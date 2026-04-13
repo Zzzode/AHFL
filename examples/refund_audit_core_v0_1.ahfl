@@ -1,0 +1,60 @@
+module refund.audit;
+
+struct RefundRequest {
+    order_id: String;
+    user_id: String;
+    refund_amount: Decimal(2);
+}
+
+struct RefundDecision {
+    result: AuditResult;
+    reason: String;
+    ticket_id: Optional<String>;
+}
+
+struct OrderInfo {
+    order_id: String;
+    user_id: String;
+    total_amount: Decimal(2);
+}
+
+enum AuditResult {
+    Approve,
+    Reject,
+}
+
+capability OrderQuery(order_id: String) -> OrderInfo;
+capability TicketCreate(order_id: String, reason: String) -> String;
+
+predicate order_exists(order_id: String): Bool;
+predicate order_belongs_to_user(order_id: String, user_id: String): Bool;
+predicate order_total_at_least(order_id: String, amount: Decimal(2)): Bool;
+predicate ticket_created(order_id: String): Bool;
+predicate audit_log_complete(): Bool;
+predicate output_contains_sensitive_info(): Bool;
+
+agent RefundAudit {
+    input: RefundRequest;
+    output: RefundDecision;
+    states: [Init, Auditing, Approved, Rejected, Terminated];
+    initial: Init;
+    final: [Terminated];
+    allow: [OrderQuery, TicketCreate];
+    deny: [RefundExecute, UserInfoModify];
+
+    transition Init -> Auditing;
+    transition Auditing -> Approved;
+    transition Auditing -> Rejected;
+    transition Approved -> Terminated;
+    transition Rejected -> Terminated;
+}
+
+contract RefundAuditSpec for RefundAudit {
+    require: order_exists(input.order_id);
+    require: order_belongs_to_user(input.order_id, input.user_id);
+    require: order_total_at_least(input.order_id, input.refund_amount);
+    never: call(RefundExecute);
+    never: output_contains_sensitive_info();
+    ensure: state(Terminated) => audit_log_complete();
+    ensure: state(Approved) => ticket_created(input.order_id);
+}
