@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 3
+
+jobs:
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install --yes clang-format ninja-build
+
+      - name: Configure
+        run: cmake --preset dev
+
+      - name: Check formatting
+        run: cmake --build --preset build-format-check
+
+  build-and-smoke-test:
+    name: Build And Smoke Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: command -v ninja >/dev/null || brew install ninja
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          ninja --version
+          c++ --version
+
+      - name: Configure
+        run: cmake --preset dev
+
+      - name: Build
+        run: cmake --build --preset build-dev
+
+      - name: Parse smoke test
+        run: ./build/dev/ahflc examples/refund_audit_core_v0_1.ahfl
+
+      - name: AST smoke test
+        run: ./build/dev/ahflc --dump-ast examples/refund_audit_core_v0_1.ahfl

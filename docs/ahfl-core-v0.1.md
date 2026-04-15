@@ -1,5 +1,11 @@
 # AHFL Core V0.1
 
+> Note
+>
+> This file is a scope-and-design note.
+> The normative grammar and type-system definition lives in
+> [ahfl-spec-v0.1-zh.md](/Users/bytedance/Develop/AHFL/docs/ahfl-spec-v0.1-zh.md).
+
 ## Positioning
 
 AHFL should start as a **control-plane DSL for agent execution governance**, not as a general-purpose programming language and not as a full business implementation language.

@@ -1,0 +1,4 @@
+.cache/**
+build/**
+src/parser/generated/**
+third_party/**

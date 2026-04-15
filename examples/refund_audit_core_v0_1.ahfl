@@ -1,9 +1,15 @@
-module refund.audit;
+module refund::audit;
 
 struct RefundRequest {
     order_id: String;
     user_id: String;
     refund_amount: Decimal(2);
+}
+
+struct RefundContext {
+    result: AuditResult = AuditResult::Reject;
+    reason: String = "pending";
+    ticket_id: Optional<String> = none;
 }
 
 struct RefundDecision {
@@ -18,29 +24,40 @@ struct OrderInfo {
     total_amount: Decimal(2);
 }
 
+struct AuditReply {
+    result: AuditResult;
+    reason: String;
+    need_ticket: Bool;
+}
+
 enum AuditResult {
     Approve,
     Reject,
 }
 
 capability OrderQuery(order_id: String) -> OrderInfo;
+capability AuditDecision(order: OrderInfo, request: RefundRequest) -> AuditReply;
 capability TicketCreate(order_id: String, reason: String) -> String;
+capability RefundExecute(order_id: String, amount: Decimal(2)) -> Unit;
+capability UserInfoModify(user_id: String) -> Unit;
 
-predicate order_exists(order_id: String): Bool;
-predicate order_belongs_to_user(order_id: String, user_id: String): Bool;
-predicate order_total_at_least(order_id: String, amount: Decimal(2)): Bool;
-predicate ticket_created(order_id: String): Bool;
-predicate audit_log_complete(): Bool;
-predicate output_contains_sensitive_info(): Bool;
+predicate order_exists(order_id: String) -> Bool;
+predicate order_belongs_to_user(order_id: String, user_id: String) -> Bool;
+predicate refund_amount_within_total(order_id: String, amount: Decimal(2)) -> Bool;
+predicate non_empty(value: String) -> Bool;
 
 agent RefundAudit {
     input: RefundRequest;
+    context: RefundContext;
     output: RefundDecision;
     states: [Init, Auditing, Approved, Rejected, Terminated];
     initial: Init;
     final: [Terminated];
-    allow: [OrderQuery, TicketCreate];
-    deny: [RefundExecute, UserInfoModify];
+    capabilities: [OrderQuery, AuditDecision, TicketCreate];
+    quota: {
+        max_tool_calls: 5;
+        max_execution_time: 30s;
+    }
 
     transition Init -> Auditing;
     transition Auditing -> Approved;
@@ -49,12 +66,65 @@ agent RefundAudit {
     transition Rejected -> Terminated;
 }
 
-contract RefundAuditSpec for RefundAudit {
-    require: order_exists(input.order_id);
-    require: order_belongs_to_user(input.order_id, input.user_id);
-    require: order_total_at_least(input.order_id, input.refund_amount);
-    never: call(RefundExecute);
-    never: output_contains_sensitive_info();
-    ensure: state(Terminated) => audit_log_complete();
-    ensure: state(Approved) => ticket_created(input.order_id);
+contract for RefundAudit {
+    requires: order_exists(input.order_id);
+    requires: order_belongs_to_user(input.order_id, input.user_id);
+    requires: refund_amount_within_total(input.order_id, input.refund_amount);
+    ensures: non_empty(output.reason);
+    invariant: always not called(RefundExecute);
+    forbid: always not called(UserInfoModify);
+}
+
+flow for RefundAudit {
+    state Init {
+        goto Auditing;
+    }
+
+    state Auditing with {
+        retry: 2;
+        retry_on: [TimeoutError, ToolError];
+        timeout: 30s;
+    } {
+        let order = OrderQuery(input.order_id);
+        let decision = AuditDecision(order, input);
+
+        ctx.result = decision.result;
+        ctx.reason = decision.reason;
+
+        if decision.result == AuditResult::Approve {
+            ctx.ticket_id = some(TicketCreate(input.order_id, decision.reason));
+            goto Approved;
+        } else {
+            ctx.ticket_id = none;
+            goto Rejected;
+        }
+    }
+
+    state Approved {
+        goto Terminated;
+    }
+
+    state Rejected {
+        goto Terminated;
+    }
+
+    state Terminated {
+        return RefundDecision {
+            result: ctx.result,
+            reason: ctx.reason,
+            ticket_id: ctx.ticket_id,
+        };
+    }
+}
+
+workflow RefundAuditWorkflow {
+    input: RefundRequest;
+    output: RefundDecision;
+
+    node audit: RefundAudit(input);
+
+    safety: always not running(audit) or eventually completed(audit);
+    liveness: eventually completed(audit, Terminated);
+
+    return: audit;
 }
