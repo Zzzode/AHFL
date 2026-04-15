@@ -2,7 +2,7 @@
 
 > Note
 >
-> This file is a scope-and-design note.
+> This file is a scope-and-design note, not the canonical syntax reference.
 > The normative grammar and type-system definition lives in
 > [ahfl-spec-v0.1-zh.md](/Users/bytedance/Develop/AHFL/docs/ahfl-spec-v0.1-zh.md).
 
@@ -54,6 +54,7 @@ The minimal surface should contain only these declaration kinds:
 
 - `module`
 - `import`
+- `const`
 - `struct`
 - `enum`
 - `type`
@@ -61,6 +62,7 @@ The minimal surface should contain only these declaration kinds:
 - `predicate`
 - `agent`
 - `contract`
+- `flow`
 - `workflow`
 
 ## What Moves Out Of Core
@@ -69,13 +71,13 @@ These should be deferred to `AHFL Native` or later versions:
 
 - `tool { ... }` implementation bodies
 - `llm_config`
-- imperative `flow` blocks
+- arbitrary host-integrated native execution bodies
 - `lifecycle`
 - `observability`
 - `compliance`
 - `main`
 - built-in HTTP/gRPC server startup
-- retry/backoff/timeout handlers as executable code
+- custom retry/backoff/timeout hook code in the host runtime
 - saga compensation bodies
 
 V0.1 can still reference these concepts through metadata, but should not execute them directly in the language.
@@ -93,7 +95,6 @@ An `agent` is a finite-state controller with:
 - one or more final states
 - an explicit transition relation
 - an allow-list of capabilities
-- an optional deny-list
 - optional quotas as metadata
 
 In V0.1, the `agent` declaration is **declarative only**. It does not contain arbitrary imperative code.
@@ -130,24 +131,41 @@ A `contract` attaches safety and correctness properties to an `agent`.
 
 Core clauses:
 
-- `require`: must hold before execution starts
-- `ensure`: must hold on successful completion
-- `always`: invariant over the execution trace
-- `never`: forbidden event or state pattern
+- `requires`: must hold before execution starts
+- `ensures`: must hold on successful completion
+- `invariant`: invariant over the execution trace
+- `forbid`: forbidden event or state pattern
 
 To keep verification tractable, contracts should use a separate expression layer from normal value expressions.
 
-### Workflow
+### Flow
 
-A `workflow` is a DAG of agent or service nodes with typed edges and global properties.
+A `flow` is a restricted, separately declared control block bound to an `agent`.
 
 Core V0.1 supports:
 
+- one handler per state
+- local bindings
+- capability calls
+- assertions
+- controlled `goto` transitions
+- a terminal `return` from final-state handlers
+
+It does not support arbitrary host-language execution, embedded tool bodies, or runtime lifecycle
+hooks.
+
+### Workflow
+
+A `workflow` is a DAG of agent or service nodes with typed dependencies and global properties.
+
+Core V0.1 supports:
+
+- typed workflow input and output
 - node declarations
-- edge declarations
-- entry conditions
+- dependency declarations through node-local `after`
 - safety properties
 - liveness properties
+- a typed workflow `return`
 
 It does not support arbitrary inline code blocks.
 
@@ -169,7 +187,7 @@ Examples:
 
 ### 2. Predicate Expressions
 
-Used in `require` and some `ensure` clauses.
+Used in `requires` and some `ensures` clauses.
 
 Examples:
 
@@ -179,7 +197,7 @@ Examples:
 
 ### 3. Temporal Formulas
 
-Used in `always`, `never`, workflow `safety`, and workflow `liveness`.
+Used in `invariant`, `forbid`, workflow `safety`, and workflow `liveness`.
 
 V0.1 should support **one temporal logic only**. Use LTL first. Do not mix LTL and CTL in the same grammar/version.
 
@@ -198,11 +216,11 @@ The language should adopt one operator per meaning.
 
 Recommended choices:
 
-- `->` for state transitions and workflow edges
+- `->` for state transitions
 - `=>` for logical implication
 - `or` for boolean disjunction
 - `and` for boolean conjunction
-- `par` as a keyword for parallel workflow branches
+- reserve `par` for a future parallel workflow extension if it is added later
 
 Unicode operators can be formatter sugar later, but should not be part of the canonical grammar in V0.1.
 
@@ -212,13 +230,18 @@ V0.1 should prefer a small, explicit, largely nominal type system.
 
 ### Primitive Types
 
+Source-level primitive types in Core V0.1 are:
+
 - `Unit`
 - `Bool`
 - `Int`
+- `Float`
 - `Decimal(scale)`
 - `String`
+- `String(min, max)`
 - `UUID`
 - `Timestamp`
+- `Duration`
 
 ### Composite Types
 
@@ -228,6 +251,18 @@ V0.1 should prefer a small, explicit, largely nominal type system.
 - `Map<K, V>` as an immutable map
 - named `struct`
 - named `enum`
+
+### Surface vs Internal Types
+
+The source language should expose only the types listed above plus named aliases.
+
+The implementation may still use a small number of checker-internal sentinel types, for example:
+
+- `Any` for error recovery or unresolved placeholders
+- `Never` for unreachable or non-returning control-flow positions
+
+These are compiler-internal concepts. They are not part of the AHFL Core V0.1 source syntax and
+must not appear in user-written programs.
 
 ### Type Policy
 
@@ -256,7 +291,6 @@ The compiler should reject:
 - transitions with unknown source or target states
 - unreachable states
 - non-final states with no outgoing transition
-- capabilities mentioned in deny-list and allow-list at the same time
 - duplicate capability declarations
 
 ### Contract Checks
@@ -275,151 +309,22 @@ The compiler should reject:
 
 - cycles in the workflow DAG
 - unknown node references
-- edges connected through incompatible outcome labels
 - undeclared agents/services
+- node inputs that reference unavailable dependencies
+- workflow return type mismatches
 - safety/liveness properties that reference unknown workflow symbols
 
-## Reduced EBNF
+## Normative Grammar And Example
 
-This is a narrowed grammar sketch, not yet a full ANTLR target.
+This document no longer maintains a separate reduced EBNF or a shadow example.
 
-```ebnf
-Program         ::= { ModuleDecl | ImportDecl | TopLevelDecl }
+Use these files as the implementation baseline:
 
-TopLevelDecl    ::= TypeDecl
-                  | CapabilityDecl
-                  | PredicateDecl
-                  | AgentDecl
-                  | ContractDecl
-                  | WorkflowDecl
-
-ModuleDecl      ::= "module" Ident ";"
-ImportDecl      ::= "import" Ident ";"
-
-TypeDecl        ::= StructDecl | EnumDecl | AliasDecl
-AliasDecl       ::= "type" Ident "=" Type ";"
-
-StructDecl      ::= "struct" Ident "{" { FieldDecl } "}"
-FieldDecl       ::= Ident ":" Type ";"
-
-EnumDecl        ::= "enum" Ident "{" Ident { "," Ident } [ "," ] "}"
-
-CapabilityDecl  ::= "capability" Ident "(" [ ParamList ] ")" "->" Type ";"
-PredicateDecl   ::= "predicate" Ident "(" [ ParamList ] ")" ":" "Bool" ";"
-
-ParamList       ::= Param { "," Param }
-Param           ::= Ident ":" Type
-
-AgentDecl       ::= "agent" Ident "{"
-                    "input" ":" Type ";"
-                    "output" ":" Type ";"
-                    "states" ":" "[" Ident { "," Ident } "]" ";"
-                    "initial" ":" Ident ";"
-                    "final" ":" "[" Ident { "," Ident } "]" ";"
-                    "allow" ":" "[" Ident { "," Ident } "]" ";"
-                    [ "deny" ":" "[" Ident { "," Ident } "]" ";" ]
-                    { TransitionDecl }
-                    [ QuotaDecl ]
-                   "}"
-
-TransitionDecl  ::= "transition" Ident "->" Ident ";"
-QuotaDecl       ::= "quota" ":" "{" { QuotaItem } "}" ";"
-QuotaItem       ::= Ident ":" Literal ";"
-
-ContractDecl    ::= "contract" Ident "for" Ident "{"
-                    { ContractClause }
-                   "}"
-
-ContractClause  ::= "require" ":" PredExpr ";"
-                  | "ensure" ":" TemporalExpr ";"
-                  | "always" ":" TemporalExpr ";"
-                  | "never" ":" TemporalExpr ";"
-
-WorkflowDecl    ::= "workflow" Ident "{"
-                    { NodeDecl | EdgeDecl | SafetyDecl | LivenessDecl }
-                   "}"
-
-NodeDecl        ::= "node" Ident ":" QualifiedIdent ";"
-EdgeDecl        ::= "edge" OutcomeRef "->" OutcomeRef ";"
-OutcomeRef      ::= Ident "." Ident
-SafetyDecl      ::= "safety" ":" TemporalExpr ";"
-LivenessDecl    ::= "liveness" ":" TemporalExpr ";"
-```
-
-## Example
-
-```ahfl
-module refund.audit;
-
-struct RefundRequest {
-    order_id: String;
-    user_id: String;
-    refund_amount: Decimal(2);
-}
-
-struct RefundDecision {
-    result: AuditResult;
-    reason: String;
-    ticket_id: Optional<String>;
-}
-
-struct OrderInfo {
-    order_id: String;
-    user_id: String;
-    total_amount: Decimal(2);
-}
-
-enum AuditResult {
-    Approve,
-    Reject,
-}
-
-capability OrderQuery(order_id: String) -> OrderInfo;
-capability TicketCreate(order_id: String, reason: String) -> String;
-
-predicate order_exists(order_id: String): Bool;
-predicate order_belongs_to_user(order_id: String, user_id: String): Bool;
-predicate refund_amount_within_total(order_id: String, amount: Decimal(2)): Bool;
-predicate ticket_created(order_id: String): Bool;
-predicate audit_log_complete(): Bool;
-predicate output_contains_sensitive_info(): Bool;
-
-agent RefundAudit {
-    input: RefundRequest;
-    output: RefundDecision;
-    states: [Init, Auditing, Approved, Rejected, Terminated];
-    initial: Init;
-    final: [Terminated];
-    allow: [OrderQuery, TicketCreate];
-    deny: [RefundExecute, UserInfoModify];
-
-    transition Init -> Auditing;
-    transition Auditing -> Approved;
-    transition Auditing -> Rejected;
-    transition Approved -> Terminated;
-    transition Rejected -> Terminated;
-}
-
-contract RefundAuditSpec for RefundAudit {
-    require: order_exists(input.order_id);
-    require: order_belongs_to_user(input.order_id, input.user_id);
-    require: refund_amount_within_total(input.order_id, input.refund_amount);
-    never: call(RefundExecute);
-    never: output_contains_sensitive_info();
-}
-```
-
-## Notes On The Example
-
-This example is intentionally narrower than your original version:
-
-- no tool implementation bodies
-- no LLM config
-- no imperative state handler blocks
-- no inline retry/backoff logic
-- no runtime launcher
-
-That is not a downgrade. It is the boundary that makes the language coherent as a first release.
+- [ahfl-spec-v0.1-zh.md](/Users/bytedance/Develop/AHFL/docs/ahfl-spec-v0.1-zh.md) for the
+  normative grammar, type system, and static semantics
+- [AHFL.g4](/Users/bytedance/Develop/AHFL/grammar/AHFL.g4) for the parser grammar
+- [refund_audit_core_v0_1.ahfl](/Users/bytedance/Develop/AHFL/examples/refund_audit_core_v0_1.ahfl)
+  for the minimal consistent example
 
 ## Suggested Versioning
 
@@ -448,7 +353,7 @@ Add:
 
 - native tool binding
 - native LLM binding
-- executable flow handlers
+- host-integrated native execution bodies
 - formal backend for a restricted pure subset
 
 ## Bottom Line

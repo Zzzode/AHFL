@@ -9,6 +9,8 @@ Current normative artifacts:
 Supporting design notes:
 
 - `docs/ahfl-core-v0.1.md`
+- `docs/roadmap-v0.1.md`
+- `docs/issue-backlog-v0.1.md`
 
 C++23 frontend:
 

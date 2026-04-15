@@ -10,8 +10,11 @@
 namespace ahfl {
 
 enum class TypeKind {
+    // Checker-internal helper kinds. These are not source-level AHFL types.
     Any,
     Never,
+
+    // Source-level primitive kinds.
     Unit,
     Bool,
     Int,
@@ -22,6 +25,8 @@ enum class TypeKind {
     Timestamp,
     Duration,
     Decimal,
+
+    // Source-level composite kinds.
     Named,
     Optional,
     List,
@@ -145,6 +150,14 @@ struct Type {
         return "<invalid-type>";
     }
 };
+
+[[nodiscard]] inline bool is_internal_type_kind(TypeKind kind) noexcept {
+    return kind == TypeKind::Any || kind == TypeKind::Never;
+}
+
+[[nodiscard]] inline bool is_source_type_kind(TypeKind kind) noexcept {
+    return !is_internal_type_kind(kind);
+}
 
 [[nodiscard]] inline bool is_collection(TypeKind kind) noexcept {
     return kind == TypeKind::List || kind == TypeKind::Set || kind == TypeKind::Map;
