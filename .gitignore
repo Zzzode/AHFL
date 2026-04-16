@@ -2,4 +2,6 @@ build/
 compile_commands.json
 .cache
 .vscode
+.agents/
 grammar/.antlr/
+log/
