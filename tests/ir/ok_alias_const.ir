@@ -1,0 +1,58 @@
+ahfl.ir.v1
+module ir::alias_const
+
+import ir::alias_const as self
+
+const ir::alias_const::DEFAULT_STATUS: String = "pending"
+
+struct ir::alias_const::Request {
+  field value: String
+}
+
+struct ir::alias_const::Context {
+  field value: String = ir::alias_const::DEFAULT_STATUS
+}
+
+struct ir::alias_const::Response {
+  field value: String
+}
+
+typealias ir::alias_const::RequestAlias = ir::alias_const::Request
+
+capability ir::alias_const::Echo(request: ir::alias_const::Request) -> ir::alias_const::Response
+
+predicate ir::alias_const::non_empty(value: String) -> Bool
+
+agent ir::alias_const::EchoAgent {
+  input: ir::alias_const::Request
+  context: ir::alias_const::Context
+  output: ir::alias_const::Response
+  states: [Init, Done]
+  initial: Init
+  final: [Done]
+  capabilities: [ir::alias_const::Echo]
+  transition Init -> Done
+}
+
+contract ir::alias_const::EchoAgent {
+  requires: ir::alias_const::non_empty(input.value)
+  ensures: ir::alias_const::non_empty(output.value)
+}
+
+flow ir::alias_const::EchoAgent {
+  state Init {
+    let reply: ir::alias_const::Response = ir::alias_const::Echo(input)
+    ctx.value = reply.value
+    goto Done
+  }
+  state Done {
+    return ir::alias_const::Response { value: ctx.value }
+  }
+}
+
+workflow ir::alias_const::EchoWorkflow {
+  input: ir::alias_const::Request
+  output: ir::alias_const::Response
+  node run: ir::alias_const::EchoAgent(input)
+  return: run
+}

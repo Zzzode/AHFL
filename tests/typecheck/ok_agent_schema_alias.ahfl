@@ -1,0 +1,49 @@
+module types::alias;
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+type RequestAlias = Request;
+type ContextAlias = Context;
+type ResponseAlias = Response;
+
+capability Echo(request: RequestAlias) -> ResponseAlias;
+
+agent AliasAgent {
+    input: RequestAlias;
+    context: ContextAlias;
+    output: ResponseAlias;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for AliasAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: "ok",
+        };
+    }
+}
+
+workflow AliasWorkflow {
+    input: RequestAlias;
+    output: ResponseAlias;
+    node run: AliasAgent(input);
+    return: run;
+}

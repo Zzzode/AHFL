@@ -1,0 +1,40 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    flag: Bool = false;
+}
+
+struct Response {
+    value: String;
+}
+
+capability Echo(request: Request) -> Response;
+
+agent BadIfAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for BadIfAgent {
+    state Init {
+        if 1 {
+            goto Done;
+        } else {
+            goto Done;
+        }
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}

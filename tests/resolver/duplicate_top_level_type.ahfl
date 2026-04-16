@@ -1,0 +1,7 @@
+struct Payload {
+    value: String;
+}
+
+enum Payload {
+    Empty,
+}

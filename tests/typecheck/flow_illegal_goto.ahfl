@@ -1,0 +1,34 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent IllegalGotoAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for IllegalGotoAgent {
+    state Init {
+        goto Init;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}

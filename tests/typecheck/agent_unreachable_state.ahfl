@@ -1,0 +1,22 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent UnreachableStateAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Dead, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}

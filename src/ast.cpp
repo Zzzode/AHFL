@@ -1,5 +1,6 @@
 #include "ahfl/ast.hpp"
 
+#include <sstream>
 #include <utility>
 
 namespace ahfl::ast {
@@ -9,6 +10,27 @@ namespace {
 std::string with_name(std::string_view prefix, const std::string &value) {
     std::string text(prefix);
     text += value;
+    return text;
+}
+
+std::string with_count(std::string prefix, std::size_t count, std::string_view noun) {
+    std::ostringstream builder;
+    builder << prefix << " (" << count << " " << noun;
+    builder << (count == 1 ? ")" : "s)");
+    return builder.str();
+}
+
+std::string join_segments(const std::vector<std::string> &segments) {
+    std::string text;
+
+    for (std::size_t index = 0; index < segments.size(); ++index) {
+        if (index != 0) {
+            text += "::";
+        }
+
+        text += segments[index];
+    }
+
     return text;
 }
 
@@ -47,6 +69,109 @@ std::string_view to_string(NodeKind kind) noexcept {
     return "Unknown";
 }
 
+std::string_view to_string(ContractClauseKind kind) noexcept {
+    switch (kind) {
+    case ContractClauseKind::Requires:
+        return "requires";
+    case ContractClauseKind::Ensures:
+        return "ensures";
+    case ContractClauseKind::Invariant:
+        return "invariant";
+    case ContractClauseKind::Forbid:
+        return "forbid";
+    }
+
+    return "unknown";
+}
+
+std::string_view to_string(TypeSyntaxKind kind) noexcept {
+    switch (kind) {
+    case TypeSyntaxKind::Unit:
+        return "Unit";
+    case TypeSyntaxKind::Bool:
+        return "Bool";
+    case TypeSyntaxKind::Int:
+        return "Int";
+    case TypeSyntaxKind::Float:
+        return "Float";
+    case TypeSyntaxKind::String:
+        return "String";
+    case TypeSyntaxKind::BoundedString:
+        return "BoundedString";
+    case TypeSyntaxKind::UUID:
+        return "UUID";
+    case TypeSyntaxKind::Timestamp:
+        return "Timestamp";
+    case TypeSyntaxKind::Duration:
+        return "Duration";
+    case TypeSyntaxKind::Decimal:
+        return "Decimal";
+    case TypeSyntaxKind::Named:
+        return "Named";
+    case TypeSyntaxKind::Optional:
+        return "Optional";
+    case TypeSyntaxKind::List:
+        return "List";
+    case TypeSyntaxKind::Set:
+        return "Set";
+    case TypeSyntaxKind::Map:
+        return "Map";
+    }
+
+    return "Unknown";
+}
+
+std::string QualifiedName::spelling() const {
+    return join_segments(segments);
+}
+
+std::string PathSyntax::spelling() const {
+    std::string text = root_name;
+
+    for (const auto &member : members) {
+        text += ".";
+        text += member;
+    }
+
+    return text;
+}
+
+std::string TypeSyntax::spelling() const {
+    switch (kind) {
+    case TypeSyntaxKind::Unit:
+    case TypeSyntaxKind::Bool:
+    case TypeSyntaxKind::Int:
+    case TypeSyntaxKind::Float:
+    case TypeSyntaxKind::String:
+    case TypeSyntaxKind::UUID:
+    case TypeSyntaxKind::Timestamp:
+    case TypeSyntaxKind::Duration:
+        return std::string(to_string(kind));
+    case TypeSyntaxKind::BoundedString: {
+        std::ostringstream builder;
+        builder << "String(" << string_bounds->first << ", " << string_bounds->second << ")";
+        return builder.str();
+    }
+    case TypeSyntaxKind::Decimal: {
+        std::ostringstream builder;
+        builder << "Decimal(" << *decimal_scale << ")";
+        return builder.str();
+    }
+    case TypeSyntaxKind::Named:
+        return name->spelling();
+    case TypeSyntaxKind::Optional:
+        return "Optional<" + first->spelling() + ">";
+    case TypeSyntaxKind::List:
+        return "List<" + first->spelling() + ">";
+    case TypeSyntaxKind::Set:
+        return "Set<" + first->spelling() + ">";
+    case TypeSyntaxKind::Map:
+        return "Map<" + first->spelling() + ", " + second->spelling() + ">";
+    }
+
+    return "<invalid-type>";
+}
+
 Node::Node(NodeKind kind, ahfl::SourceRange range) : kind(kind), range(range) {}
 
 Decl::Decl(NodeKind kind, std::string raw_text, ahfl::SourceRange range)
@@ -59,7 +184,7 @@ void Program::accept(Visitor &visitor) {
     visitor.visit(*this);
 }
 
-ModuleDecl::ModuleDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
+ModuleDecl::ModuleDecl(Owned<QualifiedName> name, std::string raw_text, ahfl::SourceRange range)
     : Decl(NodeKind::ModuleDecl, std::move(raw_text), range), name(std::move(name)) {}
 
 void ModuleDecl::accept(Visitor &visitor) {
@@ -67,10 +192,10 @@ void ModuleDecl::accept(Visitor &visitor) {
 }
 
 std::string ModuleDecl::headline() const {
-    return with_name("module ", name);
+    return with_name("module ", name->spelling());
 }
 
-ImportDecl::ImportDecl(std::string path,
+ImportDecl::ImportDecl(Owned<QualifiedName> path,
                        std::string alias,
                        std::string raw_text,
                        ahfl::SourceRange range)
@@ -83,10 +208,10 @@ void ImportDecl::accept(Visitor &visitor) {
 
 std::string ImportDecl::headline() const {
     if (alias.empty()) {
-        return with_name("import ", path);
+        return with_name("import ", path->spelling());
     }
 
-    return "import " + path + " as " + alias;
+    return "import " + path->spelling() + " as " + alias;
 }
 
 ConstDecl::ConstDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -97,7 +222,11 @@ void ConstDecl::accept(Visitor &visitor) {
 }
 
 std::string ConstDecl::headline() const {
-    return with_name("const ", name);
+    if (!type) {
+        return with_name("const ", name);
+    }
+
+    return "const " + name + " : " + type->spelling();
 }
 
 TypeAliasDecl::TypeAliasDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -108,7 +237,11 @@ void TypeAliasDecl::accept(Visitor &visitor) {
 }
 
 std::string TypeAliasDecl::headline() const {
-    return with_name("type ", name);
+    if (!aliased_type) {
+        return with_name("type ", name);
+    }
+
+    return "type " + name + " = " + aliased_type->spelling();
 }
 
 StructDecl::StructDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -119,7 +252,7 @@ void StructDecl::accept(Visitor &visitor) {
 }
 
 std::string StructDecl::headline() const {
-    return with_name("struct ", name);
+    return with_count("struct " + name, fields.size(), "field");
 }
 
 EnumDecl::EnumDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -130,7 +263,7 @@ void EnumDecl::accept(Visitor &visitor) {
 }
 
 std::string EnumDecl::headline() const {
-    return with_name("enum ", name);
+    return with_count("enum " + name, variants.size(), "variant");
 }
 
 CapabilityDecl::CapabilityDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -141,7 +274,15 @@ void CapabilityDecl::accept(Visitor &visitor) {
 }
 
 std::string CapabilityDecl::headline() const {
-    return with_name("capability ", name);
+    std::ostringstream builder;
+    builder << "capability " << name << " (" << params.size() << " param";
+    builder << (params.size() == 1 ? "" : "s") << ")";
+
+    if (return_type) {
+        builder << " -> " << return_type->spelling();
+    }
+
+    return builder.str();
 }
 
 PredicateDecl::PredicateDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -152,7 +293,7 @@ void PredicateDecl::accept(Visitor &visitor) {
 }
 
 std::string PredicateDecl::headline() const {
-    return with_name("predicate ", name);
+    return with_count("predicate " + name, params.size(), "param");
 }
 
 AgentDecl::AgentDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -163,10 +304,15 @@ void AgentDecl::accept(Visitor &visitor) {
 }
 
 std::string AgentDecl::headline() const {
-    return with_name("agent ", name);
+    std::ostringstream builder;
+    builder << "agent " << name << " (" << states.size() << " states, " << transitions.size()
+            << " transitions)";
+    return builder.str();
 }
 
-ContractDecl::ContractDecl(std::string target, std::string raw_text, ahfl::SourceRange range)
+ContractDecl::ContractDecl(Owned<QualifiedName> target,
+                           std::string raw_text,
+                           ahfl::SourceRange range)
     : Decl(NodeKind::ContractDecl, std::move(raw_text), range), target(std::move(target)) {}
 
 void ContractDecl::accept(Visitor &visitor) {
@@ -174,10 +320,10 @@ void ContractDecl::accept(Visitor &visitor) {
 }
 
 std::string ContractDecl::headline() const {
-    return "contract for " + target;
+    return with_count("contract for " + target->spelling(), clauses.size(), "clause");
 }
 
-FlowDecl::FlowDecl(std::string target, std::string raw_text, ahfl::SourceRange range)
+FlowDecl::FlowDecl(Owned<QualifiedName> target, std::string raw_text, ahfl::SourceRange range)
     : Decl(NodeKind::FlowDecl, std::move(raw_text), range), target(std::move(target)) {}
 
 void FlowDecl::accept(Visitor &visitor) {
@@ -185,7 +331,7 @@ void FlowDecl::accept(Visitor &visitor) {
 }
 
 std::string FlowDecl::headline() const {
-    return "flow for " + target;
+    return with_count("flow for " + target->spelling(), state_handlers.size(), "handler");
 }
 
 WorkflowDecl::WorkflowDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
@@ -196,7 +342,7 @@ void WorkflowDecl::accept(Visitor &visitor) {
 }
 
 std::string WorkflowDecl::headline() const {
-    return with_name("workflow ", name);
+    return with_count("workflow " + name, nodes.size(), "node");
 }
 
 void RecursiveVisitor::visit(Program &node) {

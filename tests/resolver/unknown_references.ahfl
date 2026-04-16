@@ -1,0 +1,51 @@
+struct Payload {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Present(request: Payload) -> Response;
+
+type Alias = MissingType;
+
+agent PresentAgent {
+    input: MissingType;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Present];
+    transition Init -> Done;
+}
+
+contract for MissingAgent {
+    requires: MissingPredicate(input.value);
+    invariant: always called(MissingCapability);
+}
+
+flow for MissingAgent {
+    state Init {
+        let reply = MissingCall(input);
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: "done",
+        };
+    }
+}
+
+workflow Run {
+    input: Payload;
+    output: Response;
+    node step: MissingAgent(input);
+    return: step;
+}

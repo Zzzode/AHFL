@@ -1,0 +1,39 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Decide(request: Request) -> Response;
+predicate Decide(request: Request) -> Bool;
+
+agent AmbiguousAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Decide];
+    transition Init -> Done;
+}
+
+flow for AmbiguousAgent {
+    state Init {
+        let reply = Decide(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: ctx.value,
+        };
+    }
+}

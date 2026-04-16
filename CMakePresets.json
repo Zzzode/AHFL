@@ -97,5 +97,15 @@
         "format-check"
       ]
     }
+  ],
+  "testPresets": [
+    {
+      "name": "test-dev",
+      "displayName": "Test Dev",
+      "configurePreset": "dev",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

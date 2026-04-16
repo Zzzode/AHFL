@@ -76,7 +76,7 @@
 - `docs/ahfl-core-v0.1.md`
 - `include/ahfl/types.hpp`
 
-## [ ] Issue 03
+## [x] Issue 03
 
 标题：
 冻结前端阶段职责与中间表示边界
@@ -103,11 +103,12 @@
 
 主要涉及文件：
 
+- `docs/frontend-architecture-v0.1.md`
 - `docs/roadmap-v0.1.md`
 - `src/frontend.cpp`
 - `include/ahfl/ast.hpp`
 
-## [ ] Issue 04
+## [x] Issue 04
 
 标题：
 扩展顶层 AST，使 declaration 节点承载完整语义信息
@@ -135,7 +136,7 @@
 - `include/ahfl/ast.hpp`
 - `src/ast.cpp`
 
-## [ ] Issue 05
+## [x] Issue 05
 
 标题：
 为 AHFL 增加完整类型 AST
@@ -165,7 +166,7 @@
 - `include/ahfl/types.hpp`
 - `src/frontend.cpp`
 
-## [ ] Issue 06
+## [x] Issue 06
 
 标题：
 为表达式、语句与时序公式增加分层 AST
@@ -195,7 +196,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `include/ahfl/ast.hpp`
 - `src/frontend.cpp`
 
-## [ ] Issue 07
+## [x] Issue 07
 
 标题：
 完成 ANTLR parse tree 到 AST 的 lowering
@@ -227,7 +228,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `include/ahfl/frontend.hpp`
 - `include/ahfl/source.hpp`
 
-## [ ] Issue 08
+## [x] Issue 08
 
 标题：
 升级 `ahflc --dump-ast` 输出
@@ -255,7 +256,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `src/ast.cpp`
 - `include/ahfl/ast.hpp`
 
-## [ ] Issue 09
+## [x] Issue 09
 
 标题：
 实现符号表与名称解析
@@ -286,7 +287,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `include/ahfl/*`
 - `src/*`
 
-## [ ] Issue 10
+## [x] Issue 10
 
 标题：
 实现类型解析与类型等价规则
@@ -316,7 +317,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `include/ahfl/types.hpp`
 - `src/*`
 
-## [ ] Issue 11
+## [x] Issue 11
 
 标题：
 实现表达式与语句类型检查
@@ -346,7 +347,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `src/*`
 - `include/ahfl/types.hpp`
 
-## [ ] Issue 12
+## [x] Issue 12
 
 标题：
 实现 contract checker
@@ -378,7 +379,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 - `src/*`
 - `docs/ahfl-spec-v0.1-zh.md`
 
-## [ ] Issue 13
+## [x] Issue 13
 
 标题：
 实现 agent 与 flow validator
@@ -409,7 +410,7 @@ agent 状态机与 flow handler 的一致性是语言最核心的静态保证之
 - `src/*`
 - `docs/ahfl-spec-v0.1-zh.md`
 
-## [ ] Issue 14
+## [x] Issue 14
 
 标题：
 实现 workflow validator
@@ -442,13 +443,13 @@ workflow 是 agent 编排边界的核心，但当前尚无 DAG、依赖与类型
 - `src/*`
 - `docs/ahfl-spec-v0.1-zh.md`
 
-## [ ] Issue 15
+## [x] Issue 15
 
 标题：
 建立测试体系、扩展 CI 并增加 IR 输出
 
 背景：
-当前 CI 只覆盖格式、构建和 parse smoke test，缺少 parser/checker 回归保护。
+当前仓库已经有 parser/resolver 基础回归和 CI 执行能力，但缺少更完整的 checker golden tests 与稳定 IR 输出。
 
 目标：
 

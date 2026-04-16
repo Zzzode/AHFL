@@ -1,0 +1,28 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Validate(request: Request) -> Bool;
+
+agent BadContractAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Validate];
+    transition Init -> Done;
+}
+
+contract for BadContractAgent {
+    requires: Validate(input);
+}

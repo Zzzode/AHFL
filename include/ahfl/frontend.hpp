@@ -16,6 +16,8 @@ struct FrontendOptions {
 };
 
 struct ParseResult {
+    // Public result of the parse + AST lowering boundary. Generated parser
+    // objects remain an implementation detail of src/frontend.cpp.
     SourceFile source;
     Owned<ast::Program> program;
     DiagnosticBag diagnostics;
@@ -29,6 +31,9 @@ class Frontend {
   public:
     explicit Frontend(FrontendOptions options = {});
 
+    // These entry points stop at the hand-written AST boundary. Later
+    // resolve/typecheck/validate/emission stages must consume ast::Program
+    // rather than ANTLR parse-tree nodes.
     [[nodiscard]] ParseResult parse_file(const std::filesystem::path &path) const;
     [[nodiscard]] ParseResult parse_text(std::string display_name, std::string text) const;
 

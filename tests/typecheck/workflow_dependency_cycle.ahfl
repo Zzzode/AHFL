@@ -1,0 +1,38 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+agent LoopAgent {
+    input: Request;
+    context: Context;
+    output: Request;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for LoopAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Request {
+            value: input.value,
+        };
+    }
+}
+
+workflow CyclicWorkflow {
+    input: Request;
+    output: Request;
+    node first: LoopAgent(second) after [second];
+    node second: LoopAgent(first) after [first];
+    return: first;
+}

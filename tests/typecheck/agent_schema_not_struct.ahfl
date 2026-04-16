@@ -1,0 +1,19 @@
+enum Status {
+    Pending,
+    Done,
+}
+
+type InputAlias = Status;
+type ContextAlias = Int;
+type OutputAlias = List<String>;
+
+agent InvalidAgent {
+    input: InputAlias;
+    context: ContextAlias;
+    output: OutputAlias;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}

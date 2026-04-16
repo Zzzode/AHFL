@@ -1,0 +1,42 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent EchoAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for EchoAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+
+workflow InvalidCompletedStateWorkflow {
+    input: Request;
+    output: Response;
+    node run: EchoAgent(input);
+    liveness: eventually completed(run, Init);
+    return: run;
+}

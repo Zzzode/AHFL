@@ -1,0 +1,90 @@
+module ir::expr_temporal;
+import ir::expr_temporal as self;
+
+const DEFAULT_NOTE: String = "seed";
+
+struct Request {
+    values: List<Int>;
+    attrs: Map<String, String>;
+}
+
+struct Context {
+    note: String = self::DEFAULT_NOTE;
+    numbers: List<Int> = [1, 2, 3];
+    labels: Set<String> = set["alpha", "beta"];
+    lookup: Map<String, String> = map["seed": self::DEFAULT_NOTE];
+    first_value: Int = [1, 2, 3][0];
+    mapped_value: String = map["seed": self::DEFAULT_NOTE]["seed"];
+    reply: Response = Response {
+        note: self::DEFAULT_NOTE,
+        result: Status::Pending,
+    };
+    maybe_note: Optional<String> = some(self::DEFAULT_NOTE);
+}
+
+struct Response {
+    note: String;
+    result: Status;
+}
+
+enum Status {
+    Pending,
+    Approved,
+    Rejected,
+}
+
+capability Decide(request: Request) -> Response;
+predicate ready(value: String) -> Bool;
+
+agent ExprAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Decide];
+    transition Init -> Done;
+}
+
+contract for self::ExprAgent {
+    requires: ready(input.attrs["seed"]);
+    invariant: always (not called(Decide) or ready(input.attrs["seed"]));
+}
+
+flow for self::ExprAgent {
+    state Init {
+        let reply = self::Decide(input);
+        assert (Response {
+            note: self::DEFAULT_NOTE,
+            result: Status::Pending,
+        }).note == self::DEFAULT_NOTE;
+
+        if (input.values[0] + 1) > 2 and ready(reply.note) {
+            ctx.note = reply.note;
+            goto Done;
+        } else {
+            ctx.note = (Response {
+                note: self::DEFAULT_NOTE + "_fallback",
+                result: Status::Rejected,
+            }).note;
+            goto Done;
+        }
+    }
+
+    state Done {
+        return Response {
+            note: ctx.note,
+            result: Status::Approved,
+        };
+    }
+}
+
+workflow ExprWorkflow {
+    input: Request;
+    output: Response;
+    node run: self::ExprAgent(input);
+    safety: always (not running(run) or eventually completed(run));
+    liveness: eventually completed(run, Done);
+    return: run;
+}

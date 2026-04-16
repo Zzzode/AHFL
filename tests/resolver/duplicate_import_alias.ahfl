@@ -1,0 +1,6 @@
+import foo::bar as shared;
+import baz::qux as shared;
+
+struct Payload {
+    value: String;
+}

@@ -1,0 +1,35 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent BadAssertAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for BadAssertAgent {
+    state Init {
+        assert input;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}

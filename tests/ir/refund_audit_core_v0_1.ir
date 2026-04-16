@@ -1,0 +1,123 @@
+ahfl.ir.v1
+module refund::audit
+
+struct refund::audit::RefundRequest {
+  field order_id: String
+  field user_id: String
+  field refund_amount: Decimal(2)
+}
+
+struct refund::audit::RefundContext {
+  field result: refund::audit::AuditResult = refund::audit::AuditResult::Reject
+  field reason: String = "pending"
+  field ticket_id: Optional<String> = none
+}
+
+struct refund::audit::RefundDecision {
+  field result: refund::audit::AuditResult
+  field reason: String
+  field ticket_id: Optional<String>
+}
+
+struct refund::audit::OrderInfo {
+  field order_id: String
+  field user_id: String
+  field total_amount: Decimal(2)
+}
+
+struct refund::audit::AuditReply {
+  field result: refund::audit::AuditResult
+  field reason: String
+  field need_ticket: Bool
+}
+
+enum refund::audit::AuditResult {
+  variant Approve
+  variant Reject
+}
+
+capability refund::audit::OrderQuery(order_id: String) -> refund::audit::OrderInfo
+
+capability refund::audit::AuditDecision(order: refund::audit::OrderInfo, request: refund::audit::RefundRequest) -> refund::audit::AuditReply
+
+capability refund::audit::TicketCreate(order_id: String, reason: String) -> String
+
+capability refund::audit::RefundExecute(order_id: String, amount: Decimal(2)) -> Unit
+
+capability refund::audit::UserInfoModify(user_id: String) -> Unit
+
+predicate refund::audit::order_exists(order_id: String) -> Bool
+
+predicate refund::audit::order_belongs_to_user(order_id: String, user_id: String) -> Bool
+
+predicate refund::audit::refund_amount_within_total(order_id: String, amount: Decimal(2)) -> Bool
+
+predicate refund::audit::non_empty(value: String) -> Bool
+
+agent refund::audit::RefundAudit {
+  input: refund::audit::RefundRequest
+  context: refund::audit::RefundContext
+  output: refund::audit::RefundDecision
+  states: [Init, Auditing, Approved, Rejected, Terminated]
+  initial: Init
+  final: [Terminated]
+  capabilities: [refund::audit::OrderQuery, refund::audit::AuditDecision, refund::audit::TicketCreate]
+  quota {
+    max_tool_calls: 5
+    max_execution_time: 30s
+  }
+  transition Init -> Auditing
+  transition Auditing -> Approved
+  transition Auditing -> Rejected
+  transition Approved -> Terminated
+  transition Rejected -> Terminated
+}
+
+contract refund::audit::RefundAudit {
+  requires: refund::audit::order_exists(input.order_id)
+  requires: refund::audit::order_belongs_to_user(input.order_id, input.user_id)
+  requires: refund::audit::refund_amount_within_total(input.order_id, input.refund_amount)
+  ensures: refund::audit::non_empty(output.reason)
+  invariant: G(!(called(refund::audit::RefundExecute)))
+  forbid: G(!(called(refund::audit::UserInfoModify)))
+}
+
+flow refund::audit::RefundAudit {
+  state Init {
+    goto Auditing
+  }
+  state Auditing {
+    retry: 2
+    retry_on: [TimeoutError, ToolError]
+    timeout: 30s
+    let order: refund::audit::OrderInfo = refund::audit::OrderQuery(input.order_id)
+    let decision: refund::audit::AuditReply = refund::audit::AuditDecision(order, input)
+    ctx.result = decision.result
+    ctx.reason = decision.reason
+    if (decision.result == refund::audit::AuditResult::Approve) {
+      ctx.ticket_id = some(refund::audit::TicketCreate(input.order_id, decision.reason))
+      goto Approved
+    } else {
+      ctx.ticket_id = none
+      goto Rejected
+    }
+  }
+  state Approved {
+    goto Terminated
+  }
+  state Rejected {
+    goto Terminated
+  }
+  state Terminated {
+    return refund::audit::RefundDecision { result: ctx.result, reason: ctx.reason, ticket_id: ctx.ticket_id }
+  }
+}
+
+workflow refund::audit::RefundAuditWorkflow {
+  input: refund::audit::RefundRequest
+  output: refund::audit::RefundDecision
+  node audit: refund::audit::RefundAudit(input)
+  safety: (G(!(running(audit))) || F(completed(audit)))
+  liveness: F(completed(audit, Terminated))
+  return: audit
+}

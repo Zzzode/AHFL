@@ -34,8 +34,8 @@ jobs:
       - name: Check formatting
         run: cmake --build --preset build-format-check
 
-  build-and-smoke-test:
-    name: Build And Smoke Test (${{ matrix.os }})
+  build-and-test:
+    name: Build And Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
 
@@ -70,8 +70,5 @@ jobs:
       - name: Build
         run: cmake --build --preset build-dev
 
-      - name: Parse smoke test
-        run: ./build/dev/ahflc examples/refund_audit_core_v0_1.ahfl
-
-      - name: AST smoke test
-        run: ./build/dev/ahflc --dump-ast examples/refund_audit_core_v0_1.ahfl
+      - name: Run Tests
+        run: ctest --preset test-dev

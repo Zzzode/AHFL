@@ -1,0 +1,79 @@
+ahfl.ir.v1
+module ir::expr_temporal
+
+import ir::expr_temporal as self
+
+const ir::expr_temporal::DEFAULT_NOTE: String = "seed"
+
+struct ir::expr_temporal::Request {
+  field values: List<Int>
+  field attrs: Map<String, String>
+}
+
+struct ir::expr_temporal::Context {
+  field note: String = ir::expr_temporal::DEFAULT_NOTE
+  field numbers: List<Int> = [1, 2, 3]
+  field labels: Set<String> = {"alpha", "beta"}
+  field lookup: Map<String, String> = {"seed": ir::expr_temporal::DEFAULT_NOTE}
+  field first_value: Int = [1, 2, 3][0]
+  field mapped_value: String = {"seed": ir::expr_temporal::DEFAULT_NOTE}["seed"]
+  field reply: ir::expr_temporal::Response = ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }
+  field maybe_note: Optional<String> = some(ir::expr_temporal::DEFAULT_NOTE)
+}
+
+struct ir::expr_temporal::Response {
+  field note: String
+  field result: ir::expr_temporal::Status
+}
+
+enum ir::expr_temporal::Status {
+  variant Pending
+  variant Approved
+  variant Rejected
+}
+
+capability ir::expr_temporal::Decide(request: ir::expr_temporal::Request) -> ir::expr_temporal::Response
+
+predicate ir::expr_temporal::ready(value: String) -> Bool
+
+agent ir::expr_temporal::ExprAgent {
+  input: ir::expr_temporal::Request
+  context: ir::expr_temporal::Context
+  output: ir::expr_temporal::Response
+  states: [Init, Done]
+  initial: Init
+  final: [Done]
+  capabilities: [ir::expr_temporal::Decide]
+  transition Init -> Done
+}
+
+contract ir::expr_temporal::ExprAgent {
+  requires: ir::expr_temporal::ready(input.attrs["seed"])
+  invariant: G((!(called(ir::expr_temporal::Decide)) || ir::expr_temporal::ready(input.attrs["seed"])))
+}
+
+flow ir::expr_temporal::ExprAgent {
+  state Init {
+    let reply: ir::expr_temporal::Response = ir::expr_temporal::Decide(input)
+    assert ((ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }).note == ir::expr_temporal::DEFAULT_NOTE)
+    if ((((input.values[0] + 1)) > 2) && ir::expr_temporal::ready(reply.note)) {
+      ctx.note = reply.note
+      goto Done
+    } else {
+      ctx.note = (ir::expr_temporal::Response { note: (ir::expr_temporal::DEFAULT_NOTE + "_fallback"), result: ir::expr_temporal::Status::Rejected }).note
+      goto Done
+    }
+  }
+  state Done {
+    return ir::expr_temporal::Response { note: ctx.note, result: ir::expr_temporal::Status::Approved }
+  }
+}
+
+workflow ir::expr_temporal::ExprWorkflow {
+  input: ir::expr_temporal::Request
+  output: ir::expr_temporal::Response
+  node run: ir::expr_temporal::ExprAgent(input)
+  safety: G((!(running(run)) || F(completed(run))))
+  liveness: F(completed(run, Done))
+  return: run
+}
