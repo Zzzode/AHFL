@@ -70,6 +70,12 @@ Emit the stable semantic IR:
 ./build/dev/ahflc emit-ir examples/refund_audit_core_v0_1.ahfl
 ```
 
+Emit machine-readable JSON IR:
+
+```bash
+./build/dev/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
+```
+
 Current scope of `ahflc`:
 
 - loads AHFL source files
@@ -93,15 +99,17 @@ Current scope of `ahflc`:
 - lowers the validated frontend result into a structured `ahfl::ir::Program` model
 - models const values, contract/workflow formulas, and flow statements as recursive IR nodes instead of flattened strings
 - emits a stable textual IR from the validated semantic model via `emit-ir`
+- emits a stable machine-readable JSON form of the structured IR via `emit-ir-json`
 - reports source diagnostics with line and column
 - `check` runs parse + AST lowering + resolver + typecheck + validate diagnostics
 - `dump-types` prints the resolved semantic type environment
 - `emit-ir` prints the stable semantic IR used as the current backend boundary
+- `emit-ir-json` prints the same IR as structured JSON for downstream tooling
 - `--dump-ast` prints a full tree view of declarations, types, expressions, statements, and temporal formulas
 
 Not wired yet:
 
-- backend-specific lowerings beyond the current stable textual IR
+- backend-specific formal lowerings beyond the current stable textual/JSON IR boundary
 
 Regenerate the C++ parser module:
 

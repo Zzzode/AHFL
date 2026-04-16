@@ -446,9 +446,16 @@ struct Program {
 
 void print_program_ir(const ir::Program &program, std::ostream &out);
 
+void print_program_ir_json(const ir::Program &program, std::ostream &out);
+
 void emit_program_ir(const ast::Program &program,
                      const ResolveResult &resolve_result,
                      const TypeCheckResult &type_check_result,
                      std::ostream &out);
+
+void emit_program_ir_json(const ast::Program &program,
+                          const ResolveResult &resolve_result,
+                          const TypeCheckResult &type_check_result,
+                          std::ostream &out);
 
 } // namespace ahfl

@@ -1,0 +1,663 @@
+{
+  "format_version": "ahfl.ir.v1",
+  "declarations": [
+    {
+      "kind": "module",
+      "name": "ir::expr_temporal"
+    },
+    {
+      "kind": "import",
+      "path": "ir::expr_temporal",
+      "alias": "self"
+    },
+    {
+      "kind": "const",
+      "name": "ir::expr_temporal::DEFAULT_NOTE",
+      "type": "String",
+      "value": {
+        "kind": "string_literal",
+        "spelling": "\"seed\""
+      }
+    },
+    {
+      "kind": "struct",
+      "name": "ir::expr_temporal::Request",
+      "fields": [
+        {
+          "name": "values",
+          "type": "List<Int>",
+          "default_value": null
+        },
+        {
+          "name": "attrs",
+          "type": "Map<String, String>",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "ir::expr_temporal::Context",
+      "fields": [
+        {
+          "name": "note",
+          "type": "String",
+          "default_value": {
+            "kind": "qualified_value",
+            "value": "ir::expr_temporal::DEFAULT_NOTE"
+          }
+        },
+        {
+          "name": "numbers",
+          "type": "List<Int>",
+          "default_value": {
+            "kind": "list_literal",
+            "items": [
+              {
+                "kind": "integer_literal",
+                "spelling": "1"
+              },
+              {
+                "kind": "integer_literal",
+                "spelling": "2"
+              },
+              {
+                "kind": "integer_literal",
+                "spelling": "3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "labels",
+          "type": "Set<String>",
+          "default_value": {
+            "kind": "set_literal",
+            "items": [
+              {
+                "kind": "string_literal",
+                "spelling": "\"alpha\""
+              },
+              {
+                "kind": "string_literal",
+                "spelling": "\"beta\""
+              }
+            ]
+          }
+        },
+        {
+          "name": "lookup",
+          "type": "Map<String, String>",
+          "default_value": {
+            "kind": "map_literal",
+            "entries": [
+              {
+                "key": {
+                  "kind": "string_literal",
+                  "spelling": "\"seed\""
+                },
+                "value": {
+                  "kind": "qualified_value",
+                  "value": "ir::expr_temporal::DEFAULT_NOTE"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "first_value",
+          "type": "Int",
+          "default_value": {
+            "kind": "index_access",
+            "base": {
+              "kind": "list_literal",
+              "items": [
+                {
+                  "kind": "integer_literal",
+                  "spelling": "1"
+                },
+                {
+                  "kind": "integer_literal",
+                  "spelling": "2"
+                },
+                {
+                  "kind": "integer_literal",
+                  "spelling": "3"
+                }
+              ]
+            },
+            "index": {
+              "kind": "integer_literal",
+              "spelling": "0"
+            }
+          }
+        },
+        {
+          "name": "mapped_value",
+          "type": "String",
+          "default_value": {
+            "kind": "index_access",
+            "base": {
+              "kind": "map_literal",
+              "entries": [
+                {
+                  "key": {
+                    "kind": "string_literal",
+                    "spelling": "\"seed\""
+                  },
+                  "value": {
+                    "kind": "qualified_value",
+                    "value": "ir::expr_temporal::DEFAULT_NOTE"
+                  }
+                }
+              ]
+            },
+            "index": {
+              "kind": "string_literal",
+              "spelling": "\"seed\""
+            }
+          }
+        },
+        {
+          "name": "reply",
+          "type": "ir::expr_temporal::Response",
+          "default_value": {
+            "kind": "struct_literal",
+            "type_name": "ir::expr_temporal::Response",
+            "fields": [
+              {
+                "name": "note",
+                "value": {
+                  "kind": "qualified_value",
+                  "value": "ir::expr_temporal::DEFAULT_NOTE"
+                }
+              },
+              {
+                "name": "result",
+                "value": {
+                  "kind": "qualified_value",
+                  "value": "ir::expr_temporal::Status::Pending"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "name": "maybe_note",
+          "type": "Optional<String>",
+          "default_value": {
+            "kind": "some",
+            "value": {
+              "kind": "qualified_value",
+              "value": "ir::expr_temporal::DEFAULT_NOTE"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "ir::expr_temporal::Response",
+      "fields": [
+        {
+          "name": "note",
+          "type": "String",
+          "default_value": null
+        },
+        {
+          "name": "result",
+          "type": "ir::expr_temporal::Status",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "enum",
+      "name": "ir::expr_temporal::Status",
+      "variants": [
+        "Pending",
+        "Approved",
+        "Rejected"
+      ]
+    },
+    {
+      "kind": "capability",
+      "name": "ir::expr_temporal::Decide",
+      "params": [
+        {
+          "name": "request",
+          "type": "ir::expr_temporal::Request"
+        }
+      ],
+      "return_type": "ir::expr_temporal::Response"
+    },
+    {
+      "kind": "predicate",
+      "name": "ir::expr_temporal::ready",
+      "params": [
+        {
+          "name": "value",
+          "type": "String"
+        }
+      ],
+      "return_type": "Bool"
+    },
+    {
+      "kind": "agent",
+      "name": "ir::expr_temporal::ExprAgent",
+      "input_type": "ir::expr_temporal::Request",
+      "context_type": "ir::expr_temporal::Context",
+      "output_type": "ir::expr_temporal::Response",
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": [
+        "ir::expr_temporal::Decide"
+      ],
+      "quota": [],
+      "transitions": [
+        {
+          "from_state": "Init",
+          "to_state": "Done"
+        }
+      ]
+    },
+    {
+      "kind": "contract",
+      "target": "ir::expr_temporal::ExprAgent",
+      "clauses": [
+        {
+          "kind": "requires",
+          "expr": {
+            "kind": "call",
+            "callee": "ir::expr_temporal::ready",
+            "arguments": [
+              {
+                "kind": "index_access",
+                "base": {
+                  "kind": "path",
+                  "path": {
+                    "root_kind": "input",
+                    "root_name": "input",
+                    "members": [
+                      "attrs"
+                    ]
+                  }
+                },
+                "index": {
+                  "kind": "string_literal",
+                  "spelling": "\"seed\""
+                }
+              }
+            ]
+          }
+        },
+        {
+          "kind": "invariant",
+          "temporal": {
+            "kind": "unary",
+            "op": "always",
+            "operand": {
+              "kind": "binary",
+              "op": "or",
+              "lhs": {
+                "kind": "unary",
+                "op": "not",
+                "operand": {
+                  "kind": "called",
+                  "capability": "ir::expr_temporal::Decide"
+                }
+              },
+              "rhs": {
+                "kind": "embedded_expr",
+                "expr": {
+                  "kind": "call",
+                  "callee": "ir::expr_temporal::ready",
+                  "arguments": [
+                    {
+                      "kind": "index_access",
+                      "base": {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "input",
+                          "root_name": "input",
+                          "members": [
+                            "attrs"
+                          ]
+                        }
+                      },
+                      "index": {
+                        "kind": "string_literal",
+                        "spelling": "\"seed\""
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "kind": "flow",
+      "target": "ir::expr_temporal::ExprAgent",
+      "state_handlers": [
+        {
+          "state_name": "Init",
+          "policy": [],
+          "body": {
+            "statements": [
+              {
+                "kind": "let",
+                "name": "reply",
+                "type": "ir::expr_temporal::Response",
+                "initializer": {
+                  "kind": "call",
+                  "callee": "ir::expr_temporal::Decide",
+                  "arguments": [
+                    {
+                      "kind": "path",
+                      "path": {
+                        "root_kind": "input",
+                        "root_name": "input",
+                        "members": []
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "assert",
+                "condition": {
+                  "kind": "binary",
+                  "op": "equal",
+                  "lhs": {
+                    "kind": "member_access",
+                    "base": {
+                      "kind": "group",
+                      "expr": {
+                        "kind": "struct_literal",
+                        "type_name": "ir::expr_temporal::Response",
+                        "fields": [
+                          {
+                            "name": "note",
+                            "value": {
+                              "kind": "qualified_value",
+                              "value": "ir::expr_temporal::DEFAULT_NOTE"
+                            }
+                          },
+                          {
+                            "name": "result",
+                            "value": {
+                              "kind": "qualified_value",
+                              "value": "ir::expr_temporal::Status::Pending"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "member": "note"
+                  },
+                  "rhs": {
+                    "kind": "qualified_value",
+                    "value": "ir::expr_temporal::DEFAULT_NOTE"
+                  }
+                }
+              },
+              {
+                "kind": "if",
+                "condition": {
+                  "kind": "binary",
+                  "op": "and",
+                  "lhs": {
+                    "kind": "binary",
+                    "op": "greater",
+                    "lhs": {
+                      "kind": "group",
+                      "expr": {
+                        "kind": "binary",
+                        "op": "add",
+                        "lhs": {
+                          "kind": "index_access",
+                          "base": {
+                            "kind": "path",
+                            "path": {
+                              "root_kind": "input",
+                              "root_name": "input",
+                              "members": [
+                                "values"
+                              ]
+                            }
+                          },
+                          "index": {
+                            "kind": "integer_literal",
+                            "spelling": "0"
+                          }
+                        },
+                        "rhs": {
+                          "kind": "integer_literal",
+                          "spelling": "1"
+                        }
+                      }
+                    },
+                    "rhs": {
+                      "kind": "integer_literal",
+                      "spelling": "2"
+                    }
+                  },
+                  "rhs": {
+                    "kind": "call",
+                    "callee": "ir::expr_temporal::ready",
+                    "arguments": [
+                      {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "identifier",
+                          "root_name": "reply",
+                          "members": [
+                            "note"
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                "then_block": {
+                  "statements": [
+                    {
+                      "kind": "assign",
+                      "target": {
+                        "root_kind": "identifier",
+                        "root_name": "ctx",
+                        "members": [
+                          "note"
+                        ]
+                      },
+                      "value": {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "identifier",
+                          "root_name": "reply",
+                          "members": [
+                            "note"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "kind": "goto",
+                      "target_state": "Done"
+                    }
+                  ]
+                },
+                "else_block": {
+                  "statements": [
+                    {
+                      "kind": "assign",
+                      "target": {
+                        "root_kind": "identifier",
+                        "root_name": "ctx",
+                        "members": [
+                          "note"
+                        ]
+                      },
+                      "value": {
+                        "kind": "member_access",
+                        "base": {
+                          "kind": "group",
+                          "expr": {
+                            "kind": "struct_literal",
+                            "type_name": "ir::expr_temporal::Response",
+                            "fields": [
+                              {
+                                "name": "note",
+                                "value": {
+                                  "kind": "binary",
+                                  "op": "add",
+                                  "lhs": {
+                                    "kind": "qualified_value",
+                                    "value": "ir::expr_temporal::DEFAULT_NOTE"
+                                  },
+                                  "rhs": {
+                                    "kind": "string_literal",
+                                    "spelling": "\"_fallback\""
+                                  }
+                                }
+                              },
+                              {
+                                "name": "result",
+                                "value": {
+                                  "kind": "qualified_value",
+                                  "value": "ir::expr_temporal::Status::Rejected"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "member": "note"
+                      }
+                    },
+                    {
+                      "kind": "goto",
+                      "target_state": "Done"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "state_name": "Done",
+          "policy": [],
+          "body": {
+            "statements": [
+              {
+                "kind": "return",
+                "value": {
+                  "kind": "struct_literal",
+                  "type_name": "ir::expr_temporal::Response",
+                  "fields": [
+                    {
+                      "name": "note",
+                      "value": {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "identifier",
+                          "root_name": "ctx",
+                          "members": [
+                            "note"
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "name": "result",
+                      "value": {
+                        "kind": "qualified_value",
+                        "value": "ir::expr_temporal::Status::Approved"
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "workflow",
+      "name": "ir::expr_temporal::ExprWorkflow",
+      "input_type": "ir::expr_temporal::Request",
+      "output_type": "ir::expr_temporal::Response",
+      "nodes": [
+        {
+          "name": "run",
+          "target": "ir::expr_temporal::ExprAgent",
+          "input": {
+            "kind": "path",
+            "path": {
+              "root_kind": "input",
+              "root_name": "input",
+              "members": []
+            }
+          },
+          "after": []
+        }
+      ],
+      "safety": [
+        {
+          "kind": "unary",
+          "op": "always",
+          "operand": {
+            "kind": "binary",
+            "op": "or",
+            "lhs": {
+              "kind": "unary",
+              "op": "not",
+              "operand": {
+                "kind": "running",
+                "node": "run"
+              }
+            },
+            "rhs": {
+              "kind": "unary",
+              "op": "eventually",
+              "operand": {
+                "kind": "completed",
+                "node": "run",
+                "state_name": null
+              }
+            }
+          }
+        }
+      ],
+      "liveness": [
+        {
+          "kind": "unary",
+          "op": "eventually",
+          "operand": {
+            "kind": "completed",
+            "node": "run",
+            "state_name": "Done"
+          }
+        }
+      ],
+      "return_value": {
+        "kind": "path",
+        "path": {
+          "root_kind": "identifier",
+          "root_name": "run",
+          "members": []
+        }
+      }
+    }
+  ]
+}

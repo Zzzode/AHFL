@@ -98,6 +98,7 @@ add_library(ahfl_frontend STATIC
     src/ast.cpp
     src/frontend.cpp
     src/ir.cpp
+    src/ir_json.cpp
     src/resolver.cpp
     src/typecheck.cpp
     src/validate.cpp
@@ -192,6 +193,13 @@ add_ahflc_output_test(
     emit-ir
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/ir/ok_expr_temporal.ahfl"
     "${CMAKE_CURRENT_SOURCE_DIR}/tests/ir/ok_expr_temporal.ir"
+)
+
+add_ahflc_output_test(
+    ahflc.emit_ir_json.expr_temporal
+    emit-ir-json
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/ir/ok_expr_temporal.ahfl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/ir/ok_expr_temporal.json"
 )
 
 add_ahflc_check_test(

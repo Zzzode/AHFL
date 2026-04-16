@@ -17,6 +17,7 @@ struct CommandLineOptions {
     bool dump_ast{false};
     bool dump_types{false};
     bool emit_ir{false};
+    bool emit_ir_json{false};
     std::vector<std::string_view> positional;
 };
 
@@ -26,12 +27,13 @@ void print_usage(std::ostream &out) {
         << "  ahflc dump-ast <input.ahfl>\n"
         << "  ahflc dump-types <input.ahfl>\n"
         << "  ahflc emit-ir <input.ahfl>\n"
+        << "  ahflc emit-ir-json <input.ahfl>\n"
         << "  ahflc [--dump-ast] <input.ahfl>\n";
 }
 
 [[nodiscard]] bool is_subcommand(std::string_view argument) {
     return argument == "check" || argument == "dump-ast" || argument == "dump-types" ||
-           argument == "emit-ir";
+           argument == "emit-ir" || argument == "emit-ir-json";
 }
 
 [[nodiscard]] int parse_command_line(std::span<const std::string_view> arguments,
@@ -65,6 +67,9 @@ void print_usage(std::ostream &out) {
             if (argument == "emit-ir") {
                 options.emit_ir = true;
             }
+            if (argument == "emit-ir-json") {
+                options.emit_ir_json = true;
+            }
             continue;
         }
 
@@ -86,11 +91,12 @@ int run_cli(std::span<const std::string_view> arguments) {
         return parse_status;
     }
 
-    const auto action_count = static_cast<int>(options.dump_ast) +
-                              static_cast<int>(options.dump_types) +
-                              static_cast<int>(options.emit_ir);
+    const auto action_count =
+        static_cast<int>(options.dump_ast) + static_cast<int>(options.dump_types) +
+        static_cast<int>(options.emit_ir) + static_cast<int>(options.emit_ir_json);
     if (action_count > 1) {
-        std::cerr << "error: choose at most one of dump-ast, dump-types, or emit-ir\n";
+        std::cerr
+            << "error: choose at most one of dump-ast, dump-types, emit-ir, or emit-ir-json\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -142,8 +148,13 @@ int run_cli(std::span<const std::string_view> arguments) {
         ahfl::emit_program_ir(*parse_result.program, resolve_result, type_check_result, std::cout);
     }
 
+    if (!validation_result.has_errors() && options.emit_ir_json) {
+        ahfl::emit_program_ir_json(
+            *parse_result.program, resolve_result, type_check_result, std::cout);
+    }
+
     if (!validation_result.has_errors() && !options.dump_ast && !options.dump_types &&
-        !options.emit_ir) {
+        !options.emit_ir && !options.emit_ir_json) {
         std::cout << "ok: checked " << parse_result.program->declarations.size()
                   << " top-level declaration(s), " << resolve_result.symbol_table.symbols().size()
                   << " symbol(s), " << resolve_result.references.size() << " reference(s), "
