@@ -1,8 +1,8 @@
-#include "ahfl/frontend.hpp"
-#include "ahfl/ir.hpp"
-#include "ahfl/resolver.hpp"
-#include "ahfl/typecheck.hpp"
-#include "ahfl/validate.hpp"
+#include "ahfl/backend.hpp"
+#include "ahfl/frontend/frontend.hpp"
+#include "ahfl/semantics/resolver.hpp"
+#include "ahfl/semantics/typecheck.hpp"
+#include "ahfl/semantics/validate.hpp"
 
 #include <functional>
 #include <iostream>
@@ -18,6 +18,7 @@ struct CommandLineOptions {
     bool dump_types{false};
     bool emit_ir{false};
     bool emit_ir_json{false};
+    bool emit_smv{false};
     std::vector<std::string_view> positional;
 };
 
@@ -28,12 +29,13 @@ void print_usage(std::ostream &out) {
         << "  ahflc dump-types <input.ahfl>\n"
         << "  ahflc emit-ir <input.ahfl>\n"
         << "  ahflc emit-ir-json <input.ahfl>\n"
+        << "  ahflc emit-smv <input.ahfl>\n"
         << "  ahflc [--dump-ast] <input.ahfl>\n";
 }
 
 [[nodiscard]] bool is_subcommand(std::string_view argument) {
     return argument == "check" || argument == "dump-ast" || argument == "dump-types" ||
-           argument == "emit-ir" || argument == "emit-ir-json";
+           argument == "emit-ir" || argument == "emit-ir-json" || argument == "emit-smv";
 }
 
 [[nodiscard]] int parse_command_line(std::span<const std::string_view> arguments,
@@ -70,6 +72,9 @@ void print_usage(std::ostream &out) {
             if (argument == "emit-ir-json") {
                 options.emit_ir_json = true;
             }
+            if (argument == "emit-smv") {
+                options.emit_smv = true;
+            }
             continue;
         }
 
@@ -93,10 +98,11 @@ int run_cli(std::span<const std::string_view> arguments) {
 
     const auto action_count =
         static_cast<int>(options.dump_ast) + static_cast<int>(options.dump_types) +
-        static_cast<int>(options.emit_ir) + static_cast<int>(options.emit_ir_json);
+        static_cast<int>(options.emit_ir) + static_cast<int>(options.emit_ir_json) +
+        static_cast<int>(options.emit_smv);
     if (action_count > 1) {
-        std::cerr
-            << "error: choose at most one of dump-ast, dump-types, emit-ir, or emit-ir-json\n";
+        std::cerr << "error: choose at most one of dump-ast, dump-types, emit-ir, "
+                     "emit-ir-json, or emit-smv\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -145,16 +151,31 @@ int run_cli(std::span<const std::string_view> arguments) {
     validation_result.diagnostics.render(std::cerr, std::cref(parse_result.source));
 
     if (!validation_result.has_errors() && options.emit_ir) {
-        ahfl::emit_program_ir(*parse_result.program, resolve_result, type_check_result, std::cout);
+        ahfl::emit_backend(ahfl::BackendKind::Ir,
+                           *parse_result.program,
+                           resolve_result,
+                           type_check_result,
+                           std::cout);
     }
 
     if (!validation_result.has_errors() && options.emit_ir_json) {
-        ahfl::emit_program_ir_json(
-            *parse_result.program, resolve_result, type_check_result, std::cout);
+        ahfl::emit_backend(ahfl::BackendKind::IrJson,
+                           *parse_result.program,
+                           resolve_result,
+                           type_check_result,
+                           std::cout);
+    }
+
+    if (!validation_result.has_errors() && options.emit_smv) {
+        ahfl::emit_backend(ahfl::BackendKind::Smv,
+                           *parse_result.program,
+                           resolve_result,
+                           type_check_result,
+                           std::cout);
     }
 
     if (!validation_result.has_errors() && !options.dump_ast && !options.dump_types &&
-        !options.emit_ir && !options.emit_ir_json) {
+        !options.emit_ir && !options.emit_ir_json && !options.emit_smv) {
         std::cout << "ok: checked " << parse_result.program->declarations.size()
                   << " top-level declaration(s), " << resolve_result.symbol_table.symbols().size()
                   << " symbol(s), " << resolve_result.references.size() << " reference(s), "

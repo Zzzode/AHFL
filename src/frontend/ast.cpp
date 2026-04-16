@@ -1,4 +1,4 @@
-#include "ahfl/ast.hpp"
+#include "ahfl/frontend/ast.hpp"
 
 #include <sstream>
 #include <utility>

@@ -1,4 +1,9 @@
 ahfl.ir.v1
+formal_observations {
+  observation agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide: called_capability(agent=ir::expr_temporal::ExprAgent, capability=ir::expr_temporal::Decide)
+  observation contract_ir_expr_temporal_ExprAgent_1_atom_0: embedded_bool_expr(scope=contract_clause, owner=ir::expr_temporal::ExprAgent, clause=1, atom=0)
+}
+
 module ir::expr_temporal
 
 import ir::expr_temporal as self

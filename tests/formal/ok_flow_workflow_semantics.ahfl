@@ -1,0 +1,66 @@
+module formal::flow_workflow;
+
+struct Request {
+    allow_fast_track: Bool;
+}
+
+struct Context {
+    tag: String = "seed";
+}
+
+struct Response {
+    tag: String;
+}
+
+agent ReviewAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, FastTrack, Review, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> FastTrack;
+    transition Init -> Review;
+    transition Init -> Done;
+    transition FastTrack -> Done;
+    transition Review -> Done;
+}
+
+flow for ReviewAgent {
+    state Init {
+        if input.allow_fast_track {
+            goto FastTrack;
+        } else {
+            goto Review;
+        }
+    }
+
+    state FastTrack {
+        goto Done;
+    }
+
+    state Review {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            tag: ctx.tag,
+        };
+    }
+}
+
+workflow ReviewWorkflow {
+    input: Request;
+    output: Response;
+
+    node first: ReviewAgent(input);
+    node second: ReviewAgent(input) after [first];
+
+    safety: always (not running(second) or completed(first));
+    safety: always (not running(first) or input.allow_fast_track);
+    liveness: eventually completed(second, Done);
+
+    return: second;
+}

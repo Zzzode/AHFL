@@ -1,4 +1,8 @@
 ahfl.ir.v1
+formal_observations {
+  observation agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo: called_capability(agent=ir::alias_const::EchoAgent, capability=ir::alias_const::Echo)
+}
+
 module ir::alias_const
 
 import ir::alias_const as self

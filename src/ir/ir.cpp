@@ -1,9 +1,11 @@
-#include "ahfl/ir.hpp"
+#include "ahfl/ir/ir.hpp"
 
+#include <cctype>
 #include <cstddef>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -30,6 +32,58 @@ template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
     }
 
     return builder.str();
+}
+
+[[nodiscard]] std::string sanitize_identifier(std::string_view name) {
+    std::string sanitized;
+    sanitized.reserve(name.size() + 2);
+
+    for (const auto character : name) {
+        if (std::isalnum(static_cast<unsigned char>(character)) != 0) {
+            sanitized.push_back(character);
+        } else {
+            sanitized.push_back('_');
+        }
+    }
+
+    while (sanitized.find("__") != std::string::npos) {
+        sanitized.replace(sanitized.find("__"), 2, "_");
+    }
+
+    if (sanitized.empty()) {
+        return "id";
+    }
+
+    if (std::isdigit(static_cast<unsigned char>(sanitized.front())) != 0) {
+        sanitized.insert(sanitized.begin(), 'n');
+        sanitized.insert(sanitized.begin() + 1, '_');
+    }
+
+    return sanitized;
+}
+
+[[nodiscard]] std::string
+called_observation_symbol(std::string_view agent_name, std::string_view capability_name) {
+    return "agent__" + sanitize_identifier(agent_name) + "__called__" +
+           sanitize_identifier(capability_name);
+}
+
+[[nodiscard]] std::string observation_scope_base_name(const ir::FormalObservationScope &scope) {
+    switch (scope.kind) {
+    case ir::FormalObservationScopeKind::ContractClause:
+        return "contract__" + scope.owner + "__" + std::to_string(scope.clause_index);
+    case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+        return "workflow__" + scope.owner + "__safety__" + std::to_string(scope.clause_index);
+    case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+        return "workflow__" + scope.owner + "__liveness__" + std::to_string(scope.clause_index);
+    }
+
+    return "observation";
+}
+
+[[nodiscard]] std::string embedded_observation_symbol(const ir::FormalObservationScope &scope) {
+    return sanitize_identifier(observation_scope_base_name(scope) + "__atom__" +
+                               std::to_string(scope.atom_index));
 }
 
 [[nodiscard]] ir::PathRootKind lower_path_root_kind(ast::PathRootKind kind) {
@@ -998,6 +1052,160 @@ class IrLowerer final {
     }
 };
 
+class FormalObservationCollector final {
+  public:
+    [[nodiscard]] std::vector<ir::FormalObservation> collect(const ir::Program &program) {
+        observations_.clear();
+        observation_index_by_symbol_.clear();
+
+        for (const auto &declaration : program.declarations) {
+            std::visit(
+                Overloaded{
+                    [this](const ir::AgentDecl &agent) { collect_agent(agent); },
+                    [this](const ir::ContractDecl &contract) { collect_contract(contract); },
+                    [this](const ir::WorkflowDecl &workflow) { collect_workflow(workflow); },
+                    [](const auto &) {},
+                },
+                declaration);
+        }
+
+        return observations_;
+    }
+
+  private:
+    std::vector<ir::FormalObservation> observations_;
+    std::unordered_map<std::string, std::size_t> observation_index_by_symbol_;
+
+    void collect_agent(const ir::AgentDecl &agent) {
+        for (const auto &capability : agent.capabilities) {
+            add_called_observation(agent.name, capability);
+        }
+    }
+
+    void collect_contract(const ir::ContractDecl &contract) {
+        for (std::size_t clause_index = 0; clause_index < contract.clauses.size(); ++clause_index) {
+            const auto temporal = std::get_if<ir::TemporalExprPtr>(&contract.clauses[clause_index].value);
+            if (temporal == nullptr) {
+                continue;
+            }
+
+            std::size_t atom_index = 0;
+            collect_contract_formula(**temporal, contract.target, clause_index, atom_index);
+        }
+    }
+
+    void collect_workflow(const ir::WorkflowDecl &workflow) {
+        for (std::size_t clause_index = 0; clause_index < workflow.safety.size(); ++clause_index) {
+            std::size_t atom_index = 0;
+            collect_workflow_formula(*workflow.safety[clause_index],
+                                     ir::FormalObservationScopeKind::WorkflowSafetyClause,
+                                     workflow.name,
+                                     clause_index,
+                                     atom_index);
+        }
+
+        for (std::size_t clause_index = 0; clause_index < workflow.liveness.size();
+             ++clause_index) {
+            std::size_t atom_index = 0;
+            collect_workflow_formula(*workflow.liveness[clause_index],
+                                     ir::FormalObservationScopeKind::WorkflowLivenessClause,
+                                     workflow.name,
+                                     clause_index,
+                                     atom_index);
+        }
+    }
+
+    void collect_contract_formula(const ir::TemporalExpr &expr,
+                                  std::string_view agent_name,
+                                  std::size_t clause_index,
+                                  std::size_t &atom_index) {
+        std::visit(
+            Overloaded{
+                [&](const ir::EmbeddedTemporalExpr &) {
+                    add_embedded_observation(ir::FormalObservationScope{
+                        .kind = ir::FormalObservationScopeKind::ContractClause,
+                        .owner = std::string(agent_name),
+                        .clause_index = clause_index,
+                        .atom_index = atom_index++,
+                    });
+                },
+                [&](const ir::CalledTemporalExpr &value) {
+                    add_called_observation(agent_name, value.capability);
+                },
+                [&](const ir::TemporalUnaryExpr &value) {
+                    collect_contract_formula(*value.operand, agent_name, clause_index, atom_index);
+                },
+                [&](const ir::TemporalBinaryExpr &value) {
+                    collect_contract_formula(*value.lhs, agent_name, clause_index, atom_index);
+                    collect_contract_formula(*value.rhs, agent_name, clause_index, atom_index);
+                },
+                [&](const auto &) {},
+            },
+            expr.node);
+    }
+
+    void collect_workflow_formula(const ir::TemporalExpr &expr,
+                                  ir::FormalObservationScopeKind scope_kind,
+                                  std::string_view workflow_name,
+                                  std::size_t clause_index,
+                                  std::size_t &atom_index) {
+        std::visit(
+            Overloaded{
+                [&](const ir::EmbeddedTemporalExpr &) {
+                    add_embedded_observation(ir::FormalObservationScope{
+                        .kind = scope_kind,
+                        .owner = std::string(workflow_name),
+                        .clause_index = clause_index,
+                        .atom_index = atom_index++,
+                    });
+                },
+                [&](const ir::TemporalUnaryExpr &value) {
+                    collect_workflow_formula(
+                        *value.operand, scope_kind, workflow_name, clause_index, atom_index);
+                },
+                [&](const ir::TemporalBinaryExpr &value) {
+                    collect_workflow_formula(
+                        *value.lhs, scope_kind, workflow_name, clause_index, atom_index);
+                    collect_workflow_formula(
+                        *value.rhs, scope_kind, workflow_name, clause_index, atom_index);
+                },
+                [&](const auto &) {},
+            },
+            expr.node);
+    }
+
+    void add_called_observation(std::string_view agent_name, std::string_view capability_name) {
+        const auto symbol = called_observation_symbol(agent_name, capability_name);
+        if (observation_index_by_symbol_.contains(symbol)) {
+            return;
+        }
+
+        observation_index_by_symbol_.emplace(symbol, observations_.size());
+        observations_.push_back(ir::FormalObservation{
+            .symbol = symbol,
+            .node = ir::CalledCapabilityObservation{
+                .agent = std::string(agent_name),
+                .capability = std::string(capability_name),
+            },
+        });
+    }
+
+    void add_embedded_observation(ir::FormalObservationScope scope) {
+        const auto symbol = embedded_observation_symbol(scope);
+        if (observation_index_by_symbol_.contains(symbol)) {
+            return;
+        }
+
+        observation_index_by_symbol_.emplace(symbol, observations_.size());
+        observations_.push_back(ir::FormalObservation{
+            .symbol = symbol,
+            .node = ir::EmbeddedBoolObservation{
+                .scope = std::move(scope),
+            },
+        });
+    }
+};
+
 class IrProgramPrinter final {
   public:
     explicit IrProgramPrinter(std::ostream &out) : out_(out) {}
@@ -1005,14 +1213,19 @@ class IrProgramPrinter final {
     void print(const ir::Program &program) {
         out_ << program.format_version << '\n';
 
-        bool emitted_previous_decl = false;
+        bool emitted_section = false;
+        if (!program.formal_observations.empty()) {
+            print_formal_observations(program.formal_observations);
+            emitted_section = true;
+        }
+
         for (const auto &declaration : program.declarations) {
-            if (emitted_previous_decl) {
+            if (emitted_section) {
                 out_ << '\n';
             }
 
             std::visit([this](const auto &typed_decl) { print_decl(typed_decl); }, declaration);
-            emitted_previous_decl = true;
+            emitted_section = true;
         }
     }
 
@@ -1021,6 +1234,46 @@ class IrProgramPrinter final {
 
     void line(int indent_level, std::string_view text) {
         out_ << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
+    }
+
+    [[nodiscard]] std::string render_formal_observation(
+        const ir::FormalObservation &observation) const {
+        return std::visit(
+            Overloaded{
+                [&](const ir::CalledCapabilityObservation &value) {
+                    return "observation " + observation.symbol + ": called_capability(agent=" +
+                           value.agent + ", capability=" + value.capability + ")";
+                },
+                [&](const ir::EmbeddedBoolObservation &value) {
+                    const auto scope_kind = [&]() {
+                        switch (value.scope.kind) {
+                        case ir::FormalObservationScopeKind::ContractClause:
+                            return std::string("contract_clause");
+                        case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+                            return std::string("workflow_safety_clause");
+                        case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+                            return std::string("workflow_liveness_clause");
+                        }
+
+                        return std::string("invalid");
+                    }();
+
+                    return "observation " + observation.symbol +
+                           ": embedded_bool_expr(scope=" + scope_kind + ", owner=" +
+                           value.scope.owner + ", clause=" +
+                           std::to_string(value.scope.clause_index) + ", atom=" +
+                           std::to_string(value.scope.atom_index) + ")";
+                },
+            },
+            observation.node);
+    }
+
+    void print_formal_observations(const std::vector<ir::FormalObservation> &observations) {
+        line(0, "formal_observations {");
+        for (const auto &observation : observations) {
+            line(1, render_formal_observation(observation));
+        }
+        line(0, "}");
     }
 
     [[nodiscard]] std::string render_path(const ir::Path &path) const {
@@ -1383,7 +1636,14 @@ ir::Program lower_program_ir(const ast::Program &program,
                              const ResolveResult &resolve_result,
                              const TypeCheckResult &type_check_result) {
     IrLowerer lowerer(program, resolve_result, type_check_result);
-    return lowerer.lower();
+    auto program_ir = lowerer.lower();
+    program_ir.formal_observations = collect_formal_observations(program_ir);
+    return program_ir;
+}
+
+std::vector<ir::FormalObservation> collect_formal_observations(const ir::Program &program) {
+    FormalObservationCollector collector;
+    return collector.collect(program);
 }
 
 void print_program_ir(const ir::Program &program, std::ostream &out) {

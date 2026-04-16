@@ -1,4 +1,4 @@
-#include "ahfl/frontend.hpp"
+#include "ahfl/frontend/frontend.hpp"
 
 #include <algorithm>
 #include <charconv>

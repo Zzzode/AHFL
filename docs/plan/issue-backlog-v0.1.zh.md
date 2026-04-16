@@ -22,7 +22,7 @@
 冻结 AHFL Core V0.1 语言边界
 
 背景：
-当前 `docs/ahfl-core-v0.1.md` 与 `docs/ahfl-spec-v0.1-zh.md` 在 Core 边界上仍有未完全统一之处，尤其是 `flow` 是否属于 Core V0.1。
+当前 `docs/design/core-scope-v0.1.en.md` 与 `docs/spec/core-language-v0.1.zh.md` 在 Core 边界上仍有未完全统一之处，尤其是 `flow` 是否属于 Core V0.1。
 
 目标：
 
@@ -32,7 +32,7 @@
 
 验收标准：
 
-1. `docs/ahfl-core-v0.1.md` 与 `docs/ahfl-spec-v0.1-zh.md` 无边界冲突
+1. `docs/design/core-scope-v0.1.en.md` 与 `docs/spec/core-language-v0.1.zh.md` 无边界冲突
 2. `grammar/AHFL.g4` 与规范中的边界一致
 3. `examples/refund_audit_core_v0_1.ahfl` 不再使用越界能力
 
@@ -41,8 +41,8 @@
 
 主要涉及文件：
 
-- `docs/ahfl-core-v0.1.md`
-- `docs/ahfl-spec-v0.1-zh.md`
+- `docs/design/core-scope-v0.1.en.md`
+- `docs/spec/core-language-v0.1.zh.md`
 - `grammar/AHFL.g4`
 - `examples/refund_audit_core_v0_1.ahfl`
 
@@ -72,9 +72,9 @@
 
 主要涉及文件：
 
-- `docs/ahfl-spec-v0.1-zh.md`
-- `docs/ahfl-core-v0.1.md`
-- `include/ahfl/types.hpp`
+- `docs/spec/core-language-v0.1.zh.md`
+- `docs/design/core-scope-v0.1.en.md`
+- `include/ahfl/semantics/types.hpp`
 
 ## [x] Issue 03
 
@@ -103,10 +103,10 @@
 
 主要涉及文件：
 
-- `docs/frontend-architecture-v0.1.md`
-- `docs/roadmap-v0.1.md`
-- `src/frontend.cpp`
-- `include/ahfl/ast.hpp`
+- `docs/design/frontend-architecture-v0.1.zh.md`
+- `docs/plan/roadmap-v0.1.zh.md`
+- `src/frontend/frontend.cpp`
+- `include/ahfl/frontend/ast.hpp`
 
 ## [x] Issue 04
 
@@ -133,8 +133,8 @@
 
 主要涉及文件：
 
-- `include/ahfl/ast.hpp`
-- `src/ast.cpp`
+- `include/ahfl/frontend/ast.hpp`
+- `src/frontend/ast.cpp`
 
 ## [x] Issue 05
 
@@ -162,9 +162,9 @@
 
 主要涉及文件：
 
-- `include/ahfl/ast.hpp`
-- `include/ahfl/types.hpp`
-- `src/frontend.cpp`
+- `include/ahfl/frontend/ast.hpp`
+- `include/ahfl/semantics/types.hpp`
+- `src/frontend/frontend.cpp`
 
 ## [x] Issue 06
 
@@ -193,8 +193,8 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 
 主要涉及文件：
 
-- `include/ahfl/ast.hpp`
-- `src/frontend.cpp`
+- `include/ahfl/frontend/ast.hpp`
+- `src/frontend/frontend.cpp`
 
 ## [x] Issue 07
 
@@ -224,9 +224,9 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 
 主要涉及文件：
 
-- `src/frontend.cpp`
-- `include/ahfl/frontend.hpp`
-- `include/ahfl/source.hpp`
+- `src/frontend/frontend.cpp`
+- `include/ahfl/frontend/frontend.hpp`
+- `include/ahfl/support/source.hpp`
 
 ## [x] Issue 08
 
@@ -252,9 +252,9 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 
 主要涉及文件：
 
-- `src/tools/ahflc.cpp`
-- `src/ast.cpp`
-- `include/ahfl/ast.hpp`
+- `src/cli/ahflc.cpp`
+- `src/frontend/ast.cpp`
+- `include/ahfl/frontend/ast.hpp`
 
 ## [x] Issue 09
 
@@ -314,7 +314,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 
 主要涉及文件：
 
-- `include/ahfl/types.hpp`
+- `include/ahfl/semantics/types.hpp`
 - `src/*`
 
 ## [x] Issue 11
@@ -345,7 +345,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 主要涉及文件：
 
 - `src/*`
-- `include/ahfl/types.hpp`
+- `include/ahfl/semantics/types.hpp`
 
 ## [x] Issue 12
 
@@ -377,7 +377,7 @@ V0.1 设计强调 value expr、predicate expr、temporal formula 分层，但当
 主要涉及文件：
 
 - `src/*`
-- `docs/ahfl-spec-v0.1-zh.md`
+- `docs/spec/core-language-v0.1.zh.md`
 
 ## [x] Issue 13
 
@@ -408,7 +408,7 @@ agent 状态机与 flow handler 的一致性是语言最核心的静态保证之
 主要涉及文件：
 
 - `src/*`
-- `docs/ahfl-spec-v0.1-zh.md`
+- `docs/spec/core-language-v0.1.zh.md`
 
 ## [x] Issue 14
 
@@ -441,7 +441,7 @@ workflow 是 agent 编排边界的核心，但当前尚无 DAG、依赖与类型
 主要涉及文件：
 
 - `src/*`
-- `docs/ahfl-spec-v0.1-zh.md`
+- `docs/spec/core-language-v0.1.zh.md`
 
 ## [x] Issue 15
 
@@ -476,5 +476,167 @@ workflow 是 agent 编排边界的核心，但当前尚无 DAG、依赖与类型
 
 - `CMakeLists.txt`
 - `.github/workflows/ci.yml`
-- `src/tools/ahflc.cpp`
+- `src/cli/ahflc.cpp`
 - `tests/`
+
+## [x] Issue 16
+
+标题：
+提交并冻结第一版 `emit-smv`
+
+背景：
+当前仓库已经具备结构化 IR、`emit-ir` 和 `emit-ir-json`。工作区内还存在一版 `emit-smv` 原型，但尚未完成提交、文档冻结和正式回归收口。
+
+目标：
+
+1. 提交当前 `emit-smv` 实现
+2. 将 `emit-smv` 接入正式回归测试
+3. 在 README 和路线图中明确其定位是“受限 formal backend”
+
+验收标准：
+
+1. `ahflc emit-smv <file>` 可稳定输出
+2. `ctest` 中包含至少一条 `emit-smv` golden test
+3. 文档明确说明 `emit-smv` 的能力边界与限制
+
+依赖：
+
+- Issue 15
+
+主要涉及文件：
+
+- `include/ahfl/backends/smv.hpp`
+- `src/backends/smv.cpp`
+- `src/cli/ahflc.cpp`
+- `CMakeLists.txt`
+- `README.md`
+- `tests/formal/`
+
+## [x] Issue 17
+
+标题：
+冻结 AHFL Core V0.1 的 formal subset 语义
+
+背景：
+`emit-smv` 已经打开了后端 lowering 的入口，但目前“哪些语义可以 lower，哪些语义会被抽象”仍然主要体现在实现里，缺少正式文档约束。
+
+目标：
+
+1. 明确 AHFL Core V0.1 中可 lower 到 formal backend 的受限子集
+2. 明确 embedded pure expr 的 observation abstraction 规则
+3. 明确 `called`、`in_state`、`running`、`completed` 到 formal backend 的映射边界
+
+验收标准：
+
+1. 仓库新增 formal backend 语义说明文档
+2. 规范与实现对于 formal subset 的约束一致
+3. `emit-smv` 的抽象策略可以从文档直接读出，而不需要反推代码
+
+依赖：
+
+- Issue 16
+
+主要涉及文件：
+
+- `docs/spec/core-language-v0.1.zh.md`
+- `docs/design/core-scope-v0.1.en.md`
+- `docs/plan/roadmap-v0.1.zh.md`
+- `docs/design/frontend-architecture-v0.1.zh.md`
+- `docs/design/formal-backend-v0.1.zh.md`
+
+## [x] Issue 18
+
+标题：
+扩展 `emit-smv` 到 flow / workflow 语义级 lowering
+
+背景：
+当前 `emit-smv` 主要依赖声明级状态机和时序公式进行导出，尚未充分利用 `flow` 中的控制流信息，也没有把 workflow 调度语义编码到足够细的粒度。
+
+目标：
+
+1. 从 `flow` 中抽取更接近执行语义的状态转移关系
+2. 完善 workflow node 启动条件、依赖和完成条件的 lowering
+3. 让 `emit-smv` 不只是 declaration exporter，而是 flow/workflow 语义 lowering
+
+验收标准：
+
+1. `goto`、final-state `return`、state handler 终结行为能影响 SMV lowering
+2. workflow `after` 依赖与 node 完成条件被编码到输出中
+3. 至少新增一组覆盖 flow/workflow 语义的 SMV golden
+
+依赖：
+
+- Issue 16
+- Issue 17
+
+主要涉及文件：
+
+- `src/backends/smv.cpp`
+- `include/ahfl/ir/ir.hpp`
+- `src/ir/ir.cpp`
+- `tests/formal/`
+
+## [x] Issue 19
+
+标题：
+建立 formal observation abstraction 层
+
+背景：
+当前 `emit-smv` 对 embedded pure expr 的处理仍偏直接，observation symbol 的命名、去重和作用域规则还没有抽出成稳定层，后续会影响更多 formal backend。
+
+目标：
+
+1. 抽象独立的 observation collection / naming 机制
+2. 定义 observation 的作用域、去重和命名稳定性规则
+3. 让 JSON / SMV / 后续 formal backend 能共享同一套 observation 模型
+
+验收标准：
+
+1. observation 不再散落在 `smv.cpp` 内部 ad-hoc 生成
+2. 同一语义 observation 在不同后端输出中命名稳定
+3. 新增针对 observation abstraction 的 golden 或单元测试
+
+依赖：
+
+- Issue 17
+- Issue 18
+
+主要涉及文件：
+
+- `include/ahfl/*`
+- `src/*`
+- `tests/formal/`
+- `tests/ir/`
+
+## [x] Issue 20
+
+标题：
+抽象 backend API 并拆分 `emit-ir` / `emit-ir-json` / `emit-smv`
+
+背景：
+随着 `emit-ir`、`emit-ir-json` 和 `emit-smv` 增长，CLI 和 emitter 代码会继续膨胀。需要把 backend driver、公共 lowering 边界和具体 backend 实现层拆开。
+
+目标：
+
+1. 抽象统一的 backend API 或 driver 层
+2. 让 `ahflc` 只负责参数分发，不直接感知过多 backend 细节
+3. 为未来新增 backend 保留稳定扩展点
+
+验收标准：
+
+1. backend 相关代码有清晰目录和接口边界
+2. `ahflc` CLI 文件不再持续膨胀
+3. 新增 backend 时不需要复制粘贴已有 emitter 流水线
+
+依赖：
+
+- Issue 16
+- Issue 18
+- Issue 19
+
+主要涉及文件：
+
+- `src/cli/ahflc.cpp`
+- `include/ahfl/*.hpp`
+- `src/*.cpp`
+- `CMakeLists.txt`

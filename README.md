@@ -2,24 +2,32 @@
 
 Current normative artifacts:
 
-- `docs/ahfl-spec-v0.1-zh.md`
+- `docs/README.md`
+- `docs/spec/core-language-v0.1.zh.md`
 - `grammar/AHFL.g4`
 - `examples/refund_audit_core_v0_1.ahfl`
 
 Supporting design notes:
 
-- `docs/ahfl-core-v0.1.md`
-- `docs/frontend-architecture-v0.1.md`
-- `docs/roadmap-v0.1.md`
-- `docs/issue-backlog-v0.1.md`
+- `docs/design/core-scope-v0.1.en.md`
+- `docs/design/frontend-architecture-v0.1.zh.md`
+- `docs/design/formal-backend-v0.1.zh.md`
+- `docs/design/repository-layout-v0.1.zh.md`
+- `docs/plan/roadmap-v0.1.zh.md`
+- `docs/plan/issue-backlog-v0.1.zh.md`
 
-C++23 frontend:
+C++23 implementation:
 
 - `CMakeLists.txt`
-- `include/ahfl/*.hpp`
-- `src/*.cpp`
+- `cmake/modules/*.cmake`
+- `include/ahfl/{support,frontend,semantics,ir,backends}/*.hpp`
+- `include/ahfl/*.hpp` for compatibility forwarding headers
+- `src/{frontend,semantics,ir,backends,cli}/*.cpp`
 - `src/parser/generated/*`
-- `src/tools/ahflc.cpp`
+- `src/*/CMakeLists.txt`
+- `src/cli/ahflc.cpp`
+- `tests/CMakeLists.txt`
+- `third_party/antlr4/CMakeLists.txt`
 - `third_party/antlr4/runtime/src/*`
 
 Build:
@@ -49,32 +57,41 @@ create a source-root `compile_commands.json` symlink to the active build directo
 Try the parser:
 
 ```bash
-./build/dev/ahflc --dump-ast examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/cli/ahflc --dump-ast examples/refund_audit_core_v0_1.ahfl
 ```
 
 Try the resolver-backed checker:
 
 ```bash
-./build/dev/ahflc check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
 ```
 
 Inspect resolved semantic types:
 
 ```bash
-./build/dev/ahflc dump-types examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/cli/ahflc dump-types examples/refund_audit_core_v0_1.ahfl
 ```
 
 Emit the stable semantic IR:
 
 ```bash
-./build/dev/ahflc emit-ir examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/cli/ahflc emit-ir examples/refund_audit_core_v0_1.ahfl
 ```
 
 Emit machine-readable JSON IR:
 
 ```bash
-./build/dev/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
 ```
+
+Emit restricted SMV for model-check-oriented tooling:
+
+```bash
+./build/dev/src/cli/ahflc emit-smv examples/refund_audit_core_v0_1.ahfl
+```
+
+The current `emit-smv` boundary is documented in
+`docs/design/formal-backend-v0.1.zh.md`.
 
 Current scope of `ahflc`:
 
@@ -100,16 +117,20 @@ Current scope of `ahflc`:
 - models const values, contract/workflow formulas, and flow statements as recursive IR nodes instead of flattened strings
 - emits a stable textual IR from the validated semantic model via `emit-ir`
 - emits a stable machine-readable JSON form of the structured IR via `emit-ir-json`
+- emits a restricted SMV backend from validated state machines, flow/workflow control structure, and temporal formulas via `emit-smv`
 - reports source diagnostics with line and column
 - `check` runs parse + AST lowering + resolver + typecheck + validate diagnostics
 - `dump-types` prints the resolved semantic type environment
 - `emit-ir` prints the stable semantic IR used as the current backend boundary
-- `emit-ir-json` prints the same IR as structured JSON for downstream tooling
+- `emit-ir-json` prints the same IR as structured JSON for downstream tooling, including shared `formal_observations`
+- `emit-smv` prints a restricted formal-backend lowering with flow-aware transitions, workflow start/completion latches, and abstracted boolean observations for embedded pure expressions
 - `--dump-ast` prints a full tree view of declarations, types, expressions, statements, and temporal formulas
 
 Not wired yet:
 
-- backend-specific formal lowerings beyond the current stable textual/JSON IR boundary
+- statement/data semantics beyond the current `goto` / final-state `return` / workflow lifecycle `emit-smv` subset
+- a shared observation abstraction model across IR/SMV/future formal backends
+- a split backend driver/API so `ahflc` does not keep absorbing emitter details
 
 Regenerate the C++ parser module:
 

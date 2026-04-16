@@ -1,5 +1,23 @@
 {
   "format_version": "ahfl.ir.v1",
+  "formal_observations": [
+    {
+      "symbol": "agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide",
+      "kind": "called_capability",
+      "agent": "ir::expr_temporal::ExprAgent",
+      "capability": "ir::expr_temporal::Decide"
+    },
+    {
+      "symbol": "contract_ir_expr_temporal_ExprAgent_1_atom_0",
+      "kind": "embedded_bool_expr",
+      "scope": {
+        "kind": "contract_clause",
+        "owner": "ir::expr_temporal::ExprAgent",
+        "clause_index": 1,
+        "atom_index": 0
+      }
+    }
+  ],
   "declarations": [
     {
       "kind": "module",

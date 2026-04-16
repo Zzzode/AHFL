@@ -1,0 +1,63 @@
+ahfl.ir.v1
+formal_observations {
+  observation workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0: embedded_bool_expr(scope=workflow_safety_clause, owner=formal::flow_workflow::ReviewWorkflow, clause=1, atom=0)
+}
+
+module formal::flow_workflow
+
+struct formal::flow_workflow::Request {
+  field allow_fast_track: Bool
+}
+
+struct formal::flow_workflow::Context {
+  field tag: String = "seed"
+}
+
+struct formal::flow_workflow::Response {
+  field tag: String
+}
+
+agent formal::flow_workflow::ReviewAgent {
+  input: formal::flow_workflow::Request
+  context: formal::flow_workflow::Context
+  output: formal::flow_workflow::Response
+  states: [Init, FastTrack, Review, Done]
+  initial: Init
+  final: [Done]
+  capabilities: []
+  transition Init -> FastTrack
+  transition Init -> Review
+  transition Init -> Done
+  transition FastTrack -> Done
+  transition Review -> Done
+}
+
+flow formal::flow_workflow::ReviewAgent {
+  state Init {
+    if input.allow_fast_track {
+      goto FastTrack
+    } else {
+      goto Review
+    }
+  }
+  state FastTrack {
+    goto Done
+  }
+  state Review {
+    goto Done
+  }
+  state Done {
+    return formal::flow_workflow::Response { tag: ctx.tag }
+  }
+}
+
+workflow formal::flow_workflow::ReviewWorkflow {
+  input: formal::flow_workflow::Request
+  output: formal::flow_workflow::Response
+  node first: formal::flow_workflow::ReviewAgent(input)
+  node second: formal::flow_workflow::ReviewAgent(input) after [first]
+  safety: G((!(running(second)) || completed(first)))
+  safety: G((!(running(first)) || input.allow_fast_track))
+  liveness: F(completed(second, Done))
+  return: second
+}

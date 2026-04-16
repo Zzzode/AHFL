@@ -1,0 +1,302 @@
+{
+  "format_version": "ahfl.ir.v1",
+  "formal_observations": [
+    {
+      "symbol": "workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0",
+      "kind": "embedded_bool_expr",
+      "scope": {
+        "kind": "workflow_safety_clause",
+        "owner": "formal::flow_workflow::ReviewWorkflow",
+        "clause_index": 1,
+        "atom_index": 0
+      }
+    }
+  ],
+  "declarations": [
+    {
+      "kind": "module",
+      "name": "formal::flow_workflow"
+    },
+    {
+      "kind": "struct",
+      "name": "formal::flow_workflow::Request",
+      "fields": [
+        {
+          "name": "allow_fast_track",
+          "type": "Bool",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "formal::flow_workflow::Context",
+      "fields": [
+        {
+          "name": "tag",
+          "type": "String",
+          "default_value": {
+            "kind": "string_literal",
+            "spelling": "\"seed\""
+          }
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "formal::flow_workflow::Response",
+      "fields": [
+        {
+          "name": "tag",
+          "type": "String",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "agent",
+      "name": "formal::flow_workflow::ReviewAgent",
+      "input_type": "formal::flow_workflow::Request",
+      "context_type": "formal::flow_workflow::Context",
+      "output_type": "formal::flow_workflow::Response",
+      "states": [
+        "Init",
+        "FastTrack",
+        "Review",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": [],
+      "quota": [],
+      "transitions": [
+        {
+          "from_state": "Init",
+          "to_state": "FastTrack"
+        },
+        {
+          "from_state": "Init",
+          "to_state": "Review"
+        },
+        {
+          "from_state": "Init",
+          "to_state": "Done"
+        },
+        {
+          "from_state": "FastTrack",
+          "to_state": "Done"
+        },
+        {
+          "from_state": "Review",
+          "to_state": "Done"
+        }
+      ]
+    },
+    {
+      "kind": "flow",
+      "target": "formal::flow_workflow::ReviewAgent",
+      "state_handlers": [
+        {
+          "state_name": "Init",
+          "policy": [],
+          "body": {
+            "statements": [
+              {
+                "kind": "if",
+                "condition": {
+                  "kind": "path",
+                  "path": {
+                    "root_kind": "input",
+                    "root_name": "input",
+                    "members": [
+                      "allow_fast_track"
+                    ]
+                  }
+                },
+                "then_block": {
+                  "statements": [
+                    {
+                      "kind": "goto",
+                      "target_state": "FastTrack"
+                    }
+                  ]
+                },
+                "else_block": {
+                  "statements": [
+                    {
+                      "kind": "goto",
+                      "target_state": "Review"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "state_name": "FastTrack",
+          "policy": [],
+          "body": {
+            "statements": [
+              {
+                "kind": "goto",
+                "target_state": "Done"
+              }
+            ]
+          }
+        },
+        {
+          "state_name": "Review",
+          "policy": [],
+          "body": {
+            "statements": [
+              {
+                "kind": "goto",
+                "target_state": "Done"
+              }
+            ]
+          }
+        },
+        {
+          "state_name": "Done",
+          "policy": [],
+          "body": {
+            "statements": [
+              {
+                "kind": "return",
+                "value": {
+                  "kind": "struct_literal",
+                  "type_name": "formal::flow_workflow::Response",
+                  "fields": [
+                    {
+                      "name": "tag",
+                      "value": {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "identifier",
+                          "root_name": "ctx",
+                          "members": [
+                            "tag"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "workflow",
+      "name": "formal::flow_workflow::ReviewWorkflow",
+      "input_type": "formal::flow_workflow::Request",
+      "output_type": "formal::flow_workflow::Response",
+      "nodes": [
+        {
+          "name": "first",
+          "target": "formal::flow_workflow::ReviewAgent",
+          "input": {
+            "kind": "path",
+            "path": {
+              "root_kind": "input",
+              "root_name": "input",
+              "members": []
+            }
+          },
+          "after": []
+        },
+        {
+          "name": "second",
+          "target": "formal::flow_workflow::ReviewAgent",
+          "input": {
+            "kind": "path",
+            "path": {
+              "root_kind": "input",
+              "root_name": "input",
+              "members": []
+            }
+          },
+          "after": [
+            "first"
+          ]
+        }
+      ],
+      "safety": [
+        {
+          "kind": "unary",
+          "op": "always",
+          "operand": {
+            "kind": "binary",
+            "op": "or",
+            "lhs": {
+              "kind": "unary",
+              "op": "not",
+              "operand": {
+                "kind": "running",
+                "node": "second"
+              }
+            },
+            "rhs": {
+              "kind": "completed",
+              "node": "first",
+              "state_name": null
+            }
+          }
+        },
+        {
+          "kind": "unary",
+          "op": "always",
+          "operand": {
+            "kind": "binary",
+            "op": "or",
+            "lhs": {
+              "kind": "unary",
+              "op": "not",
+              "operand": {
+                "kind": "running",
+                "node": "first"
+              }
+            },
+            "rhs": {
+              "kind": "embedded_expr",
+              "expr": {
+                "kind": "path",
+                "path": {
+                  "root_kind": "input",
+                  "root_name": "input",
+                  "members": [
+                    "allow_fast_track"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ],
+      "liveness": [
+        {
+          "kind": "unary",
+          "op": "eventually",
+          "operand": {
+            "kind": "completed",
+            "node": "second",
+            "state_name": "Done"
+          }
+        }
+      ],
+      "return_value": {
+        "kind": "path",
+        "path": {
+          "root_kind": "identifier",
+          "root_name": "second",
+          "members": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+-- AHFL restricted SMV backend v0.1
+-- This lowering preserves validated state-machine, flow, and workflow structure.
+-- Pure embedded expressions are abstracted as boolean observation variables.
+MODULE main
+VAR
+  agent__formal_flow_workflow_ReviewAgent__state : {Init, FastTrack, Review, Done};
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__state : {Init, FastTrack, Review, Done};
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__started : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__state : {Init, FastTrack, Review, Done};
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__started : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed : boolean;
+IVAR
+  workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0 : boolean;
+DEFINE
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__running := workflow__formal_flow_workflow_ReviewWorkflow__node__first__started & !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__running := workflow__formal_flow_workflow_ReviewWorkflow__node__second__started & !(workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed);
+ASSIGN
+  init(agent__formal_flow_workflow_ReviewAgent__state) := Init;
+  next(agent__formal_flow_workflow_ReviewAgent__state) := case
+    agent__formal_flow_workflow_ReviewAgent__state = Init : {FastTrack, Review};
+    agent__formal_flow_workflow_ReviewAgent__state = FastTrack : Done;
+    agent__formal_flow_workflow_ReviewAgent__state = Review : Done;
+    agent__formal_flow_workflow_ReviewAgent__state = Done : Done;
+    TRUE : agent__formal_flow_workflow_ReviewAgent__state;
+  esac;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__state) := Init;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__state) := case
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Init : {FastTrack, Review};
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = FastTrack : Done;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Review : Done;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done : Done;
+    TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__first__state;
+  esac;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__started) := TRUE;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__started) := TRUE;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) := FALSE;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) := case
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed : TRUE;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__started & (workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done) : TRUE;
+    TRUE : FALSE;
+  esac;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__state) := Init;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__state) := case
+    !(workflow__formal_flow_workflow_ReviewWorkflow__node__second__started) & !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) : workflow__formal_flow_workflow_ReviewWorkflow__node__second__state;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Init : {FastTrack, Review};
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = FastTrack : Done;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Review : Done;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done : Done;
+    TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__second__state;
+  esac;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__started) := FALSE;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__started) := case
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__started : TRUE;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed : TRUE;
+    TRUE : FALSE;
+  esac;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed) := FALSE;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed) := case
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed : TRUE;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__started & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done) : TRUE;
+    TRUE : FALSE;
+  esac;
+-- workflow formal::flow_workflow::ReviewWorkflow safety[0]
+LTLSPEC G ((! (workflow__formal_flow_workflow_ReviewWorkflow__node__second__running) | workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed))
+-- workflow formal::flow_workflow::ReviewWorkflow safety[1]
+LTLSPEC G ((! (workflow__formal_flow_workflow_ReviewWorkflow__node__first__running) | workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0))
+-- workflow formal::flow_workflow::ReviewWorkflow liveness[0]
+LTLSPEC F ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done)))

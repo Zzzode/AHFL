@@ -1,4 +1,12 @@
 ahfl.ir.v1
+formal_observations {
+  observation agent__refund_audit_RefundAudit__called__refund_audit_OrderQuery: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::OrderQuery)
+  observation agent__refund_audit_RefundAudit__called__refund_audit_AuditDecision: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::AuditDecision)
+  observation agent__refund_audit_RefundAudit__called__refund_audit_TicketCreate: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::TicketCreate)
+  observation agent__refund_audit_RefundAudit__called__refund_audit_RefundExecute: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::RefundExecute)
+  observation agent__refund_audit_RefundAudit__called__refund_audit_UserInfoModify: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::UserInfoModify)
+}
+
 module refund::audit
 
 struct refund::audit::RefundRequest {

@@ -6,8 +6,8 @@
 
 - `grammar/AHFL.g4`
 - `src/parser/generated/*`
-- `src/frontend.cpp`
-- `include/ahfl/ast.hpp`
+- `src/frontend/frontend.cpp`
+- `include/ahfl/frontend/ast.hpp`
 - 后续新增的 resolver / checker / emitter 模块
 
 ## 冻结的前端流水线
@@ -123,6 +123,14 @@ AST 必须满足：
 - 将 validate 通过的语义模型 lower 成稳定 IR
 - 使后续后端不再依赖 AST 细节和 grammar trivia
 
+当前仓库中，`emit` 阶段已经分化出三类产物：
+
+- `emit-ir`：人类可读的稳定文本 IR
+- `emit-ir-json`：机器可读的稳定 JSON IR
+- `emit-smv`：面向 model-check-oriented tooling 的受限 formal backend
+
+其中 `emit-smv` 允许在 formal backend 中引入显式抽象，但抽象边界必须单独文档化，不能只藏在 emitter 实现里。
+
 IR 必须满足：
 
 - 不包含 ANTLR 类型
@@ -136,19 +144,22 @@ IR 必须满足：
 - `Frontend::parse_file` / `Frontend::parse_text`
   - 当前同时覆盖 `parse + ast`
   - 对外只返回 `ParseResult`
-- `src/frontend.cpp`
+- `src/frontend/frontend.cpp`
   - 当前是唯一允许直接接触 ANTLR parse tree 的手写模块
-- `include/ahfl/ast.hpp`
+- `include/ahfl/frontend/ast.hpp`
   - 当前承载手写 AST 的公共边界
-- `src/resolver.cpp` + `include/ahfl/resolver.hpp`
+- `src/semantics/resolver.cpp` + `include/ahfl/semantics/resolver.hpp`
   - 当前承载 `resolve`
-- `src/typecheck.cpp` + `include/ahfl/typecheck.hpp`
+- `src/semantics/typecheck.cpp` + `include/ahfl/semantics/typecheck.hpp`
   - 当前承载 `typecheck`
-- `src/validate.cpp` + `include/ahfl/validate.hpp`
+- `src/semantics/validate.cpp` + `include/ahfl/semantics/validate.hpp`
   - 当前承载 `validate`
-- `src/ir.cpp` + `include/ahfl/ir.hpp`
+- `src/ir/ir.cpp` + `include/ahfl/ir/ir.hpp`
   - 当前承载 `emit`
   - 对外暴露稳定的 IR 数据结构与文本输出入口
+- `src/backends/smv.cpp` + `include/ahfl/backends/smv.hpp`
+  - 当前承载第一版 restricted formal backend
+  - 只能消费 validate 之后的语义模型与 IR
 
 后续新增这些模块时，必须沿用本文定义的阶段边界，不得把 ANTLR context 重新引入 AST 或 checker 公共接口。
 
@@ -170,3 +181,4 @@ parse tree 的生命周期只限于 `parse -> ast` lowering 期间；一旦 `ast
 - Issue 04-08 只能扩展手写 AST 和 lowering，不得把 parse tree 当 AST 的替代物
 - Issue 09-14 只能基于 AST、resolve 结果和 typecheck 结果工作
 - Issue 15 的 IR 输出必须基于 validate 后的语义模型，而不是直接序列化 parse tree
+- Issue 16-20 的 formal backend 也必须基于 validate 后的语义模型，不得绕过前端阶段边界

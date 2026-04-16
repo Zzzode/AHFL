@@ -1,4 +1,4 @@
-#include "ahfl/typecheck.hpp"
+#include "ahfl/semantics/typecheck.hpp"
 
 #include <algorithm>
 #include <cctype>

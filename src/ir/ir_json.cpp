@@ -1,4 +1,4 @@
-#include "ahfl/ir.hpp"
+#include "ahfl/ir/ir.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -122,6 +122,20 @@ template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
     return "invalid";
 }
 
+[[nodiscard]] std::string_view
+formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
+    switch (kind) {
+    case ir::FormalObservationScopeKind::ContractClause:
+        return "contract_clause";
+    case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+        return "workflow_safety_clause";
+    case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+        return "workflow_liveness_clause";
+    }
+
+    return "invalid";
+}
+
 class IrJsonPrinter final {
   public:
     explicit IrJsonPrinter(std::ostream &out) : out_(out) {}
@@ -129,6 +143,13 @@ class IrJsonPrinter final {
     void print(const ir::Program &program) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(program.format_version); });
+            field("formal_observations", [&]() {
+                print_array(1, [&](const auto &item) {
+                    for (const auto &observation : program.formal_observations) {
+                        item([&]() { print_formal_observation(observation, 2); });
+                    }
+                });
+            });
             field("declarations", [&]() {
                 print_array(1, [&](const auto &item) {
                     for (const auto &declaration : program.declarations) {
@@ -239,6 +260,43 @@ class IrJsonPrinter final {
 
     void write_bool(bool value) {
         out_ << (value ? "true" : "false");
+    }
+
+    void write_index(std::size_t value) {
+        out_ << value;
+    }
+
+    void print_formal_observation_scope(const ir::FormalObservationScope &scope,
+                                        int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("kind", [&]() { write_string(formal_observation_scope_kind_name(scope.kind)); });
+            field("owner", [&]() { write_string(scope.owner); });
+            field("clause_index", [&]() { write_index(scope.clause_index); });
+            field("atom_index", [&]() { write_index(scope.atom_index); });
+        });
+    }
+
+    void print_formal_observation(const ir::FormalObservation &observation, int indent_level) {
+        std::visit(
+            Overloaded{
+                [&](const ir::CalledCapabilityObservation &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("symbol", [&]() { write_string(observation.symbol); });
+                        field("kind", [&]() { write_string("called_capability"); });
+                        field("agent", [&]() { write_string(value.agent); });
+                        field("capability", [&]() { write_string(value.capability); });
+                    });
+                },
+                [&](const ir::EmbeddedBoolObservation &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("symbol", [&]() { write_string(observation.symbol); });
+                        field("kind", [&]() { write_string("embedded_bool_expr"); });
+                        field("scope",
+                              [&]() { print_formal_observation_scope(value.scope, indent_level + 1); });
+                    });
+                },
+            },
+            observation.node);
     }
 
     void print_path(const ir::Path &path, int indent_level) {

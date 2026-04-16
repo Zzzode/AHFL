@@ -1,4 +1,4 @@
-#include "ahfl/resolver.hpp"
+#include "ahfl/semantics/resolver.hpp"
 
 #include <algorithm>
 #include <functional>

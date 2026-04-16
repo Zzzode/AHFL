@@ -1,0 +1,41 @@
+-- AHFL restricted SMV backend v0.1
+-- This lowering preserves validated state-machine, flow, and workflow structure.
+-- Pure embedded expressions are abstracted as boolean observation variables.
+MODULE main
+VAR
+  agent__ir_expr_temporal_ExprAgent__state : {Init, Done};
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__state : {Init, Done};
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__started : boolean;
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__completed : boolean;
+IVAR
+  agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide : boolean;
+  contract_ir_expr_temporal_ExprAgent_1_atom_0 : boolean;
+DEFINE
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__running := workflow__ir_expr_temporal_ExprWorkflow__node__run__started & !(workflow__ir_expr_temporal_ExprWorkflow__node__run__completed);
+ASSIGN
+  init(agent__ir_expr_temporal_ExprAgent__state) := Init;
+  next(agent__ir_expr_temporal_ExprAgent__state) := case
+    agent__ir_expr_temporal_ExprAgent__state = Init : Done;
+    agent__ir_expr_temporal_ExprAgent__state = Done : Done;
+    TRUE : agent__ir_expr_temporal_ExprAgent__state;
+  esac;
+  init(workflow__ir_expr_temporal_ExprWorkflow__node__run__state) := Init;
+  next(workflow__ir_expr_temporal_ExprWorkflow__node__run__state) := case
+    workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Init : Done;
+    workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Done : Done;
+    TRUE : workflow__ir_expr_temporal_ExprWorkflow__node__run__state;
+  esac;
+  init(workflow__ir_expr_temporal_ExprWorkflow__node__run__started) := TRUE;
+  next(workflow__ir_expr_temporal_ExprWorkflow__node__run__started) := TRUE;
+  init(workflow__ir_expr_temporal_ExprWorkflow__node__run__completed) := FALSE;
+  next(workflow__ir_expr_temporal_ExprWorkflow__node__run__completed) := case
+    workflow__ir_expr_temporal_ExprWorkflow__node__run__completed : TRUE;
+    workflow__ir_expr_temporal_ExprWorkflow__node__run__started & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Done) : TRUE;
+    TRUE : FALSE;
+  esac;
+-- contract ir::expr_temporal::ExprAgent clause[1]
+LTLSPEC G ((! (agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide) | contract_ir_expr_temporal_ExprAgent_1_atom_0))
+-- workflow ir::expr_temporal::ExprWorkflow safety[0]
+LTLSPEC G ((! (workflow__ir_expr_temporal_ExprWorkflow__node__run__running) | F (workflow__ir_expr_temporal_ExprWorkflow__node__run__completed)))
+-- workflow ir::expr_temporal::ExprWorkflow liveness[0]
+LTLSPEC F ((workflow__ir_expr_temporal_ExprWorkflow__node__run__completed & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Done)))

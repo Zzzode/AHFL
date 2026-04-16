@@ -4,7 +4,7 @@
 >
 > This file is a scope-and-design note, not the canonical syntax reference.
 > The normative grammar and type-system definition lives in
-> [ahfl-spec-v0.1-zh.md](/Users/bytedance/Develop/AHFL/docs/ahfl-spec-v0.1-zh.md).
+> [core-language-v0.1.zh.md](../spec/core-language-v0.1.zh.md).
 
 ## Positioning
 
@@ -320,10 +320,10 @@ This document no longer maintains a separate reduced EBNF or a shadow example.
 
 Use these files as the implementation baseline:
 
-- [ahfl-spec-v0.1-zh.md](/Users/bytedance/Develop/AHFL/docs/ahfl-spec-v0.1-zh.md) for the
+- [core-language-v0.1.zh.md](../spec/core-language-v0.1.zh.md) for the
   normative grammar, type system, and static semantics
-- [AHFL.g4](/Users/bytedance/Develop/AHFL/grammar/AHFL.g4) for the parser grammar
-- [refund_audit_core_v0_1.ahfl](/Users/bytedance/Develop/AHFL/examples/refund_audit_core_v0_1.ahfl)
+- [AHFL.g4](../../grammar/AHFL.g4) for the parser grammar
+- [refund_audit_core_v0_1.ahfl](../../examples/refund_audit_core_v0_1.ahfl)
   for the minimal consistent example
 
 ## Suggested Versioning
@@ -337,11 +337,15 @@ Focus on:
 - type checker
 - agent/contract/workflow validator
 - JSON or IR lowering
+- a first restricted formal backend over validated state machines and LTL formulas
 
 ### V0.2
 
 Add:
 
+- flow/workflow semantic lowering for formal backends
+- a stable observation abstraction model
+- backend API cleanup for multiple emitters
 - lifecycle metadata
 - timeout/retry policy as declarative metadata
 - typed event model
@@ -354,7 +358,6 @@ Add:
 - native tool binding
 - native LLM binding
 - host-integrated native execution bodies
-- formal backend for a restricted pure subset
 
 ## Bottom Line
 
