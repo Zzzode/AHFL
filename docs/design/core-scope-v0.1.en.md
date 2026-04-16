@@ -337,15 +337,12 @@ Focus on:
 - type checker
 - agent/contract/workflow validator
 - JSON or IR lowering
-- a first restricted formal backend over validated state machines and LTL formulas
+- a restricted formal backend over validated state machines and LTL formulas, including flow/workflow semantic lowering, stable observation abstraction, and shared backend dispatch for multiple emitters
 
 ### V0.2
 
 Add:
 
-- flow/workflow semantic lowering for formal backends
-- a stable observation abstraction model
-- backend API cleanup for multiple emitters
 - lifecycle metadata
 - timeout/retry policy as declarative metadata
 - typed event model

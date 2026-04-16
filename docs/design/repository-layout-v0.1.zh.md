@@ -123,8 +123,9 @@ AHFL/
 
 ### `include/ahfl/backends` + `src/backends`
 
-放 backend-specific lowering：
+放 backend driver 与 backend-specific lowering：
 
+- `driver`
 - `emit-smv`
 - 后续 formal backend
 
@@ -191,5 +192,5 @@ AHFL/
 ## 当前已知后续演进点
 
 1. `tests/` 目前仍是数据文件分组，后续若测试规模继续增大，可再拆成多个 `tests/*/CMakeLists.txt`
-2. backend API 仍会在 Issue 20 进一步抽象
+2. backend API 已在 Issue 20 中抽象为独立 driver；后续新增 backend 应继续沿用该分层，而不是把分发逻辑重新塞回 `ahflc`
 3. 平铺兼容头是过渡层，不应成为长期继续堆功能的位置

@@ -126,11 +126,10 @@ Current scope of `ahflc`:
 - `emit-smv` prints a restricted formal-backend lowering with flow-aware transitions, workflow start/completion latches, and abstracted boolean observations for embedded pure expressions
 - `--dump-ast` prints a full tree view of declarations, types, expressions, statements, and temporal formulas
 
-Not wired yet:
+Current `emit-smv` limits:
 
-- statement/data semantics beyond the current `goto` / final-state `return` / workflow lifecycle `emit-smv` subset
-- a shared observation abstraction model across IR/SMV/future formal backends
-- a split backend driver/API so `ahflc` does not keep absorbing emitter details
+- statement/data semantics beyond the current `goto` / final-state `return` / workflow lifecycle subset remain out of scope
+- capability timing/count/order, parameter values, and workflow dataflow/value semantics are still abstracted rather than directly encoded
 
 Regenerate the C++ parser module:
 
