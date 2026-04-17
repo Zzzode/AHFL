@@ -1,0 +1,112 @@
+{
+  "format_version": "ahfl.native-package.v1",
+  "metadata": {
+    "identity": null,
+    "entry_target": null,
+    "export_targets": [],
+    "capability_binding_keys": []
+  },
+  "executable_targets": [
+    {
+      "kind": "agent",
+      "canonical_name": "ir::workflow_value_flow::EchoAgent",
+      "input_type": "ir::workflow_value_flow::Request",
+      "context_type": "ir::workflow_value_flow::Context",
+      "output_type": "ir::workflow_value_flow::Response",
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": []
+    },
+    {
+      "kind": "workflow",
+      "canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "input_type": "ir::workflow_value_flow::Request",
+      "output_type": "ir::workflow_value_flow::Response",
+      "execution_graph": {
+        "entry_nodes": [
+          "first"
+        ],
+        "dependency_edges": [
+          {
+            "from_node": "first",
+            "to_node": "second"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "name": "first",
+          "target": "ir::workflow_value_flow::EchoAgent",
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "after": [],
+          "lifecycle": {
+            "start_condition": "immediate",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          }
+        },
+        {
+          "name": "second",
+          "target": "ir::workflow_value_flow::EchoAgent",
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_node_output",
+                "root_name": "first",
+                "members": [
+                  "value"
+                ]
+              }
+            ]
+          },
+          "after": [
+            "first"
+          ],
+          "lifecycle": {
+            "start_condition": "after_dependencies_completed",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          }
+        }
+      ],
+      "safety_clause_count": 0,
+      "liveness_clause_count": 0,
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "second",
+            "members": [
+              "value"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "capability_binding_slots": [],
+  "policy_obligations": [],
+  "formal_observations": []
+}

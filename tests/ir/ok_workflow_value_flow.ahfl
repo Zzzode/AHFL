@@ -1,0 +1,46 @@
+module ir::workflow_value_flow;
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "seed";
+}
+
+struct Response {
+    value: String;
+}
+
+agent EchoAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for EchoAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+
+workflow ValueFlowWorkflow {
+    input: Request;
+    output: Response;
+
+    node first: EchoAgent(input);
+    node second: EchoAgent(Request { value: first.value }) after [first];
+
+    return: Response { value: second.value };
+}

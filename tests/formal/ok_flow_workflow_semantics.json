@@ -101,6 +101,17 @@
         {
           "state_name": "Init",
           "policy": [],
+          "summary": {
+            "goto_targets": [
+              "FastTrack",
+              "Review"
+            ],
+            "may_return": false,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
           "body": {
             "statements": [
               {
@@ -138,6 +149,16 @@
         {
           "state_name": "FastTrack",
           "policy": [],
+          "summary": {
+            "goto_targets": [
+              "Done"
+            ],
+            "may_return": false,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
           "body": {
             "statements": [
               {
@@ -150,6 +171,16 @@
         {
           "state_name": "Review",
           "policy": [],
+          "summary": {
+            "goto_targets": [
+              "Done"
+            ],
+            "may_return": false,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
           "body": {
             "statements": [
               {
@@ -162,6 +193,14 @@
         {
           "state_name": "Done",
           "policy": [],
+          "summary": {
+            "goto_targets": [],
+            "may_return": true,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
           "body": {
             "statements": [
               {
@@ -208,6 +247,15 @@
               "members": []
             }
           },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
           "after": []
         },
         {
@@ -220,6 +268,15 @@
               "root_name": "input",
               "members": []
             }
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
           },
           "after": [
             "first"
@@ -289,6 +346,15 @@
           }
         }
       ],
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "second",
+            "members": []
+          }
+        ]
+      },
       "return_value": {
         "kind": "path",
         "path": {

@@ -445,7 +445,7 @@ WorkflowTemporalExpr ::= TemporalExpr ;
 实现说明：
 
 1. 当前仓库中的 `emit-smv` 只 lower validate 通过后的受限 formal subset
-2. `called`、`in_state`、`running`、`completed` 的 backend 映射，以及 `TemporalAtom` 中裸 `Expr` 的 observation abstraction 规则，见 `../design/formal-backend-v0.1.zh.md`
+2. `called`、`in_state`、`running`、`completed` 的 backend 映射，以及 `TemporalAtom` 中裸 `Expr` 的 observation abstraction 规则，见 `../design/formal-backend-v0.2.zh.md`
 
 ### 3.12 常量表达式
 

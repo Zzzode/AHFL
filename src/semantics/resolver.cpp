@@ -1,5 +1,7 @@
 #include "ahfl/semantics/resolver.hpp"
 
+#include "ahfl/frontend/frontend.hpp"
+
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -69,15 +71,42 @@ class ResolverPass final : public ast::Visitor {
   public:
     [[nodiscard]] ResolveResult run(const ast::Program &program) {
         auto &mutable_program = const_cast<ast::Program &>(program);
+        run_program(mutable_program);
+
+        detect_type_alias_cycles();
+        return std::move(result_);
+    }
+
+    [[nodiscard]] ResolveResult run(const SourceGraph &graph) {
+        source_graph_mode_ = true;
+        source_graph_ = &graph;
 
         current_pass_ = Pass::CollectImports;
-        mutable_program.accept(*this);
+        for (const auto &source : graph.sources) {
+            auto &mutable_program = const_cast<ast::Program &>(
+                require(source.program.get(), "source graph program must exist before resolution"));
+            enter_source(source);
+            mutable_program.accept(*this);
+            leave_source();
+        }
 
         current_pass_ = Pass::RegisterSymbols;
-        mutable_program.accept(*this);
+        for (const auto &source : graph.sources) {
+            auto &mutable_program = const_cast<ast::Program &>(
+                require(source.program.get(), "source graph program must exist before resolution"));
+            enter_source(source);
+            mutable_program.accept(*this);
+            leave_source();
+        }
 
         current_pass_ = Pass::ResolveReferences;
-        mutable_program.accept(*this);
+        for (const auto &source : graph.sources) {
+            auto &mutable_program = const_cast<ast::Program &>(
+                require(source.program.get(), "source graph program must exist before resolution"));
+            enter_source(source);
+            mutable_program.accept(*this);
+            leave_source();
+        }
 
         detect_type_alias_cycles();
         return std::move(result_);
@@ -94,6 +123,13 @@ class ResolverPass final : public ast::Visitor {
             return;
         }
 
+        if (source_graph_mode_ && current_source_id_.has_value()) {
+            if (module_name_.has_value() && node.name->spelling() != *module_name_) {
+                error_here("source unit module boundary does not match graph owner", node.range);
+            }
+            return;
+        }
+
         const auto module_name = node.name->spelling();
         if (!module_name_.has_value()) {
             module_name_ = module_name;
@@ -101,9 +137,8 @@ class ResolverPass final : public ast::Visitor {
             return;
         }
 
-        result_.diagnostics.error(
-            "multiple module declarations are not supported in one source file", node.range);
-        result_.diagnostics.note("first module declaration is here", module_range_);
+        error_here("multiple module declarations are not supported in one source file", node.range);
+        note_here("first module declaration is here", module_range_);
     }
 
     void visit(ast::ImportDecl &node) override {
@@ -115,6 +150,7 @@ class ResolverPass final : public ast::Visitor {
             result_.imports.push_back(ImportBinding{
                 .alias = "",
                 .target_module = node.path->spelling(),
+                .source_id = current_source_id_,
                 .declaration_range = node.range,
             });
             return;
@@ -122,9 +158,10 @@ class ResolverPass final : public ast::Visitor {
 
         if (const auto existing = import_alias_index_.find(node.alias);
             existing != import_alias_index_.end()) {
-            result_.diagnostics.error("duplicate import alias '" + node.alias + "'", node.range);
-            result_.diagnostics.note("previous import alias is here",
-                                     result_.imports[existing->second].declaration_range);
+            error_here("duplicate import alias '" + node.alias + "'", node.range);
+            note_for_source("previous import alias is here",
+                            result_.imports[existing->second].source_id,
+                            result_.imports[existing->second].declaration_range);
             return;
         }
 
@@ -133,6 +170,7 @@ class ResolverPass final : public ast::Visitor {
         result_.imports.push_back(ImportBinding{
             .alias = node.alias,
             .target_module = node.path->spelling(),
+            .source_id = current_source_id_,
             .declaration_range = node.range,
         });
     }
@@ -304,6 +342,10 @@ class ResolverPass final : public ast::Visitor {
 
     Pass current_pass_{Pass::CollectImports};
     ResolveResult result_;
+    bool source_graph_mode_{false};
+    const SourceGraph *source_graph_{nullptr};
+    const SourceUnit *current_source_{nullptr};
+    std::optional<SourceId> current_source_id_;
     std::optional<std::string> module_name_;
     std::optional<SourceRange> module_range_;
     std::unordered_map<std::string, std::size_t> import_alias_index_;
@@ -320,22 +362,121 @@ class ResolverPass final : public ast::Visitor {
         return *module_name_ + "::" + std::string(local_name);
     }
 
+    void run_program(ast::Program &program) {
+        current_pass_ = Pass::CollectImports;
+        program.accept(*this);
+
+        current_pass_ = Pass::RegisterSymbols;
+        program.accept(*this);
+
+        current_pass_ = Pass::ResolveReferences;
+        program.accept(*this);
+    }
+
+    void enter_source(const SourceUnit &source) {
+        current_source_ = &source;
+        current_source_id_ = source.id;
+        module_name_ = source.module_name;
+        module_range_.reset();
+        import_alias_index_.clear();
+        import_aliases_.clear();
+
+        for (std::size_t index = 0; index < result_.imports.size(); ++index) {
+            const auto &binding = result_.imports[index];
+            if (binding.source_id != current_source_id_ || binding.alias.empty()) {
+                continue;
+            }
+
+            import_alias_index_.emplace(binding.alias, index);
+            import_aliases_.emplace(binding.alias, binding.target_module);
+        }
+    }
+
+    void leave_source() {
+        current_source_ = nullptr;
+        current_source_id_.reset();
+        module_name_.reset();
+        module_range_.reset();
+        import_alias_index_.clear();
+        import_aliases_.clear();
+    }
+
+    [[nodiscard]] MaybeCRef<SourceUnit> source_unit_for(SourceId id) const {
+        if (source_graph_ == nullptr) {
+            return std::nullopt;
+        }
+
+        for (const auto &source : source_graph_->sources) {
+            if (source.id == id) {
+                return std::cref(source);
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    void error_here(std::string message, std::optional<SourceRange> range = std::nullopt) {
+        if (current_source_ != nullptr) {
+            result_.diagnostics.error_in_source(std::move(message), current_source_->source, range);
+            return;
+        }
+
+        result_.diagnostics.error(std::move(message), range);
+    }
+
+    void note_here(std::string message, std::optional<SourceRange> range = std::nullopt) {
+        if (current_source_ != nullptr) {
+            result_.diagnostics.note_in_source(std::move(message), current_source_->source, range);
+            return;
+        }
+
+        result_.diagnostics.note(std::move(message), range);
+    }
+
+    void note_for_source(std::string message,
+                         std::optional<SourceId> source_id,
+                         std::optional<SourceRange> range = std::nullopt) {
+        if (source_id.has_value()) {
+            if (const auto source = source_unit_for(*source_id); source.has_value()) {
+                result_.diagnostics.note_in_source(std::move(message), source->get().source, range);
+                return;
+            }
+        }
+
+        note_here(std::move(message), range);
+    }
+
+    void error_for_source(std::string message,
+                          std::optional<SourceId> source_id,
+                          std::optional<SourceRange> range = std::nullopt) {
+        if (source_id.has_value()) {
+            if (const auto source = source_unit_for(*source_id); source.has_value()) {
+                result_.diagnostics.error_in_source(std::move(message), source->get().source, range);
+                return;
+            }
+        }
+
+        error_here(std::move(message), range);
+    }
+
     [[nodiscard]] std::optional<SymbolId> register_symbol(SymbolNamespace name_space,
                                                           SymbolKind kind,
                                                           std::string_view local_name,
                                                           SourceRange range) {
         auto &index = result_.symbol_table.index(name_space);
+        auto &module_index = index.module_local_names[module_name_.value_or("")];
 
-        if (const auto existing = index.local_names.find(std::string(local_name));
-            existing != index.local_names.end()) {
+        if (const auto existing = module_index.find(std::string(local_name));
+            existing != module_index.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            result_.diagnostics.error("duplicate " + namespace_name(name_space) + " '" +
-                                          std::string(local_name) + "'",
-                                      range);
+            error_here("duplicate " + namespace_name(name_space) + " '" +
+                           std::string(local_name) + "'",
+                       range);
 
             if (previous_symbol.has_value()) {
-                result_.diagnostics.note("previous declaration is here",
-                                         previous_symbol->get().declaration_range);
+                note_for_source("previous declaration is here",
+                                previous_symbol->get().source_id,
+                                previous_symbol->get().declaration_range);
             }
 
             return std::nullopt;
@@ -348,11 +489,29 @@ class ResolverPass final : public ast::Visitor {
             .kind = kind,
             .local_name = std::string(local_name),
             .canonical_name = canonical_name_for(local_name),
+            .module_name = module_name_.value_or(""),
+            .source_id = current_source_id_,
             .declaration_range = range,
         };
 
+        if (const auto existing = index.canonical_names.find(symbol.canonical_name);
+            existing != index.canonical_names.end()) {
+            const auto previous_symbol = result_.symbol_table.get(existing->second);
+            error_here(
+                "duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name + "'",
+                range);
+
+            if (previous_symbol.has_value()) {
+                note_for_source("previous declaration is here",
+                                previous_symbol->get().source_id,
+                                previous_symbol->get().declaration_range);
+            }
+
+            return std::nullopt;
+        }
+
         result_.symbol_table.symbols_.push_back(symbol);
-        index.local_names.emplace(symbol.local_name, symbol_id);
+        module_index.emplace(symbol.local_name, symbol_id);
         index.canonical_names.emplace(symbol.canonical_name, symbol_id);
         return symbol_id;
     }
@@ -360,9 +519,12 @@ class ResolverPass final : public ast::Visitor {
     [[nodiscard]] std::optional<SymbolId>
     find_registered_symbol(SymbolNamespace name_space, std::string_view local_name) const {
         const auto &index = result_.symbol_table.index(name_space);
-        if (const auto iter = index.local_names.find(std::string(local_name));
-            iter != index.local_names.end()) {
-            return iter->second;
+        if (const auto module_iter = index.module_local_names.find(module_name_.value_or(""));
+            module_iter != index.module_local_names.end()) {
+            if (const auto iter = module_iter->second.find(std::string(local_name));
+                iter != module_iter->second.end()) {
+                return iter->second;
+            }
         }
 
         return std::nullopt;
@@ -406,9 +568,12 @@ class ResolverPass final : public ast::Visitor {
         const auto &index = result_.symbol_table.index(name_space);
 
         if (name.segments.size() == 1) {
-            if (const auto local = index.local_names.find(name.spelling());
-                local != index.local_names.end()) {
-                return local->second;
+            if (const auto module_iter = index.module_local_names.find(module_name_.value_or(""));
+                module_iter != index.module_local_names.end()) {
+                if (const auto local = module_iter->second.find(name.spelling());
+                    local != module_iter->second.end()) {
+                    return local->second;
+                }
             }
         }
 
@@ -436,14 +601,15 @@ class ResolverPass final : public ast::Visitor {
                                                             std::string_view expected_name) {
         const auto resolved = lookup(name_space, name);
         if (!resolved.has_value()) {
-            result_.diagnostics.error(
-                "unknown " + std::string(expected_name) + " '" + name.spelling() + "'", name.range);
+            error_here("unknown " + std::string(expected_name) + " '" + name.spelling() + "'",
+                       name.range);
             return std::nullopt;
         }
 
         result_.references.push_back(ResolvedReference{
             .kind = kind,
             .text = name.spelling(),
+            .source_id = current_source_id_,
             .range = name.range,
             .target = *resolved,
         });
@@ -456,18 +622,21 @@ class ResolverPass final : public ast::Visitor {
         const auto predicate = lookup(SymbolNamespace::Predicates, name);
 
         if (capability.has_value() && predicate.has_value()) {
-            result_.diagnostics.error("ambiguous callable '" + name.spelling() +
-                                          "' matches both a capability and a predicate",
-                                      name.range);
+            error_here("ambiguous callable '" + name.spelling() +
+                           "' matches both a capability and a predicate",
+                       name.range);
 
             if (const auto symbol = result_.symbol_table.get(*capability); symbol.has_value()) {
-                result_.diagnostics.note("capability declaration is here",
-                                         symbol->get().declaration_range);
+                note_for_source(
+                    "capability declaration is here",
+                    symbol->get().source_id,
+                    symbol->get().declaration_range);
             }
 
             if (const auto symbol = result_.symbol_table.get(*predicate); symbol.has_value()) {
-                result_.diagnostics.note("predicate declaration is here",
-                                         symbol->get().declaration_range);
+                note_for_source("predicate declaration is here",
+                                symbol->get().source_id,
+                                symbol->get().declaration_range);
             }
 
             return std::nullopt;
@@ -477,6 +646,7 @@ class ResolverPass final : public ast::Visitor {
             result_.references.push_back(ResolvedReference{
                 .kind = ReferenceKind::CallTarget,
                 .text = name.spelling(),
+                .source_id = current_source_id_,
                 .range = name.range,
                 .target = *capability,
             });
@@ -487,13 +657,14 @@ class ResolverPass final : public ast::Visitor {
             result_.references.push_back(ResolvedReference{
                 .kind = ReferenceKind::CallTarget,
                 .text = name.spelling(),
+                .source_id = current_source_id_,
                 .range = name.range,
                 .target = *predicate,
             });
             return predicate;
         }
 
-        result_.diagnostics.error("unknown callable '" + name.spelling() + "'", name.range);
+        error_here("unknown callable '" + name.spelling() + "'", name.range);
         return std::nullopt;
     }
 
@@ -608,6 +779,7 @@ class ResolverPass final : public ast::Visitor {
                 result_.references.push_back(ResolvedReference{
                     .kind = ReferenceKind::ConstValue,
                     .text = expr.qualified_name->spelling(),
+                    .source_id = current_source_id_,
                     .range = expr.qualified_name->range,
                     .target = *resolved,
                 });
@@ -766,7 +938,8 @@ class ResolverPass final : public ast::Visitor {
 
         for (std::size_t index = 0; index + 1 < cycle.size(); ++index) {
             if (const auto symbol = result_.symbol_table.get(cycle[index]); symbol.has_value()) {
-                result_.diagnostics.error(message, symbol->get().declaration_range);
+                error_for_source(
+                    message, symbol->get().source_id, symbol->get().declaration_range);
             }
         }
     }
@@ -782,14 +955,39 @@ MaybeCRef<Symbol> SymbolTable::get(SymbolId id) const {
     return std::cref(symbols_[id.value]);
 }
 
-MaybeCRef<Symbol> SymbolTable::find_local(SymbolNamespace name_space, std::string_view name) const {
+MaybeCRef<Symbol> SymbolTable::find_local(SymbolNamespace name_space,
+                                          std::string_view name,
+                                          std::string_view module_name) const {
     const auto &name_index = index(name_space);
-    if (const auto iter = name_index.local_names.find(std::string(name));
-        iter != name_index.local_names.end()) {
-        return get(iter->second);
+    if (!module_name.empty()) {
+        if (const auto module_iter = name_index.module_local_names.find(std::string(module_name));
+            module_iter != name_index.module_local_names.end()) {
+            if (const auto iter = module_iter->second.find(std::string(name));
+                iter != module_iter->second.end()) {
+                return get(iter->second);
+            }
+        }
+
+        return std::nullopt;
     }
 
-    return std::nullopt;
+    std::optional<SymbolId> unique_match;
+    for (const auto &[owner_module, local_names] : name_index.module_local_names) {
+        (void)owner_module;
+        if (const auto iter = local_names.find(std::string(name)); iter != local_names.end()) {
+            if (unique_match.has_value()) {
+                return std::nullopt;
+            }
+
+            unique_match = iter->second;
+        }
+    }
+
+    if (!unique_match.has_value()) {
+        return std::nullopt;
+    }
+
+    return get(*unique_match);
 }
 
 MaybeCRef<Symbol> SymbolTable::find_canonical(SymbolNamespace name_space,
@@ -842,10 +1040,12 @@ SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space) {
 }
 
 MaybeCRef<ResolvedReference> ResolveResult::find_reference(ReferenceKind kind,
-                                                           SourceRange range) const {
+                                                           SourceRange range,
+                                                           std::optional<SourceId> source_id) const {
     for (const auto &reference : references) {
         if (reference.kind == kind && reference.range.begin_offset == range.begin_offset &&
-            reference.range.end_offset == range.end_offset) {
+            reference.range.end_offset == range.end_offset &&
+            (!source_id.has_value() || reference.source_id == source_id)) {
             return std::cref(reference);
         }
     }
@@ -856,6 +1056,11 @@ MaybeCRef<ResolvedReference> ResolveResult::find_reference(ReferenceKind kind,
 ResolveResult Resolver::resolve(const ast::Program &program) const {
     detail::ResolverPass pass;
     return pass.run(program);
+}
+
+ResolveResult Resolver::resolve(const SourceGraph &graph) const {
+    detail::ResolverPass pass;
+    return pass.run(graph);
 }
 
 } // namespace ahfl

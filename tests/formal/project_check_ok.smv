@@ -1,0 +1,36 @@
+-- AHFL restricted SMV backend v0.1
+-- This lowering preserves validated state-machine, flow, and workflow structure.
+-- Pure embedded expressions are abstracted as boolean observation variables.
+MODULE main
+VAR
+  agent__lib_agents_AliasAgent__state : {Init, Done};
+  workflow__app_main_MainWorkflow__node__run__state : {Init, Done};
+  workflow__app_main_MainWorkflow__node__run__started : boolean;
+  workflow__app_main_MainWorkflow__node__run__completed : boolean;
+IVAR
+  agent__lib_agents_AliasAgent__called__lib_agents_Echo : boolean;
+DEFINE
+  workflow__app_main_MainWorkflow__node__run__running := workflow__app_main_MainWorkflow__node__run__started & !(workflow__app_main_MainWorkflow__node__run__completed);
+ASSIGN
+  init(agent__lib_agents_AliasAgent__state) := Init;
+  next(agent__lib_agents_AliasAgent__state) := case
+    agent__lib_agents_AliasAgent__state = Init : Done;
+    agent__lib_agents_AliasAgent__state = Done : Done;
+    TRUE : agent__lib_agents_AliasAgent__state;
+  esac;
+  init(workflow__app_main_MainWorkflow__node__run__state) := Init;
+  next(workflow__app_main_MainWorkflow__node__run__state) := case
+    workflow__app_main_MainWorkflow__node__run__state = Init : Done;
+    workflow__app_main_MainWorkflow__node__run__state = Done : Done;
+    TRUE : workflow__app_main_MainWorkflow__node__run__state;
+  esac;
+  init(workflow__app_main_MainWorkflow__node__run__started) := TRUE;
+  next(workflow__app_main_MainWorkflow__node__run__started) := TRUE;
+  init(workflow__app_main_MainWorkflow__node__run__completed) := FALSE;
+  next(workflow__app_main_MainWorkflow__node__run__completed) := case
+    workflow__app_main_MainWorkflow__node__run__completed : TRUE;
+    workflow__app_main_MainWorkflow__node__run__started & (workflow__app_main_MainWorkflow__node__run__state = Done) : TRUE;
+    TRUE : FALSE;
+  esac;
+-- workflow app::main::MainWorkflow liveness[0]
+LTLSPEC F ((workflow__app_main_MainWorkflow__node__run__completed & (workflow__app_main_MainWorkflow__node__run__state = Done)))

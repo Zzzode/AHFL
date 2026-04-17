@@ -17,6 +17,8 @@
 
 namespace ahfl {
 
+struct SourceGraph;
+
 struct StructFieldInfo {
     std::string name;
     TypePtr type;
@@ -144,6 +146,7 @@ class TypeEnvironment {
 
 struct ExpressionTypeInfo {
     SourceRange range;
+    std::optional<SourceId> source_id;
     TypePtr type;
     bool is_pure{true};
 };
@@ -157,12 +160,16 @@ struct TypeCheckResult {
         return diagnostics.has_error();
     }
 
-    [[nodiscard]] MaybeCRef<ExpressionTypeInfo> find_expression_type(SourceRange range) const;
+    [[nodiscard]] MaybeCRef<ExpressionTypeInfo> find_expression_type(
+        SourceRange range,
+        std::optional<SourceId> source_id = std::nullopt) const;
 };
 
 class TypeChecker {
   public:
     [[nodiscard]] TypeCheckResult check(const ast::Program &program,
+                                        const ResolveResult &resolve_result) const;
+    [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
                                         const ResolveResult &resolve_result) const;
 };
 

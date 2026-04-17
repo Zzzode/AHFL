@@ -1,0 +1,5 @@
+module right::types;
+
+struct Request {
+    value: String;
+}

@@ -1,0 +1,6 @@
+module app::main;
+import lib::types as types;
+
+struct Broken {
+    request: types::Missing;
+}

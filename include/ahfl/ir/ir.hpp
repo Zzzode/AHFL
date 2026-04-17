@@ -4,6 +4,7 @@
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -14,7 +15,11 @@
 
 namespace ahfl {
 
+struct SourceGraph;
+
 namespace ir {
+
+inline constexpr std::string_view kFormatVersion = "ahfl.ir.v1";
 
 enum class PathRootKind {
     Identifier,
@@ -64,6 +69,11 @@ enum class ContractClauseKind {
     Ensures,
     Invariant,
     Forbid,
+};
+
+enum class WorkflowValueSourceKind {
+    WorkflowInput,
+    WorkflowNodeOutput,
 };
 
 struct Path {
@@ -294,22 +304,31 @@ struct Statement {
     StatementNode node;
 };
 
+struct DeclarationProvenance {
+    std::string module_name;
+    std::string source_path;
+};
+
 struct ModuleDecl {
+    DeclarationProvenance provenance;
     std::string name;
 };
 
 struct ImportDecl {
+    DeclarationProvenance provenance;
     std::string path;
     std::optional<std::string> alias;
 };
 
 struct ConstDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::string type;
     ExprPtr value;
 };
 
 struct TypeAliasDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::string aliased_type;
 };
@@ -321,11 +340,13 @@ struct FieldDecl {
 };
 
 struct StructDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::vector<FieldDecl> fields;
 };
 
 struct EnumDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::vector<std::string> variants;
 };
@@ -336,12 +357,14 @@ struct ParamDecl {
 };
 
 struct CapabilityDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::vector<ParamDecl> params;
     std::string return_type;
 };
 
 struct PredicateDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::vector<ParamDecl> params;
 };
@@ -357,6 +380,7 @@ struct TransitionDecl {
 };
 
 struct AgentDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::string input_type;
     std::string context_type;
@@ -375,6 +399,7 @@ struct ContractClause {
 };
 
 struct ContractDecl {
+    DeclarationProvenance provenance;
     std::string target;
     std::vector<ContractClause> clauses;
 };
@@ -394,24 +419,47 @@ struct TimeoutPolicy {
 using StatePolicyItem = std::variant<RetryPolicy, RetryOnPolicy, TimeoutPolicy>;
 
 struct StateHandler {
+    struct Summary {
+        std::vector<std::string> goto_targets;
+        bool may_return{false};
+        bool may_fallthrough{true};
+        std::vector<Path> assigned_paths;
+        std::vector<std::string> called_targets;
+        std::size_t assert_count{0};
+    };
+
     std::string state_name;
     std::vector<StatePolicyItem> policy;
     Block body;
+    Summary summary;
 };
 
 struct FlowDecl {
+    DeclarationProvenance provenance;
     std::string target;
     std::vector<StateHandler> state_handlers;
+};
+
+struct WorkflowValueRead {
+    WorkflowValueSourceKind kind{WorkflowValueSourceKind::WorkflowInput};
+    std::string root_name;
+    std::vector<std::string> members;
+};
+
+struct WorkflowExprSummary {
+    std::vector<WorkflowValueRead> reads;
 };
 
 struct WorkflowNode {
     std::string name;
     std::string target;
     ExprPtr input;
+    WorkflowExprSummary input_summary;
     std::vector<std::string> after;
 };
 
 struct WorkflowDecl {
+    DeclarationProvenance provenance;
     std::string name;
     std::string input_type;
     std::string output_type;
@@ -419,6 +467,7 @@ struct WorkflowDecl {
     std::vector<TemporalExprPtr> safety;
     std::vector<TemporalExprPtr> liveness;
     ExprPtr return_value;
+    WorkflowExprSummary return_summary;
 };
 
 enum class FormalObservationScopeKind {
@@ -464,7 +513,7 @@ using Decl = std::variant<ModuleDecl,
                           WorkflowDecl>;
 
 struct Program {
-    std::string format_version{"ahfl.ir.v1"};
+    std::string format_version{std::string(kFormatVersion)};
     std::vector<Decl> declarations;
     std::vector<FormalObservation> formal_observations;
 };
@@ -472,6 +521,10 @@ struct Program {
 } // namespace ir
 
 [[nodiscard]] ir::Program lower_program_ir(const ast::Program &program,
+                                           const ResolveResult &resolve_result,
+                                           const TypeCheckResult &type_check_result);
+
+[[nodiscard]] ir::Program lower_program_ir(const SourceGraph &graph,
                                            const ResolveResult &resolve_result,
                                            const TypeCheckResult &type_check_result);
 
@@ -487,7 +540,17 @@ void emit_program_ir(const ast::Program &program,
                      const TypeCheckResult &type_check_result,
                      std::ostream &out);
 
+void emit_program_ir(const SourceGraph &graph,
+                     const ResolveResult &resolve_result,
+                     const TypeCheckResult &type_check_result,
+                     std::ostream &out);
+
 void emit_program_ir_json(const ast::Program &program,
+                          const ResolveResult &resolve_result,
+                          const TypeCheckResult &type_check_result,
+                          std::ostream &out);
+
+void emit_program_ir_json(const SourceGraph &graph,
                           const ResolveResult &resolve_result,
                           const TypeCheckResult &type_check_result,
                           std::ostream &out);

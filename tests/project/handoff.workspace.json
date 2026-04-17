@@ -1,0 +1,7 @@
+{
+  "format_version": "ahfl.workspace.v0.3",
+  "name": "handoff-workspace",
+  "projects": [
+    "workflow_value_flow/ahfl.project.json"
+  ]
+}

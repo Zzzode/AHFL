@@ -1,6 +1,7 @@
 add_library(ahfl_semantics STATIC
     resolver.cpp
     typecheck.cpp
+    type_environment.cpp
     validate.cpp
 )
 

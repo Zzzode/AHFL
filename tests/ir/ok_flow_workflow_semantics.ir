@@ -34,6 +34,14 @@ agent formal::flow_workflow::ReviewAgent {
 
 flow formal::flow_workflow::ReviewAgent {
   state Init {
+    summary {
+      goto_targets: [FastTrack, Review]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     if input.allow_fast_track {
       goto FastTrack
     } else {
@@ -41,12 +49,36 @@ flow formal::flow_workflow::ReviewAgent {
     }
   }
   state FastTrack {
+    summary {
+      goto_targets: [Done]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     goto Done
   }
   state Review {
+    summary {
+      goto_targets: [Done]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     goto Done
   }
   state Done {
+    summary {
+      goto_targets: []
+      may_return: true
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     return formal::flow_workflow::Response { tag: ctx.tag }
   }
 }
@@ -55,9 +87,18 @@ workflow formal::flow_workflow::ReviewWorkflow {
   input: formal::flow_workflow::Request
   output: formal::flow_workflow::Response
   node first: formal::flow_workflow::ReviewAgent(input)
+    input_summary {
+      reads: [workflow_input(input)]
+    }
   node second: formal::flow_workflow::ReviewAgent(input) after [first]
+    input_summary {
+      reads: [workflow_input(input)]
+    }
   safety: G((!(running(second)) || completed(first)))
   safety: G((!(running(first)) || input.allow_fast_track))
   liveness: F(completed(second, Done))
+  return_summary {
+    reads: [workflow_node_output(second)]
+  }
   return: second
 }

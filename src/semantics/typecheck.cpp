@@ -1,13 +1,14 @@
 #include "ahfl/semantics/typecheck.hpp"
 
+#include "ahfl/frontend/frontend.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <functional>
 #include <optional>
-#include <ostream>
-#include <sstream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -104,16 +105,6 @@ struct ValueContext {
 }
 
 template <typename T>
-[[nodiscard]] MaybeCRef<T> get_from_map(const std::unordered_map<std::size_t, T> &map,
-                                        SymbolId id) {
-    if (const auto iter = map.find(id.value); iter != map.end()) {
-        return std::cref(iter->second);
-    }
-
-    return std::nullopt;
-}
-
-template <typename T>
 [[nodiscard]] MaybeCRef<T>
 find_decl_ref(const std::unordered_map<std::size_t, std::reference_wrapper<const T>> &map,
               SymbolId id) {
@@ -123,133 +114,25 @@ find_decl_ref(const std::unordered_map<std::size_t, std::reference_wrapper<const
 
     return std::nullopt;
 }
-
-[[nodiscard]] std::string join_names(const std::vector<std::string> &names) {
-    std::ostringstream builder;
-
-    for (std::size_t index = 0; index < names.size(); ++index) {
-        if (index != 0) {
-            builder << ", ";
-        }
-
-        builder << names[index];
-    }
-
-    return builder.str();
-}
-
-[[nodiscard]] std::string join_symbol_names(const SymbolTable &symbols,
-                                            const std::vector<SymbolId> &ids) {
-    std::vector<std::string> names;
-    names.reserve(ids.size());
-
-    for (const auto id : ids) {
-        if (const auto symbol = symbols.get(id); symbol.has_value()) {
-            names.push_back(symbol->get().canonical_name);
-        }
-    }
-
-    return join_names(names);
-}
-
 } // namespace
-
-MaybeCRef<StructFieldInfo> StructTypeInfo::find_field(std::string_view name) const {
-    for (const auto &field : fields) {
-        if (field.name == name) {
-            return std::cref(field);
-        }
-    }
-
-    return std::nullopt;
-}
-
-bool EnumTypeInfo::has_variant(std::string_view name) const noexcept {
-    for (const auto &variant : variants) {
-        if (variant.name == name) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-MaybeCRef<Type> TypeEnvironment::get_const_type(SymbolId id) const {
-    if (const auto iter = const_types_.find(id.value);
-        iter != const_types_.end() && static_cast<bool>(iter->second)) {
-        return std::cref(*iter->second);
-    }
-
-    return std::nullopt;
-}
-
-MaybeCRef<StructTypeInfo> TypeEnvironment::get_struct(SymbolId id) const {
-    return get_from_map(structs_, id);
-}
-
-MaybeCRef<EnumTypeInfo> TypeEnvironment::get_enum(SymbolId id) const {
-    return get_from_map(enums_, id);
-}
-
-MaybeCRef<StructTypeInfo> TypeEnvironment::find_struct(std::string_view canonical_name) const {
-    for (const auto &[id, info] : structs_) {
-        (void)id;
-        if (info.canonical_name == canonical_name) {
-            return std::cref(info);
-        }
-    }
-
-    return std::nullopt;
-}
-
-MaybeCRef<EnumTypeInfo> TypeEnvironment::find_enum(std::string_view canonical_name) const {
-    for (const auto &[id, info] : enums_) {
-        (void)id;
-        if (info.canonical_name == canonical_name) {
-            return std::cref(info);
-        }
-    }
-
-    return std::nullopt;
-}
-
-MaybeCRef<CapabilityTypeInfo> TypeEnvironment::get_capability(SymbolId id) const {
-    return get_from_map(capabilities_, id);
-}
-
-MaybeCRef<PredicateTypeInfo> TypeEnvironment::get_predicate(SymbolId id) const {
-    return get_from_map(predicates_, id);
-}
-
-MaybeCRef<AgentTypeInfo> TypeEnvironment::get_agent(SymbolId id) const {
-    return get_from_map(agents_, id);
-}
-
-MaybeCRef<WorkflowTypeInfo> TypeEnvironment::get_workflow(SymbolId id) const {
-    return get_from_map(workflows_, id);
-}
-
-MaybeCRef<ExpressionTypeInfo> TypeCheckResult::find_expression_type(SourceRange range) const {
-    for (const auto &entry : expression_types) {
-        if (same_range(entry.range, range)) {
-            return std::cref(entry);
-        }
-    }
-
-    return std::nullopt;
-}
 
 class TypeCheckPass final {
   public:
     TypeCheckPass(const ast::Program &program, const ResolveResult &resolve_result)
-        : program_(program), resolve_result_(resolve_result) {}
+        : program_(&program), resolve_result_(resolve_result) {}
+    TypeCheckPass(const SourceGraph &graph, const ResolveResult &resolve_result)
+        : graph_(&graph), resolve_result_(resolve_result) {}
 
     [[nodiscard]] TypeCheckResult run();
 
   private:
-    const ast::Program &program_;
+    const ast::Program *program_{nullptr};
+    const SourceGraph *graph_{nullptr};
     const ResolveResult &resolve_result_;
     TypeCheckResult result_;
+    const SourceUnit *current_source_{nullptr};
+    std::optional<SourceId> current_source_id_;
+    std::string current_module_name_;
 
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TypeAliasDecl>>
         type_alias_decls_;
@@ -267,6 +150,7 @@ class TypeCheckPass final {
     std::unordered_map<std::size_t, TypePtr> resolved_alias_types_;
     std::unordered_set<std::size_t> active_aliases_;
 
+    void index_program_declarations(const ast::Program &program);
     void index_declarations();
     void build_type_environment();
     void build_const_types();
@@ -277,10 +161,14 @@ class TypeCheckPass final {
     void build_agent_types();
     void build_workflow_types();
 
+    void check_const_initializers_in_program(const ast::Program &program);
     void check_const_initializers();
     void check_struct_defaults();
+    void check_contracts_in_program(const ast::Program &program);
     void check_contracts();
+    void check_flows_in_program(const ast::Program &program);
     void check_flows();
+    void check_workflows_in_program(const ast::Program &program);
     void check_workflows();
     void check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
                                        const ValueContext &context);
@@ -293,6 +181,16 @@ class TypeCheckPass final {
                          ValueContext &context,
                          MaybeCRef<Type> expected_return_type,
                          std::string_view state_name = "");
+
+    void enter_source(const SourceUnit &source);
+    void leave_source();
+    [[nodiscard]] MaybeCRef<SourceUnit> source_unit_for(SourceId id) const;
+    template <typename Fn> decltype(auto) with_symbol_context(SymbolId id, Fn &&fn);
+    [[nodiscard]] MaybeCRef<Symbol> find_local_here(SymbolNamespace name_space,
+                                                    std::string_view name) const;
+    [[nodiscard]] MaybeCRef<ResolvedReference> find_reference_here(ReferenceKind kind,
+                                                                   SourceRange range) const;
+    void error_here(std::string message, SourceRange range);
 
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
     [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
@@ -354,13 +252,95 @@ TypeCheckResult TypeCheckPass::run() {
     return std::move(result_);
 }
 
-void TypeCheckPass::index_declarations() {
-    for (const auto &declaration : program_.declarations) {
+void TypeCheckPass::enter_source(const SourceUnit &source) {
+    current_source_ = &source;
+    current_source_id_ = source.id;
+    current_module_name_ = source.module_name;
+}
+
+void TypeCheckPass::leave_source() {
+    current_source_ = nullptr;
+    current_source_id_.reset();
+    current_module_name_.clear();
+}
+
+MaybeCRef<SourceUnit> TypeCheckPass::source_unit_for(SourceId id) const {
+    if (graph_ == nullptr) {
+        return std::nullopt;
+    }
+
+    for (const auto &source : graph_->sources) {
+        if (source.id == id) {
+            return std::cref(source);
+        }
+    }
+
+    return std::nullopt;
+}
+
+template <typename Fn> decltype(auto) TypeCheckPass::with_symbol_context(SymbolId id, Fn &&fn) {
+    const auto previous_source = current_source_;
+    const auto previous_source_id = current_source_id_;
+    const auto previous_module_name = current_module_name_;
+
+    current_source_ = nullptr;
+    current_source_id_.reset();
+    current_module_name_.clear();
+
+    if (const auto symbol = symbol_of(id); symbol.has_value()) {
+        current_source_id_ = symbol->get().source_id;
+        current_module_name_ = symbol->get().module_name;
+        if (graph_ != nullptr && symbol->get().source_id.has_value()) {
+            if (const auto source = source_unit_for(*symbol->get().source_id); source.has_value()) {
+                current_source_ = &source->get();
+            }
+        }
+    }
+
+    using Result = std::invoke_result_t<Fn>;
+    if constexpr (std::is_void_v<Result>) {
+        std::forward<Fn>(fn)();
+        current_source_ = previous_source;
+        current_source_id_ = previous_source_id;
+        current_module_name_ = previous_module_name;
+    } else {
+        Result result = std::forward<Fn>(fn)();
+        current_source_ = previous_source;
+        current_source_id_ = previous_source_id;
+        current_module_name_ = previous_module_name;
+        return result;
+    }
+}
+
+MaybeCRef<Symbol> TypeCheckPass::find_local_here(SymbolNamespace name_space,
+                                                 std::string_view name) const {
+    if (!current_module_name_.empty()) {
+        return resolve_result_.symbol_table.find_local(name_space, name, current_module_name_);
+    }
+
+    return resolve_result_.symbol_table.find_local(name_space, name);
+}
+
+MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind kind,
+                                                                SourceRange range) const {
+    return resolve_result_.find_reference(kind, range, current_source_id_);
+}
+
+void TypeCheckPass::error_here(std::string message, SourceRange range) {
+    if (current_source_ != nullptr) {
+        result_.diagnostics.error_in_source(std::move(message), current_source_->source, range);
+        return;
+    }
+
+    result_.diagnostics.error(std::move(message), range);
+}
+
+void TypeCheckPass::index_program_declarations(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
         switch (declaration->kind) {
         case ast::NodeKind::ConstDecl: {
             const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Consts, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Consts, decl.name);
                 symbol.has_value()) {
                 const_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -368,8 +348,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::TypeAliasDecl: {
             const auto &decl = static_cast<const ast::TypeAliasDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Types, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 type_alias_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -377,8 +356,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::StructDecl: {
             const auto &decl = static_cast<const ast::StructDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Types, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 struct_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -386,8 +364,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::EnumDecl: {
             const auto &decl = static_cast<const ast::EnumDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Types, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 enum_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -395,8 +372,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::CapabilityDecl: {
             const auto &decl = static_cast<const ast::CapabilityDecl &>(*declaration);
-            if (const auto symbol = resolve_result_.symbol_table.find_local(
-                    SymbolNamespace::Capabilities, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Capabilities, decl.name);
                 symbol.has_value()) {
                 capability_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -404,8 +380,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::PredicateDecl: {
             const auto &decl = static_cast<const ast::PredicateDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Predicates, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Predicates, decl.name);
                 symbol.has_value()) {
                 predicate_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -413,8 +388,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::AgentDecl: {
             const auto &decl = static_cast<const ast::AgentDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Agents, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Agents, decl.name);
                 symbol.has_value()) {
                 agent_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -422,8 +396,7 @@ void TypeCheckPass::index_declarations() {
         }
         case ast::NodeKind::WorkflowDecl: {
             const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
-            if (const auto symbol =
-                    resolve_result_.symbol_table.find_local(SymbolNamespace::Workflows, decl.name);
+            if (const auto symbol = find_local_here(SymbolNamespace::Workflows, decl.name);
                 symbol.has_value()) {
                 workflow_decls_.emplace(symbol->get().id.value, std::cref(decl));
             }
@@ -437,6 +410,20 @@ void TypeCheckPass::index_declarations() {
             break;
         }
     }
+}
+
+void TypeCheckPass::index_declarations() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            index_program_declarations(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    index_program_declarations(require(program_, "typecheck program must exist"));
 }
 
 MaybeCRef<Symbol> TypeCheckPass::symbol_of(SymbolId id) const {
@@ -459,189 +446,202 @@ void TypeCheckPass::build_type_environment() {
 
 void TypeCheckPass::build_const_types() {
     for (const auto &[id, decl] : const_decls_) {
-        if (!decl.get().type) {
-            continue;
-        }
+        with_symbol_context(SymbolId{id}, [&]() {
+            if (!decl.get().type) {
+                return;
+            }
 
-        result_.environment.const_types_.emplace(id, resolve_type(*decl.get().type));
+            result_.environment.const_types_.emplace(id, resolve_type(*decl.get().type));
+        });
     }
 }
 
 void TypeCheckPass::build_struct_types() {
     for (const auto &[id, decl] : struct_decls_) {
-        const auto symbol = symbol_of(SymbolId{id});
-        if (!symbol.has_value()) {
-            continue;
-        }
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
 
-        StructTypeInfo info{
-            .symbol = SymbolId{id},
-            .canonical_name = symbol->get().canonical_name,
-            .declaration_range = decl.get().range,
-        };
+            StructTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .declaration_range = decl.get().range,
+            };
 
-        for (const auto &field : decl.get().fields) {
-            info.fields.push_back(StructFieldInfo{
-                .name = field->name,
-                .type = resolve_type(*field->type),
-                .has_default = static_cast<bool>(field->default_value),
-                .declaration_range = field->range,
-            });
-        }
+            for (const auto &field : decl.get().fields) {
+                info.fields.push_back(StructFieldInfo{
+                    .name = field->name,
+                    .type = resolve_type(*field->type),
+                    .has_default = static_cast<bool>(field->default_value),
+                    .declaration_range = field->range,
+                });
+            }
 
-        result_.environment.structs_.emplace(id, std::move(info));
+            result_.environment.structs_.emplace(id, std::move(info));
+        });
     }
 }
 
 void TypeCheckPass::build_enum_types() {
     for (const auto &[id, decl] : enum_decls_) {
-        const auto symbol = symbol_of(SymbolId{id});
-        if (!symbol.has_value()) {
-            continue;
-        }
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
 
-        EnumTypeInfo info{
-            .symbol = SymbolId{id},
-            .canonical_name = symbol->get().canonical_name,
-            .declaration_range = decl.get().range,
-        };
+            EnumTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .declaration_range = decl.get().range,
+            };
 
-        for (const auto &variant : decl.get().variants) {
-            info.variants.push_back(EnumVariantInfo{
-                .name = variant->name,
-                .declaration_range = variant->range,
-            });
-        }
+            for (const auto &variant : decl.get().variants) {
+                info.variants.push_back(EnumVariantInfo{
+                    .name = variant->name,
+                    .declaration_range = variant->range,
+                });
+            }
 
-        result_.environment.enums_.emplace(id, std::move(info));
+            result_.environment.enums_.emplace(id, std::move(info));
+        });
     }
 }
 
 void TypeCheckPass::build_capability_types() {
     for (const auto &[id, decl] : capability_decls_) {
-        const auto symbol = symbol_of(SymbolId{id});
-        if (!symbol.has_value()) {
-            continue;
-        }
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
 
-        CapabilityTypeInfo info{
-            .symbol = SymbolId{id},
-            .canonical_name = symbol->get().canonical_name,
-            .declaration_range = decl.get().range,
-        };
+            CapabilityTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .declaration_range = decl.get().range,
+            };
 
-        for (const auto &param : decl.get().params) {
-            info.params.push_back(ParamTypeInfo{
-                .name = param->name,
-                .type = resolve_type(*param->type),
-                .declaration_range = param->range,
-            });
-        }
+            for (const auto &param : decl.get().params) {
+                info.params.push_back(ParamTypeInfo{
+                    .name = param->name,
+                    .type = resolve_type(*param->type),
+                    .declaration_range = param->range,
+                });
+            }
 
-        info.return_type = resolve_type(*decl.get().return_type);
-        result_.environment.capabilities_.emplace(id, std::move(info));
+            info.return_type = resolve_type(*decl.get().return_type);
+            result_.environment.capabilities_.emplace(id, std::move(info));
+        });
     }
 }
 
 void TypeCheckPass::build_predicate_types() {
     for (const auto &[id, decl] : predicate_decls_) {
-        const auto symbol = symbol_of(SymbolId{id});
-        if (!symbol.has_value()) {
-            continue;
-        }
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
 
-        PredicateTypeInfo info{
-            .symbol = SymbolId{id},
-            .canonical_name = symbol->get().canonical_name,
-            .declaration_range = decl.get().range,
-        };
+            PredicateTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .declaration_range = decl.get().range,
+            };
 
-        for (const auto &param : decl.get().params) {
-            info.params.push_back(ParamTypeInfo{
-                .name = param->name,
-                .type = resolve_type(*param->type),
-                .declaration_range = param->range,
-            });
-        }
+            for (const auto &param : decl.get().params) {
+                info.params.push_back(ParamTypeInfo{
+                    .name = param->name,
+                    .type = resolve_type(*param->type),
+                    .declaration_range = param->range,
+                });
+            }
 
-        result_.environment.predicates_.emplace(id, std::move(info));
+            result_.environment.predicates_.emplace(id, std::move(info));
+        });
     }
 }
 
 void TypeCheckPass::build_agent_types() {
     for (const auto &[id, decl] : agent_decls_) {
-        const auto symbol = symbol_of(SymbolId{id});
-        if (!symbol.has_value()) {
-            continue;
-        }
-
-        AgentTypeInfo info{
-            .symbol = SymbolId{id},
-            .canonical_name = symbol->get().canonical_name,
-            .input_type = resolve_type(*decl.get().input_type),
-            .context_type = resolve_type(*decl.get().context_type),
-            .output_type = resolve_type(*decl.get().output_type),
-            .declaration_range = decl.get().range,
-        };
-
-        if (info.input_type && info.input_type->kind != TypeKind::Struct) {
-            result_.diagnostics.error("agent input type must resolve to a struct type",
-                                      decl.get().input_type->range);
-        }
-
-        if (info.context_type && info.context_type->kind != TypeKind::Struct) {
-            result_.diagnostics.error("agent context type must resolve to a struct type",
-                                      decl.get().context_type->range);
-        }
-
-        if (info.output_type && info.output_type->kind != TypeKind::Struct) {
-            result_.diagnostics.error("agent output type must resolve to a struct type",
-                                      decl.get().output_type->range);
-        }
-
-        for (const auto &capability_name : decl.get().capabilities) {
-            const auto capability_symbol = resolve_result_.symbol_table.find_local(
-                SymbolNamespace::Capabilities, capability_name);
-            if (!capability_symbol.has_value()) {
-                result_.diagnostics.error("unknown capability '" + capability_name +
-                                              "' in agent capability list",
-                                          decl.get().range);
-                continue;
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
             }
 
-            info.capability_symbols.push_back(capability_symbol->get().id);
-        }
+            AgentTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .input_type = resolve_type(*decl.get().input_type),
+                .context_type = resolve_type(*decl.get().context_type),
+                .output_type = resolve_type(*decl.get().output_type),
+                .declaration_range = decl.get().range,
+            };
 
-        result_.environment.agents_.emplace(id, std::move(info));
+            if (info.input_type && info.input_type->kind != TypeKind::Struct) {
+                error_here("agent input type must resolve to a struct type",
+                           decl.get().input_type->range);
+            }
+
+            if (info.context_type && info.context_type->kind != TypeKind::Struct) {
+                error_here("agent context type must resolve to a struct type",
+                           decl.get().context_type->range);
+            }
+
+            if (info.output_type && info.output_type->kind != TypeKind::Struct) {
+                error_here("agent output type must resolve to a struct type",
+                           decl.get().output_type->range);
+            }
+
+            for (const auto &capability_name : decl.get().capabilities) {
+                const auto capability_symbol =
+                    find_local_here(SymbolNamespace::Capabilities, capability_name);
+                if (!capability_symbol.has_value()) {
+                    error_here("unknown capability '" + capability_name + "' in agent capability list",
+                               decl.get().range);
+                    continue;
+                }
+
+                info.capability_symbols.push_back(capability_symbol->get().id);
+            }
+
+            result_.environment.agents_.emplace(id, std::move(info));
+        });
     }
 }
 
 void TypeCheckPass::build_workflow_types() {
     for (const auto &[id, decl] : workflow_decls_) {
-        const auto symbol = symbol_of(SymbolId{id});
-        if (!symbol.has_value()) {
-            continue;
-        }
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
 
-        WorkflowTypeInfo info{
-            .symbol = SymbolId{id},
-            .canonical_name = symbol->get().canonical_name,
-            .input_type = resolve_type(*decl.get().input_type),
-            .output_type = resolve_type(*decl.get().output_type),
-            .declaration_range = decl.get().range,
-        };
+            WorkflowTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .input_type = resolve_type(*decl.get().input_type),
+                .output_type = resolve_type(*decl.get().output_type),
+                .declaration_range = decl.get().range,
+            };
 
-        if (info.input_type && info.input_type->kind != TypeKind::Struct) {
-            result_.diagnostics.error("workflow input type must resolve to a struct type",
-                                      decl.get().input_type->range);
-        }
+            if (info.input_type && info.input_type->kind != TypeKind::Struct) {
+                error_here("workflow input type must resolve to a struct type",
+                           decl.get().input_type->range);
+            }
 
-        if (info.output_type && info.output_type->kind != TypeKind::Struct) {
-            result_.diagnostics.error("workflow output type must resolve to a struct type",
-                                      decl.get().output_type->range);
-        }
+            if (info.output_type && info.output_type->kind != TypeKind::Struct) {
+                error_here("workflow output type must resolve to a struct type",
+                           decl.get().output_type->range);
+            }
 
-        result_.environment.workflows_.emplace(id, std::move(info));
+            result_.environment.workflows_.emplace(id, std::move(info));
+        });
     }
 }
 
@@ -683,9 +683,9 @@ TypePtr TypeCheckPass::resolve_type(const ast::TypeSyntax &type) {
 }
 
 TypePtr TypeCheckPass::resolve_named_type(const ast::QualifiedName &name) {
-    const auto reference = resolve_result_.find_reference(ReferenceKind::TypeName, name.range);
+    const auto reference = find_reference_here(ReferenceKind::TypeName, name.range);
     if (!reference.has_value()) {
-        result_.diagnostics.error("unable to resolve type '" + name.spelling() + "'", name.range);
+        error_here("unable to resolve type '" + name.spelling() + "'", name.range);
         return make_any_type();
     }
 
@@ -695,7 +695,7 @@ TypePtr TypeCheckPass::resolve_named_type(const ast::QualifiedName &name) {
 TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     const auto symbol = symbol_of(id);
     if (!symbol.has_value()) {
-        result_.diagnostics.error("resolved type symbol is missing", use_range);
+        error_here("resolved type symbol is missing", use_range);
         return make_any_type();
     }
 
@@ -711,8 +711,8 @@ TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     case SymbolKind::Predicate:
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
-        result_.diagnostics.error(
-            "symbol '" + symbol->get().canonical_name + "' does not name a type", use_range);
+        error_here("symbol '" + symbol->get().canonical_name + "' does not name a type",
+                   use_range);
         return make_any_type();
     }
 
@@ -726,18 +726,20 @@ TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
     }
 
     if (!active_aliases_.insert(id.value).second) {
-        result_.diagnostics.error("type alias cycle reached during type resolution", use_range);
+        error_here("type alias cycle reached during type resolution", use_range);
         return make_any_type();
     }
 
     const auto alias_decl = alias_decl_of(id);
     if (!alias_decl.has_value()) {
         active_aliases_.erase(id.value);
-        result_.diagnostics.error("type alias declaration is missing", use_range);
+        error_here("type alias declaration is missing", use_range);
         return make_any_type();
     }
 
-    auto resolved = resolve_type(*alias_decl->get().aliased_type);
+    auto resolved = with_symbol_context(id, [&]() {
+        return resolve_type(*alias_decl->get().aliased_type);
+    });
     resolved_alias_types_.emplace(id.value, resolved ? resolved->clone() : make_any_type());
     active_aliases_.erase(id.value);
     return resolved;
@@ -745,7 +747,7 @@ TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
 
 void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed) {
     for (auto &entry : result_.expression_types) {
-        if (same_range(entry.range, expr.range)) {
+        if (same_range(entry.range, expr.range) && entry.source_id == current_source_id_) {
             entry.type = typed.type ? typed.type->clone() : make_any_type();
             entry.is_pure = typed.is_pure;
             return;
@@ -754,6 +756,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
 
     result_.expression_types.push_back(ExpressionTypeInfo{
         .range = expr.range,
+        .source_id = current_source_id_,
         .type = typed.type ? typed.type->clone() : make_any_type(),
         .is_pure = typed.is_pure,
     });
@@ -771,9 +774,9 @@ bool TypeCheckPass::check_assignable(const Type &source,
         return true;
     }
 
-    result_.diagnostics.error("type mismatch in " + std::string(context_label) + ": expected " +
-                                  target.describe() + ", got " + source.describe(),
-                              range);
+    error_here("type mismatch in " + std::string(context_label) + ": expected " +
+                   target.describe() + ", got " + source.describe(),
+               range);
     return false;
 }
 
@@ -798,22 +801,21 @@ TypeCheckPass::field_access(const Type &base_type, std::string_view field_name, 
     }
 
     if (base_type.kind != TypeKind::Struct) {
-        result_.diagnostics.error(
-            "member access requires a struct value, got " + base_type.describe(), range);
+        error_here("member access requires a struct value, got " + base_type.describe(), range);
         return make_any_type();
     }
 
     const auto struct_info = result_.environment.find_struct(base_type.name);
     if (!struct_info.has_value()) {
-        result_.diagnostics.error("unknown struct type '" + base_type.name + "'", range);
+        error_here("unknown struct type '" + base_type.name + "'", range);
         return make_any_type();
     }
 
     const auto field = struct_info->get().find_field(field_name);
     if (!field.has_value()) {
-        result_.diagnostics.error("unknown field '" + std::string(field_name) + "' on struct '" +
-                                      base_type.name + "'",
-                                  range);
+        error_here("unknown field '" + std::string(field_name) + "' on struct '" + base_type.name +
+                       "'",
+                   range);
         return make_any_type();
     }
 
@@ -849,8 +851,8 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return typed(expected_type->get().clone());
         }
 
-        result_.diagnostics.error(
-            "cannot infer type of 'none' without an expected Optional<T> context", expr.range);
+        error_here("cannot infer type of 'none' without an expected Optional<T> context",
+                   expr.range);
         return error_typed();
     case ast::ExprSyntaxKind::Some: {
         MaybeCRef<Type> inner_expected = std::nullopt;
@@ -895,7 +897,7 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
 TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueContext &context) {
     const auto root = find_binding(context.bindings, path.root_name);
     if (!root.has_value()) {
-        result_.diagnostics.error("unknown value '" + path.root_name + "'", path.range);
+        error_here("unknown value '" + path.root_name + "'", path.range);
         return error_typed();
     }
 
@@ -909,45 +911,43 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
 
 TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
     if (const auto const_reference =
-            resolve_result_.find_reference(ReferenceKind::ConstValue, expr.qualified_name->range);
+            find_reference_here(ReferenceKind::ConstValue, expr.qualified_name->range);
         const_reference.has_value()) {
         const auto const_type = result_.environment.get_const_type(const_reference->get().target);
         if (!const_type.has_value()) {
-            result_.diagnostics.error("constant type is missing for '" +
-                                          expr.qualified_name->spelling() + "'",
-                                      expr.range);
+            error_here("constant type is missing for '" + expr.qualified_name->spelling() + "'",
+                       expr.range);
             return error_typed();
         }
 
         return typed(const_type->get().clone());
     }
 
-    const auto owner_reference = resolve_result_.find_reference(
-        ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range);
+    const auto owner_reference =
+        find_reference_here(ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range);
     if (!owner_reference.has_value()) {
-        result_.diagnostics.error(
-            "unknown qualified value '" + expr.qualified_name->spelling() + "'", expr.range);
+        error_here("unknown qualified value '" + expr.qualified_name->spelling() + "'",
+                   expr.range);
         return error_typed();
     }
 
     auto owner_type = resolve_type_symbol(owner_reference->get().target, expr.range);
     if (!owner_type || owner_type->kind != TypeKind::Enum) {
-        result_.diagnostics.error("qualified value '" + expr.qualified_name->spelling() +
-                                      "' must refer to a constant or enum variant",
-                                  expr.range);
+        error_here("qualified value '" + expr.qualified_name->spelling() +
+                       "' must refer to a constant or enum variant",
+                   expr.range);
         return error_typed();
     }
 
     const auto enum_info = result_.environment.find_enum(owner_type->name);
     if (!enum_info.has_value()) {
-        result_.diagnostics.error("enum type '" + owner_type->name + "' is missing", expr.range);
+        error_here("enum type '" + owner_type->name + "' is missing", expr.range);
         return error_typed();
     }
 
     const auto &segments = expr.qualified_name->segments;
     if (segments.empty() || !enum_info->get().has_variant(segments.back())) {
-        result_.diagnostics.error("unknown enum variant '" + expr.qualified_name->spelling() + "'",
-                                  expr.range);
+        error_here("unknown enum variant '" + expr.qualified_name->spelling() + "'", expr.range);
         return error_typed();
     }
 
@@ -956,32 +956,31 @@ TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
 
 TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueContext &context) {
     const auto reference =
-        resolve_result_.find_reference(ReferenceKind::CallTarget, expr.qualified_name->range);
+        find_reference_here(ReferenceKind::CallTarget, expr.qualified_name->range);
     if (!reference.has_value()) {
-        result_.diagnostics.error("unknown callable '" + expr.qualified_name->spelling() + "'",
-                                  expr.range);
+        error_here("unknown callable '" + expr.qualified_name->spelling() + "'", expr.range);
         return error_typed(false);
     }
 
     const auto symbol = symbol_of(reference->get().target);
     if (!symbol.has_value()) {
-        result_.diagnostics.error("call target symbol is missing", expr.range);
+        error_here("call target symbol is missing", expr.range);
         return error_typed(false);
     }
 
     if (symbol->get().kind == SymbolKind::Capability) {
         const auto capability = result_.environment.get_capability(reference->get().target);
         if (!capability.has_value()) {
-            result_.diagnostics.error("capability type info is missing for '" +
-                                          expr.qualified_name->spelling() + "'",
-                                      expr.range);
+            error_here("capability type info is missing for '" + expr.qualified_name->spelling() +
+                           "'",
+                       expr.range);
             return error_typed(false);
         }
 
         if (context.call_context != CallContext::Flow) {
-            result_.diagnostics.error("capability call '" + expr.qualified_name->spelling() +
-                                          "' is not allowed in this context",
-                                      expr.range);
+            error_here("capability call '" + expr.qualified_name->spelling() +
+                           "' is not allowed in this context",
+                       expr.range);
         }
 
         if (context.current_agent.has_value()) {
@@ -991,20 +990,18 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
                                                agent_info->get().capability_symbols.end(),
                                                reference->get().target);
                 if (allowed == agent_info->get().capability_symbols.end()) {
-                    result_.diagnostics.error("capability '" + expr.qualified_name->spelling() +
-                                                  "' is not declared in the current agent "
-                                                  "capabilities",
-                                              expr.range);
+                    error_here("capability '" + expr.qualified_name->spelling() +
+                                   "' is not declared in the current agent capabilities",
+                               expr.range);
                 }
             }
         }
 
         if (expr.items.size() != capability->get().params.size()) {
-            result_.diagnostics.error("capability '" + expr.qualified_name->spelling() +
-                                          "' expects " +
-                                          std::to_string(capability->get().params.size()) +
-                                          " argument(s), got " + std::to_string(expr.items.size()),
-                                      expr.range);
+            error_here("capability '" + expr.qualified_name->spelling() + "' expects " +
+                           std::to_string(capability->get().params.size()) + " argument(s), got " +
+                           std::to_string(expr.items.size()),
+                       expr.range);
         }
 
         const auto limit = std::min(expr.items.size(), capability->get().params.size());
@@ -1024,17 +1021,16 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
 
     const auto predicate = result_.environment.get_predicate(reference->get().target);
     if (!predicate.has_value()) {
-        result_.diagnostics.error("predicate type info is missing for '" +
-                                      expr.qualified_name->spelling() + "'",
-                                  expr.range);
+        error_here("predicate type info is missing for '" + expr.qualified_name->spelling() + "'",
+                   expr.range);
         return error_typed();
     }
 
     if (expr.items.size() != predicate->get().params.size()) {
-        result_.diagnostics.error("predicate '" + expr.qualified_name->spelling() + "' expects " +
-                                      std::to_string(predicate->get().params.size()) +
-                                      " argument(s), got " + std::to_string(expr.items.size()),
-                                  expr.range);
+        error_here("predicate '" + expr.qualified_name->spelling() + "' expects " +
+                       std::to_string(predicate->get().params.size()) + " argument(s), got " +
+                       std::to_string(expr.items.size()),
+                   expr.range);
     }
 
     bool is_pure = true;
@@ -1043,8 +1039,7 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
         const auto argument = check_expr(
             *expr.items[index], context, std::cref(*predicate->get().params[index].type));
         if (!argument.is_pure) {
-            result_.diagnostics.error("predicate arguments must be pure expressions",
-                                      expr.items[index]->range);
+            error_here("predicate arguments must be pure expressions", expr.items[index]->range);
             is_pure = false;
         }
 
@@ -1059,25 +1054,23 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
 
 TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
                                                const ValueContext &context) {
-    const auto reference =
-        resolve_result_.find_reference(ReferenceKind::TypeName, expr.qualified_name->range);
+    const auto reference = find_reference_here(ReferenceKind::TypeName, expr.qualified_name->range);
     if (!reference.has_value()) {
-        result_.diagnostics.error("unknown struct type '" + expr.qualified_name->spelling() + "'",
-                                  expr.range);
+        error_here("unknown struct type '" + expr.qualified_name->spelling() + "'", expr.range);
         return error_typed();
     }
 
     auto struct_type = resolve_type_symbol(reference->get().target, expr.range);
     if (!struct_type || struct_type->kind != TypeKind::Struct) {
-        result_.diagnostics.error("struct literal target '" + expr.qualified_name->spelling() +
-                                      "' does not resolve to a struct type",
-                                  expr.range);
+        error_here("struct literal target '" + expr.qualified_name->spelling() +
+                       "' does not resolve to a struct type",
+                   expr.range);
         return error_typed();
     }
 
     const auto struct_info = result_.environment.find_struct(struct_type->name);
     if (!struct_info.has_value()) {
-        result_.diagnostics.error("unknown struct type '" + struct_type->name + "'", expr.range);
+        error_here("unknown struct type '" + struct_type->name + "'", expr.range);
         return error_typed();
     }
 
@@ -1086,17 +1079,16 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
 
     for (const auto &field_init : expr.struct_fields) {
         if (!seen_fields.insert(field_init->field_name).second) {
-            result_.diagnostics.error("duplicate field '" + field_init->field_name +
-                                          "' in struct literal",
-                                      field_init->range);
+            error_here("duplicate field '" + field_init->field_name + "' in struct literal",
+                       field_init->range);
             continue;
         }
 
         const auto field = struct_info->get().find_field(field_init->field_name);
         if (!field.has_value()) {
-            result_.diagnostics.error("unknown field '" + field_init->field_name +
-                                          "' in struct literal for '" + struct_type->name + "'",
-                                      field_init->range);
+            error_here("unknown field '" + field_init->field_name + "' in struct literal for '" +
+                           struct_type->name + "'",
+                       field_init->range);
             continue;
         }
 
@@ -1108,8 +1100,7 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
 
     for (const auto &field : struct_info->get().fields) {
         if (!seen_fields.contains(field.name)) {
-            result_.diagnostics.error("missing field '" + field.name + "' in struct literal",
-                                      expr.range);
+            error_here("missing field '" + field.name + "' in struct literal", expr.range);
         }
     }
 
@@ -1130,7 +1121,7 @@ TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
             return typed(expected_type->get().clone());
         }
 
-        result_.diagnostics.error("cannot infer type of empty list literal", expr.range);
+        error_here("cannot infer type of empty list literal", expr.range);
         return typed(Type::list(make_any_type()));
     }
 
@@ -1168,7 +1159,7 @@ TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
             return typed(expected_type->get().clone());
         }
 
-        result_.diagnostics.error("cannot infer type of empty set literal", expr.range);
+        error_here("cannot infer type of empty set literal", expr.range);
         return typed(Type::set(make_any_type()));
     }
 
@@ -1208,7 +1199,7 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
             return typed(expected_type->get().clone());
         }
 
-        result_.diagnostics.error("cannot infer type of empty map literal", expr.range);
+        error_here("cannot infer type of empty map literal", expr.range);
         return typed(Type::map(make_any_type(), make_any_type()));
     }
 
@@ -1247,17 +1238,15 @@ TypedValue TypeCheckPass::check_unary_expr(const ast::ExprSyntax &expr,
     switch (expr.unary_op) {
     case ast::ExprUnaryOp::Not:
         if (!is_bool_type(*operand.type) && !is_error_type(*operand.type)) {
-            result_.diagnostics.error("logical not requires Bool, got " + operand.type->describe(),
-                                      expr.range);
+            error_here("logical not requires Bool, got " + operand.type->describe(), expr.range);
         }
         return typed(Type::make(TypeKind::Bool), operand.is_pure);
     case ast::ExprUnaryOp::Negate:
     case ast::ExprUnaryOp::Positive:
         if (!is_numeric_type(*operand.type) && !is_error_type(*operand.type)) {
-            result_.diagnostics.error(
-                "numeric unary operator requires Int, Float, or Decimal, got " +
-                    operand.type->describe(),
-                expr.range);
+            error_here("numeric unary operator requires Int, Float, or Decimal, got " +
+                           operand.type->describe(),
+                       expr.range);
         }
         return typed(operand.type ? operand.type->clone() : make_any_type(), operand.is_pure);
     }
@@ -1282,7 +1271,7 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
     case ast::ExprBinaryOp::And:
         if ((!is_bool_type(*lhs.type) || !is_bool_type(*rhs.type)) && !is_error_type(*lhs.type) &&
             !is_error_type(*rhs.type)) {
-            result_.diagnostics.error("logical operator requires Bool operands", expr.range);
+            error_here("logical operator requires Bool operands", expr.range);
         }
         return typed(Type::make(TypeKind::Bool), is_pure);
     case ast::ExprBinaryOp::Equal:
@@ -1292,9 +1281,9 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
     case ast::ExprBinaryOp::Greater:
     case ast::ExprBinaryOp::GreaterEqual:
         if (!comparable()) {
-            result_.diagnostics.error("comparison operands are not type-compatible: " +
-                                          lhs.type->describe() + " vs " + rhs.type->describe(),
-                                      expr.range);
+            error_here("comparison operands are not type-compatible: " + lhs.type->describe() +
+                           " vs " + rhs.type->describe(),
+                       expr.range);
         }
         return typed(Type::make(TypeKind::Bool), is_pure);
     case ast::ExprBinaryOp::Add:
@@ -1316,9 +1305,9 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
-            result_.diagnostics.error("operator '+' is not defined for " + lhs.type->describe() +
-                                          " and " + rhs.type->describe(),
-                                      expr.range);
+            error_here("operator '+' is not defined for " + lhs.type->describe() + " and " +
+                           rhs.type->describe(),
+                       expr.range);
         }
         return error_typed(is_pure);
     case ast::ExprBinaryOp::Subtract:
@@ -1336,9 +1325,9 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
-            result_.diagnostics.error("operator '-' is not defined for " + lhs.type->describe() +
-                                          " and " + rhs.type->describe(),
-                                      expr.range);
+            error_here("operator '-' is not defined for " + lhs.type->describe() + " and " +
+                           rhs.type->describe(),
+                       expr.range);
         }
         return error_typed(is_pure);
     case ast::ExprBinaryOp::Multiply:
@@ -1352,9 +1341,9 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
-            result_.diagnostics.error("arithmetic operator is not defined for " +
-                                          lhs.type->describe() + " and " + rhs.type->describe(),
-                                      expr.range);
+            error_here("arithmetic operator is not defined for " + lhs.type->describe() + " and " +
+                           rhs.type->describe(),
+                       expr.range);
         }
         return error_typed(is_pure);
     case ast::ExprBinaryOp::Modulo:
@@ -1363,7 +1352,7 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
-            result_.diagnostics.error("operator '%' requires Int operands", expr.range);
+            error_here("operator '%' requires Int operands", expr.range);
         }
         return error_typed(is_pure);
     }
@@ -1385,7 +1374,7 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
 
     if (collection.type->kind == TypeKind::List) {
         if (index.type->kind != TypeKind::Int && !is_error_type(*index.type)) {
-            result_.diagnostics.error("list index must have type Int", expr.second->range);
+            error_here("list index must have type Int", expr.second->range);
         }
 
         if (collection.type->first) {
@@ -1409,23 +1398,22 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
     }
 
     if (!is_error_type(*collection.type)) {
-        result_.diagnostics.error("index access requires a List or Map value, got " +
-                                      collection.type->describe(),
-                                  expr.range);
+        error_here("index access requires a List or Map value, got " +
+                       collection.type->describe(),
+                   expr.range);
     }
 
     return error_typed(is_pure);
 }
 
-void TypeCheckPass::check_const_initializers() {
-    for (const auto &declaration : program_.declarations) {
+void TypeCheckPass::check_const_initializers_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::ConstDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
-        const auto symbol =
-            resolve_result_.symbol_table.find_local(SymbolNamespace::Consts, decl.name);
+        const auto symbol = find_local_here(SymbolNamespace::Consts, decl.name);
         if (!symbol.has_value()) {
             continue;
         }
@@ -1440,50 +1428,64 @@ void TypeCheckPass::check_const_initializers() {
         (void)check_assignable(
             *value.type, declared_type->get(), decl.value->range, "const initializer");
         if (!value.is_pure) {
-            result_.diagnostics.error("const initializer must be a pure expression",
-                                      decl.value->range);
+            error_here("const initializer must be a pure expression", decl.value->range);
         }
     }
+}
+
+void TypeCheckPass::check_const_initializers() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            check_const_initializers_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    check_const_initializers_in_program(require(program_, "typecheck program must exist"));
 }
 
 void TypeCheckPass::check_struct_defaults() {
     for (const auto &[id, decl] : struct_decls_) {
-        const auto struct_info = result_.environment.get_struct(SymbolId{id});
-        if (!struct_info.has_value()) {
-            continue;
-        }
-
-        for (std::size_t index = 0; index < decl.get().fields.size(); ++index) {
-            const auto &field_decl = decl.get().fields[index];
-            if (!field_decl->default_value) {
-                continue;
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto struct_info = result_.environment.get_struct(SymbolId{id});
+            if (!struct_info.has_value()) {
+                return;
             }
 
-            const auto &field_info = struct_info->get().fields[index];
-            const ValueContext context;
-            const auto value =
-                check_expr(*field_decl->default_value, context, std::cref(*field_info.type));
-            (void)check_assignable(*value.type,
-                                   *field_info.type,
-                                   field_decl->default_value->range,
-                                   "struct field default");
-            if (!value.is_pure) {
-                result_.diagnostics.error("struct field default value must be pure",
-                                          field_decl->default_value->range);
+            for (std::size_t index = 0; index < decl.get().fields.size(); ++index) {
+                const auto &field_decl = decl.get().fields[index];
+                if (!field_decl->default_value) {
+                    continue;
+                }
+
+                const auto &field_info = struct_info->get().fields[index];
+                const ValueContext context;
+                const auto value =
+                    check_expr(*field_decl->default_value, context, std::cref(*field_info.type));
+                (void)check_assignable(*value.type,
+                                       *field_info.type,
+                                       field_decl->default_value->range,
+                                       "struct field default");
+                if (!value.is_pure) {
+                    error_here("struct field default value must be pure",
+                               field_decl->default_value->range);
+                }
             }
-        }
+        });
     }
 }
 
-void TypeCheckPass::check_contracts() {
-    for (const auto &declaration : program_.declarations) {
+void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::ContractDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
-        const auto target =
-            resolve_result_.find_reference(ReferenceKind::ContractTarget, decl.target->range);
+        const auto target = find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
         if (!target.has_value()) {
             continue;
         }
@@ -1513,14 +1515,27 @@ void TypeCheckPass::check_contracts() {
 
             const auto value = check_expr(*clause->expr, context, std::cref(*bool_type));
             if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
-                result_.diagnostics.error("contract expression must have type Bool",
-                                          clause->expr->range);
+                error_here("contract expression must have type Bool", clause->expr->range);
             }
             if (!value.is_pure) {
-                result_.diagnostics.error("contract expression must be pure", clause->expr->range);
+                error_here("contract expression must be pure", clause->expr->range);
             }
         }
     }
+}
+
+void TypeCheckPass::check_contracts() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            check_contracts_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    check_contracts_in_program(require(program_, "typecheck program must exist"));
 }
 
 void TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
@@ -1530,12 +1545,10 @@ void TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax 
         const auto bool_type = Type::make(TypeKind::Bool);
         const auto value = check_expr(*expr.expr, context, std::cref(*bool_type));
         if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
-            result_.diagnostics.error("temporal embedded expression must have type Bool",
-                                      expr.expr->range);
+            error_here("temporal embedded expression must have type Bool", expr.expr->range);
         }
         if (!value.is_pure) {
-            result_.diagnostics.error("temporal embedded expression must be pure",
-                                      expr.expr->range);
+            error_here("temporal embedded expression must be pure", expr.expr->range);
         }
         break;
     }
@@ -1554,15 +1567,14 @@ void TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax 
     }
 }
 
-void TypeCheckPass::check_flows() {
-    for (const auto &declaration : program_.declarations) {
+void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::FlowDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
-        const auto target =
-            resolve_result_.find_reference(ReferenceKind::FlowTarget, decl.target->range);
+        const auto target = find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
         if (!target.has_value()) {
             continue;
         }
@@ -1588,15 +1600,28 @@ void TypeCheckPass::check_flows() {
     }
 }
 
-void TypeCheckPass::check_workflows() {
-    for (const auto &declaration : program_.declarations) {
+void TypeCheckPass::check_flows() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            check_flows_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    check_flows_in_program(require(program_, "typecheck program must exist"));
+}
+
+void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::WorkflowDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
-        const auto workflow_symbol =
-            resolve_result_.symbol_table.find_local(SymbolNamespace::Workflows, decl.name);
+        const auto workflow_symbol = find_local_here(SymbolNamespace::Workflows, decl.name);
         if (!workflow_symbol.has_value()) {
             continue;
         }
@@ -1609,8 +1634,8 @@ void TypeCheckPass::check_workflows() {
         BindingMap all_node_outputs;
 
         for (const auto &node : decl.nodes) {
-            const auto target = resolve_result_.find_reference(ReferenceKind::WorkflowNodeTarget,
-                                                               node->target->range);
+            const auto target =
+                find_reference_here(ReferenceKind::WorkflowNodeTarget, node->target->range);
             if (!target.has_value()) {
                 continue;
             }
@@ -1625,8 +1650,8 @@ void TypeCheckPass::check_workflows() {
         }
 
         for (const auto &node : decl.nodes) {
-            const auto target = resolve_result_.find_reference(ReferenceKind::WorkflowNodeTarget,
-                                                               node->target->range);
+            const auto target =
+                find_reference_here(ReferenceKind::WorkflowNodeTarget, node->target->range);
             if (!target.has_value()) {
                 continue;
             }
@@ -1679,6 +1704,20 @@ void TypeCheckPass::check_workflows() {
                                decl.return_value->range,
                                "workflow return");
     }
+}
+
+void TypeCheckPass::check_workflows() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            check_workflows_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    check_workflows_in_program(require(program_, "typecheck program must exist"));
 }
 
 void TypeCheckPass::check_block(const ast::BlockSyntax &block,
@@ -1735,12 +1774,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         };
         const auto condition = check_expr(*statement.if_stmt->condition, condition_context);
         if (!is_bool_type(*condition.type) && !is_error_type(*condition.type)) {
-            result_.diagnostics.error("if condition must have type Bool",
-                                      statement.if_stmt->condition->range);
+            error_here("if condition must have type Bool", statement.if_stmt->condition->range);
         }
         if (!condition.is_pure) {
-            result_.diagnostics.error("if condition must be pure",
-                                      statement.if_stmt->condition->range);
+            error_here("if condition must be pure", statement.if_stmt->condition->range);
         }
 
         auto then_context = ValueContext{
@@ -1783,12 +1820,11 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         };
         const auto condition = check_expr(*statement.assert_stmt->condition, condition_context);
         if (!is_bool_type(*condition.type) && !is_error_type(*condition.type)) {
-            result_.diagnostics.error("assert condition must have type Bool",
-                                      statement.assert_stmt->condition->range);
+            error_here("assert condition must have type Bool",
+                       statement.assert_stmt->condition->range);
         }
         if (!condition.is_pure) {
-            result_.diagnostics.error("assert condition must be pure",
-                                      statement.assert_stmt->condition->range);
+            error_here("assert condition must be pure", statement.assert_stmt->condition->range);
         }
         break;
     }
@@ -1804,118 +1840,10 @@ TypeCheckResult TypeChecker::check(const ast::Program &program,
     return pass.run();
 }
 
-void dump_type_environment(const TypeEnvironment &environment,
-                           const SymbolTable &symbols,
-                           std::ostream &out) {
-    for (const auto &symbol : symbols.symbols()) {
-        switch (symbol.kind) {
-        case SymbolKind::Const: {
-            const auto type = environment.get_const_type(symbol.id);
-            if (!type.has_value()) {
-                break;
-            }
-
-            out << "const " << symbol.canonical_name << ": " << type->get().describe() << '\n';
-            break;
-        }
-        case SymbolKind::Struct: {
-            const auto info = environment.get_struct(symbol.id);
-            if (!info.has_value()) {
-                break;
-            }
-
-            out << "struct " << info->get().canonical_name << '\n';
-            for (const auto &field : info->get().fields) {
-                out << "  " << field.name << ": " << (field.type ? field.type->describe() : "Any");
-                if (field.has_default) {
-                    out << " = <default>";
-                }
-                out << '\n';
-            }
-            break;
-        }
-        case SymbolKind::Enum: {
-            const auto info = environment.get_enum(symbol.id);
-            if (!info.has_value()) {
-                break;
-            }
-
-            out << "enum " << info->get().canonical_name << '\n';
-            for (const auto &variant : info->get().variants) {
-                out << "  " << variant.name << '\n';
-            }
-            break;
-        }
-        case SymbolKind::Capability: {
-            const auto info = environment.get_capability(symbol.id);
-            if (!info.has_value()) {
-                break;
-            }
-
-            out << "capability " << info->get().canonical_name << '(';
-            for (std::size_t index = 0; index < info->get().params.size(); ++index) {
-                if (index != 0) {
-                    out << ", ";
-                }
-                const auto &param = info->get().params[index];
-                out << param.name << ": " << (param.type ? param.type->describe() : "Any");
-            }
-            out << ") -> "
-                << (info->get().return_type ? info->get().return_type->describe() : "Any") << '\n';
-            break;
-        }
-        case SymbolKind::Predicate: {
-            const auto info = environment.get_predicate(symbol.id);
-            if (!info.has_value()) {
-                break;
-            }
-
-            out << "predicate " << info->get().canonical_name << '(';
-            for (std::size_t index = 0; index < info->get().params.size(); ++index) {
-                if (index != 0) {
-                    out << ", ";
-                }
-                const auto &param = info->get().params[index];
-                out << param.name << ": " << (param.type ? param.type->describe() : "Any");
-            }
-            out << ") -> Bool\n";
-            break;
-        }
-        case SymbolKind::Agent: {
-            const auto info = environment.get_agent(symbol.id);
-            if (!info.has_value()) {
-                break;
-            }
-
-            out << "agent " << info->get().canonical_name << '\n';
-            out << "  input: "
-                << (info->get().input_type ? info->get().input_type->describe() : "Any") << '\n';
-            out << "  context: "
-                << (info->get().context_type ? info->get().context_type->describe() : "Any")
-                << '\n';
-            out << "  output: "
-                << (info->get().output_type ? info->get().output_type->describe() : "Any") << '\n';
-            out << "  capabilities: [" << join_symbol_names(symbols, info->get().capability_symbols)
-                << "]\n";
-            break;
-        }
-        case SymbolKind::Workflow: {
-            const auto info = environment.get_workflow(symbol.id);
-            if (!info.has_value()) {
-                break;
-            }
-
-            out << "workflow " << info->get().canonical_name << '\n';
-            out << "  input: "
-                << (info->get().input_type ? info->get().input_type->describe() : "Any") << '\n';
-            out << "  output: "
-                << (info->get().output_type ? info->get().output_type->describe() : "Any") << '\n';
-            break;
-        }
-        case SymbolKind::TypeAlias:
-            break;
-        }
-    }
+TypeCheckResult TypeChecker::check(const SourceGraph &graph,
+                                   const ResolveResult &resolve_result) const {
+    TypeCheckPass pass(graph, resolve_result);
+    return pass.run();
 }
 
 } // namespace ahfl

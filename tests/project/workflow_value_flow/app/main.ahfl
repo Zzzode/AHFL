@@ -1,0 +1,25 @@
+module app::main;
+import lib::types as types;
+import lib::agents as agents;
+
+flow for agents::AliasAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return types::ResponseAlias {
+            value: input.value,
+        };
+    }
+}
+
+workflow ValueFlowWorkflow {
+    input: types::RequestAlias;
+    output: types::ResponseAlias;
+
+    node first: agents::AliasAgent(input);
+    node second: agents::AliasAgent(types::RequestAlias { value: first.value }) after [first];
+
+    return: types::ResponseAlias { value: second.value };
+}

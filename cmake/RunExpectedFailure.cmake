@@ -10,8 +10,17 @@ if(NOT DEFINED EXPECTED_REGEX)
     message(FATAL_ERROR "EXPECTED_REGEX is required")
 endif()
 
+if(DEFINED AHFLC_ARGS)
+    set(ahflc_command "${AHFLC}")
+    foreach(arg IN LISTS AHFLC_ARGS)
+        list(APPEND ahflc_command "${arg}")
+    endforeach()
+else()
+    set(ahflc_command "${AHFLC}" check "${INPUT_FILE}")
+endif()
+
 execute_process(
-    COMMAND "${AHFLC}" check "${INPUT_FILE}"
+    COMMAND ${ahflc_command}
     RESULT_VARIABLE ahflc_result
     OUTPUT_VARIABLE ahflc_stdout
     ERROR_VARIABLE ahflc_stderr

@@ -1,0 +1,316 @@
+{
+  "format_version": "ahfl.ir.v1",
+  "formal_observations": [
+    {
+      "symbol": "agent__lib_agents_AliasAgent__called__lib_agents_Echo",
+      "kind": "called_capability",
+      "agent": "lib::agents::AliasAgent",
+      "capability": "lib::agents::Echo"
+    }
+  ],
+  "declarations": [
+    {
+      "kind": "module",
+      "provenance": {
+        "module_name": "app::main",
+        "source_path": "app/main.ahfl"
+      },
+      "name": "app::main"
+    },
+    {
+      "kind": "import",
+      "provenance": {
+        "module_name": "app::main",
+        "source_path": "app/main.ahfl"
+      },
+      "path": "lib::types",
+      "alias": "types"
+    },
+    {
+      "kind": "import",
+      "provenance": {
+        "module_name": "app::main",
+        "source_path": "app/main.ahfl"
+      },
+      "path": "lib::agents",
+      "alias": "agents"
+    },
+    {
+      "kind": "flow",
+      "provenance": {
+        "module_name": "app::main",
+        "source_path": "app/main.ahfl"
+      },
+      "target": "lib::agents::AliasAgent",
+      "state_handlers": [
+        {
+          "state_name": "Init",
+          "policy": [],
+          "summary": {
+            "goto_targets": [
+              "Done"
+            ],
+            "may_return": false,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
+          "body": {
+            "statements": [
+              {
+                "kind": "goto",
+                "target_state": "Done"
+              }
+            ]
+          }
+        },
+        {
+          "state_name": "Done",
+          "policy": [],
+          "summary": {
+            "goto_targets": [],
+            "may_return": true,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
+          "body": {
+            "statements": [
+              {
+                "kind": "return",
+                "value": {
+                  "kind": "struct_literal",
+                  "type_name": "lib::types::ResponseAlias",
+                  "fields": [
+                    {
+                      "name": "value",
+                      "value": {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "input",
+                          "root_name": "input",
+                          "members": [
+                            "value"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "workflow",
+      "provenance": {
+        "module_name": "app::main",
+        "source_path": "app/main.ahfl"
+      },
+      "name": "app::main::MainWorkflow",
+      "input_type": "lib::types::Request",
+      "output_type": "lib::types::Response",
+      "nodes": [
+        {
+          "name": "run",
+          "target": "lib::agents::AliasAgent",
+          "input": {
+            "kind": "path",
+            "path": {
+              "root_kind": "input",
+              "root_name": "input",
+              "members": []
+            }
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "after": []
+        }
+      ],
+      "safety": [],
+      "liveness": [
+        {
+          "kind": "unary",
+          "op": "eventually",
+          "operand": {
+            "kind": "completed",
+            "node": "run",
+            "state_name": "Done"
+          }
+        }
+      ],
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "run",
+            "members": []
+          }
+        ]
+      },
+      "return_value": {
+        "kind": "path",
+        "path": {
+          "root_kind": "identifier",
+          "root_name": "run",
+          "members": []
+        }
+      }
+    },
+    {
+      "kind": "module",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types"
+    },
+    {
+      "kind": "struct",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types::Request",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types::Context",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "default_value": {
+            "kind": "string_literal",
+            "spelling": "\"pending\""
+          }
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types::Response",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "type_alias",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types::RequestAlias",
+      "aliased_type": "lib::types::Request"
+    },
+    {
+      "kind": "type_alias",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types::ContextAlias",
+      "aliased_type": "lib::types::Context"
+    },
+    {
+      "kind": "type_alias",
+      "provenance": {
+        "module_name": "lib::types",
+        "source_path": "lib/types.ahfl"
+      },
+      "name": "lib::types::ResponseAlias",
+      "aliased_type": "lib::types::Response"
+    },
+    {
+      "kind": "module",
+      "provenance": {
+        "module_name": "lib::agents",
+        "source_path": "lib/agents.ahfl"
+      },
+      "name": "lib::agents"
+    },
+    {
+      "kind": "import",
+      "provenance": {
+        "module_name": "lib::agents",
+        "source_path": "lib/agents.ahfl"
+      },
+      "path": "lib::types",
+      "alias": "types"
+    },
+    {
+      "kind": "capability",
+      "provenance": {
+        "module_name": "lib::agents",
+        "source_path": "lib/agents.ahfl"
+      },
+      "name": "lib::agents::Echo",
+      "params": [
+        {
+          "name": "request",
+          "type": "lib::types::Request"
+        }
+      ],
+      "return_type": "lib::types::Response"
+    },
+    {
+      "kind": "agent",
+      "provenance": {
+        "module_name": "lib::agents",
+        "source_path": "lib/agents.ahfl"
+      },
+      "name": "lib::agents::AliasAgent",
+      "input_type": "lib::types::Request",
+      "context_type": "lib::types::Context",
+      "output_type": "lib::types::Response",
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": [
+        "lib::agents::Echo"
+      ],
+      "quota": [],
+      "transitions": [
+        {
+          "from_state": "Init",
+          "to_state": "Done"
+        }
+      ]
+    }
+  ]
+}

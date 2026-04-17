@@ -1,0 +1,19 @@
+module app::side;
+import lib::types as types;
+import lib::one as one;
+import lib::two as two;
+import app::main as main;
+
+flow for two::TwoAgent {
+    state Init {
+        let reply = two::Pong(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return types::TwoRes {
+            value: ctx.value,
+        };
+    }
+}

@@ -1,0 +1,5 @@
+module lib::types;
+
+struct DuplicateRequest {
+    value: String;
+}

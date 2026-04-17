@@ -1,0 +1,234 @@
+{
+  "format_version": "ahfl.ir.v1",
+  "formal_observations": [],
+  "declarations": [
+    {
+      "kind": "module",
+      "name": "ir::workflow_value_flow"
+    },
+    {
+      "kind": "struct",
+      "name": "ir::workflow_value_flow::Request",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "ir::workflow_value_flow::Context",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "default_value": {
+            "kind": "string_literal",
+            "spelling": "\"seed\""
+          }
+        }
+      ]
+    },
+    {
+      "kind": "struct",
+      "name": "ir::workflow_value_flow::Response",
+      "fields": [
+        {
+          "name": "value",
+          "type": "String",
+          "default_value": null
+        }
+      ]
+    },
+    {
+      "kind": "agent",
+      "name": "ir::workflow_value_flow::EchoAgent",
+      "input_type": "ir::workflow_value_flow::Request",
+      "context_type": "ir::workflow_value_flow::Context",
+      "output_type": "ir::workflow_value_flow::Response",
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": [],
+      "quota": [],
+      "transitions": [
+        {
+          "from_state": "Init",
+          "to_state": "Done"
+        }
+      ]
+    },
+    {
+      "kind": "flow",
+      "target": "ir::workflow_value_flow::EchoAgent",
+      "state_handlers": [
+        {
+          "state_name": "Init",
+          "policy": [],
+          "summary": {
+            "goto_targets": [
+              "Done"
+            ],
+            "may_return": false,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
+          "body": {
+            "statements": [
+              {
+                "kind": "goto",
+                "target_state": "Done"
+              }
+            ]
+          }
+        },
+        {
+          "state_name": "Done",
+          "policy": [],
+          "summary": {
+            "goto_targets": [],
+            "may_return": true,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
+          "body": {
+            "statements": [
+              {
+                "kind": "return",
+                "value": {
+                  "kind": "struct_literal",
+                  "type_name": "ir::workflow_value_flow::Response",
+                  "fields": [
+                    {
+                      "name": "value",
+                      "value": {
+                        "kind": "path",
+                        "path": {
+                          "root_kind": "input",
+                          "root_name": "input",
+                          "members": [
+                            "value"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "kind": "workflow",
+      "name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "input_type": "ir::workflow_value_flow::Request",
+      "output_type": "ir::workflow_value_flow::Response",
+      "nodes": [
+        {
+          "name": "first",
+          "target": "ir::workflow_value_flow::EchoAgent",
+          "input": {
+            "kind": "path",
+            "path": {
+              "root_kind": "input",
+              "root_name": "input",
+              "members": []
+            }
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "after": []
+        },
+        {
+          "name": "second",
+          "target": "ir::workflow_value_flow::EchoAgent",
+          "input": {
+            "kind": "struct_literal",
+            "type_name": "ir::workflow_value_flow::Request",
+            "fields": [
+              {
+                "name": "value",
+                "value": {
+                  "kind": "path",
+                  "path": {
+                    "root_kind": "identifier",
+                    "root_name": "first",
+                    "members": [
+                      "value"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_node_output",
+                "root_name": "first",
+                "members": [
+                  "value"
+                ]
+              }
+            ]
+          },
+          "after": [
+            "first"
+          ]
+        }
+      ],
+      "safety": [],
+      "liveness": [],
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "second",
+            "members": [
+              "value"
+            ]
+          }
+        ]
+      },
+      "return_value": {
+        "kind": "struct_literal",
+        "type_name": "ir::workflow_value_flow::Response",
+        "fields": [
+          {
+            "name": "value",
+            "value": {
+              "kind": "path",
+              "path": {
+                "root_kind": "identifier",
+                "root_name": "second",
+                "members": [
+                  "value"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

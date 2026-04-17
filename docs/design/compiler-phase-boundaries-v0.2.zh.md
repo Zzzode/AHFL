@@ -1,6 +1,13 @@
-# AHFL Core V0.1 Frontend Architecture
+# AHFL Core V0.2 Compiler Phase Boundaries
 
-本文冻结 AHFL Core V0.1 前端阶段职责与中间表示边界，作为后续 AST、resolver、type checker、validator 和 IR 实现的统一约束。
+本文冻结 AHFL Core V0.2 的编译阶段职责与中间表示边界，面向需要理解 `parse -> ast -> resolve -> typecheck -> validate -> emit` 主链的工程实现者。
+
+关联文档：
+
+- [compiler-architecture-v0.2.zh.md](./compiler-architecture-v0.2.zh.md)
+- [frontend-lowering-architecture-v0.2.zh.md](./frontend-lowering-architecture-v0.2.zh.md)
+- [semantics-architecture-v0.2.zh.md](./semantics-architecture-v0.2.zh.md)
+- [ir-backend-architecture-v0.2.zh.md](./ir-backend-architecture-v0.2.zh.md)
 
 适用范围：
 
@@ -8,11 +15,13 @@
 - `src/parser/generated/*`
 - `src/frontend/frontend.cpp`
 - `include/ahfl/frontend/ast.hpp`
-- 后续新增的 resolver / checker / emitter 模块
+- `src/semantics/*`
+- `src/ir/*`
+- `src/backends/*`
 
 ## 冻结的前端流水线
 
-AHFL Core V0.1 前端固定分为六个阶段：
+AHFL Core 当前固定分为六个阶段：
 
 1. `parse`
 2. `ast`
@@ -174,11 +183,11 @@ IR 必须满足：
 
 parse tree 的生命周期只限于 `parse -> ast` lowering 期间；一旦 `ast::Program` 构建完成，后续阶段都必须只消费 AST 与语义对象。
 
-## 对后续 issue 的约束
+## 对后续实现的约束
 
-从 Issue 04 开始，默认采用本文边界：
+后续继续扩展编译器时，默认采用本文边界：
 
-- Issue 04-08 只能扩展手写 AST 和 lowering，不得把 parse tree 当 AST 的替代物
-- Issue 09-14 只能基于 AST、resolve 结果和 typecheck 结果工作
-- Issue 15 的 IR 输出必须基于 validate 后的语义模型，而不是直接序列化 parse tree
-- Issue 16-20 的 formal backend 也必须基于 validate 后的语义模型，不得绕过前端阶段边界
+1. 新增语法能力时，只能扩展 hand-written AST 和 lowering，不得把 parse tree 当 AST 的替代物。
+2. 新增语义能力时，只能基于 AST、resolve 结果和 typecheck 结果工作，不得回看 parse tree。
+3. IR 输出必须基于 validate 后的语义模型，而不是直接序列化 parse tree。
+4. formal backend 也必须基于 validate 后的语义模型，不得绕过编译阶段边界。

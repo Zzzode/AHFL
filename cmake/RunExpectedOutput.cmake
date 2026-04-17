@@ -14,8 +14,13 @@ if(NOT DEFINED EXPECTED_FILE)
     message(FATAL_ERROR "EXPECTED_FILE is not defined")
 endif()
 
+set(ahflc_args)
+if(DEFINED AHFLC_ARGS AND NOT AHFLC_ARGS STREQUAL "")
+    separate_arguments(ahflc_args UNIX_COMMAND "${AHFLC_ARGS}")
+endif()
+
 execute_process(
-    COMMAND "${AHFLC}" "${SUBCOMMAND}" "${INPUT_FILE}"
+    COMMAND "${AHFLC}" "${SUBCOMMAND}" ${ahflc_args} "${INPUT_FILE}"
     RESULT_VARIABLE result_code
     OUTPUT_VARIABLE actual_output
     ERROR_VARIABLE actual_error

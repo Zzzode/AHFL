@@ -1,0 +1,12 @@
+module app::main;
+import lib::types as types;
+import lib::agents as agents;
+
+workflow BadWorkflow {
+    input: types::RequestAlias;
+    output: types::ResponseAlias;
+    node run: agents::AliasAgent(types::ResponseAlias {
+        value: "wrong",
+    });
+    return: run;
+}

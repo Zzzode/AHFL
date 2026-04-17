@@ -1,0 +1,13 @@
+module lib::agents;
+import lib::types as types;
+
+agent AliasAgent {
+    input: types::RequestAlias;
+    context: types::ContextAlias;
+    output: types::ResponseAlias;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}

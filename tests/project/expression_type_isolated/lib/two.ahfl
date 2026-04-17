@@ -1,0 +1,15 @@
+module lib::two;
+import lib::types as types;
+
+capability Pong(request: types::TwoReq) -> types::TwoRes;
+
+agent TwoAgent {
+    input: types::TwoReq;
+    context: types::TwoCtx;
+    output: types::TwoRes;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Pong];
+    transition Init -> Done;
+}

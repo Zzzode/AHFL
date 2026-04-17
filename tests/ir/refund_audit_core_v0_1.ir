@@ -3,6 +3,10 @@ formal_observations {
   observation agent__refund_audit_RefundAudit__called__refund_audit_OrderQuery: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::OrderQuery)
   observation agent__refund_audit_RefundAudit__called__refund_audit_AuditDecision: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::AuditDecision)
   observation agent__refund_audit_RefundAudit__called__refund_audit_TicketCreate: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::TicketCreate)
+  observation contract_refund_audit_RefundAudit_0_atom_0: embedded_bool_expr(scope=contract_clause, owner=refund::audit::RefundAudit, clause=0, atom=0)
+  observation contract_refund_audit_RefundAudit_1_atom_0: embedded_bool_expr(scope=contract_clause, owner=refund::audit::RefundAudit, clause=1, atom=0)
+  observation contract_refund_audit_RefundAudit_2_atom_0: embedded_bool_expr(scope=contract_clause, owner=refund::audit::RefundAudit, clause=2, atom=0)
+  observation contract_refund_audit_RefundAudit_3_atom_0: embedded_bool_expr(scope=contract_clause, owner=refund::audit::RefundAudit, clause=3, atom=0)
   observation agent__refund_audit_RefundAudit__called__refund_audit_RefundExecute: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::RefundExecute)
   observation agent__refund_audit_RefundAudit__called__refund_audit_UserInfoModify: called_capability(agent=refund::audit::RefundAudit, capability=refund::audit::UserInfoModify)
 }
@@ -92,12 +96,28 @@ contract refund::audit::RefundAudit {
 
 flow refund::audit::RefundAudit {
   state Init {
+    summary {
+      goto_targets: [Auditing]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     goto Auditing
   }
   state Auditing {
     retry: 2
     retry_on: [TimeoutError, ToolError]
     timeout: 30s
+    summary {
+      goto_targets: [Approved, Rejected]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: [ctx.result, ctx.reason, ctx.ticket_id]
+      called_targets: [refund::audit::OrderQuery, refund::audit::AuditDecision, refund::audit::TicketCreate]
+      assert_count: 0
+    }
     let order: refund::audit::OrderInfo = refund::audit::OrderQuery(input.order_id)
     let decision: refund::audit::AuditReply = refund::audit::AuditDecision(order, input)
     ctx.result = decision.result
@@ -111,12 +131,36 @@ flow refund::audit::RefundAudit {
     }
   }
   state Approved {
+    summary {
+      goto_targets: [Terminated]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     goto Terminated
   }
   state Rejected {
+    summary {
+      goto_targets: [Terminated]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     goto Terminated
   }
   state Terminated {
+    summary {
+      goto_targets: []
+      may_return: true
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
     return refund::audit::RefundDecision { result: ctx.result, reason: ctx.reason, ticket_id: ctx.ticket_id }
   }
 }
@@ -125,7 +169,13 @@ workflow refund::audit::RefundAuditWorkflow {
   input: refund::audit::RefundRequest
   output: refund::audit::RefundDecision
   node audit: refund::audit::RefundAudit(input)
+    input_summary {
+      reads: [workflow_input(input)]
+    }
   safety: (G(!(running(audit))) || F(completed(audit)))
   liveness: F(completed(audit, Terminated))
+  return_summary {
+    reads: [workflow_node_output(audit)]
+  }
   return: audit
 }

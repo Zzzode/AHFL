@@ -1,0 +1,163 @@
+{
+  "format_version": "ahfl.native-package.v1",
+  "metadata": {
+    "identity": null,
+    "entry_target": null,
+    "export_targets": [],
+    "capability_binding_keys": []
+  },
+  "executable_targets": [
+    {
+      "kind": "agent",
+      "canonical_name": "ir::expr_temporal::ExprAgent",
+      "input_type": "ir::expr_temporal::Request",
+      "context_type": "ir::expr_temporal::Context",
+      "output_type": "ir::expr_temporal::Response",
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": [
+        "ir::expr_temporal::Decide"
+      ]
+    },
+    {
+      "kind": "workflow",
+      "canonical_name": "ir::expr_temporal::ExprWorkflow",
+      "input_type": "ir::expr_temporal::Request",
+      "output_type": "ir::expr_temporal::Response",
+      "execution_graph": {
+        "entry_nodes": [
+          "run"
+        ],
+        "dependency_edges": []
+      },
+      "nodes": [
+        {
+          "name": "run",
+          "target": "ir::expr_temporal::ExprAgent",
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "after": [],
+          "lifecycle": {
+            "start_condition": "immediate",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          }
+        }
+      ],
+      "safety_clause_count": 1,
+      "liveness_clause_count": 1,
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "run",
+            "members": []
+          }
+        ]
+      }
+    }
+  ],
+  "capability_binding_slots": [
+    {
+      "capability_name": "ir::expr_temporal::Decide",
+      "binding_key": "ir::expr_temporal::Decide",
+      "required_by_targets": [
+        {
+          "kind": "agent",
+          "canonical_name": "ir::expr_temporal::ExprAgent"
+        },
+        {
+          "kind": "workflow",
+          "canonical_name": "ir::expr_temporal::ExprWorkflow"
+        }
+      ]
+    }
+  ],
+  "policy_obligations": [
+    {
+      "owner_target": {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent"
+      },
+      "kind": "requires",
+      "clause_index": 0,
+      "observation_symbols": [
+        "contract_ir_expr_temporal_ExprAgent_0_atom_0"
+      ]
+    },
+    {
+      "owner_target": {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent"
+      },
+      "kind": "invariant",
+      "clause_index": 1,
+      "observation_symbols": [
+        "contract_ir_expr_temporal_ExprAgent_1_atom_0"
+      ]
+    },
+    {
+      "owner_target": {
+        "kind": "workflow",
+        "canonical_name": "ir::expr_temporal::ExprWorkflow"
+      },
+      "kind": "workflow_safety",
+      "clause_index": 0,
+      "observation_symbols": []
+    },
+    {
+      "owner_target": {
+        "kind": "workflow",
+        "canonical_name": "ir::expr_temporal::ExprWorkflow"
+      },
+      "kind": "workflow_liveness",
+      "clause_index": 0,
+      "observation_symbols": []
+    }
+  ],
+  "formal_observations": [
+    {
+      "symbol": "agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide",
+      "kind": "called_capability",
+      "agent": "ir::expr_temporal::ExprAgent",
+      "capability": "ir::expr_temporal::Decide"
+    },
+    {
+      "symbol": "contract_ir_expr_temporal_ExprAgent_0_atom_0",
+      "kind": "embedded_bool_expr",
+      "scope": {
+        "kind": "contract_clause",
+        "owner": "ir::expr_temporal::ExprAgent",
+        "clause_index": 0,
+        "atom_index": 0
+      }
+    },
+    {
+      "symbol": "contract_ir_expr_temporal_ExprAgent_1_atom_0",
+      "kind": "embedded_bool_expr",
+      "scope": {
+        "kind": "contract_clause",
+        "owner": "ir::expr_temporal::ExprAgent",
+        "clause_index": 1,
+        "atom_index": 0
+      }
+    }
+  ]
+}

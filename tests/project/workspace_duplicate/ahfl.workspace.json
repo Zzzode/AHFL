@@ -1,0 +1,8 @@
+{
+  "format_version": "ahfl.workspace.v0.3",
+  "name": "workspace-duplicate",
+  "projects": [
+    "left/ahfl.project.json",
+    "right/ahfl.project.json"
+  ]
+}

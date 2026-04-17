@@ -1,0 +1,40 @@
+-- AHFL restricted SMV backend v0.1
+-- This lowering preserves validated state-machine, flow, and workflow structure.
+-- Pure embedded expressions are abstracted as boolean observation variables.
+MODULE main
+VAR
+  agent__ir_alias_const_EchoAgent__state : {Init, Done};
+  workflow__ir_alias_const_EchoWorkflow__node__run__state : {Init, Done};
+  workflow__ir_alias_const_EchoWorkflow__node__run__started : boolean;
+  workflow__ir_alias_const_EchoWorkflow__node__run__completed : boolean;
+IVAR
+  agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo : boolean;
+  contract_ir_alias_const_EchoAgent_0_atom_0 : boolean;
+  contract_ir_alias_const_EchoAgent_1_atom_0 : boolean;
+DEFINE
+  workflow__ir_alias_const_EchoWorkflow__node__run__running := workflow__ir_alias_const_EchoWorkflow__node__run__started & !(workflow__ir_alias_const_EchoWorkflow__node__run__completed);
+ASSIGN
+  init(agent__ir_alias_const_EchoAgent__state) := Init;
+  next(agent__ir_alias_const_EchoAgent__state) := case
+    agent__ir_alias_const_EchoAgent__state = Init : Done;
+    agent__ir_alias_const_EchoAgent__state = Done : Done;
+    TRUE : agent__ir_alias_const_EchoAgent__state;
+  esac;
+  init(workflow__ir_alias_const_EchoWorkflow__node__run__state) := Init;
+  next(workflow__ir_alias_const_EchoWorkflow__node__run__state) := case
+    workflow__ir_alias_const_EchoWorkflow__node__run__state = Init : Done;
+    workflow__ir_alias_const_EchoWorkflow__node__run__state = Done : Done;
+    TRUE : workflow__ir_alias_const_EchoWorkflow__node__run__state;
+  esac;
+  init(workflow__ir_alias_const_EchoWorkflow__node__run__started) := TRUE;
+  next(workflow__ir_alias_const_EchoWorkflow__node__run__started) := TRUE;
+  init(workflow__ir_alias_const_EchoWorkflow__node__run__completed) := FALSE;
+  next(workflow__ir_alias_const_EchoWorkflow__node__run__completed) := case
+    workflow__ir_alias_const_EchoWorkflow__node__run__completed : TRUE;
+    workflow__ir_alias_const_EchoWorkflow__node__run__started & (workflow__ir_alias_const_EchoWorkflow__node__run__state = Done) : TRUE;
+    TRUE : FALSE;
+  esac;
+-- contract ir::alias_const::EchoAgent requires[0]
+LTLSPEC contract_ir_alias_const_EchoAgent_0_atom_0
+-- contract ir::alias_const::EchoAgent ensures[1]
+LTLSPEC G ((agent__ir_alias_const_EchoAgent__state = Done) -> contract_ir_alias_const_EchoAgent_1_atom_0)

@@ -1,0 +1,11 @@
+module app::main;
+import lib::types as types;
+import lib::agents as agents;
+
+workflow BadWorkflow {
+    input: types::RequestAlias;
+    output: types::ResponseAlias;
+    node run: agents::AliasAgent(input);
+    liveness: eventually completed(run, Missing);
+    return: run;
+}

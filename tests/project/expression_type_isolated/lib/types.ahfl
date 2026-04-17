@@ -1,0 +1,25 @@
+module lib::types;
+
+struct OneReq {
+    value: String;
+}
+
+struct OneCtx {
+    value: String = "seed";
+}
+
+struct OneRes {
+    value: String;
+}
+
+struct TwoReq {
+    value: String;
+}
+
+struct TwoCtx {
+    value: String = "seed";
+}
+
+struct TwoRes {
+    value: String;
+}

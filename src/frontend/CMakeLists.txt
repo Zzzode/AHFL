@@ -1,6 +1,7 @@
 add_library(ahfl_syntax STATIC
     ast.cpp
     frontend.cpp
+    project.cpp
 )
 
 target_link_libraries(ahfl_syntax

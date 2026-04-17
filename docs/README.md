@@ -39,7 +39,7 @@ Rules:
 Examples:
 
 - `docs/spec/core-language-v0.1.zh.md`
-- `docs/design/frontend-architecture-v0.1.zh.md`
+- `docs/design/compiler-phase-boundaries-v0.2.zh.md`
 - `docs/plan/roadmap-v0.1.zh.md`
 
 Avoid:
@@ -57,15 +57,49 @@ Avoid:
 
 ### Design
 
+- [ast-model-architecture-v0.2.zh.md](./design/ast-model-architecture-v0.2.zh.md)
+- [backend-extension-guide-v0.2.zh.md](./design/backend-extension-guide-v0.2.zh.md)
+- [cli-pipeline-architecture-v0.2.zh.md](./design/cli-pipeline-architecture-v0.2.zh.md)
+- [compiler-architecture-v0.2.zh.md](./design/compiler-architecture-v0.2.zh.md)
+- [compiler-phase-boundaries-v0.2.zh.md](./design/compiler-phase-boundaries-v0.2.zh.md)
+- [compiler-evolution-v0.2.zh.md](./design/compiler-evolution-v0.2.zh.md)
 - [core-scope-v0.1.en.md](./design/core-scope-v0.1.en.md)
-- [frontend-architecture-v0.1.zh.md](./design/frontend-architecture-v0.1.zh.md)
-- [formal-backend-v0.1.zh.md](./design/formal-backend-v0.1.zh.md)
-- [repository-layout-v0.1.zh.md](./design/repository-layout-v0.1.zh.md)
+- [diagnostics-architecture-v0.2.zh.md](./design/diagnostics-architecture-v0.2.zh.md)
+- [frontend-lowering-architecture-v0.2.zh.md](./design/frontend-lowering-architecture-v0.2.zh.md)
+- [formal-backend-v0.2.zh.md](./design/formal-backend-v0.2.zh.md)
+- [ir-backend-architecture-v0.2.zh.md](./design/ir-backend-architecture-v0.2.zh.md)
+- [module-loading-v0.2.zh.md](./design/module-loading-v0.2.zh.md)
+- [module-resolution-rules-v0.2.zh.md](./design/module-resolution-rules-v0.2.zh.md)
+- [native-handoff-architecture-v0.4.zh.md](./design/native-handoff-architecture-v0.4.zh.md)
+- [native-package-metadata-v0.4.zh.md](./design/native-package-metadata-v0.4.zh.md)
+- [project-descriptor-architecture-v0.3.zh.md](./design/project-descriptor-architecture-v0.3.zh.md)
+- [repository-layout-v0.2.zh.md](./design/repository-layout-v0.2.zh.md)
+- [semantics-architecture-v0.2.zh.md](./design/semantics-architecture-v0.2.zh.md)
+- [source-graph-v0.2.zh.md](./design/source-graph-v0.2.zh.md)
+- [testing-strategy-v0.3.zh.md](./design/testing-strategy-v0.3.zh.md)
 
 ### Plan
 
-- [roadmap-v0.1.zh.md](./plan/roadmap-v0.1.zh.md)
-- [issue-backlog-v0.1.zh.md](./plan/issue-backlog-v0.1.zh.md)
+- [roadmap-v0.4.zh.md](./plan/roadmap-v0.4.zh.md) - current execution plan
+- [issue-backlog-v0.4.zh.md](./plan/issue-backlog-v0.4.zh.md) - current execution backlog
+- [roadmap-v0.3.zh.md](./plan/roadmap-v0.3.zh.md) - completed baseline
+- [issue-backlog-v0.3.zh.md](./plan/issue-backlog-v0.3.zh.md) - completed baseline
+- [roadmap-v0.2.zh.md](./plan/roadmap-v0.2.zh.md) - completed baseline
+- [issue-backlog-v0.2.zh.md](./plan/issue-backlog-v0.2.zh.md) - completed baseline
+- [roadmap-v0.1.zh.md](./plan/roadmap-v0.1.zh.md) - historical baseline
+- [issue-backlog-v0.1.zh.md](./plan/issue-backlog-v0.1.zh.md) - historical baseline
+
+### Reference
+
+- [project-usage-v0.3.zh.md](./reference/project-usage-v0.3.zh.md)
+- [cli-commands-v0.3.zh.md](./reference/cli-commands-v0.3.zh.md)
+- [ir-format-v0.3.zh.md](./reference/ir-format-v0.3.zh.md)
+- [ir-compatibility-v0.3.zh.md](./reference/ir-compatibility-v0.3.zh.md)
+- [backend-capability-matrix-v0.3.zh.md](./reference/backend-capability-matrix-v0.3.zh.md)
+- [native-package-compatibility-v0.4.zh.md](./reference/native-package-compatibility-v0.4.zh.md)
+- [native-consumer-matrix-v0.4.zh.md](./reference/native-consumer-matrix-v0.4.zh.md)
+- [native-handoff-usage-v0.4.zh.md](./reference/native-handoff-usage-v0.4.zh.md)
+- [contributor-guide-v0.3.zh.md](./reference/contributor-guide-v0.3.zh.md)
 
 ## Governance
 

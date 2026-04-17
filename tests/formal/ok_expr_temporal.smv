@@ -9,6 +9,7 @@ VAR
   workflow__ir_expr_temporal_ExprWorkflow__node__run__completed : boolean;
 IVAR
   agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide : boolean;
+  contract_ir_expr_temporal_ExprAgent_0_atom_0 : boolean;
   contract_ir_expr_temporal_ExprAgent_1_atom_0 : boolean;
 DEFINE
   workflow__ir_expr_temporal_ExprWorkflow__node__run__running := workflow__ir_expr_temporal_ExprWorkflow__node__run__started & !(workflow__ir_expr_temporal_ExprWorkflow__node__run__completed);
@@ -33,7 +34,9 @@ ASSIGN
     workflow__ir_expr_temporal_ExprWorkflow__node__run__started & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Done) : TRUE;
     TRUE : FALSE;
   esac;
--- contract ir::expr_temporal::ExprAgent clause[1]
+-- contract ir::expr_temporal::ExprAgent requires[0]
+LTLSPEC contract_ir_expr_temporal_ExprAgent_0_atom_0
+-- contract ir::expr_temporal::ExprAgent invariant[1]
 LTLSPEC G ((! (agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide) | contract_ir_expr_temporal_ExprAgent_1_atom_0))
 -- workflow ir::expr_temporal::ExprWorkflow safety[0]
 LTLSPEC G ((! (workflow__ir_expr_temporal_ExprWorkflow__node__run__running) | F (workflow__ir_expr_temporal_ExprWorkflow__node__run__completed)))

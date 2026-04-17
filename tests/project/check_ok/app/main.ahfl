@@ -1,0 +1,23 @@
+module app::main;
+import lib::types as types;
+import lib::agents as agents;
+
+flow for agents::AliasAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return types::ResponseAlias {
+            value: input.value,
+        };
+    }
+}
+
+workflow MainWorkflow {
+    input: types::RequestAlias;
+    output: types::ResponseAlias;
+    node run: agents::AliasAgent(input);
+    liveness: eventually completed(run, Done);
+    return: run;
+}

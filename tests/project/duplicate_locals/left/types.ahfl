@@ -1,0 +1,5 @@
+module left::types;
+
+struct Request {
+    value: String;
+}

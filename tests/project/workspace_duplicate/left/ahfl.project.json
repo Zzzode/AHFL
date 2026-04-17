@@ -1,0 +1,6 @@
+{
+  "format_version": "ahfl.project.v0.3",
+  "name": "dup-project",
+  "search_roots": ["."],
+  "entry_sources": ["app/main.ahfl"]
+}

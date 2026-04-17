@@ -8,6 +8,16 @@
       "capability": "ir::expr_temporal::Decide"
     },
     {
+      "symbol": "contract_ir_expr_temporal_ExprAgent_0_atom_0",
+      "kind": "embedded_bool_expr",
+      "scope": {
+        "kind": "contract_clause",
+        "owner": "ir::expr_temporal::ExprAgent",
+        "clause_index": 0,
+        "atom_index": 0
+      }
+    },
+    {
       "symbol": "contract_ir_expr_temporal_ExprAgent_1_atom_0",
       "kind": "embedded_bool_expr",
       "scope": {
@@ -369,6 +379,27 @@
         {
           "state_name": "Init",
           "policy": [],
+          "summary": {
+            "goto_targets": [
+              "Done"
+            ],
+            "may_return": false,
+            "may_fallthrough": false,
+            "assigned_paths": [
+              {
+                "root_kind": "identifier",
+                "root_name": "ctx",
+                "members": [
+                  "note"
+                ]
+              }
+            ],
+            "called_targets": [
+              "ir::expr_temporal::Decide",
+              "ir::expr_temporal::ready"
+            ],
+            "assert_count": 1
+          },
           "body": {
             "statements": [
               {
@@ -574,6 +605,14 @@
         {
           "state_name": "Done",
           "policy": [],
+          "summary": {
+            "goto_targets": [],
+            "may_return": true,
+            "may_fallthrough": false,
+            "assigned_paths": [],
+            "called_targets": [],
+            "assert_count": 0
+          },
           "body": {
             "statements": [
               {
@@ -627,6 +666,15 @@
               "members": []
             }
           },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
           "after": []
         }
       ],
@@ -668,6 +716,15 @@
           }
         }
       ],
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "run",
+            "members": []
+          }
+        ]
+      },
       "return_value": {
         "kind": "path",
         "path": {

@@ -1,0 +1,6 @@
+module app::main;
+import missing::types;
+
+struct Local {
+    value: String;
+}

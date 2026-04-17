@@ -1,6 +1,13 @@
-# AHFL Core V0.1 Issue Backlog
+# AHFL Core V0.1 Issue Backlog Baseline
 
-本文将里程碑拆成可直接复制为 GitHub issue 的任务文本。
+本文保留为 AHFL Core V0.1 的历史 issue backlog 基线，用于回溯已完成里程碑的任务拆解；它不是当前版本的新增任务入口。
+
+当前版本请优先看：
+
+- [roadmap-v0.2.zh.md](./roadmap-v0.2.zh.md)
+- [issue-backlog-v0.2.zh.md](./issue-backlog-v0.2.zh.md)
+
+本文将当时的里程碑拆成可直接复制为 GitHub issue 的任务文本。
 
 执行状态约定：
 
@@ -103,7 +110,7 @@
 
 主要涉及文件：
 
-- `docs/design/frontend-architecture-v0.1.zh.md`
+- `docs/design/compiler-phase-boundaries-v0.2.zh.md`
 - `docs/plan/roadmap-v0.1.zh.md`
 - `src/frontend/frontend.cpp`
 - `include/ahfl/frontend/ast.hpp`
@@ -541,8 +548,8 @@ workflow 是 agent 编排边界的核心，但当前尚无 DAG、依赖与类型
 - `docs/spec/core-language-v0.1.zh.md`
 - `docs/design/core-scope-v0.1.en.md`
 - `docs/plan/roadmap-v0.1.zh.md`
-- `docs/design/frontend-architecture-v0.1.zh.md`
-- `docs/design/formal-backend-v0.1.zh.md`
+- `docs/design/compiler-phase-boundaries-v0.2.zh.md`
+- `docs/design/formal-backend-v0.2.zh.md`
 
 ## [x] Issue 18
 

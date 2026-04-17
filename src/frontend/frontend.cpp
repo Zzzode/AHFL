@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <charconv>
+#include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <sstream>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -261,6 +265,24 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
     const SourceFile &source_;
     DiagnosticBag &diagnostics_;
 };
+
+[[nodiscard]] bool read_text_file(const std::filesystem::path &path,
+                                  SourceFile &source,
+                                  DiagnosticBag &diagnostics,
+                                  std::string_view kind) {
+    source.display_name = path.string();
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        diagnostics.error("failed to open " + std::string(kind) + ": " + path.string());
+        return false;
+    }
+
+    std::ostringstream buffer;
+    buffer << input.rdbuf();
+    source.content = buffer.str();
+    return true;
+}
 
 class ProgramBuilder {
   public:
@@ -1724,7 +1746,8 @@ class ProgramBuilder {
 
 class AstPrinter final : public ast::Visitor {
   public:
-    explicit AstPrinter(std::ostream &out) : out_(out) {}
+    explicit AstPrinter(std::ostream &out, int base_indent = 0)
+        : out_(out), base_indent_(base_indent) {}
 
     void visit(ast::Program &node) override {
         line(0, "program " + node.source_name);
@@ -1895,9 +1918,11 @@ class AstPrinter final : public ast::Visitor {
 
   private:
     std::ostream &out_;
+    int base_indent_{0};
 
     void line(int indent_level, const std::string &text) {
-        out_ << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
+        const auto effective_indent = std::max(0, base_indent_ + indent_level);
+        out_ << std::string(static_cast<std::size_t>(effective_indent) * 2, ' ') << text << '\n';
     }
 
     void print_string_list(std::string_view label,
@@ -2176,17 +2201,9 @@ Frontend::Frontend(FrontendOptions options) : options_(options) {}
 
 ParseResult Frontend::parse_file(const std::filesystem::path &path) const {
     ParseResult result;
-    result.source.display_name = path.string();
-
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        result.diagnostics.error("failed to open source file: " + path.string());
+    if (!read_text_file(path, result.source, result.diagnostics, "source file")) {
         return result;
     }
-
-    std::ostringstream buffer;
-    buffer << input.rdbuf();
-    result.source.content = buffer.str();
 
     return parse_text(std::move(result.source.display_name), std::move(result.source.content));
 }
@@ -2224,6 +2241,31 @@ void dump_program_outline(const ast::Program &program, std::ostream &out) {
     AstPrinter printer(out);
     auto &mutable_program = const_cast<ast::Program &>(program);
     mutable_program.accept(printer);
+}
+
+void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
+    out << "project_ast (" << graph.entry_sources.size() << " entry, " << graph.sources.size()
+        << " sources, " << graph.import_edges.size() << " import"
+        << (graph.import_edges.size() == 1 ? "" : "s") << ")\n";
+
+    std::unordered_set<std::size_t> entry_ids;
+    entry_ids.reserve(graph.entry_sources.size());
+    for (const auto entry_source : graph.entry_sources) {
+        entry_ids.insert(entry_source.value);
+    }
+
+    for (const auto &source : graph.sources) {
+        out << "source " << source.path.string();
+        if (entry_ids.contains(source.id.value)) {
+            out << " [entry]";
+        }
+        out << '\n';
+        out << "  module " << source.module_name << '\n';
+        out << "  ast\n";
+        AstPrinter printer(out, 2);
+        auto &mutable_program = const_cast<ast::Program &>(*source.program);
+        mutable_program.accept(printer);
+    }
 }
 
 } // namespace ahfl

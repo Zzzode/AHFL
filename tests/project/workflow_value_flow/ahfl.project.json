@@ -1,0 +1,6 @@
+{
+  "format_version": "ahfl.project.v0.3",
+  "name": "workflow-value-flow",
+  "search_roots": ["."],
+  "entry_sources": ["app/main.ahfl"]
+}

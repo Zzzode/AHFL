@@ -1,0 +1,8 @@
+module app::main;
+import left::types as left;
+import right::types as right;
+
+struct Pair {
+    first: left::Request;
+    second: right::Request;
+}

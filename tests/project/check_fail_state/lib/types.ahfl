@@ -1,0 +1,17 @@
+module lib::types;
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+type RequestAlias = Request;
+type ContextAlias = Context;
+type ResponseAlias = Response;

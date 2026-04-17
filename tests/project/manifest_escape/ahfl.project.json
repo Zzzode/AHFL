@@ -1,0 +1,6 @@
+{
+  "format_version": "ahfl.project.v0.3",
+  "name": "manifest-escape",
+  "search_roots": ["../outside"],
+  "entry_sources": ["app/main.ahfl"]
+}

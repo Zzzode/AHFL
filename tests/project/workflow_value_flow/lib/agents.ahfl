@@ -1,0 +1,15 @@
+module lib::agents;
+import lib::types as types;
+
+capability Echo(request: types::RequestAlias) -> types::ResponseAlias;
+
+agent AliasAgent {
+    input: types::RequestAlias;
+    context: types::ContextAlias;
+    output: types::ResponseAlias;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}

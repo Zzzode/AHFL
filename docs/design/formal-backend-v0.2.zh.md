@@ -1,6 +1,6 @@
-# AHFL Core V0.1 Formal Backend Boundary
+# AHFL Core V0.2 Formal Backend Boundary
 
-本文冻结 AHFL Core V0.1 在 formal backend 方向的当前边界，作为 `emit-smv`、后续 model-check-oriented backend，以及 `tests/formal/*` golden 的统一约束。
+本文冻结 AHFL Core 在 formal backend 方向的当前边界，作为 `emit-smv`、后续 model-check-oriented backend，以及 `tests/formal/*` golden 的统一约束。
 
 适用范围：
 
@@ -13,7 +13,8 @@
 - `src/cli/ahflc.cpp`
 - `tests/formal/*`
 - `docs/plan/roadmap-v0.1.zh.md`
-- `docs/design/frontend-architecture-v0.1.zh.md`
+- `docs/plan/roadmap-v0.2.zh.md`
+- `docs/design/compiler-phase-boundaries-v0.2.zh.md`
 
 ## 目标
 
@@ -53,6 +54,104 @@
 - 只处理 LTL 方向的公式 lowering
 - 保留 validate 后的状态机、flow 终结控制流与 workflow 启动/完成结构
 - 不尝试把 AHFL 解释成完整 runtime
+
+## V0.2 增量冻结
+
+V0.2 在 formal backend 方向只正式新增一类能力：
+
+- contract clause export 的受限扩张
+
+这次扩张不改变 backend 的总体定位。当前 `emit-smv` 仍然是：
+
+- project-aware Core 的 restricted formal exporter
+
+而不是：
+
+- 完整 runtime / statement / data semantics 的 model checker backend
+
+V0.2 当前正式保留的 contract/export 语义：
+
+1. `requires`
+   - 保留为 contract precondition 边界。
+   - 通过 observation-backed `LTLSPEC` 导出。
+2. `ensures`
+   - 保留为 final-state obligation 边界。
+   - 通过 observation-backed、final-state-guarded `LTLSPEC` 导出。
+3. `invariant`
+   - 保留为现有 temporal exporter 可表达的 agent contract 公式。
+4. `forbid`
+   - 保留为现有 temporal exporter 可表达的禁止型 temporal 公式。
+5. workflow `safety` / `liveness`
+   - 继续保留为 workflow lifecycle 上的 LTL 公式。
+
+V0.2 当前继续抽象的 contract/export 语义：
+
+1. `requires` / `ensures` 内部的值计算与数据依赖
+2. output 值如何由 flow statement 逐步构造
+3. capability 参数、返回值、调用次数与调用顺序
+4. flow 中 `let` / 赋值 / `assert` 的 transition-relation 编码
+5. retry / timeout / quota / exception / richer scheduling 语义
+
+因此，V0.2 的 contract/export 边界必须按下面的二分法理解：
+
+- 保留语义
+  - clause 的约束边界与何时应成立。
+- 抽象语义
+  - clause 内部的具体数据求值和 runtime 机制。
+
+## V0.3 Freeze: Flow Summary Boundary
+
+V0.3 在不把 `emit-smv` 扩张成完整 statement executor 的前提下，正式新增一层 flow statement 摘要边界：
+
+- `flow.state_handlers[].summary.goto_targets`
+- `flow.state_handlers[].summary.may_return`
+- `flow.state_handlers[].summary.may_fallthrough`
+- `flow.state_handlers[].summary.assigned_paths`
+- `flow.state_handlers[].summary.called_targets`
+- `flow.state_handlers[].summary.assert_count`
+
+这层边界的定位不是“把每条语句直接 lower 成 transition relation”，而是把 backend 之前在内部临时推导的 flow 控制/副作用摘要提升成稳定 IR 契约。
+
+### V0.3 当前保留的 flow 语义
+
+1. handler 可能跳转到哪些 `goto` 目标
+2. handler 是否可能 `return`
+3. handler 是否可能 fallthrough 到后续语句
+4. handler 内显式写入了哪些 path
+5. handler 内出现了哪些 call target
+6. handler 内出现了多少个 `assert`
+
+### V0.3 当前继续抽象的 flow 语义
+
+1. `let` / assignment / `assert` 的逐步求值顺序
+2. path 写入之间的先后关系与数据依赖
+3. call target 的执行时点、次数、参数值、返回值与因果关系
+4. `assert` 条件本身对 transition relation 的直接约束
+5. 多分支路径上的精确 path-sensitive 数据语义
+
+### backend 当前如何消费
+
+当前 `emit-smv` 只正式消费 flow summary 里的控制摘要：
+
+1. `goto_targets`
+2. `may_return`
+3. `may_fallthrough`
+
+`assigned_paths`、`called_targets`、`assert_count` 当前作为稳定导出信息保留在 IR / JSON IR 中，供后续 backend 或 tooling 消费，但 `emit-smv` 还不会把它们直接编码成状态迁移或值语义。
+
+## V0.3 Freeze: Workflow Value Summary Boundary
+
+V0.3 同时把 workflow 值流里最关键的读取来源提升成稳定 IR 字段：
+
+- `workflow.nodes[].input_summary.reads`
+- `workflow.return_summary.reads`
+
+其语义只覆盖：
+
+1. 读取 `workflow_input`
+2. 读取 `workflow_node_output`
+
+当前 `emit-smv` 仍然不会把这些 value summary 直接 lower 成值语义或数据通道语义；它们的作用是为后续 formal/backend/tooling 保留统一消费入口，而不是提前承诺完整 workflow dataflow execution semantics。
 
 ## 当前保留的语义
 
@@ -126,10 +225,26 @@
 
 当前 `emit-smv` 只输出 `LTLSPEC`，不输出 CTL 或公平性约束。
 
+### 5. Contract `requires` / `ensures` 导出
+
+当前 formal backend 对 expr-shaped contract clause 采用受限导出：
+
+- `requires: <pure-bool-expr>`
+- `ensures: <pure-bool-expr>`
+
+其规则固定为：
+
+1. `requires` / `ensures` 不直接 lower 成可求值的数据表达式树，而是先进入共享 `formal_observations`
+2. `requires` 当前被视为初始态前置条件，导出为 `LTLSPEC <contract_observation>`
+3. `ensures` 当前只在 agent 进入任一 final state 时受检，导出为 `LTLSPEC G((final_state(agent)) -> <contract_observation>)`
+4. 该导出保留的是 contract 边界，不是 output/dataflow 的完整执行语义
+5. `invariant` / `forbid` 的 temporal lowering 规则保持不变，仍按现有 temporal exporter 路径处理
+
 ## Observation Abstraction
 
 当前最重要的抽象边界是：
 
+- contract 语境中的纯布尔 `Expr`
 - temporal formula 中内嵌的纯布尔 `Expr`
 
 例如：
@@ -149,7 +264,8 @@
 当前命名来源：
 
 - agent capability / `called(k)` observation
-- contract clause 内的 embedded expr
+- contract `requires` / `ensures` expr
+- contract temporal clause 内的 embedded expr
 - workflow safety/liveness clause 内的 embedded expr
 
 当前仓库里，这套 observation 模型已经被：
@@ -157,11 +273,18 @@
 1. `emit-ir-json` 作为 `formal_observations` 顶层字段输出
 2. `emit-smv` 用来生成布尔 `IVAR` 和稳定 symbol 名字
 
+在 V0.2 contract/export 冻结下，shared observation model 的职责也已经固定：
+
+1. 承载 contract `requires` / `ensures`
+2. 承载 contract temporal clause 内嵌纯布尔 expr
+3. 承载 workflow safety/liveness 内嵌纯布尔 expr
+4. 为 backend emitter 提供统一的 clause ownership 和稳定命名
+
 ## 当前不承诺的语义
 
 以下能力当前明确不属于 `emit-smv` 的语义承诺范围：
 
-1. `requires` / `ensures` 的 formal backend lowering
+1. `requires` / `ensures` expr 的直接数据求值或 output/value semantics 编码
 2. `let`、赋值、`assert`、表达式求值对 transition relation 的直接编码
 3. `goto` / final-state `return` 之外的更细粒度 statement 执行语义
 4. capability 调用发生的时间点、次数、参数值和顺序
@@ -190,8 +313,8 @@ Issue 16 之后，formal backend 相关实现必须遵守以下约束：
 
 ## 当前状态
 
-M4 当前规划项已经全部完成：
+截至 V0.2 当前实现：
 
-1. `emit-smv` 已冻结并接入回归
-2. formal subset 与 observation abstraction 边界已文档化
+1. `emit-smv` 已覆盖受限的 state-machine / workflow-lifecycle / temporal / contract export 子集
+2. contract/export 的“保留语义”和“抽象语义”边界已文档化
 3. `emit-ir` / `emit-ir-json` / `emit-smv` 已通过统一 backend driver 分发

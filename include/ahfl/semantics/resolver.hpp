@@ -14,6 +14,8 @@
 
 namespace ahfl {
 
+struct SourceGraph;
+
 namespace detail {
 class ResolverPass;
 }
@@ -62,12 +64,15 @@ struct Symbol {
     SymbolKind kind{SymbolKind::Struct};
     std::string local_name;
     std::string canonical_name;
+    std::string module_name;
+    std::optional<SourceId> source_id;
     SourceRange declaration_range;
 };
 
 struct ResolvedReference {
     ReferenceKind kind{ReferenceKind::TypeName};
     std::string text;
+    std::optional<SourceId> source_id;
     SourceRange range;
     SymbolId target;
 };
@@ -75,6 +80,7 @@ struct ResolvedReference {
 struct ImportBinding {
     std::string alias;
     std::string target_module;
+    std::optional<SourceId> source_id;
     SourceRange declaration_range;
 };
 
@@ -86,7 +92,8 @@ class SymbolTable {
 
     [[nodiscard]] MaybeCRef<Symbol> get(SymbolId id) const;
     [[nodiscard]] MaybeCRef<Symbol> find_local(SymbolNamespace name_space,
-                                               std::string_view name) const;
+                                               std::string_view name,
+                                               std::string_view module_name = "") const;
     [[nodiscard]] MaybeCRef<Symbol> find_canonical(SymbolNamespace name_space,
                                                    std::string_view name) const;
 
@@ -95,8 +102,9 @@ class SymbolTable {
     friend class detail::ResolverPass;
 
     struct NamespaceIndex {
-        std::unordered_map<std::string, SymbolId> local_names;
         std::unordered_map<std::string, SymbolId> canonical_names;
+        std::unordered_map<std::string, std::unordered_map<std::string, SymbolId>>
+            module_local_names;
     };
 
     [[nodiscard]] const NamespaceIndex &index(SymbolNamespace name_space) const;
@@ -122,12 +130,15 @@ struct ResolveResult {
     }
 
     [[nodiscard]] MaybeCRef<ResolvedReference> find_reference(ReferenceKind kind,
-                                                              SourceRange range) const;
+                                                              SourceRange range,
+                                                              std::optional<SourceId> source_id =
+                                                                  std::nullopt) const;
 };
 
 class Resolver {
   public:
     [[nodiscard]] ResolveResult resolve(const ast::Program &program) const;
+    [[nodiscard]] ResolveResult resolve(const SourceGraph &graph) const;
 };
 
 } // namespace ahfl

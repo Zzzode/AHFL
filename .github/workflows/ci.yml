@@ -70,5 +70,50 @@ jobs:
       - name: Build
         run: cmake --build --preset build-dev
 
+      - name: Run V0.3 Project Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.3-(project-model|project-debug|semantics|compat)'
+
+      - name: Run V0.3 IR Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.3-ir'
+
+      - name: Run V0.3 Backend Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.3-backend'
+
+      - name: Run V0.4 Package Model Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.4-package-model'
+
+      - name: Run V0.4 Package Emission Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.4-package-emission'
+
+      - name: Run V0.4 Package Compatibility Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.4-package-compat'
+
+      - name: Run Full Tests
+        run: ctest --preset test-dev --output-on-failure
+
+  asan-linux:
+    name: ASan UBSan (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+
+      - name: Show toolchain
+        run: |
+          cmake --version
+          ninja --version
+          c++ --version
+
+      - name: Configure
+        run: cmake --preset asan
+
+      - name: Build
+        run: cmake --build --preset build-asan
+
       - name: Run Tests
-        run: ctest --preset test-dev
+        run: ctest --preset test-asan --output-on-failure

@@ -1,0 +1,3 @@
+struct Request {
+    value: String;
+}

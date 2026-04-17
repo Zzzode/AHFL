@@ -2,10 +2,17 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
 namespace ahfl {
+
+struct SourceId {
+    std::size_t value{0};
+
+    [[nodiscard]] friend bool operator==(SourceId lhs, SourceId rhs) noexcept = default;
+};
 
 struct SourcePosition {
     std::size_t offset{0};
@@ -73,6 +80,18 @@ struct SourceFile {
         const auto length = std::min(range.end_offset, content.size()) - range.begin_offset;
         return std::string_view{content}.substr(range.begin_offset, length);
     }
+};
+
+struct SourceArtifact {
+    SourceId id;
+    std::filesystem::path path;
+    SourceFile source;
+};
+
+struct ImportRequest {
+    std::string module_name;
+    std::string alias;
+    SourceRange range;
 };
 
 } // namespace ahfl

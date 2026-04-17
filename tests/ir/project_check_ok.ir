@@ -1,0 +1,102 @@
+ahfl.ir.v1
+formal_observations {
+  observation agent__lib_agents_AliasAgent__called__lib_agents_Echo: called_capability(agent=lib::agents::AliasAgent, capability=lib::agents::Echo)
+}
+
+@provenance(module=app::main, source=app/main.ahfl)
+module app::main
+
+@provenance(module=app::main, source=app/main.ahfl)
+import lib::types as types
+
+@provenance(module=app::main, source=app/main.ahfl)
+import lib::agents as agents
+
+@provenance(module=app::main, source=app/main.ahfl)
+flow lib::agents::AliasAgent {
+  state Init {
+    summary {
+      goto_targets: [Done]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
+    goto Done
+  }
+  state Done {
+    summary {
+      goto_targets: []
+      may_return: true
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
+    return lib::types::ResponseAlias { value: input.value }
+  }
+}
+
+@provenance(module=app::main, source=app/main.ahfl)
+workflow app::main::MainWorkflow {
+  input: lib::types::Request
+  output: lib::types::Response
+  node run: lib::agents::AliasAgent(input)
+    input_summary {
+      reads: [workflow_input(input)]
+    }
+  liveness: F(completed(run, Done))
+  return_summary {
+    reads: [workflow_node_output(run)]
+  }
+  return: run
+}
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+module lib::types
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+struct lib::types::Request {
+  field value: String
+}
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+struct lib::types::Context {
+  field value: String = "pending"
+}
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+struct lib::types::Response {
+  field value: String
+}
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+typealias lib::types::RequestAlias = lib::types::Request
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+typealias lib::types::ContextAlias = lib::types::Context
+
+@provenance(module=lib::types, source=lib/types.ahfl)
+typealias lib::types::ResponseAlias = lib::types::Response
+
+@provenance(module=lib::agents, source=lib/agents.ahfl)
+module lib::agents
+
+@provenance(module=lib::agents, source=lib/agents.ahfl)
+import lib::types as types
+
+@provenance(module=lib::agents, source=lib/agents.ahfl)
+capability lib::agents::Echo(request: lib::types::Request) -> lib::types::Response
+
+@provenance(module=lib::agents, source=lib/agents.ahfl)
+agent lib::agents::AliasAgent {
+  input: lib::types::Request
+  context: lib::types::Context
+  output: lib::types::Response
+  states: [Init, Done]
+  initial: Init
+  final: [Done]
+  capabilities: [lib::agents::Echo]
+  transition Init -> Done
+}

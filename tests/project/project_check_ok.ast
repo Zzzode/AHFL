@@ -1,0 +1,84 @@
+project_ast (1 entry, 3 sources, 3 imports)
+source /Users/bytedance/Develop/AHFL/tests/project/check_ok/app/main.ahfl [entry]
+  module app::main
+  ast
+    program /Users/bytedance/Develop/AHFL/tests/project/check_ok/app/main.ahfl
+      - module app::main
+      - import lib::types as types
+      - import lib::agents as agents
+      - flow for agents::AliasAgent (2 handlers)
+        state Init
+          block
+            goto Done
+        state Done
+          block
+            return
+              value
+                struct_literal types::ResponseAlias
+                  field value
+                    path input.value
+      - workflow MainWorkflow (1 node)
+        input
+          named types::RequestAlias
+        output
+          named types::ResponseAlias
+        node run -> agents::AliasAgent
+          input
+            path input
+        liveness
+          temporal_unary eventually
+            completed run, Done
+        return
+          path run
+source /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/types.ahfl
+  module lib::types
+  ast
+    program /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/types.ahfl
+      - module lib::types
+      - struct Request (1 field)
+        field value
+          type
+            primitive String
+      - struct Context (1 field)
+        field value
+          type
+            primitive String
+          default
+            string "pending"
+      - struct Response (1 field)
+        field value
+          type
+            primitive String
+      - type RequestAlias = Request
+        aliased_type
+          named Request
+      - type ContextAlias = Context
+        aliased_type
+          named Context
+      - type ResponseAlias = Response
+        aliased_type
+          named Response
+source /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/agents.ahfl
+  module lib::agents
+  ast
+    program /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/agents.ahfl
+      - module lib::agents
+      - import lib::types as types
+      - capability Echo (1 param) -> types::ResponseAlias
+        param request
+          type
+            named types::RequestAlias
+        return
+          named types::ResponseAlias
+      - agent AliasAgent (2 states, 1 transitions)
+        input
+          named types::RequestAlias
+        context
+          named types::ContextAlias
+        output
+          named types::ResponseAlias
+        states: [Init, Done]
+        initial: Init
+        final: [Done]
+        capabilities: [Echo]
+        transition Init -> Done

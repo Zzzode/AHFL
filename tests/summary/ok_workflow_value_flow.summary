@@ -1,0 +1,43 @@
+ahfl.summary.v1
+ir_format ahfl.ir.v1
+project_aware false
+declarations 7
+declarations_with_provenance 0
+declaration_kinds {
+  module 1
+  import 0
+  const 0
+  type_alias 0
+  struct 3
+  enum 0
+  capability 0
+  predicate 0
+  agent 1
+  contract 0
+  flow 1
+  workflow 1
+}
+formal_observations {
+  total 0
+  called_capability 0
+  embedded_bool_expr 0
+}
+flow_summaries {
+  handlers 2
+  total_goto_targets 1
+  handlers_with_return 1
+  handlers_with_fallthrough 0
+  total_assigned_paths 0
+  total_called_targets 0
+  total_asserts 0
+}
+workflow_summaries {
+  workflows 1
+  nodes 2
+  total_input_reads 2
+  input_reads_workflow_input 1
+  input_reads_workflow_node_output 1
+  total_return_reads 1
+  return_reads_workflow_input 0
+  return_reads_workflow_node_output 1
+}

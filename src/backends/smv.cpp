@@ -27,12 +27,6 @@ struct WorkflowNodeInfo {
     std::reference_wrapper<const ir::AgentDecl> agent;
 };
 
-struct FlowSummary {
-    std::vector<std::string> goto_targets;
-    bool saw_return{false};
-    bool may_fallthrough{true};
-};
-
 [[nodiscard]] std::string join(const std::vector<std::string> &parts, std::string_view delimiter) {
     std::string joined;
 
@@ -162,12 +156,6 @@ struct FlowSummary {
            std::to_string(clause_index) + "\n" + std::to_string(atom_index);
 }
 
-void push_unique(std::vector<std::string> &values, std::string value) {
-    if (std::find(values.begin(), values.end(), value) == values.end()) {
-        values.push_back(std::move(value));
-    }
-}
-
 [[nodiscard]] std::string render_state_membership(std::string_view state_var,
                                                   const std::vector<std::string> &states) {
     if (states.empty()) {
@@ -186,6 +174,21 @@ void push_unique(std::vector<std::string> &values, std::string value) {
     }
 
     return "(" + join(clauses, " | ") + ")";
+}
+
+[[nodiscard]] std::string contract_clause_kind_name(ir::ContractClauseKind kind) {
+    switch (kind) {
+    case ir::ContractClauseKind::Requires:
+        return "requires";
+    case ir::ContractClauseKind::Ensures:
+        return "ensures";
+    case ir::ContractClauseKind::Invariant:
+        return "invariant";
+    case ir::ContractClauseKind::Forbid:
+        return "forbid";
+    }
+
+    return "invalid";
 }
 
 class SmvPrinter final {
@@ -218,22 +221,21 @@ class SmvPrinter final {
 
     void index_declarations(const ir::Program &program) {
         for (const auto &declaration : program.declarations) {
-            std::visit(Overloaded{
-                           [&](const ir::AgentDecl &agent) {
-                               agents_.emplace(agent.name, std::cref(agent));
-                           },
-                           [&](const ir::ContractDecl &contract) {
-                               contracts_.push_back(std::cref(contract));
-                           },
-                           [&](const ir::FlowDecl &flow) {
-                               flows_.emplace(flow.target, std::cref(flow));
-                           },
-                           [&](const ir::WorkflowDecl &workflow) {
-                               workflows_.push_back(std::cref(workflow));
-                           },
-                           [&](const auto &) {},
-                       },
-                       declaration);
+            std::visit(
+                Overloaded{
+                    [&](const ir::AgentDecl &agent) {
+                        agents_.emplace(agent.name, std::cref(agent));
+                    },
+                    [&](const ir::ContractDecl &contract) {
+                        contracts_.push_back(std::cref(contract));
+                    },
+                    [&](const ir::FlowDecl &flow) { flows_.emplace(flow.target, std::cref(flow)); },
+                    [&](const ir::WorkflowDecl &workflow) {
+                        workflows_.push_back(std::cref(workflow));
+                    },
+                    [&](const auto &) {},
+                },
+                declaration);
         }
     }
 
@@ -241,23 +243,22 @@ class SmvPrinter final {
         for (const auto &observation : program.formal_observations) {
             observation_variables_.push_back(observation.symbol + " : boolean;");
 
-            std::visit(
-                Overloaded{
-                    [&](const ir::CalledCapabilityObservation &value) {
-                        called_observation_symbols_.emplace(
-                            called_observation_key(value.agent, value.capability),
-                            observation.symbol);
-                    },
-                    [&](const ir::EmbeddedBoolObservation &value) {
-                        embedded_observation_symbols_.emplace(
-                            embedded_observation_key(value.scope.kind,
-                                                     value.scope.owner,
-                                                     value.scope.clause_index,
-                                                     value.scope.atom_index),
-                            observation.symbol);
-                    },
-                },
-                observation.node);
+            std::visit(Overloaded{
+                           [&](const ir::CalledCapabilityObservation &value) {
+                               called_observation_symbols_.emplace(
+                                   called_observation_key(value.agent, value.capability),
+                                   observation.symbol);
+                           },
+                           [&](const ir::EmbeddedBoolObservation &value) {
+                               embedded_observation_symbols_.emplace(
+                                   embedded_observation_key(value.scope.kind,
+                                                            value.scope.owner,
+                                                            value.scope.clause_index,
+                                                            value.scope.atom_index),
+                                   observation.symbol);
+                           },
+                       },
+                       observation.node);
         }
     }
 
@@ -305,9 +306,8 @@ class SmvPrinter final {
     void collect_assignments() {
         for (const auto &[name, agent] : agents_) {
             (void)name;
-            collect_state_machine_assignments(agent.get(),
-                                             agent_state_var(agent.get()),
-                                             build_effective_adjacency(agent.get()));
+            collect_state_machine_assignments(
+                agent.get(), agent_state_var(agent.get()), build_effective_adjacency(agent.get()));
         }
 
         for (const auto &workflow : workflows_) {
@@ -318,8 +318,7 @@ class SmvPrinter final {
                     continue;
                 }
 
-                collect_workflow_node_assignments(
-                    workflow.get(), node, target->second.agent.get());
+                collect_workflow_node_assignments(workflow.get(), node, target->second.agent.get());
             }
         }
     }
@@ -333,18 +332,20 @@ class SmvPrinter final {
 
             for (std::size_t index = 0; index < contract.get().clauses.size(); ++index) {
                 const auto &clause = contract.get().clauses[index];
-                const auto temporal = std::get_if<ir::TemporalExprPtr>(&clause.value);
-                if (temporal == nullptr) {
+                std::string formula;
+                if (const auto expr = std::get_if<ir::ExprPtr>(&clause.value); expr != nullptr) {
+                    formula = render_contract_expr_clause(
+                        contract.get(), agent->get(), clause.kind, index);
+                } else if (const auto temporal = std::get_if<ir::TemporalExprPtr>(&clause.value);
+                           temporal != nullptr) {
+                    std::size_t atom_index = 0;
+                    formula = render_agent_formula(**temporal, agent->get(), index, atom_index);
+                } else {
                     continue;
                 }
 
-                std::size_t atom_index = 0;
-                const auto formula = render_agent_formula(**temporal,
-                                                          agent->get(),
-                                                          index,
-                                                          atom_index);
-
-                specs_.push_back("-- contract " + contract.get().target + " clause[" +
+                specs_.push_back("-- contract " + contract.get().target + " " +
+                                 contract_clause_kind_name(clause.kind) + "[" +
                                  std::to_string(index) + "]");
                 specs_.push_back("LTLSPEC " + formula);
             }
@@ -353,12 +354,12 @@ class SmvPrinter final {
         for (const auto &workflow : workflows_) {
             for (std::size_t index = 0; index < workflow.get().safety.size(); ++index) {
                 std::size_t atom_index = 0;
-                const auto formula = render_workflow_formula(
-                    *workflow.get().safety[index],
-                    workflow.get(),
-                    ir::FormalObservationScopeKind::WorkflowSafetyClause,
-                    index,
-                    atom_index);
+                const auto formula =
+                    render_workflow_formula(*workflow.get().safety[index],
+                                            workflow.get(),
+                                            ir::FormalObservationScopeKind::WorkflowSafetyClause,
+                                            index,
+                                            atom_index);
                 specs_.push_back("-- workflow " + workflow.get().name + " safety[" +
                                  std::to_string(index) + "]");
                 specs_.push_back("LTLSPEC " + formula);
@@ -366,12 +367,12 @@ class SmvPrinter final {
 
             for (std::size_t index = 0; index < workflow.get().liveness.size(); ++index) {
                 std::size_t atom_index = 0;
-                const auto formula = render_workflow_formula(
-                    *workflow.get().liveness[index],
-                    workflow.get(),
-                    ir::FormalObservationScopeKind::WorkflowLivenessClause,
-                    index,
-                    atom_index);
+                const auto formula =
+                    render_workflow_formula(*workflow.get().liveness[index],
+                                            workflow.get(),
+                                            ir::FormalObservationScopeKind::WorkflowLivenessClause,
+                                            index,
+                                            atom_index);
                 specs_.push_back("-- workflow " + workflow.get().name + " liveness[" +
                                  std::to_string(index) + "]");
                 specs_.push_back("LTLSPEC " + formula);
@@ -415,8 +416,9 @@ class SmvPrinter final {
         return std::nullopt;
     }
 
-    [[nodiscard]] std::string lookup_called_observation_symbol(std::string_view agent_name,
-                                                               std::string_view capability_name) const {
+    [[nodiscard]] std::string
+    lookup_called_observation_symbol(std::string_view agent_name,
+                                     std::string_view capability_name) const {
         const auto key = called_observation_key(agent_name, capability_name);
         if (const auto iter = called_observation_symbols_.find(key);
             iter != called_observation_symbols_.end()) {
@@ -438,14 +440,14 @@ class SmvPrinter final {
             return iter->second;
         }
 
-        const auto base_name = kind == ir::FormalObservationScopeKind::ContractClause
-                                   ? "contract__" + std::string(owner) + "__" +
-                                         std::to_string(clause_index)
-                               : "workflow__" + std::string(owner) + "__" +
-                                     std::string(kind == ir::FormalObservationScopeKind::WorkflowSafetyClause
-                                                     ? "safety"
-                                                     : "liveness") +
-                                     "__" + std::to_string(clause_index);
+        const auto base_name =
+            kind == ir::FormalObservationScopeKind::ContractClause
+                ? "contract__" + std::string(owner) + "__" + std::to_string(clause_index)
+                : "workflow__" + std::string(owner) + "__" +
+                      std::string(kind == ir::FormalObservationScopeKind::WorkflowSafetyClause
+                                      ? "safety"
+                                      : "liveness") +
+                      "__" + std::to_string(clause_index);
         return clause_atom_name(base_name, atom_index);
     }
 
@@ -457,15 +459,15 @@ class SmvPrinter final {
         const auto completed_var = workflow_node_completed_var(workflow, node.name);
         const auto dependency_guard = render_dependency_guard(workflow, node.after);
 
-        collect_state_machine_assignments(
-            agent,
-            state_var,
-            build_effective_adjacency(agent),
-            node.after.empty() ? std::string() : "!(" + started_var + ") & !(" + dependency_guard +
-                                                  ")");
+        collect_state_machine_assignments(agent,
+                                          state_var,
+                                          build_effective_adjacency(agent),
+                                          node.after.empty() ? std::string()
+                                                             : "!(" + started_var + ") & !(" +
+                                                                   dependency_guard + ")");
 
-        assignments_.push_back("init(" + started_var + ") := " +
-                               std::string(node.after.empty() ? "TRUE" : "FALSE") + ";");
+        assignments_.push_back("init(" + started_var +
+                               ") := " + std::string(node.after.empty() ? "TRUE" : "FALSE") + ";");
         if (node.after.empty()) {
             assignments_.push_back("next(" + started_var + ") := TRUE;");
         } else {
@@ -480,18 +482,16 @@ class SmvPrinter final {
         assignments_.push_back("next(" + completed_var + ") := case");
         assignments_.push_back("  " + completed_var + " : TRUE;");
         assignments_.push_back("  " + started_var + " & " +
-                               render_state_membership(state_var, agent.final_states) +
-                               " : TRUE;");
+                               render_state_membership(state_var, agent.final_states) + " : TRUE;");
         assignments_.push_back("  TRUE : FALSE;");
         assignments_.push_back("esac;");
     }
 
-    void collect_state_machine_assignments(const ir::AgentDecl &agent,
-                                           std::string state_var,
-                                           const std::unordered_map<std::string,
-                                                                    std::vector<std::string>>
-                                               &adjacency,
-                                           std::string block_guard = {}) {
+    void collect_state_machine_assignments(
+        const ir::AgentDecl &agent,
+        std::string state_var,
+        const std::unordered_map<std::string, std::vector<std::string>> &adjacency,
+        std::string block_guard = {}) {
         assignments_.push_back("init(" + state_var + ") := " + agent.initial_state + ";");
         assignments_.push_back("next(" + state_var + ") := case");
 
@@ -527,74 +527,12 @@ class SmvPrinter final {
         }
 
         for (const auto &handler : flow->get().state_handlers) {
-            const auto summary = summarize_block(handler.body);
-            if (!summary.goto_targets.empty() || summary.saw_return) {
-                adjacency[handler.state_name] = summary.goto_targets;
+            if (!handler.summary.goto_targets.empty() || handler.summary.may_return) {
+                adjacency[handler.state_name] = handler.summary.goto_targets;
             }
         }
 
         return adjacency;
-    }
-
-    [[nodiscard]] FlowSummary summarize_statement(const ir::Statement &statement) const {
-        return std::visit(
-            Overloaded{
-                [](const ir::LetStatement &) { return FlowSummary{}; },
-                [](const ir::AssignStatement &) { return FlowSummary{}; },
-                [](const ir::AssertStatement &) { return FlowSummary{}; },
-                [](const ir::ExprStatement &) { return FlowSummary{}; },
-                [](const ir::GotoStatement &value) {
-                    return FlowSummary{
-                        .goto_targets = {value.target_state},
-                        .saw_return = false,
-                        .may_fallthrough = false,
-                    };
-                },
-                [](const ir::ReturnStatement &) {
-                    return FlowSummary{
-                        .goto_targets = {},
-                        .saw_return = true,
-                        .may_fallthrough = false,
-                    };
-                },
-                [this](const ir::IfStatement &value) {
-                    auto summary = summarize_block(*value.then_block);
-
-                    FlowSummary else_summary;
-                    if (value.else_block) {
-                        else_summary = summarize_block(*value.else_block);
-                    }
-
-                    for (const auto &target : else_summary.goto_targets) {
-                        push_unique(summary.goto_targets, target);
-                    }
-
-                    summary.saw_return = summary.saw_return || else_summary.saw_return;
-                    summary.may_fallthrough =
-                        !value.else_block || summary.may_fallthrough || else_summary.may_fallthrough;
-                    return summary;
-                },
-            },
-            statement.node);
-    }
-
-    [[nodiscard]] FlowSummary summarize_block(const ir::Block &block) const {
-        FlowSummary summary;
-
-        for (const auto &statement : block.statements) {
-            if (!summary.may_fallthrough) {
-                break;
-            }
-
-            const auto statement_summary = summarize_statement(*statement);
-            for (const auto &target : statement_summary.goto_targets) {
-                push_unique(summary.goto_targets, target);
-            }
-            summary.saw_return = summary.saw_return || statement_summary.saw_return;
-            summary.may_fallthrough = statement_summary.may_fallthrough;
-        }
-
-        return summary;
     }
 
     [[nodiscard]] std::string render_next_targets(const std::vector<std::string> &targets,
@@ -651,23 +589,43 @@ class SmvPrinter final {
                            ")";
                 },
                 [&](const ir::TemporalBinaryExpr &value) {
-                    return "(" +
-                           render_agent_formula(*value.lhs, agent, clause_index, atom_index) +
+                    return "(" + render_agent_formula(*value.lhs, agent, clause_index, atom_index) +
                            " " + smv_binary_op(value.op) + " " +
-                           render_agent_formula(*value.rhs, agent, clause_index, atom_index) +
-                           ")";
+                           render_agent_formula(*value.rhs, agent, clause_index, atom_index) + ")";
                 },
                 [&](const auto &) { return std::string("FALSE"); },
             },
             expr.node);
     }
 
-    [[nodiscard]] std::string
-    render_workflow_formula(const ir::TemporalExpr &expr,
-                            const ir::WorkflowDecl &workflow,
-                            ir::FormalObservationScopeKind scope_kind,
-                            std::size_t clause_index,
-                            std::size_t &atom_index) const {
+    [[nodiscard]] std::string render_contract_expr_clause(const ir::ContractDecl &contract,
+                                                          const ir::AgentDecl &agent,
+                                                          ir::ContractClauseKind kind,
+                                                          std::size_t clause_index) const {
+        const auto observation = lookup_embedded_observation_symbol(
+            ir::FormalObservationScopeKind::ContractClause, contract.target, clause_index, 0);
+
+        switch (kind) {
+        case ir::ContractClauseKind::Requires:
+            // A `requires` clause is exported as an initial-state precondition only.
+            return observation;
+        case ir::ContractClauseKind::Ensures:
+            // An `ensures` clause is only checked once the agent reaches a final state.
+            return "G (" + render_state_membership(agent_state_var(agent), agent.final_states) +
+                   " -> " + observation + ")";
+        case ir::ContractClauseKind::Invariant:
+        case ir::ContractClauseKind::Forbid:
+            return observation;
+        }
+
+        return observation;
+    }
+
+    [[nodiscard]] std::string render_workflow_formula(const ir::TemporalExpr &expr,
+                                                      const ir::WorkflowDecl &workflow,
+                                                      ir::FormalObservationScopeKind scope_kind,
+                                                      std::size_t clause_index,
+                                                      std::size_t &atom_index) const {
         return std::visit(
             Overloaded{
                 [&](const ir::EmbeddedTemporalExpr &) {
@@ -708,7 +666,8 @@ class SmvPrinter final {
 
     void emit() {
         out_ << "-- AHFL restricted SMV backend v0.1\n";
-        out_ << "-- This lowering preserves validated state-machine, flow, and workflow structure.\n";
+        out_ << "-- This lowering preserves validated state-machine, flow, and workflow "
+                "structure.\n";
         out_ << "-- Pure embedded expressions are abstracted as boolean observation variables.\n";
         out_ << "MODULE main\n";
 

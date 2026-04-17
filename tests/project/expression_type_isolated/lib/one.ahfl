@@ -1,0 +1,15 @@
+module lib::one;
+import lib::types as types;
+
+capability Ping(request: types::OneReq) -> types::OneRes;
+
+agent OneAgent {
+    input: types::OneReq;
+    context: types::OneCtx;
+    output: types::OneRes;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Ping];
+    transition Init -> Done;
+}

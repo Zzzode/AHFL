@@ -1,5 +1,7 @@
 #include "ahfl/ir/ir.hpp"
 
+#include "ahfl/frontend/frontend.hpp"
+
 #include <cctype>
 #include <cstddef>
 #include <sstream>
@@ -62,8 +64,41 @@ template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
     return sanitized;
 }
 
-[[nodiscard]] std::string
-called_observation_symbol(std::string_view agent_name, std::string_view capability_name) {
+[[nodiscard]] bool paths_equal(const ir::Path &lhs, const ir::Path &rhs) {
+    return lhs.root_kind == rhs.root_kind && lhs.root_name == rhs.root_name &&
+           lhs.members == rhs.members;
+}
+
+[[nodiscard]] bool workflow_value_reads_equal(const ir::WorkflowValueRead &lhs,
+                                              const ir::WorkflowValueRead &rhs) {
+    return lhs.kind == rhs.kind && lhs.root_name == rhs.root_name && lhs.members == rhs.members;
+}
+
+[[nodiscard]] std::string logical_source_path(std::string_view module_name) {
+    if (module_name.empty()) {
+        return {};
+    }
+
+    std::string path;
+    path.reserve(module_name.size() + 5);
+
+    for (std::size_t index = 0; index < module_name.size(); ++index) {
+        if (index + 1 < module_name.size() && module_name[index] == ':' &&
+            module_name[index + 1] == ':') {
+            path += '/';
+            ++index;
+            continue;
+        }
+
+        path += module_name[index];
+    }
+
+    path += ".ahfl";
+    return path;
+}
+
+[[nodiscard]] std::string called_observation_symbol(std::string_view agent_name,
+                                                    std::string_view capability_name) {
     return "agent__" + sanitize_identifier(agent_name) + "__called__" +
            sanitize_identifier(capability_name);
 }
@@ -285,6 +320,49 @@ called_observation_symbol(std::string_view agent_name, std::string_view capabili
     return "<invalid-contract-clause>";
 }
 
+[[nodiscard]] std::string workflow_value_source_kind_name(ir::WorkflowValueSourceKind kind) {
+    switch (kind) {
+    case ir::WorkflowValueSourceKind::WorkflowInput:
+        return "workflow_input";
+    case ir::WorkflowValueSourceKind::WorkflowNodeOutput:
+        return "workflow_node_output";
+    }
+
+    return "invalid";
+}
+
+template <typename T>
+void push_unique_value(std::vector<T> &values, const T &value) {
+    for (const auto &existing : values) {
+        if (existing == value) {
+            return;
+        }
+    }
+
+    values.push_back(value);
+}
+
+void push_unique_path(std::vector<ir::Path> &values, const ir::Path &value) {
+    for (const auto &existing : values) {
+        if (paths_equal(existing, value)) {
+            return;
+        }
+    }
+
+    values.push_back(value);
+}
+
+void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
+                                     const ir::WorkflowValueRead &value) {
+    for (const auto &existing : values) {
+        if (workflow_value_reads_equal(existing, value)) {
+            return;
+        }
+    }
+
+    values.push_back(value);
+}
+
 [[nodiscard]] std::string quota_item_name(ast::AgentQuotaItemKind kind) {
     switch (kind) {
     case ast::AgentQuotaItemKind::MaxToolCalls:
@@ -327,24 +405,55 @@ class IrLowerer final {
     IrLowerer(const ast::Program &program,
               const ResolveResult &resolve_result,
               const TypeCheckResult &type_check_result)
-        : program_(program), resolve_result_(resolve_result),
+        : program_(&program), resolve_result_(resolve_result),
           type_check_result_(type_check_result) {}
+    IrLowerer(const SourceGraph &graph,
+              const ResolveResult &resolve_result,
+              const TypeCheckResult &type_check_result)
+        : graph_(&graph), resolve_result_(resolve_result), type_check_result_(type_check_result) {}
 
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
-        program_ir.declarations.reserve(program_.declarations.size());
+        if (graph_ != nullptr) {
+            std::size_t declaration_count = 0;
+            for (const auto &source : graph_->sources) {
+                declaration_count += source.program ? source.program->declarations.size() : 0;
+            }
+            program_ir.declarations.reserve(declaration_count);
 
-        for (const auto &declaration : program_.declarations) {
-            program_ir.declarations.push_back(lower_declaration(*declaration));
+            for (const auto &source : graph_->sources) {
+                if (!source.program) {
+                    continue;
+                }
+
+                enter_source(source);
+                for (const auto &declaration : source.program->declarations) {
+                    program_ir.declarations.push_back(lower_declaration(*declaration));
+                }
+                leave_source();
+            }
+
+            return program_ir;
+        }
+
+        if (program_ != nullptr) {
+            program_ir.declarations.reserve(program_->declarations.size());
+            for (const auto &declaration : program_->declarations) {
+                program_ir.declarations.push_back(lower_declaration(*declaration));
+            }
         }
 
         return program_ir;
     }
 
   private:
-    const ast::Program &program_;
+    const ast::Program *program_{nullptr};
+    const SourceGraph *graph_{nullptr};
     const ResolveResult &resolve_result_;
     const TypeCheckResult &type_check_result_;
+    mutable const SourceUnit *current_source_{nullptr};
+    mutable std::optional<SourceId> current_source_id_;
+    mutable std::string current_module_name_;
 
     template <typename T> [[nodiscard]] ir::ExprPtr make_expr(T node) const {
         auto expr = make_owned<ir::Expr>();
@@ -372,14 +481,46 @@ class IrLowerer final {
         return type_check_result_.environment;
     }
 
-    [[nodiscard]] MaybeCRef<Symbol> find_local_symbol(SymbolNamespace name_space,
-                                                      std::string_view name) const {
+    void enter_source(const SourceUnit &source) const {
+        current_source_ = &source;
+        current_source_id_ = source.id;
+        current_module_name_ = source.module_name;
+    }
+
+    void leave_source() const {
+        current_source_ = nullptr;
+        current_source_id_.reset();
+        current_module_name_.clear();
+    }
+
+    [[nodiscard]] ir::DeclarationProvenance current_provenance() const {
+        if (graph_ == nullptr || current_module_name_.empty()) {
+            return {};
+        }
+
+        return ir::DeclarationProvenance{
+            .module_name = current_module_name_,
+            .source_path = logical_source_path(current_module_name_),
+        };
+    }
+
+    template <typename DeclT> [[nodiscard]] DeclT with_provenance(DeclT declaration) const {
+        declaration.provenance = current_provenance();
+        return declaration;
+    }
+
+    [[nodiscard]] MaybeCRef<Symbol> find_local_symbol_here(SymbolNamespace name_space,
+                                                           std::string_view name) const {
+        if (!current_module_name_.empty()) {
+            return symbols().find_local(name_space, name, current_module_name_);
+        }
+
         return symbols().find_local(name_space, name);
     }
 
-    [[nodiscard]] MaybeCRef<Symbol> symbol_from_reference(ReferenceKind kind,
-                                                          SourceRange range) const {
-        const auto reference = resolve_result_.find_reference(kind, range);
+    [[nodiscard]] MaybeCRef<Symbol> symbol_from_reference_here(ReferenceKind kind,
+                                                               SourceRange range) const {
+        const auto reference = resolve_result_.find_reference(kind, range, current_source_id_);
         if (!reference.has_value()) {
             return std::nullopt;
         }
@@ -387,10 +528,10 @@ class IrLowerer final {
         return symbols().get(reference->get().target);
     }
 
-    [[nodiscard]] std::string canonical_name_from_reference(ReferenceKind kind,
-                                                            SourceRange range,
-                                                            std::string_view fallback) const {
-        const auto symbol = symbol_from_reference(kind, range);
+    [[nodiscard]] std::string canonical_name_from_reference_here(ReferenceKind kind,
+                                                                 SourceRange range,
+                                                                 std::string_view fallback) const {
+        const auto symbol = symbol_from_reference_here(kind, range);
         if (!symbol.has_value()) {
             return std::string(fallback);
         }
@@ -398,9 +539,9 @@ class IrLowerer final {
         return symbol->get().canonical_name;
     }
 
-    [[nodiscard]] std::string canonical_local_name(SymbolNamespace name_space,
-                                                   std::string_view local_name) const {
-        const auto symbol = find_local_symbol(name_space, local_name);
+    [[nodiscard]] std::string canonical_local_name_here(SymbolNamespace name_space,
+                                                        std::string_view local_name) const {
+        const auto symbol = find_local_symbol_here(name_space, local_name);
         if (!symbol.has_value()) {
             return std::string(local_name);
         }
@@ -430,7 +571,7 @@ class IrLowerer final {
         case ast::TypeSyntaxKind::Decimal:
             return type.spelling();
         case ast::TypeSyntaxKind::Named:
-            return canonical_name_from_reference(
+            return canonical_name_from_reference_here(
                 ReferenceKind::TypeName, type.name->range, type.name->spelling());
         case ast::TypeSyntaxKind::Optional:
             return "Optional<" + render_type_syntax(*type.first) + ">";
@@ -459,23 +600,24 @@ class IrLowerer final {
     }
 
     [[nodiscard]] std::string render_call_target(const ast::QualifiedName &name) const {
-        return canonical_name_from_reference(
+        return canonical_name_from_reference_here(
             ReferenceKind::CallTarget, name.range, name.spelling());
     }
 
     [[nodiscard]] std::string render_struct_target(const ast::QualifiedName &name) const {
-        return canonical_name_from_reference(ReferenceKind::TypeName, name.range, name.spelling());
+        return canonical_name_from_reference_here(
+            ReferenceKind::TypeName, name.range, name.spelling());
     }
 
     [[nodiscard]] std::string render_qualified_value(const ast::ExprSyntax &expr) const {
         const auto const_symbol =
-            symbol_from_reference(ReferenceKind::ConstValue, expr.qualified_name->range);
+            symbol_from_reference_here(ReferenceKind::ConstValue, expr.qualified_name->range);
         if (const_symbol.has_value()) {
             return const_symbol->get().canonical_name;
         }
 
-        const auto owner_symbol = symbol_from_reference(ReferenceKind::QualifiedValueOwnerType,
-                                                        expr.qualified_name->range);
+        const auto owner_symbol = symbol_from_reference_here(
+            ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range);
         if (!owner_symbol.has_value()) {
             return expr.qualified_name->spelling();
         }
@@ -606,7 +748,7 @@ class IrLowerer final {
             return make_temporal(ir::EmbeddedTemporalExpr{.expr = lower_expr(*expr.expr)});
         case ast::TemporalExprSyntaxKind::Called:
             return make_temporal(ir::CalledTemporalExpr{
-                .capability = canonical_name_from_reference(
+                .capability = canonical_name_from_reference_here(
                     ReferenceKind::TemporalCapability, expr.range, expr.name),
             });
         case ast::TemporalExprSyntaxKind::InState:
@@ -640,8 +782,8 @@ class IrLowerer final {
         }
 
         if (statement.initializer) {
-            const auto expression_type =
-                type_check_result_.find_expression_type(statement.initializer->range);
+            const auto expression_type = type_check_result_.find_expression_type(
+                statement.initializer->range, current_source_id_);
             if (expression_type.has_value() && expression_type->get().type) {
                 return expression_type->get().type->describe();
             }
@@ -659,6 +801,165 @@ class IrLowerer final {
         }
 
         return ir_block;
+    }
+
+    void collect_called_targets_from_expr(const ir::Expr &expr,
+                                          std::vector<std::string> &called_targets) const {
+        std::visit(Overloaded{
+                       [](const ir::NoneLiteralExpr &) {},
+                       [](const ir::BoolLiteralExpr &) {},
+                       [](const ir::IntegerLiteralExpr &) {},
+                       [](const ir::FloatLiteralExpr &) {},
+                       [](const ir::DecimalLiteralExpr &) {},
+                       [](const ir::StringLiteralExpr &) {},
+                       [](const ir::DurationLiteralExpr &) {},
+                       [this, &called_targets](const ir::SomeExpr &value) {
+                           collect_called_targets_from_expr(*value.value, called_targets);
+                       },
+                       [](const ir::PathExpr &) {},
+                       [](const ir::QualifiedValueExpr &) {},
+                       [this, &called_targets](const ir::CallExpr &value) {
+                           push_unique_value(called_targets, value.callee);
+                           for (const auto &argument : value.arguments) {
+                               collect_called_targets_from_expr(*argument, called_targets);
+                           }
+                       },
+                       [this, &called_targets](const ir::StructLiteralExpr &value) {
+                           for (const auto &field : value.fields) {
+                               collect_called_targets_from_expr(*field.value, called_targets);
+                           }
+                       },
+                       [this, &called_targets](const ir::ListLiteralExpr &value) {
+                           for (const auto &item : value.items) {
+                               collect_called_targets_from_expr(*item, called_targets);
+                           }
+                       },
+                       [this, &called_targets](const ir::SetLiteralExpr &value) {
+                           for (const auto &item : value.items) {
+                               collect_called_targets_from_expr(*item, called_targets);
+                           }
+                       },
+                       [this, &called_targets](const ir::MapLiteralExpr &value) {
+                           for (const auto &entry : value.entries) {
+                               collect_called_targets_from_expr(*entry.key, called_targets);
+                               collect_called_targets_from_expr(*entry.value, called_targets);
+                           }
+                       },
+                       [this, &called_targets](const ir::UnaryExpr &value) {
+                           collect_called_targets_from_expr(*value.operand, called_targets);
+                       },
+                       [this, &called_targets](const ir::BinaryExpr &value) {
+                           collect_called_targets_from_expr(*value.lhs, called_targets);
+                           collect_called_targets_from_expr(*value.rhs, called_targets);
+                       },
+                       [this, &called_targets](const ir::MemberAccessExpr &value) {
+                           collect_called_targets_from_expr(*value.base, called_targets);
+                       },
+                       [this, &called_targets](const ir::IndexAccessExpr &value) {
+                           collect_called_targets_from_expr(*value.base, called_targets);
+                           collect_called_targets_from_expr(*value.index, called_targets);
+                       },
+                       [this, &called_targets](const ir::GroupExpr &value) {
+                           collect_called_targets_from_expr(*value.expr, called_targets);
+                       },
+                   },
+                   expr.node);
+    }
+
+    void merge_flow_summary(ir::StateHandler::Summary &target,
+                            const ir::StateHandler::Summary &other) const {
+        for (const auto &goto_target : other.goto_targets) {
+            push_unique_value(target.goto_targets, goto_target);
+        }
+
+        for (const auto &assigned_path : other.assigned_paths) {
+            push_unique_path(target.assigned_paths, assigned_path);
+        }
+
+        for (const auto &called_target : other.called_targets) {
+            push_unique_value(target.called_targets, called_target);
+        }
+
+        target.may_return = target.may_return || other.may_return;
+        target.assert_count += other.assert_count;
+    }
+
+    [[nodiscard]] ir::StateHandler::Summary summarize_statement(const ir::Statement &statement) const {
+        return std::visit(
+            Overloaded{
+                [this](const ir::LetStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    collect_called_targets_from_expr(*value.initializer, summary.called_targets);
+                    return summary;
+                },
+                [this](const ir::AssignStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    push_unique_path(summary.assigned_paths, value.target);
+                    collect_called_targets_from_expr(*value.value, summary.called_targets);
+                    return summary;
+                },
+                [this](const ir::IfStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    collect_called_targets_from_expr(*value.condition, summary.called_targets);
+
+                    const auto then_summary = summarize_block(*value.then_block);
+                    merge_flow_summary(summary, then_summary);
+
+                    ir::StateHandler::Summary else_summary;
+                    if (value.else_block) {
+                        else_summary = summarize_block(*value.else_block);
+                        merge_flow_summary(summary, else_summary);
+                    }
+
+                    summary.may_fallthrough =
+                        !value.else_block || then_summary.may_fallthrough ||
+                        else_summary.may_fallthrough;
+                    return summary;
+                },
+                [](const ir::GotoStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    summary.goto_targets.push_back(value.target_state);
+                    summary.may_fallthrough = false;
+                    return summary;
+                },
+                [this](const ir::ReturnStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    if (value.value) {
+                        collect_called_targets_from_expr(*value.value, summary.called_targets);
+                    }
+                    summary.may_return = true;
+                    summary.may_fallthrough = false;
+                    return summary;
+                },
+                [this](const ir::AssertStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    collect_called_targets_from_expr(*value.condition, summary.called_targets);
+                    summary.assert_count = 1;
+                    return summary;
+                },
+                [this](const ir::ExprStatement &value) {
+                    ir::StateHandler::Summary summary;
+                    collect_called_targets_from_expr(*value.expr, summary.called_targets);
+                    return summary;
+                },
+            },
+            statement.node);
+    }
+
+    [[nodiscard]] ir::StateHandler::Summary summarize_block(const ir::Block &block) const {
+        ir::StateHandler::Summary summary;
+
+        for (const auto &statement : block.statements) {
+            if (!summary.may_fallthrough) {
+                break;
+            }
+
+            const auto statement_summary = summarize_statement(*statement);
+            merge_flow_summary(summary, statement_summary);
+            summary.may_fallthrough = statement_summary.may_fallthrough;
+        }
+
+        return summary;
     }
 
     [[nodiscard]] ir::StatementPtr lower_statement(const ast::StatementSyntax &statement) const {
@@ -704,6 +1005,107 @@ class IrLowerer final {
         });
     }
 
+    void collect_workflow_value_reads(const ir::Expr &expr,
+                                      const std::vector<std::string> &workflow_node_names,
+                                      std::vector<ir::WorkflowValueRead> &reads) const {
+        std::visit(
+            Overloaded{
+                [](const ir::NoneLiteralExpr &) {},
+                [](const ir::BoolLiteralExpr &) {},
+                [](const ir::IntegerLiteralExpr &) {},
+                [](const ir::FloatLiteralExpr &) {},
+                [](const ir::DecimalLiteralExpr &) {},
+                [](const ir::StringLiteralExpr &) {},
+                [](const ir::DurationLiteralExpr &) {},
+                [this, &workflow_node_names, &reads](const ir::SomeExpr &value) {
+                    collect_workflow_value_reads(*value.value, workflow_node_names, reads);
+                },
+                [&workflow_node_names, &reads](const ir::PathExpr &value) {
+                    if (value.path.root_kind == ir::PathRootKind::Input) {
+                        push_unique_workflow_value_read(
+                            reads,
+                            ir::WorkflowValueRead{
+                                .kind = ir::WorkflowValueSourceKind::WorkflowInput,
+                                .root_name = value.path.root_name,
+                                .members = value.path.members,
+                            });
+                        return;
+                    }
+
+                    if (value.path.root_kind != ir::PathRootKind::Identifier) {
+                        return;
+                    }
+
+                    if (std::find(workflow_node_names.begin(),
+                                  workflow_node_names.end(),
+                                  value.path.root_name) == workflow_node_names.end()) {
+                        return;
+                    }
+
+                    push_unique_workflow_value_read(
+                        reads,
+                        ir::WorkflowValueRead{
+                            .kind = ir::WorkflowValueSourceKind::WorkflowNodeOutput,
+                            .root_name = value.path.root_name,
+                            .members = value.path.members,
+                        });
+                },
+                [](const ir::QualifiedValueExpr &) {},
+                [this, &workflow_node_names, &reads](const ir::CallExpr &value) {
+                    for (const auto &argument : value.arguments) {
+                        collect_workflow_value_reads(*argument, workflow_node_names, reads);
+                    }
+                },
+                [this, &workflow_node_names, &reads](const ir::StructLiteralExpr &value) {
+                    for (const auto &field : value.fields) {
+                        collect_workflow_value_reads(*field.value, workflow_node_names, reads);
+                    }
+                },
+                [this, &workflow_node_names, &reads](const ir::ListLiteralExpr &value) {
+                    for (const auto &item : value.items) {
+                        collect_workflow_value_reads(*item, workflow_node_names, reads);
+                    }
+                },
+                [this, &workflow_node_names, &reads](const ir::SetLiteralExpr &value) {
+                    for (const auto &item : value.items) {
+                        collect_workflow_value_reads(*item, workflow_node_names, reads);
+                    }
+                },
+                [this, &workflow_node_names, &reads](const ir::MapLiteralExpr &value) {
+                    for (const auto &entry : value.entries) {
+                        collect_workflow_value_reads(*entry.key, workflow_node_names, reads);
+                        collect_workflow_value_reads(*entry.value, workflow_node_names, reads);
+                    }
+                },
+                [this, &workflow_node_names, &reads](const ir::UnaryExpr &value) {
+                    collect_workflow_value_reads(*value.operand, workflow_node_names, reads);
+                },
+                [this, &workflow_node_names, &reads](const ir::BinaryExpr &value) {
+                    collect_workflow_value_reads(*value.lhs, workflow_node_names, reads);
+                    collect_workflow_value_reads(*value.rhs, workflow_node_names, reads);
+                },
+                [this, &workflow_node_names, &reads](const ir::MemberAccessExpr &value) {
+                    collect_workflow_value_reads(*value.base, workflow_node_names, reads);
+                },
+                [this, &workflow_node_names, &reads](const ir::IndexAccessExpr &value) {
+                    collect_workflow_value_reads(*value.base, workflow_node_names, reads);
+                    collect_workflow_value_reads(*value.index, workflow_node_names, reads);
+                },
+                [this, &workflow_node_names, &reads](const ir::GroupExpr &value) {
+                    collect_workflow_value_reads(*value.expr, workflow_node_names, reads);
+                },
+            },
+            expr.node);
+    }
+
+    [[nodiscard]] ir::WorkflowExprSummary
+    summarize_workflow_expr(const ir::Expr &expr,
+                            const std::vector<std::string> &workflow_node_names) const {
+        ir::WorkflowExprSummary summary;
+        collect_workflow_value_reads(expr, workflow_node_names, summary.reads);
+        return summary;
+    }
+
     [[nodiscard]] ir::Decl lower_declaration(const ast::Decl &declaration) const {
         switch (declaration.kind) {
         case ast::NodeKind::ModuleDecl:
@@ -738,49 +1140,53 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::ModuleDecl lower_module(const ast::ModuleDecl &node) const {
-        return ir::ModuleDecl{
+        if (graph_ == nullptr) {
+            current_module_name_ = node.name->spelling();
+        }
+
+        return with_provenance(ir::ModuleDecl{
             .name = node.name->spelling(),
-        };
+        });
     }
 
     [[nodiscard]] ir::ImportDecl lower_import(const ast::ImportDecl &node) const {
-        return ir::ImportDecl{
+        return with_provenance(ir::ImportDecl{
             .path = node.path->spelling(),
             .alias = node.alias.empty() ? std::nullopt : std::make_optional(node.alias),
-        };
+        });
     }
 
     [[nodiscard]] ir::ConstDecl lower_const(const ast::ConstDecl &node) const {
-        const auto symbol_name = canonical_local_name(SymbolNamespace::Consts, node.name);
-        const auto const_symbol = find_local_symbol(SymbolNamespace::Consts, node.name);
+        const auto symbol_name = canonical_local_name_here(SymbolNamespace::Consts, node.name);
+        const auto const_symbol = find_local_symbol_here(SymbolNamespace::Consts, node.name);
 
         MaybeCRef<Type> const_type;
         if (const_symbol.has_value()) {
             const_type = environment().get_const_type(const_symbol->get().id);
         }
 
-        return ir::ConstDecl{
+        return with_provenance(ir::ConstDecl{
             .name = symbol_name,
             .type = describe_type(const_type),
             .value = lower_expr(*node.value),
-        };
+        });
     }
 
     [[nodiscard]] ir::TypeAliasDecl lower_type_alias(const ast::TypeAliasDecl &node) const {
-        return ir::TypeAliasDecl{
-            .name = canonical_local_name(SymbolNamespace::Types, node.name),
+        return with_provenance(ir::TypeAliasDecl{
+            .name = canonical_local_name_here(SymbolNamespace::Types, node.name),
             .aliased_type = render_type_syntax(*node.aliased_type),
-        };
+        });
     }
 
     [[nodiscard]] ir::StructDecl lower_struct(const ast::StructDecl &node) const {
-        const auto symbol = find_local_symbol(SymbolNamespace::Types, node.name);
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Types, node.name);
         const auto info =
             symbol.has_value() ? environment().get_struct(symbol->get().id) : std::nullopt;
 
-        ir::StructDecl declaration{
+        ir::StructDecl declaration = with_provenance(ir::StructDecl{
             .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-        };
+        });
         declaration.fields.reserve(node.fields.size());
 
         for (std::size_t index = 0; index < node.fields.size(); ++index) {
@@ -803,11 +1209,11 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::EnumDecl lower_enum(const ast::EnumDecl &node) const {
-        const auto symbol = find_local_symbol(SymbolNamespace::Types, node.name);
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Types, node.name);
 
-        ir::EnumDecl declaration{
+        ir::EnumDecl declaration = with_provenance(ir::EnumDecl{
             .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-        };
+        });
         declaration.variants.reserve(node.variants.size());
 
         for (const auto &variant : node.variants) {
@@ -857,35 +1263,35 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::CapabilityDecl lower_capability(const ast::CapabilityDecl &node) const {
-        const auto symbol = find_local_symbol(SymbolNamespace::Capabilities, node.name);
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Capabilities, node.name);
         const auto info =
             symbol.has_value() ? environment().get_capability(symbol->get().id) : std::nullopt;
 
-        return ir::CapabilityDecl{
+        return with_provenance(ir::CapabilityDecl{
             .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
             .params = lower_params(node.params, info, std::nullopt),
             .return_type = info.has_value() ? describe_type(borrow(info->get().return_type.get()))
                                             : render_type_syntax(*node.return_type),
-        };
+        });
     }
 
     [[nodiscard]] ir::PredicateDecl lower_predicate(const ast::PredicateDecl &node) const {
-        const auto symbol = find_local_symbol(SymbolNamespace::Predicates, node.name);
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Predicates, node.name);
         const auto info =
             symbol.has_value() ? environment().get_predicate(symbol->get().id) : std::nullopt;
 
-        return ir::PredicateDecl{
+        return with_provenance(ir::PredicateDecl{
             .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
             .params = lower_params(node.params, std::nullopt, info),
-        };
+        });
     }
 
     [[nodiscard]] ir::AgentDecl lower_agent(const ast::AgentDecl &node) const {
-        const auto symbol = find_local_symbol(SymbolNamespace::Agents, node.name);
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Agents, node.name);
         const auto info =
             symbol.has_value() ? environment().get_agent(symbol->get().id) : std::nullopt;
 
-        ir::AgentDecl declaration{
+        ir::AgentDecl declaration = with_provenance(ir::AgentDecl{
             .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
             .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
                                            : render_type_syntax(*node.input_type),
@@ -896,7 +1302,7 @@ class IrLowerer final {
             .states = node.states,
             .initial_state = node.initial_state,
             .final_states = node.final_states,
-        };
+        });
 
         if (info.has_value()) {
             declaration.capabilities.reserve(info->get().capability_symbols.size());
@@ -910,7 +1316,7 @@ class IrLowerer final {
             declaration.capabilities.reserve(node.capabilities.size());
             for (const auto &capability : node.capabilities) {
                 declaration.capabilities.push_back(
-                    canonical_local_name(SymbolNamespace::Capabilities, capability));
+                    canonical_local_name_here(SymbolNamespace::Capabilities, capability));
             }
         }
 
@@ -945,10 +1351,10 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::ContractDecl lower_contract(const ast::ContractDecl &node) const {
-        ir::ContractDecl declaration{
-            .target = canonical_name_from_reference(
+        ir::ContractDecl declaration = with_provenance(ir::ContractDecl{
+            .target = canonical_name_from_reference_here(
                 ReferenceKind::ContractTarget, node.target->range, node.target->spelling()),
-        };
+        });
         declaration.clauses.reserve(node.clauses.size());
 
         for (const auto &clause : node.clauses) {
@@ -969,10 +1375,10 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::FlowDecl lower_flow(const ast::FlowDecl &node) const {
-        ir::FlowDecl declaration{
-            .target = canonical_name_from_reference(
+        ir::FlowDecl declaration = with_provenance(ir::FlowDecl{
+            .target = canonical_name_from_reference_here(
                 ReferenceKind::FlowTarget, node.target->range, node.target->spelling()),
-        };
+        });
         declaration.state_handlers.reserve(node.state_handlers.size());
 
         for (const auto &handler : node.state_handlers) {
@@ -1006,6 +1412,7 @@ class IrLowerer final {
                 }
             }
 
+            state_handler.summary = summarize_block(state_handler.body);
             declaration.state_handlers.push_back(std::move(state_handler));
         }
 
@@ -1013,27 +1420,39 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::WorkflowDecl lower_workflow(const ast::WorkflowDecl &node) const {
-        const auto symbol = find_local_symbol(SymbolNamespace::Workflows, node.name);
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Workflows, node.name);
         const auto info =
             symbol.has_value() ? environment().get_workflow(symbol->get().id) : std::nullopt;
 
-        ir::WorkflowDecl declaration{
+        std::vector<std::string> workflow_node_names;
+        workflow_node_names.reserve(node.nodes.size());
+        for (const auto &workflow_node : node.nodes) {
+            workflow_node_names.push_back(workflow_node->name);
+        }
+
+        ir::WorkflowDecl declaration = with_provenance(ir::WorkflowDecl{
             .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
             .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
                                            : render_type_syntax(*node.input_type),
             .output_type = info.has_value() ? describe_type(borrow(info->get().output_type.get()))
                                             : render_type_syntax(*node.output_type),
             .return_value = lower_expr(*node.return_value),
-        };
+        });
+        declaration.return_summary =
+            summarize_workflow_expr(*declaration.return_value, workflow_node_names);
 
         declaration.nodes.reserve(node.nodes.size());
         for (const auto &workflow_node : node.nodes) {
+            auto input = lower_expr(*workflow_node->input);
+            auto input_summary = summarize_workflow_expr(*input, workflow_node_names);
             declaration.nodes.push_back(ir::WorkflowNode{
                 .name = workflow_node->name,
-                .target = canonical_name_from_reference(ReferenceKind::WorkflowNodeTarget,
-                                                        workflow_node->target->range,
-                                                        workflow_node->target->spelling()),
-                .input = lower_expr(*workflow_node->input),
+                .target = canonical_name_from_reference_here(
+                    ReferenceKind::WorkflowNodeTarget,
+                    workflow_node->target->range,
+                    workflow_node->target->spelling()),
+                .input = std::move(input),
+                .input_summary = std::move(input_summary),
                 .after = workflow_node->after,
             });
         }
@@ -1059,14 +1478,13 @@ class FormalObservationCollector final {
         observation_index_by_symbol_.clear();
 
         for (const auto &declaration : program.declarations) {
-            std::visit(
-                Overloaded{
-                    [this](const ir::AgentDecl &agent) { collect_agent(agent); },
-                    [this](const ir::ContractDecl &contract) { collect_contract(contract); },
-                    [this](const ir::WorkflowDecl &workflow) { collect_workflow(workflow); },
-                    [](const auto &) {},
-                },
-                declaration);
+            std::visit(Overloaded{
+                           [this](const ir::AgentDecl &agent) { collect_agent(agent); },
+                           [this](const ir::ContractDecl &contract) { collect_contract(contract); },
+                           [this](const ir::WorkflowDecl &workflow) { collect_workflow(workflow); },
+                           [](const auto &) {},
+                       },
+                       declaration);
         }
 
         return observations_;
@@ -1084,13 +1502,23 @@ class FormalObservationCollector final {
 
     void collect_contract(const ir::ContractDecl &contract) {
         for (std::size_t clause_index = 0; clause_index < contract.clauses.size(); ++clause_index) {
-            const auto temporal = std::get_if<ir::TemporalExprPtr>(&contract.clauses[clause_index].value);
-            if (temporal == nullptr) {
+            const auto expr = std::get_if<ir::ExprPtr>(&contract.clauses[clause_index].value);
+            if (expr != nullptr) {
+                add_embedded_observation(ir::FormalObservationScope{
+                    .kind = ir::FormalObservationScopeKind::ContractClause,
+                    .owner = contract.target,
+                    .clause_index = clause_index,
+                    .atom_index = 0,
+                });
                 continue;
             }
 
-            std::size_t atom_index = 0;
-            collect_contract_formula(**temporal, contract.target, clause_index, atom_index);
+            const auto temporal =
+                std::get_if<ir::TemporalExprPtr>(&contract.clauses[clause_index].value);
+            if (temporal != nullptr) {
+                std::size_t atom_index = 0;
+                collect_contract_formula(**temporal, contract.target, clause_index, atom_index);
+            }
         }
     }
 
@@ -1149,29 +1577,28 @@ class FormalObservationCollector final {
                                   std::string_view workflow_name,
                                   std::size_t clause_index,
                                   std::size_t &atom_index) {
-        std::visit(
-            Overloaded{
-                [&](const ir::EmbeddedTemporalExpr &) {
-                    add_embedded_observation(ir::FormalObservationScope{
-                        .kind = scope_kind,
-                        .owner = std::string(workflow_name),
-                        .clause_index = clause_index,
-                        .atom_index = atom_index++,
-                    });
-                },
-                [&](const ir::TemporalUnaryExpr &value) {
-                    collect_workflow_formula(
-                        *value.operand, scope_kind, workflow_name, clause_index, atom_index);
-                },
-                [&](const ir::TemporalBinaryExpr &value) {
-                    collect_workflow_formula(
-                        *value.lhs, scope_kind, workflow_name, clause_index, atom_index);
-                    collect_workflow_formula(
-                        *value.rhs, scope_kind, workflow_name, clause_index, atom_index);
-                },
-                [&](const auto &) {},
-            },
-            expr.node);
+        std::visit(Overloaded{
+                       [&](const ir::EmbeddedTemporalExpr &) {
+                           add_embedded_observation(ir::FormalObservationScope{
+                               .kind = scope_kind,
+                               .owner = std::string(workflow_name),
+                               .clause_index = clause_index,
+                               .atom_index = atom_index++,
+                           });
+                       },
+                       [&](const ir::TemporalUnaryExpr &value) {
+                           collect_workflow_formula(
+                               *value.operand, scope_kind, workflow_name, clause_index, atom_index);
+                       },
+                       [&](const ir::TemporalBinaryExpr &value) {
+                           collect_workflow_formula(
+                               *value.lhs, scope_kind, workflow_name, clause_index, atom_index);
+                           collect_workflow_formula(
+                               *value.rhs, scope_kind, workflow_name, clause_index, atom_index);
+                       },
+                       [&](const auto &) {},
+                   },
+                   expr.node);
     }
 
     void add_called_observation(std::string_view agent_name, std::string_view capability_name) {
@@ -1183,10 +1610,11 @@ class FormalObservationCollector final {
         observation_index_by_symbol_.emplace(symbol, observations_.size());
         observations_.push_back(ir::FormalObservation{
             .symbol = symbol,
-            .node = ir::CalledCapabilityObservation{
-                .agent = std::string(agent_name),
-                .capability = std::string(capability_name),
-            },
+            .node =
+                ir::CalledCapabilityObservation{
+                    .agent = std::string(agent_name),
+                    .capability = std::string(capability_name),
+                },
         });
     }
 
@@ -1199,9 +1627,10 @@ class FormalObservationCollector final {
         observation_index_by_symbol_.emplace(symbol, observations_.size());
         observations_.push_back(ir::FormalObservation{
             .symbol = symbol,
-            .node = ir::EmbeddedBoolObservation{
-                .scope = std::move(scope),
-            },
+            .node =
+                ir::EmbeddedBoolObservation{
+                    .scope = std::move(scope),
+                },
         });
     }
 };
@@ -1224,7 +1653,12 @@ class IrProgramPrinter final {
                 out_ << '\n';
             }
 
-            std::visit([this](const auto &typed_decl) { print_decl(typed_decl); }, declaration);
+            std::visit(
+                [this](const auto &typed_decl) {
+                    print_provenance(typed_decl.provenance);
+                    print_decl(typed_decl);
+                },
+                declaration);
             emitted_section = true;
         }
     }
@@ -1236,36 +1670,36 @@ class IrProgramPrinter final {
         out_ << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
     }
 
-    [[nodiscard]] std::string render_formal_observation(
-        const ir::FormalObservation &observation) const {
-        return std::visit(
-            Overloaded{
-                [&](const ir::CalledCapabilityObservation &value) {
-                    return "observation " + observation.symbol + ": called_capability(agent=" +
-                           value.agent + ", capability=" + value.capability + ")";
-                },
-                [&](const ir::EmbeddedBoolObservation &value) {
-                    const auto scope_kind = [&]() {
-                        switch (value.scope.kind) {
-                        case ir::FormalObservationScopeKind::ContractClause:
-                            return std::string("contract_clause");
-                        case ir::FormalObservationScopeKind::WorkflowSafetyClause:
-                            return std::string("workflow_safety_clause");
-                        case ir::FormalObservationScopeKind::WorkflowLivenessClause:
-                            return std::string("workflow_liveness_clause");
-                        }
+    [[nodiscard]] std::string
+    render_formal_observation(const ir::FormalObservation &observation) const {
+        return std::visit(Overloaded{
+                              [&](const ir::CalledCapabilityObservation &value) {
+                                  return "observation " + observation.symbol +
+                                         ": called_capability(agent=" + value.agent +
+                                         ", capability=" + value.capability + ")";
+                              },
+                              [&](const ir::EmbeddedBoolObservation &value) {
+                                  const auto scope_kind = [&]() {
+                                      switch (value.scope.kind) {
+                                      case ir::FormalObservationScopeKind::ContractClause:
+                                          return std::string("contract_clause");
+                                      case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+                                          return std::string("workflow_safety_clause");
+                                      case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+                                          return std::string("workflow_liveness_clause");
+                                      }
 
-                        return std::string("invalid");
-                    }();
+                                      return std::string("invalid");
+                                  }();
 
-                    return "observation " + observation.symbol +
-                           ": embedded_bool_expr(scope=" + scope_kind + ", owner=" +
-                           value.scope.owner + ", clause=" +
-                           std::to_string(value.scope.clause_index) + ", atom=" +
-                           std::to_string(value.scope.atom_index) + ")";
-                },
-            },
-            observation.node);
+                                  return "observation " + observation.symbol +
+                                         ": embedded_bool_expr(scope=" + scope_kind +
+                                         ", owner=" + value.scope.owner +
+                                         ", clause=" + std::to_string(value.scope.clause_index) +
+                                         ", atom=" + std::to_string(value.scope.atom_index) + ")";
+                              },
+                          },
+                          observation.node);
     }
 
     void print_formal_observations(const std::vector<ir::FormalObservation> &observations) {
@@ -1274,6 +1708,20 @@ class IrProgramPrinter final {
             line(1, render_formal_observation(observation));
         }
         line(0, "}");
+    }
+
+    [[nodiscard]] bool has_provenance(const ir::DeclarationProvenance &provenance) const {
+        return !provenance.module_name.empty() || !provenance.source_path.empty();
+    }
+
+    void print_provenance(const ir::DeclarationProvenance &provenance) {
+        if (!has_provenance(provenance)) {
+            return;
+        }
+
+        line(0,
+             "@provenance(module=" + provenance.module_name + ", source=" +
+                 provenance.source_path + ")");
     }
 
     [[nodiscard]] std::string render_path(const ir::Path &path) const {
@@ -1296,6 +1744,48 @@ class IrProgramPrinter final {
         }
 
         return builder.str();
+    }
+
+    [[nodiscard]] std::string render_bool(bool value) const { return value ? "true" : "false"; }
+
+    [[nodiscard]] std::string render_workflow_value_read(const ir::WorkflowValueRead &read) const {
+        std::string rendered = workflow_value_source_kind_name(read.kind) + "(" + read.root_name;
+        for (const auto &member : read.members) {
+            rendered += "." + member;
+        }
+        rendered += ")";
+        return rendered;
+    }
+
+    void print_flow_summary(const ir::StateHandler::Summary &summary, int indent_level) {
+        std::vector<std::string> assigned_paths;
+        assigned_paths.reserve(summary.assigned_paths.size());
+        for (const auto &assigned_path : summary.assigned_paths) {
+            assigned_paths.push_back(render_path(assigned_path));
+        }
+
+        line(indent_level, "summary {");
+        line(indent_level + 1, "goto_targets: [" + join(summary.goto_targets, ", ") + "]");
+        line(indent_level + 1, "may_return: " + render_bool(summary.may_return));
+        line(indent_level + 1, "may_fallthrough: " + render_bool(summary.may_fallthrough));
+        line(indent_level + 1, "assigned_paths: [" + join(assigned_paths, ", ") + "]");
+        line(indent_level + 1, "called_targets: [" + join(summary.called_targets, ", ") + "]");
+        line(indent_level + 1, "assert_count: " + std::to_string(summary.assert_count));
+        line(indent_level, "}");
+    }
+
+    void print_workflow_expr_summary(std::string_view label,
+                                     const ir::WorkflowExprSummary &summary,
+                                     int indent_level) {
+        std::vector<std::string> reads;
+        reads.reserve(summary.reads.size());
+        for (const auto &read : summary.reads) {
+            reads.push_back(render_workflow_value_read(read));
+        }
+
+        line(indent_level, std::string(label) + " {");
+        line(indent_level + 1, "reads: [" + join(reads, ", ") + "]");
+        line(indent_level, "}");
     }
 
     [[nodiscard]] std::string render_suffix_base(const ir::Expr &expr) const {
@@ -1596,6 +2086,7 @@ class IrProgramPrinter final {
             for (const auto &policy_item : handler.policy) {
                 print_policy_item(policy_item, 2);
             }
+            print_flow_summary(handler.summary, 2);
             print_block(handler.body, 2);
             line(1, "}");
         }
@@ -1616,6 +2107,7 @@ class IrProgramPrinter final {
             }
 
             line(1, text);
+            print_workflow_expr_summary("input_summary", node.input_summary, 2);
         }
 
         for (const auto &formula : declaration.safety) {
@@ -1625,6 +2117,7 @@ class IrProgramPrinter final {
             line(1, "liveness: " + render_temporal(*formula));
         }
 
+        print_workflow_expr_summary("return_summary", declaration.return_summary, 1);
         line(1, "return: " + render_expr(*declaration.return_value));
         line(0, "}");
     }
@@ -1636,6 +2129,15 @@ ir::Program lower_program_ir(const ast::Program &program,
                              const ResolveResult &resolve_result,
                              const TypeCheckResult &type_check_result) {
     IrLowerer lowerer(program, resolve_result, type_check_result);
+    auto program_ir = lowerer.lower();
+    program_ir.formal_observations = collect_formal_observations(program_ir);
+    return program_ir;
+}
+
+ir::Program lower_program_ir(const SourceGraph &graph,
+                             const ResolveResult &resolve_result,
+                             const TypeCheckResult &type_check_result) {
+    IrLowerer lowerer(graph, resolve_result, type_check_result);
     auto program_ir = lowerer.lower();
     program_ir.formal_observations = collect_formal_observations(program_ir);
     return program_ir;
@@ -1656,6 +2158,13 @@ void emit_program_ir(const ast::Program &program,
                      const TypeCheckResult &type_check_result,
                      std::ostream &out) {
     print_program_ir(lower_program_ir(program, resolve_result, type_check_result), out);
+}
+
+void emit_program_ir(const SourceGraph &graph,
+                     const ResolveResult &resolve_result,
+                     const TypeCheckResult &type_check_result,
+                     std::ostream &out) {
+    print_program_ir(lower_program_ir(graph, resolve_result, type_check_result), out);
 }
 
 } // namespace ahfl

@@ -1,0 +1,27 @@
+module app::main;
+import lib::types as types;
+import lib::one as one;
+import lib::two as two;
+import app::side as side;
+
+flow for one::OneAgent {
+    state Init {
+        let reply = one::Ping(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return types::OneRes {
+            value: ctx.value,
+        };
+    }
+}
+
+workflow MainWorkflow {
+    input: types::OneReq;
+    output: types::OneRes;
+    node first: one::OneAgent(input);
+    liveness: eventually completed(first, Done);
+    return: first;
+}

@@ -6,6 +6,8 @@
 #include <utility>
 #include <variant>
 
+#include "ahfl/support/json.hpp"
+
 namespace ahfl {
 
 namespace {
@@ -122,6 +124,17 @@ template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
     return "invalid";
 }
 
+[[nodiscard]] std::string_view workflow_value_source_kind_name(ir::WorkflowValueSourceKind kind) {
+    switch (kind) {
+    case ir::WorkflowValueSourceKind::WorkflowInput:
+        return "workflow_input";
+    case ir::WorkflowValueSourceKind::WorkflowNodeOutput:
+        return "workflow_node_output";
+    }
+
+    return "invalid";
+}
+
 [[nodiscard]] std::string_view
 formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     switch (kind) {
@@ -174,32 +187,7 @@ class IrJsonPrinter final {
     }
 
     void write_string(std::string_view value) {
-        out_ << '"';
-
-        for (const auto character : value) {
-            switch (character) {
-            case '\\':
-                out_ << "\\\\";
-                break;
-            case '"':
-                out_ << "\\\"";
-                break;
-            case '\n':
-                out_ << "\\n";
-                break;
-            case '\r':
-                out_ << "\\r";
-                break;
-            case '\t':
-                out_ << "\\t";
-                break;
-            default:
-                out_ << character;
-                break;
-            }
-        }
-
-        out_ << '"';
+        write_escaped_json_string(out_, value);
     }
 
     template <typename WriteFields> void print_object(int indent_level, WriteFields write_fields) {
@@ -258,6 +246,17 @@ class IrJsonPrinter final {
         out_ << "null";
     }
 
+    [[nodiscard]] bool has_provenance(const ir::DeclarationProvenance &provenance) const {
+        return !provenance.module_name.empty() || !provenance.source_path.empty();
+    }
+
+    void print_provenance(const ir::DeclarationProvenance &provenance, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("module_name", [&]() { write_string(provenance.module_name); });
+            field("source_path", [&]() { write_string(provenance.source_path); });
+        });
+    }
+
     void write_bool(bool value) {
         out_ << (value ? "true" : "false");
     }
@@ -266,8 +265,7 @@ class IrJsonPrinter final {
         out_ << value;
     }
 
-    void print_formal_observation_scope(const ir::FormalObservationScope &scope,
-                                        int indent_level) {
+    void print_formal_observation_scope(const ir::FormalObservationScope &scope, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() { write_string(formal_observation_scope_kind_name(scope.kind)); });
             field("owner", [&]() { write_string(scope.owner); });
@@ -277,26 +275,26 @@ class IrJsonPrinter final {
     }
 
     void print_formal_observation(const ir::FormalObservation &observation, int indent_level) {
-        std::visit(
-            Overloaded{
-                [&](const ir::CalledCapabilityObservation &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("symbol", [&]() { write_string(observation.symbol); });
-                        field("kind", [&]() { write_string("called_capability"); });
-                        field("agent", [&]() { write_string(value.agent); });
-                        field("capability", [&]() { write_string(value.capability); });
-                    });
-                },
-                [&](const ir::EmbeddedBoolObservation &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("symbol", [&]() { write_string(observation.symbol); });
-                        field("kind", [&]() { write_string("embedded_bool_expr"); });
-                        field("scope",
-                              [&]() { print_formal_observation_scope(value.scope, indent_level + 1); });
-                    });
-                },
-            },
-            observation.node);
+        std::visit(Overloaded{
+                       [&](const ir::CalledCapabilityObservation &value) {
+                           print_object(indent_level, [&](const auto &field) {
+                               field("symbol", [&]() { write_string(observation.symbol); });
+                               field("kind", [&]() { write_string("called_capability"); });
+                               field("agent", [&]() { write_string(value.agent); });
+                               field("capability", [&]() { write_string(value.capability); });
+                           });
+                       },
+                       [&](const ir::EmbeddedBoolObservation &value) {
+                           print_object(indent_level, [&](const auto &field) {
+                               field("symbol", [&]() { write_string(observation.symbol); });
+                               field("kind", [&]() { write_string("embedded_bool_expr"); });
+                               field("scope", [&]() {
+                                   print_formal_observation_scope(value.scope, indent_level + 1);
+                               });
+                           });
+                       },
+                   },
+                   observation.node);
     }
 
     void print_path(const ir::Path &path, int indent_level) {
@@ -630,6 +628,47 @@ class IrJsonPrinter final {
         });
     }
 
+    void print_flow_summary(const ir::StateHandler::Summary &summary, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("goto_targets", [&]() {
+                write_string_array(summary.goto_targets, indent_level + 1);
+            });
+            field("may_return", [&]() { write_bool(summary.may_return); });
+            field("may_fallthrough", [&]() { write_bool(summary.may_fallthrough); });
+            field("assigned_paths", [&]() {
+                print_array(indent_level + 1, [&](const auto &item) {
+                    for (const auto &path : summary.assigned_paths) {
+                        item([&]() { print_path(path, indent_level + 2); });
+                    }
+                });
+            });
+            field("called_targets", [&]() {
+                write_string_array(summary.called_targets, indent_level + 1);
+            });
+            field("assert_count", [&]() { write_index(summary.assert_count); });
+        });
+    }
+
+    void print_workflow_value_read(const ir::WorkflowValueRead &read, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("kind", [&]() { write_string(workflow_value_source_kind_name(read.kind)); });
+            field("root_name", [&]() { write_string(read.root_name); });
+            field("members", [&]() { write_string_array(read.members, indent_level + 1); });
+        });
+    }
+
+    void print_workflow_expr_summary(const ir::WorkflowExprSummary &summary, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("reads", [&]() {
+                print_array(indent_level + 1, [&](const auto &item) {
+                    for (const auto &read : summary.reads) {
+                        item([&]() { print_workflow_value_read(read, indent_level + 2); });
+                    }
+                });
+            });
+        });
+    }
+
     void print_state_policy_item(const ir::StatePolicyItem &item, int indent_level) {
         std::visit(Overloaded{
                        [&](const ir::RetryPolicy &value) {
@@ -662,12 +701,22 @@ class IrJsonPrinter final {
                 [&](const ir::ModuleDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("module"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                     });
                 },
                 [&](const ir::ImportDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("import"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("path", [&]() { write_string(value.path); });
                         field("alias", [&]() {
                             if (value.alias.has_value()) {
@@ -681,6 +730,11 @@ class IrJsonPrinter final {
                 [&](const ir::ConstDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("const"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("type", [&]() { write_string(value.type); });
                         field("value", [&]() { print_expr(*value.value, indent_level + 1); });
@@ -689,6 +743,11 @@ class IrJsonPrinter final {
                 [&](const ir::TypeAliasDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("type_alias"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("aliased_type", [&]() { write_string(value.aliased_type); });
                     });
@@ -696,6 +755,11 @@ class IrJsonPrinter final {
                 [&](const ir::StructDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("struct"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("fields", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -724,6 +788,11 @@ class IrJsonPrinter final {
                 [&](const ir::EnumDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("enum"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("variants",
                               [&]() { write_string_array(value.variants, indent_level + 1); });
@@ -732,6 +801,11 @@ class IrJsonPrinter final {
                 [&](const ir::CapabilityDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("capability"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("params", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -751,6 +825,11 @@ class IrJsonPrinter final {
                 [&](const ir::PredicateDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("predicate"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("params", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -770,6 +849,11 @@ class IrJsonPrinter final {
                 [&](const ir::AgentDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("agent"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("input_type", [&]() { write_string(value.input_type); });
                         field("context_type", [&]() { write_string(value.context_type); });
@@ -813,6 +897,11 @@ class IrJsonPrinter final {
                 [&](const ir::ContractDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("contract"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("target", [&]() { write_string(value.target); });
                         field("clauses", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -847,6 +936,11 @@ class IrJsonPrinter final {
                 [&](const ir::FlowDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("flow"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("target", [&]() { write_string(value.target); });
                         field("state_handlers", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -866,6 +960,10 @@ class IrJsonPrinter final {
                                                         }
                                                     });
                                             });
+                                            entry("summary", [&]() {
+                                                print_flow_summary(handler.summary,
+                                                                   indent_level + 3);
+                                            });
                                             entry("body", [&]() {
                                                 print_block(handler.body, indent_level + 3);
                                             });
@@ -879,6 +977,11 @@ class IrJsonPrinter final {
                 [&](const ir::WorkflowDecl &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("workflow"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance", [&]() {
+                                print_provenance(value.provenance, indent_level + 1);
+                            });
+                        }
                         field("name", [&]() { write_string(value.name); });
                         field("input_type", [&]() { write_string(value.input_type); });
                         field("output_type", [&]() { write_string(value.output_type); });
@@ -891,6 +994,10 @@ class IrJsonPrinter final {
                                             entry("target", [&]() { write_string(node.target); });
                                             entry("input", [&]() {
                                                 print_expr(*node.input, indent_level + 3);
+                                            });
+                                            entry("input_summary", [&]() {
+                                                print_workflow_expr_summary(node.input_summary,
+                                                                            indent_level + 3);
                                             });
                                             entry("after", [&]() {
                                                 write_string_array(node.after, indent_level + 3);
@@ -916,6 +1023,9 @@ class IrJsonPrinter final {
                                 }
                             });
                         });
+                        field("return_summary", [&]() {
+                            print_workflow_expr_summary(value.return_summary, indent_level + 1);
+                        });
                         field("return_value",
                               [&]() { print_expr(*value.return_value, indent_level + 1); });
                     });
@@ -937,6 +1047,13 @@ void emit_program_ir_json(const ast::Program &program,
                           const TypeCheckResult &type_check_result,
                           std::ostream &out) {
     print_program_ir_json(lower_program_ir(program, resolve_result, type_check_result), out);
+}
+
+void emit_program_ir_json(const SourceGraph &graph,
+                          const ResolveResult &resolve_result,
+                          const TypeCheckResult &type_check_result,
+                          std::ostream &out) {
+    print_program_ir_json(lower_program_ir(graph, resolve_result, type_check_result), out);
 }
 
 } // namespace ahfl

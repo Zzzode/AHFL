@@ -1,6 +1,13 @@
-# AHFL Repository Layout V0.1
+# AHFL Repository Layout V0.2
 
-本文冻结当前仓库的目录分层与放置规则，目标是避免源码、构建脚本和测试继续回到“全部平铺”的状态。
+本文冻结当前仓库的目录分层与放置规则，目标是避免源码、构建脚本、测试和文档继续回到“全部平铺”的状态。
+
+关联文档：
+
+- [compiler-architecture-v0.2.zh.md](./compiler-architecture-v0.2.zh.md)
+- [compiler-phase-boundaries-v0.2.zh.md](./compiler-phase-boundaries-v0.2.zh.md)
+- [testing-strategy-v0.3.zh.md](./testing-strategy-v0.3.zh.md)
+- [docs/README.md](../README.md)
 
 ## 目录分层
 
@@ -18,6 +25,7 @@ AHFL/
 ├── include/ahfl/
 │   ├── backends/
 │   ├── frontend/
+│   ├── handoff/
 │   ├── ir/
 │   ├── semantics/
 │   ├── support/
@@ -26,6 +34,8 @@ AHFL/
 │   ├── backends/
 │   ├── cli/
 │   ├── frontend/
+│   │   └── ast.cpp
+│   ├── handoff/
 │   ├── ir/
 │   ├── parser/
 │   │   └── generated/
@@ -121,6 +131,20 @@ AHFL/
 1. 不回看 parse tree
 2. IR 是 backend 的稳定输入边界
 
+### `include/ahfl/handoff` + `src/handoff`
+
+放 V0.4 之后新增的 runtime-facing handoff package 模型与其 lowering：
+
+- handoff package / package metadata 数据结构
+- 由稳定 IR 投影到 handoff package 的 lowering
+- 供 future Native/runtime consumer 使用的公共对象边界
+
+要求：
+
+1. 建立在稳定 IR 之上，不直接回看 AST 或 parse tree
+2. 不在这一层承载 CLI 参数解析或 runtime deployment 细节
+3. 不把 handoff package 反向塞回 `ir` 或 `backends` 的私有实现
+
 ### `include/ahfl/backends` + `src/backends`
 
 放 backend driver 与 backend-specific lowering：
@@ -169,6 +193,19 @@ AHFL/
 2. 平铺头只作为兼容转发层，不继续承载真实实现
 3. 若将来移除兼容头，需要先完成一次显式迁移和版本边界说明
 
+## 文档分层规则
+
+当前文档目录也属于仓库 layout 的一部分，应遵守：
+
+1. 规范性语言规则进 `docs/spec`
+2. 实现边界与架构说明进 `docs/design`
+3. 路线图、backlog 和执行拆解进 `docs/plan`
+4. how-to 和命令参考进 `docs/reference`
+
+不要再向 `docs/` 根目录直接堆新文档；常规例外只保留：
+
+- `docs/README.md`
+
 ## CMake 分层
 
 当前构建系统按以下边界拆分：
@@ -176,21 +213,24 @@ AHFL/
 1. 根 `CMakeLists.txt` 只负责项目入口、模块引入和顶层编排
 2. `third_party/antlr4/CMakeLists.txt` 只负责 ANTLR runtime
 3. `src/*/CMakeLists.txt` 分别负责各模块 target
-4. `tests/CMakeLists.txt` 只负责测试注册
-5. `cmake/modules/*.cmake` 放可复用的 CMake 函数
+4. `tests/CMakeLists.txt` 只负责引入测试注册分片
+5. `tests/cmake/*.cmake` 负责具体 test target、project regression、single-file CLI regression 和 label 注册
+6. `cmake/modules/*.cmake` 放可复用的 CMake 函数
 
 ## 新增文件的放置规则
 
 1. 新的 AST / parsing 代码放 `frontend`
 2. 新的 resolver / type / validator 代码放 `semantics`
 3. 新的稳定 IR 与其序列化放 `ir`
-4. 新的 backend lowering 放 `backends`
-5. 新的 CLI/driver 代码放 `cli`
-6. 新的 generated parser 文件只放 `src/parser/generated`
-7. 新的 CMake helper 不直接塞根目录，放 `cmake/modules`
+4. 新的 runtime-facing handoff 模型与 lowering 放 `handoff`
+5. 新的 backend lowering 放 `backends`
+6. 新的 CLI/driver 代码放 `cli`
+7. 新的 generated parser 文件只放 `src/parser/generated`
+8. 新的 CMake helper 不直接塞根目录，放 `cmake/modules`
 
 ## 当前已知后续演进点
 
 1. `tests/` 目前仍是数据文件分组，后续若测试规模继续增大，可再拆成多个 `tests/*/CMakeLists.txt`
 2. backend API 已在 Issue 20 中抽象为独立 driver；后续新增 backend 应继续沿用该分层，而不是把分发逻辑重新塞回 `ahflc`
 3. 平铺兼容头是过渡层，不应成为长期继续堆功能的位置
+4. V0.4 已新增独立 `handoff` 层；后续 Native/runtime-facing 数据模型应优先落在该层，而不是继续堆进 `ir` 或 `backends`

@@ -1,10 +1,13 @@
 #include "ahfl/semantics/validate.hpp"
 
+#include "ahfl/frontend/frontend.hpp"
+
 #include <algorithm>
 #include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -48,7 +51,12 @@ class ValidationPass final {
     ValidationPass(const ast::Program &program,
                    const ResolveResult &resolve_result,
                    const TypeCheckResult &type_check_result)
-        : program_(program), resolve_result_(resolve_result),
+        : program_(&program), resolve_result_(resolve_result),
+          type_check_result_(type_check_result) {}
+    ValidationPass(const SourceGraph &graph,
+                   const ResolveResult &resolve_result,
+                   const TypeCheckResult &type_check_result)
+        : graph_(&graph), resolve_result_(resolve_result),
           type_check_result_(type_check_result) {}
 
     [[nodiscard]] ValidationResult run() {
@@ -61,28 +69,129 @@ class ValidationPass final {
     }
 
   private:
-    const ast::Program &program_;
+    const ast::Program *program_{nullptr};
+    const SourceGraph *graph_{nullptr};
     const ResolveResult &resolve_result_;
     const TypeCheckResult &type_check_result_;
     ValidationResult result_;
+    const SourceUnit *current_source_{nullptr};
+    std::optional<SourceId> current_source_id_;
+    std::string current_module_name_;
 
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> agent_decls_;
 
-    void index_declarations() {
-        for (const auto &declaration : program_.declarations) {
+    void index_program_declarations(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
             if (declaration->kind != ast::NodeKind::AgentDecl) {
                 continue;
             }
 
             const auto &decl = static_cast<const ast::AgentDecl &>(*declaration);
-            const auto symbol =
-                resolve_result_.symbol_table.find_local(SymbolNamespace::Agents, decl.name);
+            const auto symbol = find_local_here(SymbolNamespace::Agents, decl.name);
             if (!symbol.has_value()) {
                 continue;
             }
 
             agent_decls_.emplace(symbol->get().id.value, std::cref(decl));
         }
+    }
+
+    void enter_source(const SourceUnit &source) {
+        current_source_ = &source;
+        current_source_id_ = source.id;
+        current_module_name_ = source.module_name;
+    }
+
+    void leave_source() {
+        current_source_ = nullptr;
+        current_source_id_.reset();
+        current_module_name_.clear();
+    }
+
+    [[nodiscard]] MaybeCRef<SourceUnit> source_unit_for(SourceId id) const {
+        if (graph_ == nullptr) {
+            return std::nullopt;
+        }
+
+        for (const auto &source : graph_->sources) {
+            if (source.id == id) {
+                return std::cref(source);
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    template <typename Fn> decltype(auto) with_symbol_context(SymbolId id, Fn &&fn) {
+        const auto previous_source = current_source_;
+        const auto previous_source_id = current_source_id_;
+        const auto previous_module_name = current_module_name_;
+
+        current_source_ = nullptr;
+        current_source_id_.reset();
+        current_module_name_.clear();
+
+        if (const auto symbol = symbol_of(id); symbol.has_value()) {
+            current_source_id_ = symbol->get().source_id;
+            current_module_name_ = symbol->get().module_name;
+            if (graph_ != nullptr && symbol->get().source_id.has_value()) {
+                if (const auto source = source_unit_for(*symbol->get().source_id);
+                    source.has_value()) {
+                    current_source_ = &source->get();
+                }
+            }
+        }
+
+        using Result = std::invoke_result_t<Fn>;
+        if constexpr (std::is_void_v<Result>) {
+            std::forward<Fn>(fn)();
+            current_source_ = previous_source;
+            current_source_id_ = previous_source_id;
+            current_module_name_ = previous_module_name;
+        } else {
+            Result result = std::forward<Fn>(fn)();
+            current_source_ = previous_source;
+            current_source_id_ = previous_source_id;
+            current_module_name_ = previous_module_name;
+            return result;
+        }
+    }
+
+    [[nodiscard]] MaybeCRef<Symbol> find_local_here(SymbolNamespace name_space,
+                                                    std::string_view name) const {
+        if (!current_module_name_.empty()) {
+            return resolve_result_.symbol_table.find_local(name_space, name, current_module_name_);
+        }
+
+        return resolve_result_.symbol_table.find_local(name_space, name);
+    }
+
+    [[nodiscard]] MaybeCRef<ResolvedReference> find_reference_here(ReferenceKind kind,
+                                                                   SourceRange range) const {
+        return resolve_result_.find_reference(kind, range, current_source_id_);
+    }
+
+    void error_here(std::string message, SourceRange range) {
+        if (current_source_ != nullptr) {
+            result_.diagnostics.error_in_source(std::move(message), current_source_->source, range);
+            return;
+        }
+
+        result_.diagnostics.error(std::move(message), range);
+    }
+
+    void index_declarations() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                index_program_declarations(
+                    require(source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        index_program_declarations(require(program_, "validate program must exist"));
     }
 
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const {
@@ -94,116 +203,114 @@ class ValidationPass final {
     }
 
     void check_typed_temporal_expr(const ast::ExprSyntax &expr) {
-        const auto expression_info = type_check_result_.find_expression_type(expr.range);
+        const auto expression_info =
+            type_check_result_.find_expression_type(expr.range, current_source_id_);
         if (!expression_info.has_value() || !expression_info->get().type) {
             return;
         }
 
         if (!is_bool_type(*expression_info->get().type) &&
             !is_error_type(*expression_info->get().type)) {
-            result_.diagnostics.error("temporal embedded expression must have type Bool",
-                                      expr.range);
+            error_here("temporal embedded expression must have type Bool", expr.range);
         }
 
         if (!expression_info->get().is_pure) {
-            result_.diagnostics.error("temporal embedded expression must be pure", expr.range);
+            error_here("temporal embedded expression must be pure", expr.range);
         }
     }
 
     void check_agents() {
         for (const auto &[id, decl] : agent_decls_) {
-            (void)id;
+            with_symbol_context(SymbolId{id}, [&]() {
+                std::unordered_set<std::string> states;
+                std::unordered_set<std::string> final_states;
+                std::unordered_set<std::string> capabilities;
+                std::unordered_map<std::string, std::vector<std::string>> adjacency;
 
-            std::unordered_set<std::string> states;
-            std::unordered_set<std::string> final_states;
-            std::unordered_set<std::string> capabilities;
-            std::unordered_map<std::string, std::vector<std::string>> adjacency;
-
-            for (const auto &state : decl.get().states) {
-                if (!states.insert(state).second) {
-                    result_.diagnostics.error("duplicate agent state '" + state + "'",
-                                              decl.get().range);
-                }
-            }
-
-            if (!states.contains(decl.get().initial_state)) {
-                result_.diagnostics.error("initial state '" + decl.get().initial_state +
-                                              "' is not declared in agent states",
-                                          decl.get().range);
-            }
-
-            for (const auto &final_state : decl.get().final_states) {
-                if (!final_states.insert(final_state).second) {
-                    result_.diagnostics.error("duplicate final state '" + final_state + "'",
-                                              decl.get().range);
-                }
-
-                if (!states.contains(final_state)) {
-                    result_.diagnostics.error("final state '" + final_state +
-                                                  "' is not declared in agent states",
-                                              decl.get().range);
-                }
-            }
-
-            for (const auto &capability : decl.get().capabilities) {
-                if (!capabilities.insert(capability).second) {
-                    result_.diagnostics.error("duplicate capability '" + capability +
-                                                  "' in agent capability list",
-                                              decl.get().range);
-                }
-            }
-
-            for (const auto &transition : decl.get().transitions) {
-                if (!states.contains(transition->from_state)) {
-                    result_.diagnostics.error("transition source state '" + transition->from_state +
-                                                  "' is not declared in agent states",
-                                              transition->range);
-                }
-
-                if (!states.contains(transition->to_state)) {
-                    result_.diagnostics.error("transition target state '" + transition->to_state +
-                                                  "' is not declared in agent states",
-                                              transition->range);
-                }
-
-                if (final_states.contains(transition->from_state)) {
-                    result_.diagnostics.error("final state '" + transition->from_state +
-                                                  "' must not have outgoing transitions",
-                                              transition->range);
-                }
-
-                adjacency[transition->from_state].push_back(transition->to_state);
-            }
-
-            if (!states.contains(decl.get().initial_state)) {
-                continue;
-            }
-
-            std::unordered_set<std::string> reachable;
-            std::vector<std::string> worklist{decl.get().initial_state};
-            reachable.insert(decl.get().initial_state);
-
-            for (std::size_t index = 0; index < worklist.size(); ++index) {
-                const auto adjacency_iter = adjacency.find(worklist[index]);
-                if (adjacency_iter == adjacency.end()) {
-                    continue;
-                }
-
-                for (const auto &next_state : adjacency_iter->second) {
-                    if (reachable.insert(next_state).second) {
-                        worklist.push_back(next_state);
+                for (const auto &state : decl.get().states) {
+                    if (!states.insert(state).second) {
+                        error_here("duplicate agent state '" + state + "'", decl.get().range);
                     }
                 }
-            }
 
-            for (const auto &state : decl.get().states) {
-                if (!reachable.contains(state)) {
-                    result_.diagnostics.error("state '" + state +
-                                                  "' is unreachable from initial state '" +
-                                                  decl.get().initial_state + "'",
-                                              decl.get().range);
+                if (!states.contains(decl.get().initial_state)) {
+                    error_here("initial state '" + decl.get().initial_state +
+                                   "' is not declared in agent states",
+                               decl.get().range);
                 }
-            }
+
+                for (const auto &final_state : decl.get().final_states) {
+                    if (!final_states.insert(final_state).second) {
+                        error_here("duplicate final state '" + final_state + "'", decl.get().range);
+                    }
+
+                    if (!states.contains(final_state)) {
+                        error_here("final state '" + final_state +
+                                       "' is not declared in agent states",
+                                   decl.get().range);
+                    }
+                }
+
+                for (const auto &capability : decl.get().capabilities) {
+                    if (!capabilities.insert(capability).second) {
+                        error_here("duplicate capability '" + capability +
+                                       "' in agent capability list",
+                                   decl.get().range);
+                    }
+                }
+
+                for (const auto &transition : decl.get().transitions) {
+                    if (!states.contains(transition->from_state)) {
+                        error_here("transition source state '" + transition->from_state +
+                                       "' is not declared in agent states",
+                                   transition->range);
+                    }
+
+                    if (!states.contains(transition->to_state)) {
+                        error_here("transition target state '" + transition->to_state +
+                                       "' is not declared in agent states",
+                                   transition->range);
+                    }
+
+                    if (final_states.contains(transition->from_state)) {
+                        error_here("final state '" + transition->from_state +
+                                       "' must not have outgoing transitions",
+                                   transition->range);
+                    }
+
+                    adjacency[transition->from_state].push_back(transition->to_state);
+                }
+
+                if (!states.contains(decl.get().initial_state)) {
+                    return;
+                }
+
+                std::unordered_set<std::string> reachable;
+                std::vector<std::string> worklist{decl.get().initial_state};
+                reachable.insert(decl.get().initial_state);
+
+                for (std::size_t index = 0; index < worklist.size(); ++index) {
+                    const auto adjacency_iter = adjacency.find(worklist[index]);
+                    if (adjacency_iter == adjacency.end()) {
+                        continue;
+                    }
+
+                    for (const auto &next_state : adjacency_iter->second) {
+                        if (reachable.insert(next_state).second) {
+                            worklist.push_back(next_state);
+                        }
+                    }
+                }
+
+                for (const auto &state : decl.get().states) {
+                    if (!reachable.contains(state)) {
+                        error_here("state '" + state +
+                                       "' is unreachable from initial state '" +
+                                       decl.get().initial_state + "'",
+                                   decl.get().range);
+                    }
+                }
+            });
         }
     }
 
@@ -220,19 +327,19 @@ class ValidationPass final {
             const auto state =
                 std::find(agent_decl.states.begin(), agent_decl.states.end(), expr.name);
             if (state == agent_decl.states.end()) {
-                result_.diagnostics.error("unknown state '" + expr.name + "' in contract for '" +
-                                              std::string(agent_name) + "'",
-                                          expr.range);
+                error_here("unknown state '" + expr.name + "' in contract for '" +
+                               std::string(agent_name) + "'",
+                           expr.range);
             }
             break;
         }
         case ast::TemporalExprSyntaxKind::Running:
-            result_.diagnostics.error(
-                "running(...) is only valid in workflow safety/liveness formulas", expr.range);
+            error_here("running(...) is only valid in workflow safety/liveness formulas",
+                       expr.range);
             break;
         case ast::TemporalExprSyntaxKind::Completed:
-            result_.diagnostics.error(
-                "completed(...) is only valid in workflow safety/liveness formulas", expr.range);
+            error_here("completed(...) is only valid in workflow safety/liveness formulas",
+                       expr.range);
             break;
         case ast::TemporalExprSyntaxKind::Unary:
             check_contract_temporal_expr(*expr.first, agent_decl, agent_name);
@@ -244,15 +351,14 @@ class ValidationPass final {
         }
     }
 
-    void check_contracts() {
-        for (const auto &declaration : program_.declarations) {
+    void check_contracts_in_program(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
             if (declaration->kind != ast::NodeKind::ContractDecl) {
                 continue;
             }
 
             const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
-            const auto target =
-                resolve_result_.find_reference(ReferenceKind::ContractTarget, decl.target->range);
+            const auto target = find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
             if (!target.has_value()) {
                 continue;
             }
@@ -274,6 +380,20 @@ class ValidationPass final {
                 check_contract_temporal_expr(*clause->temporal_expr, agent_decl->get(), agent_name);
             }
         }
+    }
+
+    void check_contracts() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                check_contracts_in_program(
+                    require(source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        check_contracts_in_program(require(program_, "validate program must exist"));
     }
 
     [[nodiscard]] bool has_transition(const ast::AgentDecl &agent_decl,
@@ -300,9 +420,9 @@ class ValidationPass final {
             return ControlFlowSummary{};
         case ast::StatementSyntaxKind::Goto: {
             if (!has_transition(agent_decl, handler_state, statement.goto_stmt->target_state)) {
-                result_.diagnostics.error("illegal goto from state '" + std::string(handler_state) +
-                                              "' to '" + statement.goto_stmt->target_state + "'",
-                                          statement.goto_stmt->range);
+                error_here("illegal goto from state '" + std::string(handler_state) + "' to '" +
+                               statement.goto_stmt->target_state + "'",
+                           statement.goto_stmt->range);
             }
 
             return ControlFlowSummary{
@@ -312,8 +432,8 @@ class ValidationPass final {
         }
         case ast::StatementSyntaxKind::Return:
             if (!is_final_handler) {
-                result_.diagnostics.error("return is only allowed in final state handlers",
-                                          statement.return_stmt->range);
+                error_here("return is only allowed in final state handlers",
+                           statement.return_stmt->range);
             }
 
             return ControlFlowSummary{
@@ -363,15 +483,14 @@ class ValidationPass final {
         return summary;
     }
 
-    void check_flows() {
-        for (const auto &declaration : program_.declarations) {
+    void check_flows_in_program(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
             if (declaration->kind != ast::NodeKind::FlowDecl) {
                 continue;
             }
 
             const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
-            const auto target =
-                resolve_result_.find_reference(ReferenceKind::FlowTarget, decl.target->range);
+            const auto target = find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
             if (!target.has_value()) {
                 continue;
             }
@@ -390,16 +509,15 @@ class ValidationPass final {
 
             for (const auto &handler : decl.state_handlers) {
                 if (!known_states.contains(handler->state_name)) {
-                    result_.diagnostics.error("flow handler state '" + handler->state_name +
-                                                  "' is not declared in the target agent",
-                                              handler->range);
+                    error_here("flow handler state '" + handler->state_name +
+                                   "' is not declared in the target agent",
+                               handler->range);
                     continue;
                 }
 
                 if (!handlers.emplace(handler->state_name, std::cref(*handler)).second) {
-                    result_.diagnostics.error("duplicate flow handler for state '" +
-                                                  handler->state_name + "'",
-                                              handler->range);
+                    error_here("duplicate flow handler for state '" + handler->state_name + "'",
+                               handler->range);
                 }
             }
 
@@ -411,7 +529,7 @@ class ValidationPass final {
                 const auto prefix = final_states.contains(state)
                                         ? "missing final-state handler for '"
                                         : "missing non-final-state handler for '";
-                result_.diagnostics.error(std::string(prefix) + state + "'", decl.range);
+                error_here(std::string(prefix) + state + "'", decl.range);
             }
 
             for (const auto &handler : decl.state_handlers) {
@@ -425,20 +543,33 @@ class ValidationPass final {
 
                 if (is_final_handler) {
                     if (summary.may_fallthrough || summary.saw_goto || !summary.saw_return) {
-                        result_.diagnostics.error("final-state handler '" + handler->state_name +
-                                                      "' must end with return on all control paths",
-                                                  handler->range);
+                        error_here("final-state handler '" + handler->state_name +
+                                       "' must end with return on all control paths",
+                                   handler->range);
                     }
                 } else {
                     if (summary.may_fallthrough || summary.saw_return || !summary.saw_goto) {
-                        result_.diagnostics.error("non-final-state handler '" +
-                                                      handler->state_name +
-                                                      "' must end with goto on all control paths",
-                                                  handler->range);
+                        error_here("non-final-state handler '" + handler->state_name +
+                                       "' must end with goto on all control paths",
+                                   handler->range);
                     }
                 }
             }
         }
+    }
+
+    void check_flows() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                check_flows_in_program(
+                    require(source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        check_flows_in_program(require(program_, "validate program must exist"));
     }
 
     void
@@ -449,20 +580,20 @@ class ValidationPass final {
             check_typed_temporal_expr(*expr.expr);
             break;
         case ast::TemporalExprSyntaxKind::Called:
-            result_.diagnostics.error("called(...) is only valid in agent contracts", expr.range);
+            error_here("called(...) is only valid in agent contracts", expr.range);
             break;
         case ast::TemporalExprSyntaxKind::InState:
-            result_.diagnostics.error("in_state(...) is only valid in agent contracts", expr.range);
+            error_here("in_state(...) is only valid in agent contracts", expr.range);
             break;
         case ast::TemporalExprSyntaxKind::Running:
             if (!node_agent_ids.contains(expr.name)) {
-                result_.diagnostics.error("unknown workflow node '" + expr.name + "'", expr.range);
+                error_here("unknown workflow node '" + expr.name + "'", expr.range);
             }
             break;
         case ast::TemporalExprSyntaxKind::Completed: {
             const auto node = node_agent_ids.find(expr.name);
             if (node == node_agent_ids.end()) {
-                result_.diagnostics.error("unknown workflow node '" + expr.name + "'", expr.range);
+                error_here("unknown workflow node '" + expr.name + "'", expr.range);
                 break;
             }
 
@@ -476,9 +607,9 @@ class ValidationPass final {
             }
 
             if (!contains_name(agent_decl->get().final_states, *expr.state_name)) {
-                result_.diagnostics.error("state '" + *expr.state_name +
-                                              "' is not a final state of node '" + expr.name + "'",
-                                          expr.range);
+                error_here("state '" + *expr.state_name + "' is not a final state of node '" +
+                               expr.name + "'",
+                           expr.range);
             }
             break;
         }
@@ -492,8 +623,8 @@ class ValidationPass final {
         }
     }
 
-    void check_workflows() {
-        for (const auto &declaration : program_.declarations) {
+    void check_workflows_in_program(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
             if (declaration->kind != ast::NodeKind::WorkflowDecl) {
                 continue;
             }
@@ -505,13 +636,12 @@ class ValidationPass final {
 
             for (const auto &node : decl.nodes) {
                 if (!node_names.insert(node->name).second) {
-                    result_.diagnostics.error("duplicate workflow node '" + node->name + "'",
-                                              node->range);
+                    error_here("duplicate workflow node '" + node->name + "'", node->range);
                     continue;
                 }
 
-                const auto target = resolve_result_.find_reference(
-                    ReferenceKind::WorkflowNodeTarget, node->target->range);
+                const auto target =
+                    find_reference_here(ReferenceKind::WorkflowNodeTarget, node->target->range);
                 if (target.has_value()) {
                     node_agent_ids.emplace(node->name, target->get().target);
                 }
@@ -525,8 +655,8 @@ class ValidationPass final {
                                      [&](const Owned<ast::WorkflowNodeDeclSyntax> &candidate) {
                                          return candidate->name == dependency;
                                      }) == decl.nodes.end()) {
-                        result_.diagnostics.error(
-                            "unknown workflow dependency '" + dependency + "'", node->range);
+                        error_here("unknown workflow dependency '" + dependency + "'",
+                                   node->range);
                     }
                 }
             }
@@ -554,9 +684,9 @@ class ValidationPass final {
                     }
 
                     if (state->second == VisitState::Visiting) {
-                        result_.diagnostics.error("workflow dependency cycle detected involving '" +
-                                                      node_name + "'",
-                                                  decl.range);
+                        error_here("workflow dependency cycle detected involving '" + node_name +
+                                       "'",
+                                   decl.range);
                         return;
                     }
 
@@ -588,6 +718,20 @@ class ValidationPass final {
             }
         }
     }
+
+    void check_workflows() {
+        if (graph_ != nullptr) {
+            for (const auto &source : graph_->sources) {
+                enter_source(source);
+                check_workflows_in_program(
+                    require(source.program.get(), "source graph program must exist before validate"));
+                leave_source();
+            }
+            return;
+        }
+
+        check_workflows_in_program(require(program_, "validate program must exist"));
+    }
 };
 
 } // namespace
@@ -596,6 +740,13 @@ ValidationResult Validator::validate(const ast::Program &program,
                                      const ResolveResult &resolve_result,
                                      const TypeCheckResult &type_check_result) const {
     ValidationPass pass(program, resolve_result, type_check_result);
+    return pass.run();
+}
+
+ValidationResult Validator::validate(const SourceGraph &graph,
+                                     const ResolveResult &resolve_result,
+                                     const TypeCheckResult &type_check_result) const {
+    ValidationPass pass(graph, resolve_result, type_check_result);
     return pass.run();
 }
 

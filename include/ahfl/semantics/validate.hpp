@@ -7,6 +7,8 @@
 
 namespace ahfl {
 
+struct SourceGraph;
+
 struct ValidationResult {
     DiagnosticBag diagnostics;
 
@@ -18,6 +20,9 @@ struct ValidationResult {
 class Validator {
   public:
     [[nodiscard]] ValidationResult validate(const ast::Program &program,
+                                            const ResolveResult &resolve_result,
+                                            const TypeCheckResult &type_check_result) const;
+    [[nodiscard]] ValidationResult validate(const SourceGraph &graph,
                                             const ResolveResult &resolve_result,
                                             const TypeCheckResult &type_check_result) const;
 };

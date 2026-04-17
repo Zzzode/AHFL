@@ -1,0 +1,67 @@
+ahfl.ir.v1
+module ir::workflow_value_flow
+
+struct ir::workflow_value_flow::Request {
+  field value: String
+}
+
+struct ir::workflow_value_flow::Context {
+  field value: String = "seed"
+}
+
+struct ir::workflow_value_flow::Response {
+  field value: String
+}
+
+agent ir::workflow_value_flow::EchoAgent {
+  input: ir::workflow_value_flow::Request
+  context: ir::workflow_value_flow::Context
+  output: ir::workflow_value_flow::Response
+  states: [Init, Done]
+  initial: Init
+  final: [Done]
+  capabilities: []
+  transition Init -> Done
+}
+
+flow ir::workflow_value_flow::EchoAgent {
+  state Init {
+    summary {
+      goto_targets: [Done]
+      may_return: false
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
+    goto Done
+  }
+  state Done {
+    summary {
+      goto_targets: []
+      may_return: true
+      may_fallthrough: false
+      assigned_paths: []
+      called_targets: []
+      assert_count: 0
+    }
+    return ir::workflow_value_flow::Response { value: input.value }
+  }
+}
+
+workflow ir::workflow_value_flow::ValueFlowWorkflow {
+  input: ir::workflow_value_flow::Request
+  output: ir::workflow_value_flow::Response
+  node first: ir::workflow_value_flow::EchoAgent(input)
+    input_summary {
+      reads: [workflow_input(input)]
+    }
+  node second: ir::workflow_value_flow::EchoAgent(ir::workflow_value_flow::Request { value: first.value }) after [first]
+    input_summary {
+      reads: [workflow_node_output(first.value)]
+    }
+  return_summary {
+    reads: [workflow_node_output(second.value)]
+  }
+  return: ir::workflow_value_flow::Response { value: second.value }
+}

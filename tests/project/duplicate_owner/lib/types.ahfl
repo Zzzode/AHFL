@@ -1,0 +1,5 @@
+module lib::types;
+
+struct Request {
+    value: String;
+}
