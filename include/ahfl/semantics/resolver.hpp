@@ -129,10 +129,10 @@ struct ResolveResult {
         return diagnostics.has_error();
     }
 
-    [[nodiscard]] MaybeCRef<ResolvedReference> find_reference(ReferenceKind kind,
-                                                              SourceRange range,
-                                                              std::optional<SourceId> source_id =
-                                                                  std::nullopt) const;
+    [[nodiscard]] MaybeCRef<ResolvedReference>
+    find_reference(ReferenceKind kind,
+                   SourceRange range,
+                   std::optional<SourceId> source_id = std::nullopt) const;
 };
 
 class Resolver {

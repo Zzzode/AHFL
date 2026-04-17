@@ -130,8 +130,8 @@ MaybeCRef<WorkflowTypeInfo> TypeEnvironment::get_workflow(SymbolId id) const {
     return get_from_map(workflows_, id);
 }
 
-MaybeCRef<ExpressionTypeInfo> TypeCheckResult::find_expression_type(
-    SourceRange range, std::optional<SourceId> source_id) const {
+MaybeCRef<ExpressionTypeInfo>
+TypeCheckResult::find_expression_type(SourceRange range, std::optional<SourceId> source_id) const {
     for (const auto &entry : expression_types) {
         if (same_range(entry.range, range) && entry.source_id == source_id) {
             return std::cref(entry);

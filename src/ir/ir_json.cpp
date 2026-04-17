@@ -630,9 +630,8 @@ class IrJsonPrinter final {
 
     void print_flow_summary(const ir::StateHandler::Summary &summary, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("goto_targets", [&]() {
-                write_string_array(summary.goto_targets, indent_level + 1);
-            });
+            field("goto_targets",
+                  [&]() { write_string_array(summary.goto_targets, indent_level + 1); });
             field("may_return", [&]() { write_bool(summary.may_return); });
             field("may_fallthrough", [&]() { write_bool(summary.may_fallthrough); });
             field("assigned_paths", [&]() {
@@ -642,9 +641,8 @@ class IrJsonPrinter final {
                     }
                 });
             });
-            field("called_targets", [&]() {
-                write_string_array(summary.called_targets, indent_level + 1);
-            });
+            field("called_targets",
+                  [&]() { write_string_array(summary.called_targets, indent_level + 1); });
             field("assert_count", [&]() { write_index(summary.assert_count); });
         });
     }
@@ -702,9 +700,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("module"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                     });
@@ -713,9 +710,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("import"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("path", [&]() { write_string(value.path); });
                         field("alias", [&]() {
@@ -731,9 +727,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("const"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("type", [&]() { write_string(value.type); });
@@ -744,9 +739,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("type_alias"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("aliased_type", [&]() { write_string(value.aliased_type); });
@@ -756,9 +750,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("struct"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("fields", [&]() {
@@ -789,9 +782,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("enum"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("variants",
@@ -802,9 +794,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("capability"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("params", [&]() {
@@ -826,9 +817,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("predicate"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("params", [&]() {
@@ -850,9 +840,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("agent"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("input_type", [&]() { write_string(value.input_type); });
@@ -898,9 +887,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("contract"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("target", [&]() { write_string(value.target); });
                         field("clauses", [&]() {
@@ -937,9 +925,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("flow"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("target", [&]() { write_string(value.target); });
                         field("state_handlers", [&]() {
@@ -978,9 +965,8 @@ class IrJsonPrinter final {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("workflow"); });
                         if (has_provenance(value.provenance)) {
-                            field("provenance", [&]() {
-                                print_provenance(value.provenance, indent_level + 1);
-                            });
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
                         }
                         field("name", [&]() { write_string(value.name); });
                         field("input_type", [&]() { write_string(value.input_type); });

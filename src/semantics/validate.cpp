@@ -56,8 +56,7 @@ class ValidationPass final {
     ValidationPass(const SourceGraph &graph,
                    const ResolveResult &resolve_result,
                    const TypeCheckResult &type_check_result)
-        : graph_(&graph), resolve_result_(resolve_result),
-          type_check_result_(type_check_result) {}
+        : graph_(&graph), resolve_result_(resolve_result), type_check_result_(type_check_result) {}
 
     [[nodiscard]] ValidationResult run() {
         index_declarations();
@@ -184,8 +183,8 @@ class ValidationPass final {
         if (graph_ != nullptr) {
             for (const auto &source : graph_->sources) {
                 enter_source(source);
-                index_program_declarations(
-                    require(source.program.get(), "source graph program must exist before validate"));
+                index_program_declarations(require(
+                    source.program.get(), "source graph program must exist before validate"));
                 leave_source();
             }
             return;
@@ -304,8 +303,7 @@ class ValidationPass final {
 
                 for (const auto &state : decl.get().states) {
                     if (!reachable.contains(state)) {
-                        error_here("state '" + state +
-                                       "' is unreachable from initial state '" +
+                        error_here("state '" + state + "' is unreachable from initial state '" +
                                        decl.get().initial_state + "'",
                                    decl.get().range);
                     }
@@ -358,7 +356,8 @@ class ValidationPass final {
             }
 
             const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
-            const auto target = find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
+            const auto target =
+                find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
             if (!target.has_value()) {
                 continue;
             }
@@ -386,8 +385,8 @@ class ValidationPass final {
         if (graph_ != nullptr) {
             for (const auto &source : graph_->sources) {
                 enter_source(source);
-                check_contracts_in_program(
-                    require(source.program.get(), "source graph program must exist before validate"));
+                check_contracts_in_program(require(
+                    source.program.get(), "source graph program must exist before validate"));
                 leave_source();
             }
             return;
@@ -562,8 +561,8 @@ class ValidationPass final {
         if (graph_ != nullptr) {
             for (const auto &source : graph_->sources) {
                 enter_source(source);
-                check_flows_in_program(
-                    require(source.program.get(), "source graph program must exist before validate"));
+                check_flows_in_program(require(source.program.get(),
+                                               "source graph program must exist before validate"));
                 leave_source();
             }
             return;
@@ -655,8 +654,7 @@ class ValidationPass final {
                                      [&](const Owned<ast::WorkflowNodeDeclSyntax> &candidate) {
                                          return candidate->name == dependency;
                                      }) == decl.nodes.end()) {
-                        error_here("unknown workflow dependency '" + dependency + "'",
-                                   node->range);
+                        error_here("unknown workflow dependency '" + dependency + "'", node->range);
                     }
                 }
             }
@@ -723,8 +721,8 @@ class ValidationPass final {
         if (graph_ != nullptr) {
             for (const auto &source : graph_->sources) {
                 enter_source(source);
-                check_workflows_in_program(
-                    require(source.program.get(), "source graph program must exist before validate"));
+                check_workflows_in_program(require(
+                    source.program.get(), "source graph program must exist before validate"));
                 leave_source();
             }
             return;

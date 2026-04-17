@@ -34,8 +34,12 @@ struct CommandLineOptions {
 
 void print_usage(std::ostream &out) {
     out << "Usage:\n"
-        << "  ahflc <check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-summary|emit-smv> --project <ahfl.project.json>\n"
-        << "  ahflc <check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-summary|emit-smv> --workspace <ahfl.workspace.json> --project-name <name>\n"
+        << "  ahflc "
+           "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
+           "summary|emit-smv> --project <ahfl.project.json>\n"
+        << "  ahflc "
+           "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
+           "summary|emit-smv> --workspace <ahfl.workspace.json> --project-name <name>\n"
         << "  ahflc check [--search-root <dir>]... [--dump-ast] <input.ahfl>\n"
         << "  ahflc dump-ast [--search-root <dir>]... <input.ahfl>\n"
         << "  ahflc dump-types [--search-root <dir>]... <input.ahfl>\n"
@@ -51,12 +55,10 @@ void print_usage(std::ostream &out) {
 [[nodiscard]] bool is_subcommand(std::string_view argument) {
     return argument == "check" || argument == "dump-ast" || argument == "dump-types" ||
            argument == "dump-project" || argument == "emit-ir" || argument == "emit-ir-json" ||
-           argument == "emit-native-json" || argument == "emit-summary" ||
-           argument == "emit-smv";
+           argument == "emit-native-json" || argument == "emit-summary" || argument == "emit-smv";
 }
 
-[[nodiscard]] std::optional<ahfl::BackendKind>
-selected_backend(const CommandLineOptions &options) {
+[[nodiscard]] std::optional<ahfl::BackendKind> selected_backend(const CommandLineOptions &options) {
     if (options.emit_ir) {
         return ahfl::BackendKind::Ir;
     }
@@ -191,9 +193,8 @@ template <typename InputT>
     render_diagnostics(type_check_result, source_file, std::cerr);
 
     if (options.dump_types) {
-        ahfl::dump_type_environment(type_check_result.environment,
-                                    resolve_result.symbol_table,
-                                    std::cout);
+        ahfl::dump_type_environment(
+            type_check_result.environment, resolve_result.symbol_table, std::cout);
     }
 
     if (type_check_result.has_errors()) {

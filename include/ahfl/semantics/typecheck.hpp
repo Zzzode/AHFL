@@ -160,9 +160,8 @@ struct TypeCheckResult {
         return diagnostics.has_error();
     }
 
-    [[nodiscard]] MaybeCRef<ExpressionTypeInfo> find_expression_type(
-        SourceRange range,
-        std::optional<SourceId> source_id = std::nullopt) const;
+    [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
+    find_expression_type(SourceRange range, std::optional<SourceId> source_id = std::nullopt) const;
 };
 
 class TypeChecker {

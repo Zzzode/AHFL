@@ -163,7 +163,9 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     out << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
 }
 
-[[nodiscard]] std::string bool_name(bool value) { return value ? "true" : "false"; }
+[[nodiscard]] std::string bool_name(bool value) {
+    return value ? "true" : "false";
+}
 
 } // namespace
 
@@ -174,7 +176,9 @@ void print_program_summary(const ir::Program &program, std::ostream &out) {
     line(out, 0, "ir_format " + program.format_version);
     line(out, 0, "project_aware " + bool_name(stats.declarations_with_provenance != 0));
     line(out, 0, "declarations " + std::to_string(program.declarations.size()));
-    line(out, 0, "declarations_with_provenance " + std::to_string(stats.declarations_with_provenance));
+    line(out,
+         0,
+         "declarations_with_provenance " + std::to_string(stats.declarations_with_provenance));
 
     line(out, 0, "declaration_kinds {");
     line(out, 1, "module " + std::to_string(stats.modules));
@@ -201,9 +205,7 @@ void print_program_summary(const ir::Program &program, std::ostream &out) {
     line(out, 1, "handlers " + std::to_string(stats.flow_handlers));
     line(out, 1, "total_goto_targets " + std::to_string(stats.flow_goto_targets));
     line(out, 1, "handlers_with_return " + std::to_string(stats.flow_returning_handlers));
-    line(out,
-         1,
-         "handlers_with_fallthrough " + std::to_string(stats.flow_fallthrough_handlers));
+    line(out, 1, "handlers_with_fallthrough " + std::to_string(stats.flow_fallthrough_handlers));
     line(out, 1, "total_assigned_paths " + std::to_string(stats.flow_assigned_paths));
     line(out, 1, "total_called_targets " + std::to_string(stats.flow_called_targets));
     line(out, 1, "total_asserts " + std::to_string(stats.flow_asserts));

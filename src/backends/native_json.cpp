@@ -88,7 +88,8 @@ workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionCondition
     return "invalid";
 }
 
-[[nodiscard]] std::string_view formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
+[[nodiscard]] std::string_view
+formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     switch (kind) {
     case ir::FormalObservationScopeKind::ContractClause:
         return "contract_clause";
@@ -222,8 +223,9 @@ class NativeJsonPrinter final {
                     for (const auto &read : summary.reads) {
                         item([&]() {
                             print_object(indent_level + 2, [&](const auto &read_field) {
-                                read_field("kind",
-                                           [&]() { write_string(workflow_value_source_kind_name(read.kind)); });
+                                read_field("kind", [&]() {
+                                    write_string(workflow_value_source_kind_name(read.kind));
+                                });
                                 read_field("root_name", [&]() { write_string(read.root_name); });
                                 read_field("members", [&]() {
                                     print_array(indent_level + 3, [&](const auto &member_item) {
@@ -240,7 +242,8 @@ class NativeJsonPrinter final {
         });
     }
 
-    void print_workflow_execution_graph(const handoff::WorkflowExecutionGraph &graph, int indent_level) {
+    void print_workflow_execution_graph(const handoff::WorkflowExecutionGraph &graph,
+                                        int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("entry_nodes", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
@@ -271,9 +274,11 @@ class NativeJsonPrinter final {
                 write_string(workflow_node_start_condition_name(lifecycle.start_condition));
             });
             field("completion_condition", [&]() {
-                write_string(workflow_node_completion_condition_name(lifecycle.completion_condition));
+                write_string(
+                    workflow_node_completion_condition_name(lifecycle.completion_condition));
             });
-            field("completion_latched", [&]() { out_ << (lifecycle.completion_latched ? "true" : "false"); });
+            field("completion_latched",
+                  [&]() { out_ << (lifecycle.completion_latched ? "true" : "false"); });
             field("target_initial_state", [&]() { write_string(lifecycle.target_initial_state); });
             field("target_final_states", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
@@ -318,7 +323,8 @@ class NativeJsonPrinter final {
             field("capability_binding_keys", [&]() {
                 std::vector<std::pair<std::string, std::string>> items;
                 items.reserve(metadata.capability_binding_keys.size());
-                for (const auto &[capability_name, binding_key] : metadata.capability_binding_keys) {
+                for (const auto &[capability_name, binding_key] :
+                     metadata.capability_binding_keys) {
                     items.emplace_back(capability_name, binding_key);
                 }
                 std::sort(items.begin(), items.end());
@@ -342,7 +348,8 @@ class NativeJsonPrinter final {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() { write_string("agent"); });
             if (has_provenance(agent.provenance)) {
-                field("provenance", [&]() { print_provenance(agent.provenance, indent_level + 1); });
+                field("provenance",
+                      [&]() { print_provenance(agent.provenance, indent_level + 1); });
             }
             field("canonical_name", [&]() { write_string(agent.canonical_name); });
             field("input_type", [&]() { write_string(agent.input_type); });
@@ -394,7 +401,8 @@ class NativeJsonPrinter final {
                                 node_field("name", [&]() { write_string(node.name); });
                                 node_field("target", [&]() { write_string(node.target); });
                                 node_field("input_summary", [&]() {
-                                    print_workflow_value_summary(node.input_summary, indent_level + 3);
+                                    print_workflow_value_summary(node.input_summary,
+                                                                 indent_level + 3);
                                 });
                                 node_field("after", [&]() {
                                     print_array(indent_level + 3, [&](const auto &after_item) {
@@ -431,7 +439,8 @@ class NativeJsonPrinter final {
                    target);
     }
 
-    void print_capability_binding_slot(const handoff::CapabilityBindingSlot &slot, int indent_level) {
+    void print_capability_binding_slot(const handoff::CapabilityBindingSlot &slot,
+                                       int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("capability_name", [&]() { write_string(slot.capability_name); });
             field("binding_key", [&]() { write_string(slot.binding_key); });
@@ -447,7 +456,8 @@ class NativeJsonPrinter final {
 
     void print_policy_obligation(const handoff::PolicyObligation &obligation, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("owner_target", [&]() { print_executable_ref(obligation.owner_target, indent_level + 1); });
+            field("owner_target",
+                  [&]() { print_executable_ref(obligation.owner_target, indent_level + 1); });
             field("kind", [&]() { write_string(policy_obligation_kind_name(obligation.kind)); });
             field("clause_index", [&]() { out_ << obligation.clause_index; });
             field("observation_symbols", [&]() {
@@ -475,11 +485,14 @@ class NativeJsonPrinter final {
                         field("scope", [&]() {
                             print_object(indent_level + 1, [&](const auto &scope_field) {
                                 scope_field("kind", [&]() {
-                                    write_string(formal_observation_scope_kind_name(value.scope.kind));
+                                    write_string(
+                                        formal_observation_scope_kind_name(value.scope.kind));
                                 });
                                 scope_field("owner", [&]() { write_string(value.scope.owner); });
-                                scope_field("clause_index", [&]() { out_ << value.scope.clause_index; });
-                                scope_field("atom_index", [&]() { out_ << value.scope.atom_index; });
+                                scope_field("clause_index",
+                                            [&]() { out_ << value.scope.clause_index; });
+                                scope_field("atom_index",
+                                            [&]() { out_ << value.scope.atom_index; });
                             });
                         });
                     },

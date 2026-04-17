@@ -142,10 +142,9 @@ struct Package {
 [[nodiscard]] const CapabilityBindingSlot *
 find_capability_binding_slot(const Package &package, std::string_view capability_name);
 
-[[nodiscard]] const PolicyObligation *
-find_policy_obligation(const Package &package,
-                       std::string_view owner_canonical_name,
-                       PolicyObligationKind kind,
-                       std::size_t clause_index);
+[[nodiscard]] const PolicyObligation *find_policy_obligation(const Package &package,
+                                                             std::string_view owner_canonical_name,
+                                                             PolicyObligationKind kind,
+                                                             std::size_t clause_index);
 
 } // namespace ahfl::handoff

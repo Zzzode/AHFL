@@ -451,7 +451,8 @@ class ResolverPass final : public ast::Visitor {
                           std::optional<SourceRange> range = std::nullopt) {
         if (source_id.has_value()) {
             if (const auto source = source_unit_for(*source_id); source.has_value()) {
-                result_.diagnostics.error_in_source(std::move(message), source->get().source, range);
+                result_.diagnostics.error_in_source(
+                    std::move(message), source->get().source, range);
                 return;
             }
         }
@@ -469,8 +470,8 @@ class ResolverPass final : public ast::Visitor {
         if (const auto existing = module_index.find(std::string(local_name));
             existing != module_index.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            error_here("duplicate " + namespace_name(name_space) + " '" +
-                           std::string(local_name) + "'",
+            error_here("duplicate " + namespace_name(name_space) + " '" + std::string(local_name) +
+                           "'",
                        range);
 
             if (previous_symbol.has_value()) {
@@ -497,9 +498,9 @@ class ResolverPass final : public ast::Visitor {
         if (const auto existing = index.canonical_names.find(symbol.canonical_name);
             existing != index.canonical_names.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            error_here(
-                "duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name + "'",
-                range);
+            error_here("duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name +
+                           "'",
+                       range);
 
             if (previous_symbol.has_value()) {
                 note_for_source("previous declaration is here",
@@ -627,10 +628,9 @@ class ResolverPass final : public ast::Visitor {
                        name.range);
 
             if (const auto symbol = result_.symbol_table.get(*capability); symbol.has_value()) {
-                note_for_source(
-                    "capability declaration is here",
-                    symbol->get().source_id,
-                    symbol->get().declaration_range);
+                note_for_source("capability declaration is here",
+                                symbol->get().source_id,
+                                symbol->get().declaration_range);
             }
 
             if (const auto symbol = result_.symbol_table.get(*predicate); symbol.has_value()) {
@@ -938,8 +938,7 @@ class ResolverPass final : public ast::Visitor {
 
         for (std::size_t index = 0; index + 1 < cycle.size(); ++index) {
             if (const auto symbol = result_.symbol_table.get(cycle[index]); symbol.has_value()) {
-                error_for_source(
-                    message, symbol->get().source_id, symbol->get().declaration_range);
+                error_for_source(message, symbol->get().source_id, symbol->get().declaration_range);
             }
         }
     }
@@ -1039,9 +1038,8 @@ SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space) {
     return type_symbols_;
 }
 
-MaybeCRef<ResolvedReference> ResolveResult::find_reference(ReferenceKind kind,
-                                                           SourceRange range,
-                                                           std::optional<SourceId> source_id) const {
+MaybeCRef<ResolvedReference> ResolveResult::find_reference(
+    ReferenceKind kind, SourceRange range, std::optional<SourceId> source_id) const {
     for (const auto &reference : references) {
         if (reference.kind == kind && reference.range.begin_offset == range.begin_offset &&
             reference.range.end_offset == range.end_offset &&
