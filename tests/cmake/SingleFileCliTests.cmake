@@ -8,7 +8,7 @@ add_test(NAME ahflc.dump_ast.example
             "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
 )
 set_tests_properties(ahflc.dump_ast.example PROPERTIES
-    PASS_REGULAR_EXPRESSION "program .*/examples/refund_audit_core_v0_1\\.ahfl"
+    PASS_REGULAR_EXPRESSION "program (.*/)?examples/refund_audit_core_v0_1\\.ahfl"
 )
 
 add_test(NAME ahflc.dump_types.example

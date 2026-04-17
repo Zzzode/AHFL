@@ -48,6 +48,8 @@ class DiagnosticBag {
             .severity = severity,
             .message = std::move(message),
             .range = range,
+            .source_name = std::nullopt,
+            .position = std::nullopt,
         });
     }
 
@@ -60,6 +62,7 @@ class DiagnosticBag {
             .message = std::move(message),
             .range = range,
             .source_name = source.display_name,
+            .position = std::nullopt,
         };
 
         if (range.has_value()) {

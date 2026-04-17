@@ -29,8 +29,7 @@ struct FormalObservationScopeKey {
 
 struct FormalObservationScopeKeyHash {
     [[nodiscard]] std::size_t operator()(const FormalObservationScopeKey &value) const noexcept {
-        const auto kind_hash =
-            std::hash<int>{}(static_cast<int>(value.kind));
+        const auto kind_hash = std::hash<int>{}(static_cast<int>(value.kind));
         const auto owner_hash = std::hash<std::string>{}(value.owner);
         const auto index_hash = std::hash<std::size_t>{}(value.clause_index);
         return kind_hash ^ (owner_hash << 1U) ^ (index_hash << 2U);
@@ -66,6 +65,7 @@ get_or_create_capability_binding_slot(std::vector<CapabilityBindingSlot> &slots,
     slots.push_back(CapabilityBindingSlot{
         .capability_name = std::string(capability_name),
         .binding_key = std::move(binding_key),
+        .required_by_targets = {},
     });
     return slots.back();
 }
@@ -84,11 +84,16 @@ AgentExecutable lower_agent_executable(const ir::AgentDecl &declaration) {
     };
 }
 
-WorkflowNodeLifecycleSummary
-lower_workflow_node_lifecycle(const ir::WorkflowNode &node, const ir::AgentDecl *target_agent) {
+WorkflowNodeLifecycleSummary lower_workflow_node_lifecycle(const ir::WorkflowNode &node,
+                                                           const ir::AgentDecl *target_agent) {
     WorkflowNodeLifecycleSummary lifecycle{
-        .start_condition = node.after.empty() ? WorkflowNodeStartConditionKind::Immediate
-                                              : WorkflowNodeStartConditionKind::AfterDependenciesCompleted,
+        .start_condition = node.after.empty()
+                               ? WorkflowNodeStartConditionKind::Immediate
+                               : WorkflowNodeStartConditionKind::AfterDependenciesCompleted,
+        .completion_condition = WorkflowNodeCompletionConditionKind::TargetReachedFinalState,
+        .completion_latched = true,
+        .target_initial_state = {},
+        .target_final_states = {},
     };
 
     if (target_agent == nullptr) {
@@ -136,19 +141,23 @@ WorkflowExecutionGraph lower_workflow_execution_graph(const ir::WorkflowDecl &de
     return PolicyObligationKind::Requires;
 }
 
-[[nodiscard]] std::unordered_map<FormalObservationScopeKey, std::vector<std::string>, FormalObservationScopeKeyHash>
+[[nodiscard]] std::unordered_map<FormalObservationScopeKey,
+                                 std::vector<std::string>,
+                                 FormalObservationScopeKeyHash>
 index_formal_observation_symbols(const std::vector<ir::FormalObservation> &observations) {
-    std::unordered_map<FormalObservationScopeKey, std::vector<std::string>, FormalObservationScopeKeyHash>
+    std::unordered_map<FormalObservationScopeKey,
+                       std::vector<std::string>,
+                       FormalObservationScopeKeyHash>
         index;
 
     for (const auto &observation : observations) {
         if (const auto *embedded = std::get_if<ir::EmbeddedBoolObservation>(&observation.node);
             embedded != nullptr) {
             index[FormalObservationScopeKey{
-                .kind = embedded->scope.kind,
-                .owner = embedded->scope.owner,
-                .clause_index = embedded->scope.clause_index,
-            }]
+                      .kind = embedded->scope.kind,
+                      .owner = embedded->scope.owner,
+                      .clause_index = embedded->scope.clause_index,
+                  }]
                 .push_back(observation.symbol);
         }
     }
@@ -248,6 +257,7 @@ WorkflowExecutable lower_workflow_executable(
         .input_type = declaration.input_type,
         .output_type = declaration.output_type,
         .execution_graph = lower_workflow_execution_graph(declaration),
+        .nodes = {},
         .safety_clause_count = declaration.safety.size(),
         .liveness_clause_count = declaration.liveness.size(),
         .return_summary = declaration.return_summary,
@@ -318,12 +328,16 @@ Package lower_package(const ir::Program &program, PackageMetadata metadata) {
 
     Package package{
         .metadata = std::move(metadata),
+        .executable_targets = {},
+        .capability_binding_slots = {},
+        .policy_obligations = {},
         .formal_observations = program.formal_observations,
     };
 
     std::unordered_map<std::string, std::vector<std::string>> agent_capabilities;
     std::unordered_map<std::string, const ir::AgentDecl *> agents_by_name;
-    const auto formal_observation_index = index_formal_observation_symbols(program.formal_observations);
+    const auto formal_observation_index =
+        index_formal_observation_symbols(program.formal_observations);
     for (const auto &declaration : program.declarations) {
         if (const auto *agent = std::get_if<ir::AgentDecl>(&declaration)) {
             agent_capabilities.emplace(agent->name, agent->capabilities);

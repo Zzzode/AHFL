@@ -59,6 +59,7 @@ int run_normalize_identity_format_version() {
 int run_omit_empty_provenance() {
     ahfl::handoff::Package package;
     package.executable_targets.push_back(ahfl::handoff::AgentExecutable{
+        .provenance = {},
         .canonical_name = "compat::Agent",
         .input_type = "compat::Request",
         .context_type = "compat::Context",
@@ -66,6 +67,7 @@ int run_omit_empty_provenance() {
         .states = {"Init"},
         .initial_state = "Init",
         .final_states = {"Init"},
+        .capabilities = {},
     });
 
     std::ostringstream output;
@@ -105,6 +107,7 @@ int run_escape_control_characters() {
 
     ahfl::ir::Program program;
     program.declarations.push_back(ahfl::ir::ModuleDecl{
+        .provenance = {},
         .name = raw,
     });
 

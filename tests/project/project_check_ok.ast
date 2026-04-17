@@ -1,8 +1,8 @@
 project_ast (1 entry, 3 sources, 3 imports)
-source /Users/bytedance/Develop/AHFL/tests/project/check_ok/app/main.ahfl [entry]
+source tests/project/check_ok/app/main.ahfl [entry]
   module app::main
   ast
-    program /Users/bytedance/Develop/AHFL/tests/project/check_ok/app/main.ahfl
+    program tests/project/check_ok/app/main.ahfl
       - module app::main
       - import lib::types as types
       - import lib::agents as agents
@@ -30,10 +30,10 @@ source /Users/bytedance/Develop/AHFL/tests/project/check_ok/app/main.ahfl [entry
             completed run, Done
         return
           path run
-source /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/types.ahfl
+source tests/project/check_ok/lib/types.ahfl
   module lib::types
   ast
-    program /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/types.ahfl
+    program tests/project/check_ok/lib/types.ahfl
       - module lib::types
       - struct Request (1 field)
         field value
@@ -58,10 +58,10 @@ source /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/types.ahfl
       - type ResponseAlias = Response
         aliased_type
           named Response
-source /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/agents.ahfl
+source tests/project/check_ok/lib/agents.ahfl
   module lib::agents
   ast
-    program /Users/bytedance/Develop/AHFL/tests/project/check_ok/lib/agents.ahfl
+    program tests/project/check_ok/lib/agents.ahfl
       - module lib::agents
       - import lib::types as types
       - capability Echo (1 param) -> types::ResponseAlias

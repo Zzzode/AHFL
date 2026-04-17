@@ -22,3 +22,8 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/TestTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/ProjectTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/SingleFileCliTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/LabelTests.cmake")
+
+get_property(ahfl_all_tests DIRECTORY PROPERTY TESTS)
+foreach(test_name IN LISTS ahfl_all_tests)
+    set_property(TEST "${test_name}" PROPERTY WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+endforeach()

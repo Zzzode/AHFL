@@ -82,6 +82,26 @@ struct SourceFile {
     }
 };
 
+[[nodiscard]] inline std::string display_path(const std::filesystem::path &path) {
+    const auto normalized = path.lexically_normal();
+    if (!normalized.is_absolute()) {
+        return normalized.generic_string();
+    }
+
+    std::error_code error;
+    const auto current = std::filesystem::current_path(error);
+    if (error) {
+        return normalized.generic_string();
+    }
+
+    const auto relative = std::filesystem::proximate(normalized, current, error);
+    if (error || relative.empty()) {
+        return normalized.generic_string();
+    }
+
+    return relative.lexically_normal().generic_string();
+}
+
 struct SourceArtifact {
     SourceId id;
     std::filesystem::path path;

@@ -49,7 +49,14 @@ struct Type {
     TypePtr second;
 
     [[nodiscard]] static TypePtr make(TypeKind kind) {
-        return make_owned<Type>(Type{.kind = kind});
+        return make_owned<Type>(Type{
+            .kind = kind,
+            .name = {},
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
+            .first = nullptr,
+            .second = nullptr,
+        });
     }
 
     [[nodiscard]] static TypePtr string() {
@@ -59,14 +66,22 @@ struct Type {
     [[nodiscard]] static TypePtr bounded_string(std::int64_t minimum, std::int64_t maximum) {
         return make_owned<Type>(Type{
             .kind = TypeKind::BoundedString,
+            .name = {},
             .string_bounds = std::make_pair(minimum, maximum),
+            .decimal_scale = std::nullopt,
+            .first = nullptr,
+            .second = nullptr,
         });
     }
 
     [[nodiscard]] static TypePtr decimal(std::int64_t scale) {
         return make_owned<Type>(Type{
             .kind = TypeKind::Decimal,
+            .name = {},
+            .string_bounds = std::nullopt,
             .decimal_scale = scale,
+            .first = nullptr,
+            .second = nullptr,
         });
     }
 
@@ -74,6 +89,10 @@ struct Type {
         return make_owned<Type>(Type{
             .kind = TypeKind::Struct,
             .name = std::move(canonical_name),
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
+            .first = nullptr,
+            .second = nullptr,
         });
     }
 
@@ -81,33 +100,52 @@ struct Type {
         return make_owned<Type>(Type{
             .kind = TypeKind::Enum,
             .name = std::move(canonical_name),
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
+            .first = nullptr,
+            .second = nullptr,
         });
     }
 
     [[nodiscard]] static TypePtr optional(TypePtr value_type) {
         return make_owned<Type>(Type{
             .kind = TypeKind::Optional,
+            .name = {},
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
             .first = std::move(value_type),
+            .second = nullptr,
         });
     }
 
     [[nodiscard]] static TypePtr list(TypePtr element_type) {
         return make_owned<Type>(Type{
             .kind = TypeKind::List,
+            .name = {},
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
             .first = std::move(element_type),
+            .second = nullptr,
         });
     }
 
     [[nodiscard]] static TypePtr set(TypePtr element_type) {
         return make_owned<Type>(Type{
             .kind = TypeKind::Set,
+            .name = {},
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
             .first = std::move(element_type),
+            .second = nullptr,
         });
     }
 
     [[nodiscard]] static TypePtr map(TypePtr key_type, TypePtr value_type) {
         return make_owned<Type>(Type{
             .kind = TypeKind::Map,
+            .name = {},
+            .string_bounds = std::nullopt,
+            .decimal_scale = std::nullopt,
             .first = std::move(key_type),
             .second = std::move(value_type),
         });

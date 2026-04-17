@@ -17,9 +17,8 @@ namespace ahfl {
 
 namespace {
 
-[[nodiscard]] SourceRange clamp_range(std::size_t begin_offset,
-                                      std::size_t end_offset,
-                                      const SourceFile &source) {
+[[nodiscard]] SourceRange
+clamp_range(std::size_t begin_offset, std::size_t end_offset, const SourceFile &source) {
     const auto bounded_begin = std::min(begin_offset, source.content.size());
     const auto bounded_end = std::max(bounded_begin, std::min(end_offset, source.content.size()));
 
@@ -96,11 +95,11 @@ struct ProgramImports {
                                   SourceFile &source,
                                   DiagnosticBag &diagnostics,
                                   std::string_view kind) {
-    source.display_name = path.string();
+    source.display_name = display_path(path);
 
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        diagnostics.error("failed to open " + std::string(kind) + ": " + path.string());
+        diagnostics.error("failed to open " + std::string(kind) + ": " + display_path(path));
         return false;
     }
 
@@ -126,7 +125,8 @@ class DescriptorJsonParser {
     DescriptorJsonParser(const SourceFile &source, DiagnosticBag &diagnostics)
         : source_(source), diagnostics_(diagnostics) {}
 
-    [[nodiscard]] std::optional<std::unordered_map<std::string, DescriptorJsonValue>> parse_object() {
+    [[nodiscard]] std::optional<std::unordered_map<std::string, DescriptorJsonValue>>
+    parse_object() {
         skip_whitespace();
         if (!consume('{')) {
             error_here("descriptor must begin with '{'");
@@ -328,6 +328,7 @@ class DescriptorJsonParser {
             return DescriptorJsonValue{
                 .kind = DescriptorJsonValue::Kind::String,
                 .string_value = std::move(*value),
+                .array_values = {},
             };
         }
 
@@ -339,6 +340,7 @@ class DescriptorJsonParser {
 
             return DescriptorJsonValue{
                 .kind = DescriptorJsonValue::Kind::StringArray,
+                .string_value = {},
                 .array_values = std::move(*values),
             };
         }
@@ -429,10 +431,10 @@ void reject_unknown_workspace_fields(
 
     for (const auto &[field_name, _] : fields) {
         if (!allowed.contains(field_name)) {
-            diagnostics.error_in_source(
-                "unsupported workspace descriptor field '" + field_name + "'",
-                source,
-                point_range(source, 0));
+            diagnostics.error_in_source("unsupported workspace descriptor field '" + field_name +
+                                            "'",
+                                        source,
+                                        point_range(source, 0));
         }
     }
 }
@@ -444,9 +446,8 @@ resolve_descriptor_path(const std::filesystem::path &descriptor_root,
                         const SourceFile &source,
                         std::string_view field_name) {
     const std::filesystem::path input_path(raw_path);
-    const auto resolved = input_path.is_absolute()
-                              ? normalize_path(input_path)
-                              : normalize_path(descriptor_root / input_path);
+    const auto resolved = input_path.is_absolute() ? normalize_path(input_path)
+                                                   : normalize_path(descriptor_root / input_path);
 
     if (!input_path.is_absolute() && !path_has_prefix(descriptor_root, resolved)) {
         diagnostics.error_in_source("descriptor field '" + std::string(field_name) +
@@ -626,24 +627,21 @@ Frontend::load_project_descriptor(const std::filesystem::path &path) const {
     }
 
     if (*format_version != "ahfl.project.v0.3") {
-        result.diagnostics.error_in_source(
-            "unsupported project descriptor format_version '" + *format_version + "'",
-            source,
-            point_range(source, 0));
+        result.diagnostics.error_in_source("unsupported project descriptor format_version '" +
+                                               *format_version + "'",
+                                           source,
+                                           point_range(source, 0));
         return result;
     }
 
     if (search_roots->empty()) {
         result.diagnostics.error_in_source(
-            "project descriptor requires non-empty 'search_roots'",
-            source,
-            point_range(source, 0));
+            "project descriptor requires non-empty 'search_roots'", source, point_range(source, 0));
     }
     if (entry_sources->empty()) {
-        result.diagnostics.error_in_source(
-            "project descriptor requires non-empty 'entry_sources'",
-            source,
-            point_range(source, 0));
+        result.diagnostics.error_in_source("project descriptor requires non-empty 'entry_sources'",
+                                           source,
+                                           point_range(source, 0));
     }
     if (result.has_errors()) {
         return result;
@@ -653,6 +651,8 @@ Frontend::load_project_descriptor(const std::filesystem::path &path) const {
         .descriptor_path = descriptor_path,
         .format_version = std::move(*format_version),
         .name = std::move(*name),
+        .entry_files = {},
+        .search_roots = {},
     };
 
     append_descriptor_paths(descriptor.search_roots,
@@ -706,18 +706,16 @@ Frontend::load_workspace_descriptor(const std::filesystem::path &path) const {
     }
 
     if (*format_version != "ahfl.workspace.v0.3") {
-        result.diagnostics.error_in_source(
-            "unsupported workspace descriptor format_version '" + *format_version + "'",
-            source,
-            point_range(source, 0));
+        result.diagnostics.error_in_source("unsupported workspace descriptor format_version '" +
+                                               *format_version + "'",
+                                           source,
+                                           point_range(source, 0));
         return result;
     }
 
     if (projects->empty()) {
         result.diagnostics.error_in_source(
-            "workspace descriptor requires non-empty 'projects'",
-            source,
-            point_range(source, 0));
+            "workspace descriptor requires non-empty 'projects'", source, point_range(source, 0));
         return result;
     }
 
@@ -725,6 +723,7 @@ Frontend::load_workspace_descriptor(const std::filesystem::path &path) const {
         .descriptor_path = descriptor_path,
         .format_version = std::move(*format_version),
         .name = std::move(*name),
+        .projects = {},
     };
 
     append_descriptor_paths(
@@ -767,12 +766,12 @@ Frontend::load_project_descriptor_from_workspace(const std::filesystem::path &wo
         }
 
         if (selected_descriptor.has_value()) {
-            result.diagnostics.error(
-                "workspace contains duplicate project name '" + std::string(project_name) + "'");
-            result.diagnostics.note(
-                "first matching project descriptor is '" + first_match_path->string() + "'");
+            result.diagnostics.error("workspace contains duplicate project name '" +
+                                     std::string(project_name) + "'");
+            result.diagnostics.note("first matching project descriptor is '" +
+                                    display_path(*first_match_path) + "'");
             result.diagnostics.note("second matching project descriptor is '" +
-                                    project_result.descriptor->descriptor_path.string() + "'");
+                                    display_path(project_result.descriptor->descriptor_path) + "'");
             return result;
         }
 
@@ -781,8 +780,8 @@ Frontend::load_project_descriptor_from_workspace(const std::filesystem::path &wo
     }
 
     if (!selected_descriptor.has_value()) {
-        result.diagnostics.error(
-            "workspace does not contain project named '" + std::string(project_name) + "'");
+        result.diagnostics.error("workspace does not contain project named '" +
+                                 std::string(project_name) + "'");
         return result;
     }
 
@@ -808,11 +807,10 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
     std::unordered_set<std::string> in_progress_paths;
     std::size_t next_source_id = 0;
 
-    std::function<std::optional<SourceId>(
-        const std::filesystem::path &,
-        std::optional<std::string>,
-        MaybeCRef<SourceFile>,
-        std::optional<SourceRange>)>
+    std::function<std::optional<SourceId>(const std::filesystem::path &,
+                                          std::optional<std::string>,
+                                          MaybeCRef<SourceFile>,
+                                          std::optional<SourceRange>)>
         load_source;
 
     load_source = [&](const std::filesystem::path &raw_path,
@@ -853,8 +851,8 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                                                   imports.modules.front().second);
             } else if (imports.modules.front().first.empty()) {
                 result.diagnostics.error_in_source("module declaration must not be empty",
-                                                  parse_result.source,
-                                                  imports.modules.front().second);
+                                                   parse_result.source,
+                                                   imports.modules.front().second);
             } else {
                 const auto &module_name = imports.modules.front().first;
                 if (expected_module.has_value() && module_name != *expected_module) {
@@ -865,15 +863,17 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                         imports.modules.front().second);
                 } else if (const auto existing = result.graph.module_to_source.find(module_name);
                            existing != result.graph.module_to_source.end()) {
-                    result.diagnostics.error_in_source("duplicate module owner for '" + module_name + "'",
-                                                      parse_result.source,
-                                                      imports.modules.front().second);
+                    result.diagnostics.error_in_source("duplicate module owner for '" +
+                                                           module_name + "'",
+                                                       parse_result.source,
+                                                       imports.modules.front().second);
                     if (const auto previous = find_source_unit(result.graph, existing->second);
                         previous.has_value()) {
-                        result.diagnostics.note_in_source(
-                            "previous module owner is '" + previous->get().path.string() + "'",
-                            previous->get().source,
-                            previous->get().module_range);
+                        result.diagnostics.note_in_source("previous module owner is '" +
+                                                              previous->get().source.display_name +
+                                                              "'",
+                                                          previous->get().source,
+                                                          previous->get().module_range);
                     }
                 } else {
                     const auto source_id = SourceId{next_source_id++};
@@ -893,19 +893,20 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
 
                     auto &source_unit = result.graph.sources.back();
                     for (const auto &import_request : source_unit.imports) {
-                        const auto imported_path = resolve_import_path(import_request.module_name,
-                                                                       search_roots,
-                                                                       result.diagnostics,
-                                                                       std::cref(source_unit.source),
-                                                                       import_request.range);
+                        const auto imported_path =
+                            resolve_import_path(import_request.module_name,
+                                                search_roots,
+                                                result.diagnostics,
+                                                std::cref(source_unit.source),
+                                                import_request.range);
                         if (!imported_path.has_value()) {
                             continue;
                         }
 
                         const auto imported_id = load_source(*imported_path,
-                                                            import_request.module_name,
-                                                            std::cref(source_unit.source),
-                                                            import_request.range);
+                                                             import_request.module_name,
+                                                             std::cref(source_unit.source),
+                                                             import_request.range);
                         if (!imported_id.has_value()) {
                             continue;
                         }
@@ -922,10 +923,10 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
 
         if (!loaded_id.has_value() && expected_module.has_value()) {
             if (request_source.has_value()) {
-                result.diagnostics.note_in_source(
-                    "import requested module '" + *expected_module + "' here",
-                    request_source->get(),
-                    import_range);
+                result.diagnostics.note_in_source("import requested module '" + *expected_module +
+                                                      "' here",
+                                                  request_source->get(),
+                                                  import_range);
             } else {
                 result.diagnostics.note("import requested module '" + *expected_module + "' here",
                                         import_range);
@@ -952,7 +953,7 @@ void dump_project_outline(const SourceGraph &graph, std::ostream &out) {
         << (graph.import_edges.size() == 1 ? "" : "s") << ")\n";
 
     for (const auto &source : graph.sources) {
-        out << "source " << source.path.string() << '\n';
+        out << "source " << source.source.display_name << '\n';
         out << "  module " << source.module_name << '\n';
         if (!source.imports.empty()) {
             out << "  imports\n";

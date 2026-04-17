@@ -270,11 +270,11 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
                                   SourceFile &source,
                                   DiagnosticBag &diagnostics,
                                   std::string_view kind) {
-    source.display_name = path.string();
+    source.display_name = display_path(path);
 
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        diagnostics.error("failed to open " + std::string(kind) + ": " + path.string());
+        diagnostics.error("failed to open " + std::string(kind) + ": " + display_path(path));
         return false;
     }
 
@@ -2255,7 +2255,7 @@ void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
     }
 
     for (const auto &source : graph.sources) {
-        out << "source " << source.path.string();
+        out << "source " << source.source.display_name;
         if (entry_ids.contains(source.id.value)) {
             out << " [entry]";
         }

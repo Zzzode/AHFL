@@ -467,6 +467,7 @@ void TypeCheckPass::build_struct_types() {
             StructTypeInfo info{
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
+                .fields = {},
                 .declaration_range = decl.get().range,
             };
 
@@ -495,6 +496,7 @@ void TypeCheckPass::build_enum_types() {
             EnumTypeInfo info{
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
+                .variants = {},
                 .declaration_range = decl.get().range,
             };
 
@@ -521,6 +523,8 @@ void TypeCheckPass::build_capability_types() {
             CapabilityTypeInfo info{
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
+                .params = {},
+                .return_type = nullptr,
                 .declaration_range = decl.get().range,
             };
 
@@ -549,6 +553,7 @@ void TypeCheckPass::build_predicate_types() {
             PredicateTypeInfo info{
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
+                .params = {},
                 .declaration_range = decl.get().range,
             };
 
@@ -579,6 +584,7 @@ void TypeCheckPass::build_agent_types() {
                 .input_type = resolve_type(*decl.get().input_type),
                 .context_type = resolve_type(*decl.get().context_type),
                 .output_type = resolve_type(*decl.get().output_type),
+                .capability_symbols = {},
                 .declaration_range = decl.get().range,
             };
 
@@ -601,7 +607,8 @@ void TypeCheckPass::build_agent_types() {
                 const auto capability_symbol =
                     find_local_here(SymbolNamespace::Capabilities, capability_name);
                 if (!capability_symbol.has_value()) {
-                    error_here("unknown capability '" + capability_name + "' in agent capability list",
+                    error_here("unknown capability '" + capability_name +
+                                   "' in agent capability list",
                                decl.get().range);
                     continue;
                 }
@@ -711,8 +718,7 @@ TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     case SymbolKind::Predicate:
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
-        error_here("symbol '" + symbol->get().canonical_name + "' does not name a type",
-                   use_range);
+        error_here("symbol '" + symbol->get().canonical_name + "' does not name a type", use_range);
         return make_any_type();
     }
 
@@ -737,9 +743,8 @@ TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
         return make_any_type();
     }
 
-    auto resolved = with_symbol_context(id, [&]() {
-        return resolve_type(*alias_decl->get().aliased_type);
-    });
+    auto resolved =
+        with_symbol_context(id, [&]() { return resolve_type(*alias_decl->get().aliased_type); });
     resolved_alias_types_.emplace(id.value, resolved ? resolved->clone() : make_any_type());
     active_aliases_.erase(id.value);
     return resolved;
@@ -926,8 +931,7 @@ TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
     const auto owner_reference =
         find_reference_here(ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range);
     if (!owner_reference.has_value()) {
-        error_here("unknown qualified value '" + expr.qualified_name->spelling() + "'",
-                   expr.range);
+        error_here("unknown qualified value '" + expr.qualified_name->spelling() + "'", expr.range);
         return error_typed();
     }
 
@@ -1398,8 +1402,7 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
     }
 
     if (!is_error_type(*collection.type)) {
-        error_here("index access requires a List or Map value, got " +
-                       collection.type->describe(),
+        error_here("index access requires a List or Map value, got " + collection.type->describe(),
                    expr.range);
     }
 
