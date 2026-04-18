@@ -10,12 +10,14 @@ add_subdirectory(frontend)
 add_subdirectory(semantics)
 add_subdirectory(ir)
 add_subdirectory(handoff)
+add_subdirectory(dry_run)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
 target_link_libraries(ahfl_compiler
     INTERFACE
         ahfl_handoff
+        ahfl_dry_run
         ahfl_backend
 )
 

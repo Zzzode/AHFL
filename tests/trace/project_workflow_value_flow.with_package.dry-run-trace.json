@@ -1,0 +1,110 @@
+{
+  "format_version": "ahfl.dry-run-trace.v1",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "status": "completed",
+  "input_fixture": "fixture.request.basic",
+  "run_id": "run-001",
+  "execution_order": [
+    "first",
+    "second"
+  ],
+  "node_traces": [
+    {
+      "node_name": "first",
+      "target": "lib::agents::AliasAgent",
+      "execution_index": 0,
+      "satisfied_dependencies": [],
+      "lifecycle": {
+        "start_condition": "immediate",
+        "completion_condition": "target_reached_final_state",
+        "completion_latched": true,
+        "target_initial_state": "Init",
+        "target_final_states": [
+          "Done"
+        ]
+      },
+      "input_summary": {
+        "reads": [
+          {
+            "kind": "workflow_input",
+            "root_name": "input",
+            "members": []
+          }
+        ]
+      },
+      "capability_bindings": [
+        {
+          "capability_name": "lib::agents::Echo",
+          "binding_key": "runtime.echo"
+        }
+      ],
+      "mock_results": [
+        {
+          "capability_name": "lib::agents::Echo",
+          "binding_key": null,
+          "result_fixture": "fixture.echo.ok",
+          "invocation_label": "echo-runtime"
+        }
+      ]
+    },
+    {
+      "node_name": "second",
+      "target": "lib::agents::AliasAgent",
+      "execution_index": 1,
+      "satisfied_dependencies": [
+        "first"
+      ],
+      "lifecycle": {
+        "start_condition": "after_dependencies_completed",
+        "completion_condition": "target_reached_final_state",
+        "completion_latched": true,
+        "target_initial_state": "Init",
+        "target_final_states": [
+          "Done"
+        ]
+      },
+      "input_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "first",
+            "members": [
+              "value"
+            ]
+          }
+        ]
+      },
+      "capability_bindings": [
+        {
+          "capability_name": "lib::agents::Echo",
+          "binding_key": "runtime.echo"
+        }
+      ],
+      "mock_results": [
+        {
+          "capability_name": "lib::agents::Echo",
+          "binding_key": null,
+          "result_fixture": "fixture.echo.ok",
+          "invocation_label": "echo-runtime"
+        }
+      ]
+    }
+  ],
+  "return_summary": {
+    "reads": [
+      {
+        "kind": "workflow_node_output",
+        "root_name": "second",
+        "members": [
+          "value"
+        ]
+      }
+    ]
+  }
+}

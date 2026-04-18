@@ -193,6 +193,80 @@ int run_fail_workspace_duplicate_project_name(const std::filesystem::path &works
     return 0;
 }
 
+int run_ok_package_authoring(const std::filesystem::path &descriptor) {
+    const ahfl::Frontend frontend;
+    const auto result = frontend.load_package_authoring_descriptor(descriptor);
+
+    if (result.has_errors() || !result.descriptor.has_value()) {
+        print_diagnostics(result.diagnostics);
+        return 1;
+    }
+
+    const auto &parsed = *result.descriptor;
+    if (parsed.format_version != ahfl::kPackageAuthoringFormatVersion ||
+        parsed.package_name != "refund-audit" || parsed.package_version != "0.1.0" ||
+        parsed.entry.kind != ahfl::PackageAuthoringTargetKind::Workflow ||
+        parsed.entry.name != "app::main::RefundAuditWorkflow" || parsed.exports.size() != 2 ||
+        parsed.capability_bindings.size() != 2) {
+        std::cerr << "unexpected package authoring descriptor shape\n";
+        return 1;
+    }
+
+    if (parsed.exports[0].kind != ahfl::PackageAuthoringTargetKind::Workflow ||
+        parsed.exports[0].name != "app::main::RefundAuditWorkflow" ||
+        parsed.exports[1].kind != ahfl::PackageAuthoringTargetKind::Agent ||
+        parsed.exports[1].name != "lib::agents::RefundAudit") {
+        std::cerr << "unexpected export targets\n";
+        return 1;
+    }
+
+    if (parsed.capability_bindings[0].capability != "OrderQuery" ||
+        parsed.capability_bindings[0].binding_key != "order.query" ||
+        parsed.capability_bindings[1].capability != "AuditDecision" ||
+        parsed.capability_bindings[1].binding_key != "audit.decision") {
+        std::cerr << "unexpected capability bindings\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_fail_package_unsupported_format(const std::filesystem::path &descriptor) {
+    const ahfl::Frontend frontend;
+    const auto result = frontend.load_package_authoring_descriptor(descriptor);
+
+    if (!result.has_errors()) {
+        std::cerr << "expected package authoring descriptor parse failure\n";
+        return 1;
+    }
+
+    if (!contains_message(result.diagnostics,
+                          "unsupported package authoring descriptor format_version")) {
+        print_diagnostics(result.diagnostics);
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_fail_package_duplicate_binding_key(const std::filesystem::path &descriptor) {
+    const ahfl::Frontend frontend;
+    const auto result = frontend.load_package_authoring_descriptor(descriptor);
+
+    if (!result.has_errors()) {
+        std::cerr << "expected package authoring descriptor parse failure\n";
+        return 1;
+    }
+
+    if (!contains_message(result.diagnostics,
+                          "package authoring descriptor contains duplicate binding_key")) {
+        print_diagnostics(result.diagnostics);
+        return 1;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -231,6 +305,18 @@ int main(int argc, char **argv) {
 
     if (test_case == "fail-workspace-duplicate-project-name") {
         return run_fail_workspace_duplicate_project_name(entry);
+    }
+
+    if (test_case == "ok-package-authoring") {
+        return run_ok_package_authoring(entry);
+    }
+
+    if (test_case == "fail-package-unsupported-format") {
+        return run_fail_package_unsupported_format(entry);
+    }
+
+    if (test_case == "fail-package-duplicate-binding-key") {
+        return run_fail_package_duplicate_binding_key(entry);
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

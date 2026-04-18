@@ -42,3 +42,16 @@ target_link_libraries(ahfl_handoff_package_compat_tests
         ahfl_backend_native_json
 )
 ahfl_apply_project_warnings(ahfl_handoff_package_compat_tests)
+
+add_executable(ahfl_dry_run_tests
+    dry_run/runner.cpp
+)
+target_link_libraries(ahfl_dry_run_tests
+    PRIVATE
+        ahfl_dry_run
+)
+ahfl_apply_project_warnings(ahfl_dry_run_tests)
+
+
+
+

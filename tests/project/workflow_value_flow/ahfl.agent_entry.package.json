@@ -1,0 +1,27 @@
+{
+  "format_version": "ahfl.package-authoring.v0.5",
+  "package": {
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "entry": {
+    "kind": "agent",
+    "name": "lib::agents::AliasAgent"
+  },
+  "exports": [
+    {
+      "kind": "workflow",
+      "name": "app::main::ValueFlowWorkflow"
+    },
+    {
+      "kind": "agent",
+      "name": "lib::agents::AliasAgent"
+    }
+  ],
+  "capability_bindings": [
+    {
+      "capability": "lib::agents::Echo",
+      "binding_key": "runtime.echo"
+    }
+  ]
+}

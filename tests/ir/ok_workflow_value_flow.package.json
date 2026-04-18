@@ -1,0 +1,22 @@
+{
+  "format_version": "ahfl.package-authoring.v0.5",
+  "package": {
+    "name": "workflow-value-flow",
+    "version": "0.1.0"
+  },
+  "entry": {
+    "kind": "workflow",
+    "name": "ir::workflow_value_flow::ValueFlowWorkflow"
+  },
+  "exports": [
+    {
+      "kind": "workflow",
+      "name": "ir::workflow_value_flow::ValueFlowWorkflow"
+    },
+    {
+      "kind": "agent",
+      "name": "ir::workflow_value_flow::EchoAgent"
+    }
+  ],
+  "capability_bindings": []
+}

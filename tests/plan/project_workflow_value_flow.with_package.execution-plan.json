@@ -1,0 +1,100 @@
+{
+  "format_version": "ahfl.execution-plan.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "entry_workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "workflows": [
+    {
+      "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+      "input_type": "lib::types::Request",
+      "output_type": "lib::types::Response",
+      "entry_nodes": [
+        "first"
+      ],
+      "dependency_edges": [
+        {
+          "from_node": "first",
+          "to_node": "second"
+        }
+      ],
+      "nodes": [
+        {
+          "name": "first",
+          "target": "lib::agents::AliasAgent",
+          "after": [],
+          "lifecycle": {
+            "start_condition": "immediate",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "capability_bindings": [
+            {
+              "capability_name": "lib::agents::Echo",
+              "binding_key": "runtime.echo"
+            }
+          ]
+        },
+        {
+          "name": "second",
+          "target": "lib::agents::AliasAgent",
+          "after": [
+            "first"
+          ],
+          "lifecycle": {
+            "start_condition": "after_dependencies_completed",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_node_output",
+                "root_name": "first",
+                "members": [
+                  "value"
+                ]
+              }
+            ]
+          },
+          "capability_bindings": [
+            {
+              "capability_name": "lib::agents::Echo",
+              "binding_key": "runtime.echo"
+            }
+          ]
+        }
+      ],
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "second",
+            "members": [
+              "value"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

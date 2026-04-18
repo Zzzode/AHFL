@@ -350,6 +350,636 @@ class DescriptorJsonParser {
     }
 };
 
+class PackageAuthoringJsonParser {
+  public:
+    PackageAuthoringJsonParser(const SourceFile &source, DiagnosticBag &diagnostics)
+        : source_(source), diagnostics_(diagnostics) {}
+
+    [[nodiscard]] std::optional<PackageAuthoringDescriptor>
+    parse_descriptor(const std::filesystem::path &descriptor_path) {
+        skip_whitespace();
+        if (!consume('{')) {
+            error_here("package authoring descriptor must begin with '{'");
+            return std::nullopt;
+        }
+
+        std::optional<std::string> format_version;
+        std::optional<std::string> package_name;
+        std::optional<std::string> package_version;
+        std::optional<PackageAuthoringTarget> entry;
+        std::vector<PackageAuthoringTarget> exports;
+        std::vector<PackageAuthoringCapabilityBinding> capability_bindings;
+        std::unordered_set<std::string> seen_fields;
+
+        skip_whitespace();
+        if (!consume('}')) {
+            while (true) {
+                auto key = parse_string("expected package authoring descriptor field name");
+                if (!key.has_value()) {
+                    return std::nullopt;
+                }
+
+                if (!seen_fields.insert(*key).second) {
+                    error_here("duplicate package authoring descriptor field '" + *key + "'");
+                    return std::nullopt;
+                }
+
+                skip_whitespace();
+                if (!consume(':')) {
+                    error_here("expected ':' after package authoring descriptor field name");
+                    return std::nullopt;
+                }
+
+                if (*key == "format_version") {
+                    format_version =
+                        parse_string("package authoring descriptor field 'format_version' must be a string");
+                } else if (*key == "package") {
+                    if (!parse_package_object(package_name, package_version)) {
+                        return std::nullopt;
+                    }
+                } else if (*key == "entry") {
+                    PackageAuthoringTarget target;
+                    if (!parse_target_object("entry", target)) {
+                        return std::nullopt;
+                    }
+                    entry = std::move(target);
+                } else if (*key == "exports") {
+                    if (!parse_target_array(exports)) {
+                        return std::nullopt;
+                    }
+                } else if (*key == "capability_bindings") {
+                    if (!parse_capability_binding_array(capability_bindings)) {
+                        return std::nullopt;
+                    }
+                } else {
+                    error_here("unsupported package authoring descriptor field '" + *key + "'");
+                    return std::nullopt;
+                }
+
+                if (diagnostics_.has_error()) {
+                    return std::nullopt;
+                }
+
+                skip_whitespace();
+                if (consume('}')) {
+                    break;
+                }
+
+                if (!consume(',')) {
+                    error_here("expected ',' or '}' after package authoring descriptor field");
+                    return std::nullopt;
+                }
+
+                skip_whitespace();
+            }
+        }
+
+        skip_whitespace();
+        if (!at_end()) {
+            error_here("package authoring descriptor contains trailing content");
+            return std::nullopt;
+        }
+
+        if (!format_version.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor is missing required field 'format_version'",
+                source_,
+                point_range(source_, 0));
+        }
+        if (!package_name.has_value() || !package_version.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor is missing required field 'package'",
+                source_,
+                point_range(source_, 0));
+        }
+        if (!entry.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor is missing required field 'entry'",
+                source_,
+                point_range(source_, 0));
+        }
+        if (diagnostics_.has_error()) {
+            return std::nullopt;
+        }
+
+        if (*format_version != kPackageAuthoringFormatVersion) {
+            diagnostics_.error_in_source("unsupported package authoring descriptor format_version '" +
+                                             *format_version + "'",
+                                         source_,
+                                         point_range(source_, 0));
+            return std::nullopt;
+        }
+
+        if (package_name->empty()) {
+            diagnostics_.error_in_source("package authoring descriptor field 'package.name' must not be empty",
+                                         source_,
+                                         point_range(source_, 0));
+        }
+        if (package_version->empty()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'package.version' must not be empty",
+                source_,
+                point_range(source_, 0));
+        }
+        if (entry->name.empty()) {
+            diagnostics_.error_in_source("package authoring descriptor field 'entry.name' must not be empty",
+                                         source_,
+                                         point_range(source_, 0));
+        }
+
+        std::unordered_set<std::string> seen_exports;
+        for (const auto &target : exports) {
+            if (target.name.empty()) {
+                diagnostics_.error_in_source(
+                    "package authoring descriptor export target name must not be empty",
+                    source_,
+                    point_range(source_, 0));
+                continue;
+            }
+
+            const auto key = std::to_string(static_cast<int>(target.kind)) + ":" + target.name;
+            if (!seen_exports.insert(key).second) {
+                diagnostics_.error_in_source(
+                    "package authoring descriptor contains duplicate export target '" + target.name + "'",
+                    source_,
+                    point_range(source_, 0));
+            }
+        }
+
+        std::unordered_set<std::string> seen_capabilities;
+        std::unordered_set<std::string> seen_binding_keys;
+        for (const auto &binding : capability_bindings) {
+            if (binding.capability.empty()) {
+                diagnostics_.error_in_source(
+                    "package authoring descriptor capability binding field 'capability' must not be empty",
+                    source_,
+                    point_range(source_, 0));
+            }
+            if (binding.binding_key.empty()) {
+                diagnostics_.error_in_source(
+                    "package authoring descriptor capability binding field 'binding_key' must not be empty",
+                    source_,
+                    point_range(source_, 0));
+            }
+            if (!binding.capability.empty() && !seen_capabilities.insert(binding.capability).second) {
+                diagnostics_.error_in_source(
+                    "package authoring descriptor contains duplicate capability binding for '" +
+                        binding.capability + "'",
+                    source_,
+                    point_range(source_, 0));
+            }
+            if (!binding.binding_key.empty() && !seen_binding_keys.insert(binding.binding_key).second) {
+                diagnostics_.error_in_source(
+                    "package authoring descriptor contains duplicate binding_key '" +
+                        binding.binding_key + "'",
+                    source_,
+                    point_range(source_, 0));
+            }
+        }
+        if (diagnostics_.has_error()) {
+            return std::nullopt;
+        }
+
+        return PackageAuthoringDescriptor{
+            .descriptor_path = descriptor_path,
+            .format_version = std::move(*format_version),
+            .package_name = std::move(*package_name),
+            .package_version = std::move(*package_version),
+            .entry = std::move(*entry),
+            .exports = std::move(exports),
+            .capability_bindings = std::move(capability_bindings),
+        };
+    }
+
+  private:
+    const SourceFile &source_;
+    DiagnosticBag &diagnostics_;
+    std::size_t index_{0};
+
+    [[nodiscard]] bool at_end() const noexcept {
+        return index_ >= source_.content.size();
+    }
+
+    [[nodiscard]] char current() const noexcept {
+        return at_end() ? '\0' : source_.content[index_];
+    }
+
+    void skip_whitespace() {
+        while (!at_end()) {
+            const auto ch = current();
+            if (ch != ' ' && ch != '\t' && ch != '\n' && ch != '\r') {
+                break;
+            }
+            ++index_;
+        }
+    }
+
+    [[nodiscard]] bool consume(char expected) {
+        skip_whitespace();
+        if (current() != expected) {
+            return false;
+        }
+        ++index_;
+        return true;
+    }
+
+    void error_here(std::string message) {
+        diagnostics_.error_in_source(std::move(message), source_, point_range(source_, index_));
+    }
+
+    [[nodiscard]] std::optional<std::string> parse_string(std::string_view missing_message) {
+        skip_whitespace();
+        if (current() != '"') {
+            error_here(std::string(missing_message));
+            return std::nullopt;
+        }
+
+        ++index_;
+        std::string value;
+        while (!at_end()) {
+            const auto ch = source_.content[index_++];
+            if (ch == '"') {
+                return value;
+            }
+
+            if (ch == '\\') {
+                if (at_end()) {
+                    error_here("unterminated escape sequence in package authoring descriptor string");
+                    return std::nullopt;
+                }
+
+                const auto escaped = source_.content[index_++];
+                switch (escaped) {
+                case '"':
+                case '\\':
+                case '/':
+                    value.push_back(escaped);
+                    break;
+                case 'b':
+                    value.push_back('\b');
+                    break;
+                case 'f':
+                    value.push_back('\f');
+                    break;
+                case 'n':
+                    value.push_back('\n');
+                    break;
+                case 'r':
+                    value.push_back('\r');
+                    break;
+                case 't':
+                    value.push_back('\t');
+                    break;
+                default:
+                    error_here("unsupported escape sequence in package authoring descriptor string");
+                    return std::nullopt;
+                }
+                continue;
+            }
+
+            value.push_back(ch);
+        }
+
+        error_here("unterminated package authoring descriptor string");
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::optional<PackageAuthoringTargetKind>
+    parse_target_kind(std::string_view field_path) {
+        auto kind = parse_string("expected target kind string");
+        if (!kind.has_value()) {
+            return std::nullopt;
+        }
+
+        if (*kind == "agent") {
+            return PackageAuthoringTargetKind::Agent;
+        }
+        if (*kind == "workflow") {
+            return PackageAuthoringTargetKind::Workflow;
+        }
+
+        diagnostics_.error_in_source("package authoring descriptor field '" + std::string(field_path) +
+                                         "' must be 'workflow' or 'agent'",
+                                     source_,
+                                     point_range(source_, 0));
+        return std::nullopt;
+    }
+
+    [[nodiscard]] bool parse_package_object(std::optional<std::string> &package_name,
+                                            std::optional<std::string> &package_version) {
+        skip_whitespace();
+        if (!consume('{')) {
+            error_here("package authoring descriptor field 'package' must be an object");
+            return false;
+        }
+
+        std::unordered_set<std::string> seen_fields;
+        skip_whitespace();
+        if (consume('}')) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'package' is missing required field 'name'",
+                source_,
+                point_range(source_, 0));
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'package' is missing required field 'version'",
+                source_,
+                point_range(source_, 0));
+            return false;
+        }
+
+        while (true) {
+            auto key = parse_string("expected package field name");
+            if (!key.has_value()) {
+                return false;
+            }
+            if (!seen_fields.insert(*key).second) {
+                error_here("duplicate package authoring descriptor field 'package." + *key + "'");
+                return false;
+            }
+
+            skip_whitespace();
+            if (!consume(':')) {
+                error_here("expected ':' after package field name");
+                return false;
+            }
+
+            if (*key == "name") {
+                package_name = parse_string("package authoring descriptor field 'package.name' must be a string");
+            } else if (*key == "version") {
+                package_version =
+                    parse_string("package authoring descriptor field 'package.version' must be a string");
+            } else {
+                error_here("unsupported package authoring descriptor field 'package." + *key + "'");
+                return false;
+            }
+
+            if (diagnostics_.has_error()) {
+                return false;
+            }
+
+            skip_whitespace();
+            if (consume('}')) {
+                break;
+            }
+            if (!consume(',')) {
+                error_here("expected ',' or '}' after package field");
+                return false;
+            }
+        }
+
+        if (!package_name.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'package' is missing required field 'name'",
+                source_,
+                point_range(source_, 0));
+        }
+        if (!package_version.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'package' is missing required field 'version'",
+                source_,
+                point_range(source_, 0));
+        }
+        return !diagnostics_.has_error();
+    }
+
+    [[nodiscard]] bool parse_target_object(std::string_view field_name, PackageAuthoringTarget &target) {
+        skip_whitespace();
+        if (!consume('{')) {
+            error_here("package authoring descriptor field '" + std::string(field_name) +
+                       "' must be an object");
+            return false;
+        }
+
+        std::optional<PackageAuthoringTargetKind> kind;
+        std::optional<std::string> name;
+        std::unordered_set<std::string> seen_fields;
+
+        skip_whitespace();
+        if (consume('}')) {
+            diagnostics_.error_in_source("package authoring descriptor field '" + std::string(field_name) +
+                                             "' is missing required field 'kind'",
+                                         source_,
+                                         point_range(source_, 0));
+            diagnostics_.error_in_source("package authoring descriptor field '" + std::string(field_name) +
+                                             "' is missing required field 'name'",
+                                         source_,
+                                         point_range(source_, 0));
+            return false;
+        }
+
+        while (true) {
+            auto key = parse_string("expected target field name");
+            if (!key.has_value()) {
+                return false;
+            }
+            if (!seen_fields.insert(*key).second) {
+                error_here("duplicate package authoring descriptor field '" + std::string(field_name) +
+                           "." + *key + "'");
+                return false;
+            }
+
+            skip_whitespace();
+            if (!consume(':')) {
+                error_here("expected ':' after target field name");
+                return false;
+            }
+
+            if (*key == "kind") {
+                kind = parse_target_kind(std::string(field_name) + ".kind");
+            } else if (*key == "name") {
+                name = parse_string("package authoring descriptor target field 'name' must be a string");
+            } else {
+                error_here("unsupported package authoring descriptor field '" +
+                           std::string(field_name) + "." + *key + "'");
+                return false;
+            }
+
+            if (diagnostics_.has_error()) {
+                return false;
+            }
+
+            skip_whitespace();
+            if (consume('}')) {
+                break;
+            }
+            if (!consume(',')) {
+                error_here("expected ',' or '}' after target field");
+                return false;
+            }
+        }
+
+        if (!kind.has_value()) {
+            diagnostics_.error_in_source("package authoring descriptor field '" + std::string(field_name) +
+                                             "' is missing required field 'kind'",
+                                         source_,
+                                         point_range(source_, 0));
+        }
+        if (!name.has_value()) {
+            diagnostics_.error_in_source("package authoring descriptor field '" + std::string(field_name) +
+                                             "' is missing required field 'name'",
+                                         source_,
+                                         point_range(source_, 0));
+        }
+        if (diagnostics_.has_error()) {
+            return false;
+        }
+
+        target.kind = *kind;
+        target.name = std::move(*name);
+        return true;
+    }
+
+    [[nodiscard]] bool parse_target_array(std::vector<PackageAuthoringTarget> &targets) {
+        skip_whitespace();
+        if (!consume('[')) {
+            error_here("package authoring descriptor field 'exports' must be an array");
+            return false;
+        }
+
+        skip_whitespace();
+        if (consume(']')) {
+            return true;
+        }
+
+        while (true) {
+            PackageAuthoringTarget target;
+            if (!parse_target_object("exports[]", target)) {
+                return false;
+            }
+            targets.push_back(std::move(target));
+
+            skip_whitespace();
+            if (consume(']')) {
+                return true;
+            }
+            if (!consume(',')) {
+                error_here("expected ',' or ']' in exports array");
+                return false;
+            }
+        }
+    }
+
+    [[nodiscard]] bool
+    parse_capability_binding_object(PackageAuthoringCapabilityBinding &binding) {
+        skip_whitespace();
+        if (!consume('{')) {
+            error_here("package authoring descriptor field 'capability_bindings[]' must be an object");
+            return false;
+        }
+
+        std::optional<std::string> capability;
+        std::optional<std::string> binding_key;
+        std::unordered_set<std::string> seen_fields;
+
+        skip_whitespace();
+        if (consume('}')) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'capability_bindings[]' is missing required field 'capability'",
+                source_,
+                point_range(source_, 0));
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'capability_bindings[]' is missing required field 'binding_key'",
+                source_,
+                point_range(source_, 0));
+            return false;
+        }
+
+        while (true) {
+            auto key = parse_string("expected capability binding field name");
+            if (!key.has_value()) {
+                return false;
+            }
+            if (!seen_fields.insert(*key).second) {
+                error_here("duplicate package authoring descriptor field 'capability_bindings[]." +
+                           *key + "'");
+                return false;
+            }
+
+            skip_whitespace();
+            if (!consume(':')) {
+                error_here("expected ':' after capability binding field name");
+                return false;
+            }
+
+            if (*key == "capability") {
+                capability = parse_string(
+                    "package authoring descriptor capability binding field 'capability' must be a string");
+            } else if (*key == "binding_key") {
+                binding_key = parse_string(
+                    "package authoring descriptor capability binding field 'binding_key' must be a string");
+            } else {
+                error_here("unsupported package authoring descriptor field 'capability_bindings[]." +
+                           *key + "'");
+                return false;
+            }
+
+            if (diagnostics_.has_error()) {
+                return false;
+            }
+
+            skip_whitespace();
+            if (consume('}')) {
+                break;
+            }
+            if (!consume(',')) {
+                error_here("expected ',' or '}' after capability binding field");
+                return false;
+            }
+        }
+
+        if (!capability.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'capability_bindings[]' is missing required field 'capability'",
+                source_,
+                point_range(source_, 0));
+        }
+        if (!binding_key.has_value()) {
+            diagnostics_.error_in_source(
+                "package authoring descriptor field 'capability_bindings[]' is missing required field 'binding_key'",
+                source_,
+                point_range(source_, 0));
+        }
+        if (diagnostics_.has_error()) {
+            return false;
+        }
+
+        binding.capability = std::move(*capability);
+        binding.binding_key = std::move(*binding_key);
+        return true;
+    }
+
+    [[nodiscard]] bool parse_capability_binding_array(
+        std::vector<PackageAuthoringCapabilityBinding> &bindings) {
+        skip_whitespace();
+        if (!consume('[')) {
+            error_here("package authoring descriptor field 'capability_bindings' must be an array");
+            return false;
+        }
+
+        skip_whitespace();
+        if (consume(']')) {
+            return true;
+        }
+
+        while (true) {
+            PackageAuthoringCapabilityBinding binding;
+            if (!parse_capability_binding_object(binding)) {
+                return false;
+            }
+            bindings.push_back(std::move(binding));
+
+            skip_whitespace();
+            if (consume(']')) {
+                return true;
+            }
+            if (!consume(',')) {
+                error_here("expected ',' or ']' in capability_bindings array");
+                return false;
+            }
+        }
+    }
+};
+
 [[nodiscard]] std::optional<std::string>
 required_string_field(std::string_view field_name,
                       const std::unordered_map<std::string, DescriptorJsonValue> &fields,
@@ -672,6 +1302,25 @@ Frontend::load_project_descriptor(const std::filesystem::path &path) const {
     }
 
     result.descriptor = std::move(descriptor);
+    return result;
+}
+
+PackageAuthoringDescriptorParseResult
+Frontend::load_package_authoring_descriptor(const std::filesystem::path &path) const {
+    PackageAuthoringDescriptorParseResult result;
+    SourceFile source;
+    if (!read_text_file(path, source, result.diagnostics, "package authoring descriptor")) {
+        return result;
+    }
+
+    const auto descriptor_path = normalize_path(path);
+    PackageAuthoringJsonParser parser(source, result.diagnostics);
+    auto descriptor = parser.parse_descriptor(descriptor_path);
+    if (!descriptor.has_value()) {
+        return result;
+    }
+
+    result.descriptor = std::move(*descriptor);
     return result;
 }
 

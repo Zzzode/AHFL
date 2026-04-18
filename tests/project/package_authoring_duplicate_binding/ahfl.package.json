@@ -1,0 +1,27 @@
+{
+  "format_version": "ahfl.package-authoring.v0.5",
+  "package": {
+    "name": "refund-audit",
+    "version": "0.1.0"
+  },
+  "entry": {
+    "kind": "workflow",
+    "name": "RefundAuditWorkflow"
+  },
+  "exports": [
+    {
+      "kind": "workflow",
+      "name": "RefundAuditWorkflow"
+    }
+  ],
+  "capability_bindings": [
+    {
+      "capability": "OrderQuery",
+      "binding_key": "shared.key"
+    },
+    {
+      "capability": "AuditDecision",
+      "binding_key": "shared.key"
+    }
+  ]
+}

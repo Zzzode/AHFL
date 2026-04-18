@@ -512,4 +512,10 @@ void print_program_native_json(const ir::Program &program, std::ostream &out) {
     print_package_native_json(handoff::lower_package(program), out);
 }
 
+void print_program_native_json(const ir::Program &program,
+                               const handoff::PackageMetadata &metadata,
+                               std::ostream &out) {
+    print_package_native_json(handoff::lower_package(program, metadata), out);
+}
+
 } // namespace ahfl

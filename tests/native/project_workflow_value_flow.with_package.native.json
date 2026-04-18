@@ -1,0 +1,165 @@
+{
+  "format_version": "ahfl.native-package.v1",
+  "metadata": {
+    "identity": {
+      "format_version": "ahfl.native-package.v1",
+      "name": "workflow-value-flow",
+      "version": "0.2.0"
+    },
+    "entry_target": {
+      "kind": "workflow",
+      "canonical_name": "app::main::ValueFlowWorkflow"
+    },
+    "export_targets": [
+      {
+        "kind": "workflow",
+        "canonical_name": "app::main::ValueFlowWorkflow"
+      },
+      {
+        "kind": "agent",
+        "canonical_name": "lib::agents::AliasAgent"
+      }
+    ],
+    "capability_binding_keys": [
+      {
+        "capability_name": "lib::agents::Echo",
+        "binding_key": "runtime.echo"
+      }
+    ]
+  },
+  "executable_targets": [
+    {
+      "kind": "workflow",
+      "provenance": {
+        "module_name": "app::main",
+        "source_path": "app/main.ahfl"
+      },
+      "canonical_name": "app::main::ValueFlowWorkflow",
+      "input_type": "lib::types::Request",
+      "output_type": "lib::types::Response",
+      "execution_graph": {
+        "entry_nodes": [
+          "first"
+        ],
+        "dependency_edges": [
+          {
+            "from_node": "first",
+            "to_node": "second"
+          }
+        ]
+      },
+      "nodes": [
+        {
+          "name": "first",
+          "target": "lib::agents::AliasAgent",
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "after": [],
+          "lifecycle": {
+            "start_condition": "immediate",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          }
+        },
+        {
+          "name": "second",
+          "target": "lib::agents::AliasAgent",
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_node_output",
+                "root_name": "first",
+                "members": [
+                  "value"
+                ]
+              }
+            ]
+          },
+          "after": [
+            "first"
+          ],
+          "lifecycle": {
+            "start_condition": "after_dependencies_completed",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          }
+        }
+      ],
+      "safety_clause_count": 0,
+      "liveness_clause_count": 0,
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "second",
+            "members": [
+              "value"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kind": "agent",
+      "provenance": {
+        "module_name": "lib::agents",
+        "source_path": "lib/agents.ahfl"
+      },
+      "canonical_name": "lib::agents::AliasAgent",
+      "input_type": "lib::types::Request",
+      "context_type": "lib::types::Context",
+      "output_type": "lib::types::Response",
+      "states": [
+        "Init",
+        "Done"
+      ],
+      "initial_state": "Init",
+      "final_states": [
+        "Done"
+      ],
+      "capabilities": [
+        "lib::agents::Echo"
+      ]
+    }
+  ],
+  "capability_binding_slots": [
+    {
+      "capability_name": "lib::agents::Echo",
+      "binding_key": "runtime.echo",
+      "required_by_targets": [
+        {
+          "kind": "workflow",
+          "canonical_name": "app::main::ValueFlowWorkflow"
+        },
+        {
+          "kind": "agent",
+          "canonical_name": "lib::agents::AliasAgent"
+        }
+      ]
+    }
+  ],
+  "policy_obligations": [],
+  "formal_observations": [
+    {
+      "symbol": "agent__lib_agents_AliasAgent__called__lib_agents_Echo",
+      "kind": "called_capability",
+      "agent": "lib::agents::AliasAgent",
+      "capability": "lib::agents::Echo"
+    }
+  ]
+}

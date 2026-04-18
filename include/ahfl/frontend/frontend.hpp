@@ -14,6 +14,9 @@
 
 namespace ahfl {
 
+inline constexpr std::string_view kPackageAuthoringFormatVersion =
+    "ahfl.package-authoring.v0.5";
+
 struct FrontendOptions {
     bool emit_parse_note{false};
 };
@@ -73,6 +76,31 @@ struct WorkspaceDescriptor {
     std::vector<std::filesystem::path> projects;
 };
 
+enum class PackageAuthoringTargetKind {
+    Agent,
+    Workflow,
+};
+
+struct PackageAuthoringTarget {
+    PackageAuthoringTargetKind kind{PackageAuthoringTargetKind::Workflow};
+    std::string name;
+};
+
+struct PackageAuthoringCapabilityBinding {
+    std::string capability;
+    std::string binding_key;
+};
+
+struct PackageAuthoringDescriptor {
+    std::filesystem::path descriptor_path;
+    std::string format_version;
+    std::string package_name;
+    std::string package_version;
+    PackageAuthoringTarget entry;
+    std::vector<PackageAuthoringTarget> exports;
+    std::vector<PackageAuthoringCapabilityBinding> capability_bindings;
+};
+
 struct WorkspaceDescriptorParseResult {
     std::optional<WorkspaceDescriptor> descriptor;
     DiagnosticBag diagnostics;
@@ -84,6 +112,15 @@ struct WorkspaceDescriptorParseResult {
 
 struct ProjectDescriptorParseResult {
     std::optional<ProjectDescriptor> descriptor;
+    DiagnosticBag diagnostics;
+
+    [[nodiscard]] bool has_errors() const noexcept {
+        return diagnostics.has_error();
+    }
+};
+
+struct PackageAuthoringDescriptorParseResult {
+    std::optional<PackageAuthoringDescriptor> descriptor;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -111,6 +148,8 @@ class Frontend {
     [[nodiscard]] ParseResult parse_text(std::string display_name, std::string text) const;
     [[nodiscard]] ProjectDescriptorParseResult
     load_project_descriptor(const std::filesystem::path &path) const;
+    [[nodiscard]] PackageAuthoringDescriptorParseResult
+    load_package_authoring_descriptor(const std::filesystem::path &path) const;
     [[nodiscard]] WorkspaceDescriptorParseResult
     load_workspace_descriptor(const std::filesystem::path &path) const;
     [[nodiscard]] ProjectDescriptorParseResult

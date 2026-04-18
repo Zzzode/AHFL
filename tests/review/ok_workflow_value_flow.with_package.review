@@ -1,0 +1,64 @@
+ahfl.package_review.v1
+package_reader {
+  format ahfl.native-package.v1
+  identity workflow-value-flow@0.1.0
+  entry workflow ir::workflow_value_flow::ValueFlowWorkflow
+  exports {
+    count 2
+    - workflow ir::workflow_value_flow::ValueFlowWorkflow
+    - agent ir::workflow_value_flow::EchoAgent
+  }
+  capability_bindings {
+    count 0
+  }
+  policy_obligations {
+    count 0
+  }
+  formal_observations {
+    count 0
+    called_capability 0
+    embedded_bool_expr 0
+  }
+}
+execution_planner {
+  workflows 1
+  workflow ir::workflow_value_flow::ValueFlowWorkflow {
+    input_type ir::workflow_value_flow::Request
+    output_type ir::workflow_value_flow::Response
+    entry_nodes {
+      count 1
+      - first
+    }
+    dependencies {
+      count 1
+      - first -> second
+    }
+    nodes {
+      count 2
+      - first
+        target ir::workflow_value_flow::EchoAgent
+        after none
+        lifecycle start=immediate completion=target_reached_final_state latched=true
+        target_initial_state Init
+        target_final_states Done
+        input_summary {
+          reads 1
+          - workflow_input:input
+        }
+      - second
+        target ir::workflow_value_flow::EchoAgent
+        after first
+        lifecycle start=after_dependencies_completed completion=target_reached_final_state latched=true
+        target_initial_state Init
+        target_final_states Done
+        input_summary {
+          reads 1
+          - workflow_node_output:first.value
+        }
+    }
+    return_summary {
+      reads 1
+      - workflow_node_output:second.value
+    }
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "format_version": "ahfl.execution-plan.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.1.0"
+  },
+  "entry_workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "workflows": [
+    {
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "input_type": "ir::workflow_value_flow::Request",
+      "output_type": "ir::workflow_value_flow::Response",
+      "entry_nodes": [
+        "first"
+      ],
+      "dependency_edges": [
+        {
+          "from_node": "first",
+          "to_node": "second"
+        }
+      ],
+      "nodes": [
+        {
+          "name": "first",
+          "target": "ir::workflow_value_flow::EchoAgent",
+          "after": [],
+          "lifecycle": {
+            "start_condition": "immediate",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_input",
+                "root_name": "input",
+                "members": []
+              }
+            ]
+          },
+          "capability_bindings": []
+        },
+        {
+          "name": "second",
+          "target": "ir::workflow_value_flow::EchoAgent",
+          "after": [
+            "first"
+          ],
+          "lifecycle": {
+            "start_condition": "after_dependencies_completed",
+            "completion_condition": "target_reached_final_state",
+            "completion_latched": true,
+            "target_initial_state": "Init",
+            "target_final_states": [
+              "Done"
+            ]
+          },
+          "input_summary": {
+            "reads": [
+              {
+                "kind": "workflow_node_output",
+                "root_name": "first",
+                "members": [
+                  "value"
+                ]
+              }
+            ]
+          },
+          "capability_bindings": []
+        }
+      ],
+      "return_summary": {
+        "reads": [
+          {
+            "kind": "workflow_node_output",
+            "root_name": "second",
+            "members": [
+              "value"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

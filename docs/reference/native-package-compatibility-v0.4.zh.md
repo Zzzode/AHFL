@@ -4,6 +4,7 @@
 
 关联文档：
 
+- [native-package-authoring-compatibility-v0.5.zh.md](./native-package-authoring-compatibility-v0.5.zh.md)
 - [cli-commands-v0.3.zh.md](./cli-commands-v0.3.zh.md)
 - [backend-capability-matrix-v0.3.zh.md](./backend-capability-matrix-v0.3.zh.md)
 - [native-handoff-architecture-v0.4.zh.md](../design/native-handoff-architecture-v0.4.zh.md)
@@ -191,4 +192,4 @@
 
 1. 当前稳定版本为 `ahfl.native-package.v1`
 2. `emit-native-json` 已稳定导出 executable target、execution graph、lifecycle、capability binding、policy obligations、formal observations 与 workflow value summary
-3. package metadata 的外部输入来源仍处于后续阶段，但当前版本字段契约已冻结
+3. authoring 输入本身的兼容性契约已在 [native-package-authoring-compatibility-v0.5.zh.md](./native-package-authoring-compatibility-v0.5.zh.md) 中单独冻结

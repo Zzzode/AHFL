@@ -1,0 +1,23 @@
+{
+  "format_version": "ahfl.package-authoring.v0.5",
+  "package": {
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "entry": {
+    "kind": "workflow",
+    "name": "app::main::ValueFlowWorkflow"
+  },
+  "exports": [
+    {
+      "kind": "workflow",
+      "name": "app::main::ValueFlowWorkflow"
+    }
+  ],
+  "capability_bindings": [
+    {
+      "capability": "MissingCapability",
+      "binding_key": "runtime.missing"
+    }
+  ]
+}
