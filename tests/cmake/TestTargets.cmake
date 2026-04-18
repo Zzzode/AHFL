@@ -70,4 +70,21 @@ target_link_libraries(ahfl_execution_journal_tests
 )
 ahfl_apply_project_warnings(ahfl_execution_journal_tests)
 
+add_executable(ahfl_replay_view_tests
+    replay_view/replay.cpp
+)
+target_link_libraries(ahfl_replay_view_tests
+    PRIVATE
+        ahfl_replay_view
+        ahfl_ir
+)
+ahfl_apply_project_warnings(ahfl_replay_view_tests)
 
+add_executable(ahfl_audit_report_tests
+    audit_report/report.cpp
+)
+target_link_libraries(ahfl_audit_report_tests
+    PRIVATE
+        ahfl_audit_report
+)
+ahfl_apply_project_warnings(ahfl_audit_report_tests)

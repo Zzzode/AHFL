@@ -1,0 +1,123 @@
+{
+  "format_version": "ahfl.audit-report.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.1.0"
+  },
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "conclusion": "passed",
+  "plan_summary": {
+    "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+    "execution_order": [
+      "first",
+      "second"
+    ],
+    "nodes": [
+      {
+        "node_name": "first",
+        "target": "ir::workflow_value_flow::EchoAgent",
+        "planned_dependencies": [],
+        "capability_bindings": []
+      },
+      {
+        "node_name": "second",
+        "target": "ir::workflow_value_flow::EchoAgent",
+        "planned_dependencies": [
+          "first"
+        ],
+        "capability_bindings": []
+      }
+    ],
+    "return_summary": {
+      "reads": [
+        {
+          "kind": "workflow_node_output",
+          "root_name": "second",
+          "members": [
+            "value"
+          ]
+        }
+      ]
+    }
+  },
+  "session_summary": {
+    "source_runtime_session_format_version": "ahfl.runtime-session.v1",
+    "workflow_status": "completed",
+    "nodes": [
+      {
+        "node_name": "first",
+        "final_status": "completed",
+        "execution_index": 0,
+        "satisfied_dependencies": [],
+        "used_mock_selectors": []
+      },
+      {
+        "node_name": "second",
+        "final_status": "completed",
+        "execution_index": 1,
+        "satisfied_dependencies": [
+          "first"
+        ],
+        "used_mock_selectors": []
+      }
+    ]
+  },
+  "journal_summary": {
+    "source_execution_journal_format_version": "ahfl.execution-journal.v1",
+    "total_events": 8,
+    "node_ready_events": 2,
+    "node_started_events": 2,
+    "node_completed_events": 2,
+    "workflow_completed_events": 1,
+    "completed_node_order": [
+      "first",
+      "second"
+    ]
+  },
+  "trace_summary": {
+    "source_dry_run_trace_format_version": "ahfl.dry-run-trace.v1",
+    "status": "completed",
+    "execution_order": [
+      "first",
+      "second"
+    ],
+    "nodes": [
+      {
+        "node_name": "first",
+        "execution_index": 0,
+        "mock_result_selectors": []
+      },
+      {
+        "node_name": "second",
+        "execution_index": 1,
+        "mock_result_selectors": []
+      }
+    ],
+    "return_summary": {
+      "reads": [
+        {
+          "kind": "workflow_node_output",
+          "root_name": "second",
+          "members": [
+            "value"
+          ]
+        }
+      ]
+    }
+  },
+  "replay_consistency": {
+    "plan_matches_session": true,
+    "session_matches_journal": true,
+    "journal_matches_execution_order": true
+  },
+  "audit_consistency": {
+    "plan_matches_session": true,
+    "session_matches_journal": true,
+    "journal_matches_trace": true,
+    "trace_matches_replay": true
+  }
+}

@@ -53,6 +53,28 @@ target_link_libraries(ahfl_backend_execution_journal
 
 ahfl_apply_project_warnings(ahfl_backend_execution_journal)
 
+add_library(ahfl_backend_replay_view STATIC
+    replay_view.cpp
+)
+
+target_link_libraries(ahfl_backend_replay_view
+    PUBLIC
+        ahfl_replay_view
+)
+
+ahfl_apply_project_warnings(ahfl_backend_replay_view)
+
+add_library(ahfl_backend_audit_report STATIC
+    audit_report.cpp
+)
+
+target_link_libraries(ahfl_backend_audit_report
+    PUBLIC
+        ahfl_audit_report
+)
+
+ahfl_apply_project_warnings(ahfl_backend_audit_report)
+
 add_library(ahfl_backend_dry_run_trace STATIC
     dry_run_trace.cpp
 )
@@ -93,9 +115,11 @@ add_library(ahfl_backend STATIC
 target_link_libraries(ahfl_backend
     PUBLIC
         ahfl_ir
+        ahfl_backend_audit_report
         ahfl_backend_dry_run_trace
         ahfl_backend_execution_plan
         ahfl_backend_execution_journal
+        ahfl_backend_replay_view
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session
