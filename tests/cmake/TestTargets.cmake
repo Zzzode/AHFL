@@ -52,6 +52,22 @@ target_link_libraries(ahfl_dry_run_tests
 )
 ahfl_apply_project_warnings(ahfl_dry_run_tests)
 
+add_executable(ahfl_runtime_session_tests
+    runtime_session/session.cpp
+)
+target_link_libraries(ahfl_runtime_session_tests
+    PRIVATE
+        ahfl_runtime_session
+)
+ahfl_apply_project_warnings(ahfl_runtime_session_tests)
 
+add_executable(ahfl_execution_journal_tests
+    execution_journal/journal.cpp
+)
+target_link_libraries(ahfl_execution_journal_tests
+    PRIVATE
+        ahfl_execution_journal
+)
+ahfl_apply_project_warnings(ahfl_execution_journal_tests)
 
 

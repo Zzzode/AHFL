@@ -42,8 +42,16 @@ target_link_libraries(ahfl_backend_execution_plan
 
 ahfl_apply_project_warnings(ahfl_backend_execution_plan)
 
+add_library(ahfl_backend_execution_journal STATIC
+    execution_journal.cpp
+)
 
+target_link_libraries(ahfl_backend_execution_journal
+    PUBLIC
+        ahfl_execution_journal
+)
 
+ahfl_apply_project_warnings(ahfl_backend_execution_journal)
 
 add_library(ahfl_backend_dry_run_trace STATIC
     dry_run_trace.cpp
@@ -56,6 +64,16 @@ target_link_libraries(ahfl_backend_dry_run_trace
 
 ahfl_apply_project_warnings(ahfl_backend_dry_run_trace)
 
+add_library(ahfl_backend_runtime_session STATIC
+    runtime_session.cpp
+)
+
+target_link_libraries(ahfl_backend_runtime_session
+    PUBLIC
+        ahfl_runtime_session
+)
+
+ahfl_apply_project_warnings(ahfl_backend_runtime_session)
 
 add_library(ahfl_backend_package_review STATIC
     package_review.cpp
@@ -77,8 +95,10 @@ target_link_libraries(ahfl_backend
         ahfl_ir
         ahfl_backend_dry_run_trace
         ahfl_backend_execution_plan
+        ahfl_backend_execution_journal
         ahfl_backend_native_json
         ahfl_backend_package_review
+        ahfl_backend_runtime_session
         ahfl_backend_summary
         ahfl_backend_smv
 )

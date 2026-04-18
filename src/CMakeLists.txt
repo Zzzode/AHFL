@@ -11,6 +11,8 @@ add_subdirectory(semantics)
 add_subdirectory(ir)
 add_subdirectory(handoff)
 add_subdirectory(dry_run)
+add_subdirectory(runtime_session)
+add_subdirectory(execution_journal)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
@@ -18,6 +20,8 @@ target_link_libraries(ahfl_compiler
     INTERFACE
         ahfl_handoff
         ahfl_dry_run
+        ahfl_runtime_session
+        ahfl_execution_journal
         ahfl_backend
 )
 

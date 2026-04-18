@@ -1,0 +1,85 @@
+{
+  "format_version": "ahfl.execution-journal.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v1",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.1.0"
+  },
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "events": [
+    {
+      "kind": "session_started",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": null,
+      "execution_index": null,
+      "satisfied_dependencies": [],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "node_became_ready",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": "first",
+      "execution_index": 0,
+      "satisfied_dependencies": [],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "node_started",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": "first",
+      "execution_index": 0,
+      "satisfied_dependencies": [],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "node_completed",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": "first",
+      "execution_index": 0,
+      "satisfied_dependencies": [],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "node_became_ready",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": "second",
+      "execution_index": 1,
+      "satisfied_dependencies": [
+        "first"
+      ],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "node_started",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": "second",
+      "execution_index": 1,
+      "satisfied_dependencies": [
+        "first"
+      ],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "node_completed",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": "second",
+      "execution_index": 1,
+      "satisfied_dependencies": [
+        "first"
+      ],
+      "used_mock_selectors": []
+    },
+    {
+      "kind": "workflow_completed",
+      "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "node_name": null,
+      "execution_index": null,
+      "satisfied_dependencies": [],
+      "used_mock_selectors": []
+    }
+  ]
+}
