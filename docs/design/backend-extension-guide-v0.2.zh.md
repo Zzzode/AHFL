@@ -5,7 +5,8 @@
 关联文档：
 
 - [backend-capability-matrix-v0.3.zh.md](../reference/backend-capability-matrix-v0.3.zh.md)
-- [native-consumer-matrix-v0.4.zh.md](../reference/native-consumer-matrix-v0.4.zh.md)
+- [native-consumer-matrix-v0.5.zh.md](../reference/native-consumer-matrix-v0.5.zh.md)
+- [native-package-authoring-compatibility-v0.5.zh.md](../reference/native-package-authoring-compatibility-v0.5.zh.md)
 - [ir-backend-architecture-v0.2.zh.md](./ir-backend-architecture-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.md)
 - [compiler-evolution-v0.2.zh.md](./compiler-evolution-v0.2.zh.md)
@@ -55,6 +56,9 @@ AHFL 当前 backend 相关代码分布在：
 2. `NativeJson`
    - 是当前仓库里的 runtime-facing 参考 backend
    - 用来验证 handoff package 如何在不绕开 driver / CLI / docs / golden 的前提下形成正式 consumer 契约
+3. `PackageReview`
+   - 是当前仓库里的 runtime-adjacent reference consumer 输出 backend
+   - 用来验证 direct handoff helper 如何在不绕开 driver / CLI / docs / golden 的前提下形成 review/debug 输出
 
 ## 新增 backend 的标准顺序
 
@@ -108,7 +112,7 @@ AHFL 当前 backend 相关代码分布在：
 
 具体分类见：
 
-- [native-consumer-matrix-v0.4.zh.md](../reference/native-consumer-matrix-v0.4.zh.md)
+- [native-consumer-matrix-v0.5.zh.md](../reference/native-consumer-matrix-v0.5.zh.md)
 
 ## 第二步：判断是否先扩展 IR
 
@@ -215,6 +219,28 @@ CLI 仍然不应理解：
 3. compatibility / versioning 文档
 4. consumer matrix 中的落点与使用边界
 
+## V0.5 Runtime-Adjacent 扩展模板
+
+若新增的是 V0.5 runtime-adjacent consumer prototype，当前建议顺序为：
+
+```text
+确认属于 reader / planner / review / native-json 哪一层
+  -> 确认是否复用已有 handoff helper
+  -> 若需要共享信息，先扩 handoff::Package
+  -> 再扩 direct helper / backend
+  -> 接入 driver / CLI
+  -> 补 tests/handoff + tests/review + tests/native
+  -> 更新 compatibility / consumer matrix / contributor docs
+```
+
+当前最小模板要求：
+
+1. 不回退读取 AST、raw source、project descriptor 或 `ahfl.package.json`
+2. 优先复用 `handoff::build_package_reader_summary(...)`
+3. 优先复用 `handoff::build_execution_planner_bootstrap(...)`
+4. 若扩 authoring 输入，必须同步更新 authoring compatibility 文档
+5. 若扩 emitted package 稳定语义，必须同步更新 emitted package compatibility 文档
+
 ## 常见错误模式
 
 ### 1. 先写 emitter，再补 IR
@@ -259,6 +285,29 @@ CLI 仍然不应理解：
 若是抽象语义 backend，通常还应补：
 
 7. 单独的 boundary 文档
+
+## V0.6 Runtime-Adjacent 扩展模板
+
+若新增的是 V0.6 runtime-adjacent consumer prototype，当前建议顺序为：
+
+```text
+确认属于 handoff package / execution plan / dry-run trace 哪一层
+  -> 若需要共享 planning 语义，先扩 handoff::ExecutionPlan
+  -> 若需要共享 dry-run 输入，先扩 CapabilityMockSet / DryRunRequest
+  -> 若需要共享 review 结果，先扩 DryRunTrace
+  -> 再扩 helper / runner / backend
+  -> 接入 CLI / golden / labels
+  -> 更新 compatibility / consumer matrix / contributor docs
+```
+
+当前最小模板要求：
+
+1. 不回退读取 AST、raw source、project descriptor 或 authoring descriptor
+2. planner / runner / trace 应优先复用 `build_execution_plan(...)`
+3. runner / trace 应优先复用 `validate_execution_plan(...)`
+4. 新增 mock 输入字段时，必须同步更新 mock parser、compatibility 文档与 `tests/dry_run/`
+5. 新增 trace 稳定字段时，必须同步更新 trace compatibility 文档与 `tests/trace/`
+6. 不要把 secret、endpoint、tenant、region 或 deployment 配置塞进 plan / trace 公共层
 
 ## 当前参考实现
 

@@ -45,6 +45,24 @@ add_test(NAME ahfl.frontend.project.fail_workspace_duplicate_project_name
             "${AHFL_TESTS_DIR}/project/workspace_duplicate/ahfl.workspace.json"
 )
 
+add_test(NAME ahfl.frontend.package_authoring.ok_basic
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            ok-package-authoring
+            "${AHFL_TESTS_DIR}/project/package_authoring_ok/ahfl.package.json"
+)
+
+add_test(NAME ahfl.frontend.package_authoring.fail_unsupported_format
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            fail-package-unsupported-format
+            "${AHFL_TESTS_DIR}/project/package_authoring_bad_format/ahfl.package.json"
+)
+
+add_test(NAME ahfl.frontend.package_authoring.fail_duplicate_binding_key
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            fail-package-duplicate-binding-key
+            "${AHFL_TESTS_DIR}/project/package_authoring_duplicate_binding/ahfl.package.json"
+)
+
 add_test(NAME ahfl.resolver.project.ok_basic
     COMMAND $<TARGET_FILE:ahfl_project_resolve_tests>
             ok-basic
@@ -100,10 +118,265 @@ add_test(NAME ahfl.handoff.package.project_workflow_value_flow
             "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
 )
 
+add_test(NAME ahfl.handoff.package.validate_normalizes_display_names
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-package-normalizes-display-names
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.package_reader_summary.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            package-reader-summary-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.package_reader_summary.fail_missing_export
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            package-reader-summary-rejects-missing-export
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_planner_bootstrap.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            execution-planner-bootstrap-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_planner_bootstrap.fail_agent_entry
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            execution-planner-bootstrap-rejects-agent-entry
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_planner_bootstrap.fail_missing_dependency
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            execution-planner-bootstrap-rejects-missing-dependency
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_plan.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            execution-plan-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_plan.fail_agent_entry
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            execution-plan-rejects-agent-entry
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_plan.validate_project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-execution-plan-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_plan.validate_fail_missing_entry_workflow
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-execution-plan-rejects-missing-entry-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.execution_plan.validate_fail_unknown_value_read
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-execution-plan-rejects-unknown-value-read
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.validate_rejects_wrong_kind
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-package-rejects-wrong-kind
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.validate_rejects_duplicate_normalized_targets
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-package-rejects-duplicate-normalized-targets
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.handoff.package.validate_rejects_unknown_capability
+    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+            validate-package-rejects-unknown-capability
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
 add_test(NAME ahfl.handoff.package.file_expr_temporal
     COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
             file-expr-temporal
             "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
+)
+
+add_test(NAME ahfl.dry_run.local.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_dry_run_tests>
+            local-dry-run-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.dry_run.local.fail_missing_workflow
+    COMMAND $<TARGET_FILE:ahfl_dry_run_tests>
+            local-dry-run-rejects-missing-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.dry_run.mock_set.parse_ok
+    COMMAND $<TARGET_FILE:ahfl_dry_run_tests>
+            parse-capability-mock-set-ok
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.dry_run.mock_set.parse_fail_duplicate_selector
+    COMMAND $<TARGET_FILE:ahfl_dry_run_tests>
+            parse-capability-mock-set-rejects-duplicate-selector
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.dry_run.local.fail_missing_mock
+    COMMAND $<TARGET_FILE:ahfl_dry_run_tests>
+            local-dry-run-rejects-missing-mock
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.dry_run.local.fail_unused_mock
+    COMMAND $<TARGET_FILE:ahfl_dry_run_tests>
+            local-dry-run-rejects-unused-mock
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.runtime_session.model.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+            build-runtime-session-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.runtime_session.model.fail_missing_workflow
+    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+            build-runtime-session-rejects-missing-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.runtime_session.model.fail_missing_mock
+    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+            build-runtime-session-rejects-missing-mock
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.runtime_session.validation.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+            validate-runtime-session-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.runtime_session.validation.fail_incomplete_completed_workflow
+    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+            validate-runtime-session-rejects-incomplete-completed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.runtime_session.validation.fail_missing_used_mock
+    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+            validate-runtime-session-rejects-missing-used-mock
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.execution_journal.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_execution_journal_tests>
+            validate-execution-journal-ok
+)
+
+add_test(NAME ahfl.execution_journal.model.fail_out_of_order_node_phase
+    COMMAND $<TARGET_FILE:ahfl_execution_journal_tests>
+            validate-execution-journal-rejects-out-of-order-node-phase
+)
+
+add_test(NAME ahfl.execution_journal.model.fail_non_monotonic_execution_index
+    COMMAND $<TARGET_FILE:ahfl_execution_journal_tests>
+            validate-execution-journal-rejects-non-monotonic-execution-index
+)
+
+add_test(NAME ahfl.execution_journal.model.fail_events_after_workflow_completed
+    COMMAND $<TARGET_FILE:ahfl_execution_journal_tests>
+            validate-execution-journal-rejects-events-after-workflow-completed
+)
+
+add_test(NAME ahfl.execution_journal.bootstrap.from_runtime_session_ok
+    COMMAND $<TARGET_FILE:ahfl_execution_journal_tests>
+            build-execution-journal-from-runtime-session-ok
+)
+
+add_test(NAME ahfl.execution_journal.bootstrap.fail_invalid_runtime_session
+    COMMAND $<TARGET_FILE:ahfl_execution_journal_tests>
+            build-execution-journal-rejects-invalid-runtime-session
+)
+
+add_test(NAME ahfl.replay_view.model.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+            build-replay-view-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.replay_view.model.fail_invalid_execution_journal
+    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+            build-replay-view-rejects-invalid-execution-journal
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.replay_view.model.fail_session_journal_mismatch
+    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+            build-replay-view-rejects-session-journal-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.replay_view.validation.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+            validate-replay-view-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.replay_view.validation.fail_missing_completed_progression
+    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+            validate-replay-view-rejects-missing-completed-progression
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.replay_view.validation.fail_execution_order_index_mismatch
+    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+            validate-replay-view-rejects-execution-order-index-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.audit_report.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_audit_report_tests>
+            validate-audit-report-ok
+)
+
+add_test(NAME ahfl.audit_report.model.fail_unknown_session_node
+    COMMAND $<TARGET_FILE:ahfl_audit_report_tests>
+            validate-audit-report-rejects-unknown-session-node
+)
+
+add_test(NAME ahfl.audit_report.model.fail_journal_order_mismatch
+    COMMAND $<TARGET_FILE:ahfl_audit_report_tests>
+            validate-audit-report-rejects-journal-order-mismatch
+)
+
+add_test(NAME ahfl.audit_report.bootstrap.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_audit_report_tests>
+            build-audit-report-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.audit_report.bootstrap.fail_trace_workflow_mismatch
+    COMMAND $<TARGET_FILE:ahfl_audit_report_tests>
+            build-audit-report-rejects-trace-workflow-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.audit_report.bootstrap.fail_trace_execution_order_mismatch
+    COMMAND $<TARGET_FILE:ahfl_audit_report_tests>
+            build-audit-report-rejects-trace-execution-order-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
@@ -227,11 +500,155 @@ add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-native-json --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/native/project_workflow_value_flow.with_package.native.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow.with_display_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-native-json --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.display.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/native/project_workflow_value_flow.with_package.native.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_package_review.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-package-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/review/project_workflow_value_flow.with_package.review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_package_review.project_manifest.workflow_value_flow.with_display_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-package-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.display.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/review/project_workflow_value_flow.with_package.review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_plan.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-execution-plan --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/plan/project_workflow_value_flow.with_package.execution-plan.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_dry_run_trace.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-dry-run-trace --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/trace/project_workflow_value_flow.with_package.dry-run-trace.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_runtime_session.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-runtime-session --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/session/project_workflow_value_flow.with_package.runtime-session.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_journal.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-execution-journal --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/journal/project_workflow_value_flow.with_package.execution-journal.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_replay_view.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-replay-view --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/replay/project_workflow_value_flow.with_package.replay-view.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_audit_report.project_manifest.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-audit-report --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/audit/project_workflow_value_flow.with_package.audit-report.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_native_json.workspace.workflow_value_flow
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-native-json --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/native/project_workflow_value_flow.native.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_native_json.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-native-json --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/native/project_workflow_value_flow.with_package.native.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_package_review.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-package-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/review/project_workflow_value_flow.with_package.review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_plan.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-execution-plan --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/plan/project_workflow_value_flow.with_package.execution-plan.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_dry_run_trace.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-dry-run-trace --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/trace/project_workflow_value_flow.with_package.dry-run-trace.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_runtime_session.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-runtime-session --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/session/project_workflow_value_flow.with_package.runtime-session.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_journal.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-execution-journal --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/journal/project_workflow_value_flow.with_package.execution-journal.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_replay_view.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-replay-view --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/replay/project_workflow_value_flow.with_package.replay-view.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_audit_report.workspace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-audit-report --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/audit/project_workflow_value_flow.with_package.audit-report.json"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
@@ -286,6 +703,33 @@ add_test(NAME ahflc.check.project_manifest.fail_escape
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/project/manifest_escape/ahfl.project.json"
             "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/project/manifest_escape/ahfl.project.json"
             "-DEXPECTED_REGEX=descriptor field 'search_roots' must not escape the descriptor root"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.check.project_manifest.fail_package_without_native_json
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+            "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
+            "-DEXPECTED_REGEX=--package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-runtime-session, emit-dry-run-trace, or emit-package-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.emit_native_json.project_manifest.workflow_value_flow.fail_unknown_package_capability
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+            "-DAHFLC_ARGS=emit-native-json\;--project\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.bad_capability.package.json"
+            "-DEXPECTED_REGEX=unknown package authoring capability 'MissingCapability'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_plan.project_manifest.workflow_value_flow.fail_agent_entry
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+            "-DAHFLC_ARGS=emit-execution-plan\;--project\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.agent_entry.package.json"
+            "-DEXPECTED_REGEX=package entry target 'lib::agents::AliasAgent' is not a workflow target for execution planner bootstrap"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 

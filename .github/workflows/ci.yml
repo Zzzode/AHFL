@@ -88,6 +88,24 @@ jobs:
       - name: Run V0.4 Package Compatibility Regression
         run: ctest --preset test-dev --output-on-failure -L 'v0.4-package-compat'
 
+      - name: Run V0.5 Package Authoring Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.5-package-authoring-(model|emission|validation)'
+
+      - name: Run V0.5 Package Review Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.5-package-review'
+
+      - name: Run V0.5 Reference Consumer Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.5-reference-consumer'
+
+      - name: Run V0.6 Execution Plan And Dry-Run Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.6-(execution-plan-model|execution-plan-emission|execution-plan-validation|dry-run-model|dry-run-mock-input|dry-run-trace)'
+
+      - name: Run V0.7 Runtime Session And Execution Journal Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.7-(runtime-session-model|runtime-session-validation|runtime-session-emission|execution-journal-model|execution-journal-bootstrap|execution-journal-emission)'
+
+      - name: Run V0.8 Replay And Audit Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.8-(replay-view-model|replay-view-validation|replay-view-emission|audit-report-model|audit-report-bootstrap|audit-report-emission)'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 

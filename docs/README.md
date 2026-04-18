@@ -70,18 +70,36 @@ Avoid:
 - [ir-backend-architecture-v0.2.zh.md](./design/ir-backend-architecture-v0.2.zh.md)
 - [module-loading-v0.2.zh.md](./design/module-loading-v0.2.zh.md)
 - [module-resolution-rules-v0.2.zh.md](./design/module-resolution-rules-v0.2.zh.md)
+- [native-dry-run-bootstrap-v0.6.zh.md](./design/native-dry-run-bootstrap-v0.6.zh.md)
+- [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
+- [native-replay-audit-bootstrap-v0.8.zh.md](./design/native-replay-audit-bootstrap-v0.8.zh.md)
+- [native-runtime-session-bootstrap-v0.7.zh.md](./design/native-runtime-session-bootstrap-v0.7.zh.md)
+- [native-execution-journal-v0.7.zh.md](./design/native-execution-journal-v0.7.zh.md)
+- [native-consumer-bootstrap-v0.5.zh.md](./design/native-consumer-bootstrap-v0.5.zh.md)
 - [native-handoff-architecture-v0.4.zh.md](./design/native-handoff-architecture-v0.4.zh.md)
+- [native-package-authoring-architecture-v0.5.zh.md](./design/native-package-authoring-architecture-v0.5.zh.md)
 - [native-package-metadata-v0.4.zh.md](./design/native-package-metadata-v0.4.zh.md)
 - [project-descriptor-architecture-v0.3.zh.md](./design/project-descriptor-architecture-v0.3.zh.md)
 - [repository-layout-v0.2.zh.md](./design/repository-layout-v0.2.zh.md)
 - [semantics-architecture-v0.2.zh.md](./design/semantics-architecture-v0.2.zh.md)
 - [source-graph-v0.2.zh.md](./design/source-graph-v0.2.zh.md)
 - [testing-strategy-v0.3.zh.md](./design/testing-strategy-v0.3.zh.md)
+- [testing-strategy-v0.5.zh.md](./design/testing-strategy-v0.5.zh.md)
 
 ### Plan
 
-- [roadmap-v0.4.zh.md](./plan/roadmap-v0.4.zh.md) - current execution plan
-- [issue-backlog-v0.4.zh.md](./plan/issue-backlog-v0.4.zh.md) - current execution backlog
+- [roadmap-v0.9.zh.md](./plan/roadmap-v0.9.zh.md) - current execution plan
+- [issue-backlog-v0.9.zh.md](./plan/issue-backlog-v0.9.zh.md) - current execution backlog
+- [roadmap-v0.8.zh.md](./plan/roadmap-v0.8.zh.md) - completed baseline
+- [issue-backlog-v0.8.zh.md](./plan/issue-backlog-v0.8.zh.md) - completed baseline
+- [roadmap-v0.7.zh.md](./plan/roadmap-v0.7.zh.md) - completed baseline
+- [issue-backlog-v0.7.zh.md](./plan/issue-backlog-v0.7.zh.md) - completed baseline
+- [roadmap-v0.6.zh.md](./plan/roadmap-v0.6.zh.md) - completed baseline
+- [issue-backlog-v0.6.zh.md](./plan/issue-backlog-v0.6.zh.md) - completed baseline
+- [roadmap-v0.5.zh.md](./plan/roadmap-v0.5.zh.md) - completed baseline
+- [issue-backlog-v0.5.zh.md](./plan/issue-backlog-v0.5.zh.md) - completed baseline
+- [roadmap-v0.4.zh.md](./plan/roadmap-v0.4.zh.md) - completed baseline
+- [issue-backlog-v0.4.zh.md](./plan/issue-backlog-v0.4.zh.md) - completed baseline
 - [roadmap-v0.3.zh.md](./plan/roadmap-v0.3.zh.md) - completed baseline
 - [issue-backlog-v0.3.zh.md](./plan/issue-backlog-v0.3.zh.md) - completed baseline
 - [roadmap-v0.2.zh.md](./plan/roadmap-v0.2.zh.md) - completed baseline
@@ -91,14 +109,29 @@ Avoid:
 
 ### Reference
 
+- [project-usage-v0.5.zh.md](./reference/project-usage-v0.5.zh.md)
 - [project-usage-v0.3.zh.md](./reference/project-usage-v0.3.zh.md)
-- [cli-commands-v0.3.zh.md](./reference/cli-commands-v0.3.zh.md)
+- [cli-commands-v0.5.zh.md](./reference/cli-commands-v0.5.zh.md)
 - [ir-format-v0.3.zh.md](./reference/ir-format-v0.3.zh.md)
 - [ir-compatibility-v0.3.zh.md](./reference/ir-compatibility-v0.3.zh.md)
 - [backend-capability-matrix-v0.3.zh.md](./reference/backend-capability-matrix-v0.3.zh.md)
+- [native-package-authoring-compatibility-v0.5.zh.md](./reference/native-package-authoring-compatibility-v0.5.zh.md)
 - [native-package-compatibility-v0.4.zh.md](./reference/native-package-compatibility-v0.4.zh.md)
-- [native-consumer-matrix-v0.4.zh.md](./reference/native-consumer-matrix-v0.4.zh.md)
-- [native-handoff-usage-v0.4.zh.md](./reference/native-handoff-usage-v0.4.zh.md)
+- [execution-plan-compatibility-v0.6.zh.md](./reference/execution-plan-compatibility-v0.6.zh.md)
+- [runtime-session-compatibility-v0.7.zh.md](./reference/runtime-session-compatibility-v0.7.zh.md)
+- [execution-journal-compatibility-v0.7.zh.md](./reference/execution-journal-compatibility-v0.7.zh.md)
+- [replay-view-compatibility-v0.8.zh.md](./reference/replay-view-compatibility-v0.8.zh.md)
+- [audit-report-compatibility-v0.8.zh.md](./reference/audit-report-compatibility-v0.8.zh.md)
+- [dry-run-trace-compatibility-v0.6.zh.md](./reference/dry-run-trace-compatibility-v0.6.zh.md)
+- [native-consumer-matrix-v0.8.zh.md](./reference/native-consumer-matrix-v0.8.zh.md)
+- [native-consumer-matrix-v0.7.zh.md](./reference/native-consumer-matrix-v0.7.zh.md)
+- [native-consumer-matrix-v0.6.zh.md](./reference/native-consumer-matrix-v0.6.zh.md)
+- [native-consumer-matrix-v0.5.zh.md](./reference/native-consumer-matrix-v0.5.zh.md)
+- [native-handoff-usage-v0.5.zh.md](./reference/native-handoff-usage-v0.5.zh.md)
+- [contributor-guide-v0.8.zh.md](./reference/contributor-guide-v0.8.zh.md)
+- [contributor-guide-v0.7.zh.md](./reference/contributor-guide-v0.7.zh.md)
+- [contributor-guide-v0.6.zh.md](./reference/contributor-guide-v0.6.zh.md)
+- [contributor-guide-v0.5.zh.md](./reference/contributor-guide-v0.5.zh.md)
 - [contributor-guide-v0.3.zh.md](./reference/contributor-guide-v0.3.zh.md)
 
 ## Governance

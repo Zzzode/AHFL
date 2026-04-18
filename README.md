@@ -126,6 +126,13 @@ Backend outputs:
 | `emit-ir-json` | machine-readable structured IR |
 | `emit-summary` | capability-oriented backend summary |
 | `emit-native-json` | runtime-facing Native handoff package |
+| `emit-execution-plan` | execution plan artifact for planner / dry-run bootstrap |
+| `emit-runtime-session` | deterministic runtime session snapshot for local runtime bootstrap |
+| `emit-execution-journal` | deterministic event journal for replay / audit bootstrap |
+| `emit-replay-view` | deterministic replay projection over plan, session, and journal |
+| `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
+| `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
+| `emit-package-review` | package-aware review and planner bootstrap summary |
 | `emit-smv` | restricted formal backend for model-check-oriented tooling |
 
 ## Project-Aware Inputs
@@ -199,17 +206,35 @@ Available configure presets:
 Start here instead of reading a wall of filenames:
 
 - [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) — normative Core language spec
-- [`docs/reference/cli-commands-v0.3.zh.md`](docs/reference/cli-commands-v0.3.zh.md) — CLI command reference
-- [`docs/reference/project-usage-v0.3.zh.md`](docs/reference/project-usage-v0.3.zh.md) — project / workspace usage
+- [`docs/reference/cli-commands-v0.5.zh.md`](docs/reference/cli-commands-v0.5.zh.md) — CLI command reference
+- [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) — project / workspace / package authoring usage
 - [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md) — stable IR reference
-- [`docs/reference/native-handoff-usage-v0.4.zh.md`](docs/reference/native-handoff-usage-v0.4.zh.md) — Native handoff usage
+- [`docs/reference/native-package-authoring-compatibility-v0.5.zh.md`](docs/reference/native-package-authoring-compatibility-v0.5.zh.md) — Native package authoring compatibility
+- [`docs/reference/native-handoff-usage-v0.5.zh.md`](docs/reference/native-handoff-usage-v0.5.zh.md) — Native handoff usage
+- [`docs/reference/replay-view-compatibility-v0.8.zh.md`](docs/reference/replay-view-compatibility-v0.8.zh.md) — Replay view compatibility
+- [`docs/reference/audit-report-compatibility-v0.8.zh.md`](docs/reference/audit-report-compatibility-v0.8.zh.md) — Audit report compatibility
+- [`docs/reference/native-consumer-matrix-v0.8.zh.md`](docs/reference/native-consumer-matrix-v0.8.zh.md) — Native consumer matrix
+- [`docs/reference/contributor-guide-v0.8.zh.md`](docs/reference/contributor-guide-v0.8.zh.md) — contributor guide for V0.8 replay / audit paths
+- [`docs/design/native-execution-plan-architecture-v0.6.zh.md`](docs/design/native-execution-plan-architecture-v0.6.zh.md) — Execution plan boundary
+- [`docs/design/native-dry-run-bootstrap-v0.6.zh.md`](docs/design/native-dry-run-bootstrap-v0.6.zh.md) — local dry-run bootstrap boundary
+- [`docs/design/native-runtime-session-bootstrap-v0.7.zh.md`](docs/design/native-runtime-session-bootstrap-v0.7.zh.md) — runtime session boundary
+- [`docs/design/native-execution-journal-v0.7.zh.md`](docs/design/native-execution-journal-v0.7.zh.md) — execution journal boundary
+- [`docs/design/native-replay-audit-bootstrap-v0.8.zh.md`](docs/design/native-replay-audit-bootstrap-v0.8.zh.md) — replay / audit boundary
+- [`docs/design/native-package-authoring-architecture-v0.5.zh.md`](docs/design/native-package-authoring-architecture-v0.5.zh.md) — Native package authoring boundary
+- [`docs/design/native-consumer-bootstrap-v0.5.zh.md`](docs/design/native-consumer-bootstrap-v0.5.zh.md) — Native consumer bootstrap boundary
+- [`docs/design/testing-strategy-v0.5.zh.md`](docs/design/testing-strategy-v0.5.zh.md) — V0.5 testing strategy
+- [`docs/plan/roadmap-v0.9.zh.md`](docs/plan/roadmap-v0.9.zh.md) — current execution plan
+- [`docs/plan/issue-backlog-v0.9.zh.md`](docs/plan/issue-backlog-v0.9.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.8.zh.md`](docs/plan/roadmap-v0.8.zh.md) — completed V0.8 baseline
+- [`docs/plan/issue-backlog-v0.8.zh.md`](docs/plan/issue-backlog-v0.8.zh.md) — completed V0.8 backlog
 - [`docs/design/compiler-architecture-v0.2.zh.md`](docs/design/compiler-architecture-v0.2.zh.md) — compiler architecture
 - [`docs/design/formal-backend-v0.2.zh.md`](docs/design/formal-backend-v0.2.zh.md) — current SMV/formal backend boundary
 - [`docs/README.md`](docs/README.md) — full document index and naming rules
 
 Version note: the repo has separate document tracks. The Core language spec is
-currently V0.1, project / CLI / IR references are V0.3, and Native handoff docs
-are V0.4.
+currently V0.1, project / CLI references are V0.5, IR references are V0.3,
+Native handoff docs are V0.4-V0.5, and package authoring planning / design are
+V0.5. Execution planning / local dry-run planning is V0.6.
 
 ## Current Boundaries
 

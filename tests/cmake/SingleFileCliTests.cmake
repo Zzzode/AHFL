@@ -110,6 +110,70 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/native/ok_workflow_value_flow.native.json"
 )
 
+add_test(NAME ahflc.emit_native_json.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-native-json --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/native/ok_workflow_value_flow.with_package.native.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_package_review.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-package-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/review/ok_workflow_value_flow.with_package.review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_plan.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-execution-plan --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/plan/ok_workflow_value_flow.with_package.execution-plan.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_dry_run_trace.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-dry-run-trace --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/trace/ok_workflow_value_flow.with_package.dry-run-trace.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_runtime_session.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-runtime-session --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/session/ok_workflow_value_flow.with_package.runtime-session.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_execution_journal.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-execution-journal --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/journal/ok_workflow_value_flow.with_package.execution-journal.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_replay_view.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-replay-view --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/replay/ok_workflow_value_flow.with_package.replay-view.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_audit_report.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-audit-report --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/audit/ok_workflow_value_flow.with_package.audit-report.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 ahfl_add_output_test(
     ahflc.emit_native_json.expr_temporal
     emit-native-json
