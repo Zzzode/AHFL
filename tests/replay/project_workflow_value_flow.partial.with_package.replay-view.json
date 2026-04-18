@@ -1,0 +1,25 @@
+{
+  "format_version": "ahfl.replay-view.v2",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+  "source_execution_journal_format_version": "ahfl.execution-journal.v2",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "workflow_status": "partial",
+  "replay_status": "partial",
+  "workflow_failure_summary": null,
+  "execution_order": [],
+  "nodes": [],
+  "consistency": {
+    "plan_matches_session": true,
+    "session_matches_journal": true,
+    "journal_matches_execution_order": true
+  }
+}

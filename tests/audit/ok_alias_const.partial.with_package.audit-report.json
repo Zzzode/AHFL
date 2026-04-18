@@ -1,0 +1,99 @@
+{
+  "format_version": "ahfl.audit-report.v2",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "alias-const",
+    "version": "0.1.0"
+  },
+  "workflow_canonical_name": "ir::alias_const::EchoWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "conclusion": "partial",
+  "plan_summary": {
+    "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+    "execution_order": [],
+    "nodes": [
+      {
+        "node_name": "run",
+        "target": "ir::alias_const::EchoAgent",
+        "planned_dependencies": [],
+        "capability_bindings": [
+          {
+            "capability_name": "ir::alias_const::Echo",
+            "binding_key": "runtime.echo"
+          }
+        ]
+      }
+    ],
+    "return_summary": {
+      "reads": [
+        {
+          "kind": "workflow_node_output",
+          "root_name": "run",
+          "members": []
+        }
+      ]
+    }
+  },
+  "session_summary": {
+    "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+    "workflow_status": "partial",
+    "nodes": [
+      {
+        "node_name": "run",
+        "final_status": "ready",
+        "execution_index": 0,
+        "satisfied_dependencies": [],
+        "used_mock_selectors": []
+      }
+    ]
+  },
+  "journal_summary": {
+    "source_execution_journal_format_version": "ahfl.execution-journal.v2",
+    "total_events": 1,
+    "node_ready_events": 0,
+    "node_started_events": 0,
+    "node_completed_events": 0,
+    "node_failed_events": 0,
+    "workflow_completed_events": 0,
+    "workflow_failed_events": 0,
+    "completed_node_order": []
+  },
+  "trace_summary": {
+    "source_dry_run_trace_format_version": "ahfl.dry-run-trace.v1",
+    "status": "completed",
+    "execution_order": [
+      "run"
+    ],
+    "nodes": [
+      {
+        "node_name": "run",
+        "execution_index": 0,
+        "mock_result_selectors": [
+          "binding:runtime.echo"
+        ]
+      }
+    ],
+    "return_summary": {
+      "reads": [
+        {
+          "kind": "workflow_node_output",
+          "root_name": "run",
+          "members": []
+        }
+      ]
+    }
+  },
+  "replay_consistency": {
+    "plan_matches_session": true,
+    "session_matches_journal": true,
+    "journal_matches_execution_order": true
+  },
+  "audit_consistency": {
+    "plan_matches_session": true,
+    "session_matches_journal": true,
+    "journal_matches_trace": true,
+    "trace_matches_replay": true
+  }
+}

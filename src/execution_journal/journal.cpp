@@ -1,6 +1,7 @@
 #include "ahfl/execution_journal/journal.hpp"
 
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -19,8 +20,14 @@ namespace {
         return "node_started";
     case ExecutionJournalEventKind::NodeCompleted:
         return "node_completed";
+    case ExecutionJournalEventKind::MockMissing:
+        return "mock_missing";
+    case ExecutionJournalEventKind::NodeFailed:
+        return "node_failed";
     case ExecutionJournalEventKind::WorkflowCompleted:
         return "workflow_completed";
+    case ExecutionJournalEventKind::WorkflowFailed:
+        return "workflow_failed";
     }
 
     return "<unknown>";
@@ -31,6 +38,7 @@ enum class NodeEventPhase {
     BecameReady,
     Started,
     Completed,
+    Failed,
 };
 
 [[nodiscard]] std::string node_event_key(const ExecutionJournalEvent &event) {
@@ -39,6 +47,20 @@ enum class NodeEventPhase {
     }
 
     return *event.node_name + "#" + std::to_string(*event.execution_index);
+}
+
+void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
+                              std::string_view owner_name,
+                              DiagnosticBag &diagnostics) {
+    if (summary.message.empty()) {
+        diagnostics.error("execution journal validation " + std::string(owner_name) +
+                          " contains failure summary with empty message");
+    }
+
+    if (summary.node_name.has_value() && summary.node_name->empty()) {
+        diagnostics.error("execution journal validation " + std::string(owner_name) +
+                          " contains failure summary with empty node_name");
+    }
 }
 
 } // namespace
@@ -86,15 +108,12 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
             "execution journal validation must begin with 'session_started'");
     }
 
-    if (journal.events.back().kind != ExecutionJournalEventKind::WorkflowCompleted) {
-        result.diagnostics.error(
-            "execution journal validation must end with 'workflow_completed'");
-    }
-
     std::unordered_map<std::string, NodeEventPhase> node_phases;
     std::unordered_set<std::string> completed_node_keys;
+    std::unordered_set<std::string> failed_node_keys;
     std::optional<std::size_t> previous_execution_index;
-    bool saw_workflow_completed = false;
+    std::optional<ExecutionJournalEventKind> terminal_workflow_kind;
+    std::string terminal_workflow_name;
 
     for (const auto &event : journal.events) {
         const auto kind_name = event_kind_name(event.kind);
@@ -137,9 +156,14 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
             }
         }
 
-        if (saw_workflow_completed) {
-            result.diagnostics.error(
-                "execution journal validation contains events after 'workflow_completed'");
+        if (event.failure_summary.has_value()) {
+            validate_failure_summary(
+                *event.failure_summary, "event '" + kind_name + "'", result.diagnostics);
+        }
+
+        if (terminal_workflow_kind.has_value()) {
+            result.diagnostics.error("execution journal validation contains events after '" +
+                                     terminal_workflow_name + "'");
             break;
         }
 
@@ -153,21 +177,44 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
                 result.diagnostics.error(
                     "execution journal validation 'session_started' must not contain execution_index");
             }
+            if (event.failure_summary.has_value()) {
+                result.diagnostics.error(
+                    "execution journal validation 'session_started' must not contain failure_summary");
+            }
             break;
         case ExecutionJournalEventKind::WorkflowCompleted:
+        case ExecutionJournalEventKind::WorkflowFailed:
             if (event.node_name.has_value()) {
-                result.diagnostics.error(
-                    "execution journal validation 'workflow_completed' must not contain node_name");
+                result.diagnostics.error("execution journal validation '" + kind_name +
+                                         "' must not contain node_name");
             }
             if (event.execution_index.has_value()) {
-                result.diagnostics.error(
-                    "execution journal validation 'workflow_completed' must not contain execution_index");
+                result.diagnostics.error("execution journal validation '" + kind_name +
+                                         "' must not contain execution_index");
             }
-            saw_workflow_completed = true;
+            if (event.kind == ExecutionJournalEventKind::WorkflowCompleted) {
+                if (event.failure_summary.has_value()) {
+                    result.diagnostics.error(
+                        "execution journal validation 'workflow_completed' must not contain failure_summary");
+                }
+            } else {
+                if (!event.failure_summary.has_value()) {
+                    result.diagnostics.error(
+                        "execution journal validation 'workflow_failed' requires failure_summary");
+                } else if (event.failure_summary->kind !=
+                           runtime_session::RuntimeFailureKind::WorkflowFailed) {
+                    result.diagnostics.error(
+                        "execution journal validation 'workflow_failed' failure_summary kind must be WorkflowFailed");
+                }
+            }
+            terminal_workflow_kind = event.kind;
+            terminal_workflow_name = kind_name;
             break;
         case ExecutionJournalEventKind::NodeBecameReady:
         case ExecutionJournalEventKind::NodeStarted:
-        case ExecutionJournalEventKind::NodeCompleted: {
+        case ExecutionJournalEventKind::NodeCompleted:
+        case ExecutionJournalEventKind::MockMissing:
+        case ExecutionJournalEventKind::NodeFailed: {
             if (!event.node_name.has_value() || event.node_name->empty()) {
                 result.diagnostics.error("execution journal validation event '" + kind_name +
                                          "' requires non-empty node_name");
@@ -188,12 +235,21 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
 
             const auto key = node_event_key(event);
             auto &phase = node_phases[key];
+            if (event.failure_summary.has_value() && event.failure_summary->node_name.has_value() &&
+                *event.failure_summary->node_name != *event.node_name) {
+                result.diagnostics.error("execution journal validation event '" + kind_name +
+                                         "' failure_summary node_name does not match node_name");
+            }
             switch (event.kind) {
             case ExecutionJournalEventKind::NodeBecameReady:
                 if (phase != NodeEventPhase::None) {
                     result.diagnostics.error("execution journal validation node '" +
                                              *event.node_name +
                                              "' duplicates 'node_became_ready' phase");
+                }
+                if (event.failure_summary.has_value()) {
+                    result.diagnostics.error("execution journal validation event '" + kind_name +
+                                             "' must not contain failure_summary");
                 }
                 phase = NodeEventPhase::BecameReady;
                 break;
@@ -202,6 +258,10 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
                     result.diagnostics.error("execution journal validation node '" +
                                              *event.node_name +
                                              "' starts before 'node_became_ready'");
+                }
+                if (event.failure_summary.has_value()) {
+                    result.diagnostics.error("execution journal validation event '" + kind_name +
+                                             "' must not contain failure_summary");
                 }
                 phase = NodeEventPhase::Started;
                 break;
@@ -216,9 +276,41 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
                                              *event.node_name +
                                              "' duplicates 'node_completed' phase");
                 }
+                if (event.failure_summary.has_value()) {
+                    result.diagnostics.error("execution journal validation event '" + kind_name +
+                                             "' must not contain failure_summary");
+                }
                 phase = NodeEventPhase::Completed;
                 break;
+            case ExecutionJournalEventKind::MockMissing:
+            case ExecutionJournalEventKind::NodeFailed:
+                if (phase != NodeEventPhase::Started) {
+                    result.diagnostics.error("execution journal validation node '" +
+                                             *event.node_name + "' fails before 'node_started'");
+                }
+                if (!event.failure_summary.has_value()) {
+                    result.diagnostics.error("execution journal validation event '" + kind_name +
+                                             "' requires failure_summary");
+                } else {
+                    const auto expected_failure_kind =
+                        event.kind == ExecutionJournalEventKind::MockMissing
+                            ? runtime_session::RuntimeFailureKind::MockMissing
+                            : runtime_session::RuntimeFailureKind::NodeFailed;
+                    if (event.failure_summary->kind != expected_failure_kind) {
+                        result.diagnostics.error("execution journal validation event '" +
+                                                 kind_name +
+                                                 "' failure_summary kind does not match event kind");
+                    }
+                }
+                if (!failed_node_keys.insert(key).second) {
+                    result.diagnostics.error("execution journal validation node '" +
+                                             *event.node_name +
+                                             "' duplicates failure terminal phase");
+                }
+                phase = NodeEventPhase::Failed;
+                break;
             case ExecutionJournalEventKind::SessionStarted:
+            case ExecutionJournalEventKind::WorkflowFailed:
             case ExecutionJournalEventKind::WorkflowCompleted:
                 break;
             }
@@ -228,10 +320,27 @@ ExecutionJournalValidationResult validate_execution_journal(const ExecutionJourn
     }
 
     for (const auto &[key, phase] : node_phases) {
-        if (phase != NodeEventPhase::Completed) {
+        if (phase != NodeEventPhase::Completed && phase != NodeEventPhase::Failed) {
             result.diagnostics.error("execution journal validation node event sequence '" + key +
-                                     "' does not reach 'node_completed'");
+                                     "' does not reach terminal node phase");
         }
+    }
+
+    if (terminal_workflow_kind == ExecutionJournalEventKind::WorkflowCompleted &&
+        !failed_node_keys.empty()) {
+        result.diagnostics.error(
+            "execution journal validation 'workflow_completed' must not follow failed node events");
+    }
+
+    if (terminal_workflow_kind == ExecutionJournalEventKind::WorkflowFailed &&
+        failed_node_keys.empty()) {
+        result.diagnostics.error(
+            "execution journal validation 'workflow_failed' must follow at least one failed node event");
+    }
+
+    if (!terminal_workflow_kind.has_value() && !failed_node_keys.empty()) {
+        result.diagnostics.error(
+            "execution journal validation contains failed node events but does not end with 'workflow_failed'");
     }
 
     return result;
@@ -265,6 +374,7 @@ ExecutionJournalResult build_execution_journal(const runtime_session::RuntimeSes
         .workflow_canonical_name = session.workflow_canonical_name,
         .node_name = std::nullopt,
         .execution_index = std::nullopt,
+        .failure_summary = std::nullopt,
         .satisfied_dependencies = {},
         .used_mock_selectors = {},
     });
@@ -289,6 +399,7 @@ ExecutionJournalResult build_execution_journal(const runtime_session::RuntimeSes
                 .workflow_canonical_name = session.workflow_canonical_name,
                 .node_name = node.node_name,
                 .execution_index = node.execution_index,
+                .failure_summary = std::nullopt,
                 .satisfied_dependencies = node.satisfied_dependencies,
                 .used_mock_selectors = {},
             });
@@ -298,6 +409,7 @@ ExecutionJournalResult build_execution_journal(const runtime_session::RuntimeSes
                 .workflow_canonical_name = session.workflow_canonical_name,
                 .node_name = node.node_name,
                 .execution_index = node.execution_index,
+                .failure_summary = std::nullopt,
                 .satisfied_dependencies = node.satisfied_dependencies,
                 .used_mock_selectors = {},
             });
@@ -307,25 +419,72 @@ ExecutionJournalResult build_execution_journal(const runtime_session::RuntimeSes
         for (const auto &mock : node.used_mocks) {
             used_mock_selectors.push_back(mock.selector);
         }
-        journal.events.push_back(
-            ExecutionJournalEvent{
-                .kind = ExecutionJournalEventKind::NodeCompleted,
-                .workflow_canonical_name = session.workflow_canonical_name,
-                .node_name = node.node_name,
-                .execution_index = node.execution_index,
-                .satisfied_dependencies = node.satisfied_dependencies,
-                .used_mock_selectors = std::move(used_mock_selectors),
-            });
+
+        if (node.status == runtime_session::NodeSessionStatus::Completed) {
+            journal.events.push_back(
+                ExecutionJournalEvent{
+                    .kind = ExecutionJournalEventKind::NodeCompleted,
+                    .workflow_canonical_name = session.workflow_canonical_name,
+                    .node_name = node.node_name,
+                    .execution_index = node.execution_index,
+                    .failure_summary = std::nullopt,
+                    .satisfied_dependencies = node.satisfied_dependencies,
+                    .used_mock_selectors = std::move(used_mock_selectors),
+                });
+            continue;
+        }
+
+        if (node.status == runtime_session::NodeSessionStatus::Failed) {
+            const auto event_kind =
+                node.failure_summary.has_value() &&
+                        node.failure_summary->kind ==
+                            runtime_session::RuntimeFailureKind::MockMissing
+                    ? ExecutionJournalEventKind::MockMissing
+                    : ExecutionJournalEventKind::NodeFailed;
+            journal.events.push_back(
+                ExecutionJournalEvent{
+                    .kind = event_kind,
+                    .workflow_canonical_name = session.workflow_canonical_name,
+                    .node_name = node.node_name,
+                    .execution_index = node.execution_index,
+                    .failure_summary = node.failure_summary,
+                    .satisfied_dependencies = node.satisfied_dependencies,
+                    .used_mock_selectors = std::move(used_mock_selectors),
+                });
+            continue;
+        }
+
+        result.diagnostics.error("execution journal bootstrap execution_order node '" + node_name +
+                                 "' is not in executable terminal status");
+        return result;
     }
 
-    journal.events.push_back(ExecutionJournalEvent{
-        .kind = ExecutionJournalEventKind::WorkflowCompleted,
-        .workflow_canonical_name = session.workflow_canonical_name,
-        .node_name = std::nullopt,
-        .execution_index = std::nullopt,
-        .satisfied_dependencies = {},
-        .used_mock_selectors = {},
-    });
+    switch (session.workflow_status) {
+    case runtime_session::WorkflowSessionStatus::Completed:
+        journal.events.push_back(ExecutionJournalEvent{
+            .kind = ExecutionJournalEventKind::WorkflowCompleted,
+            .workflow_canonical_name = session.workflow_canonical_name,
+            .node_name = std::nullopt,
+            .execution_index = std::nullopt,
+            .failure_summary = std::nullopt,
+            .satisfied_dependencies = {},
+            .used_mock_selectors = {},
+        });
+        break;
+    case runtime_session::WorkflowSessionStatus::Failed:
+        journal.events.push_back(ExecutionJournalEvent{
+            .kind = ExecutionJournalEventKind::WorkflowFailed,
+            .workflow_canonical_name = session.workflow_canonical_name,
+            .node_name = std::nullopt,
+            .execution_index = std::nullopt,
+            .failure_summary = session.failure_summary,
+            .satisfied_dependencies = {},
+            .used_mock_selectors = {},
+        });
+        break;
+    case runtime_session::WorkflowSessionStatus::Partial:
+        break;
+    }
 
     const auto journal_validation = validate_execution_journal(journal);
     result.diagnostics.append(journal_validation.diagnostics);

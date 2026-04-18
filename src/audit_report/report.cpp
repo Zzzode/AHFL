@@ -46,6 +46,60 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
     return {};
 }
 
+[[nodiscard]] bool node_status_is_executed(runtime_session::NodeSessionStatus status) {
+    return status == runtime_session::NodeSessionStatus::Completed ||
+           status == runtime_session::NodeSessionStatus::Failed;
+}
+
+[[nodiscard]] std::size_t count_session_nodes_with_status(
+    const std::vector<AuditSessionNodeSummary> &nodes,
+    runtime_session::NodeSessionStatus status) {
+    std::size_t count = 0;
+    for (const auto &node : nodes) {
+        if (node.final_status == status) {
+            count += 1;
+        }
+    }
+
+    return count;
+}
+
+[[nodiscard]] std::vector<std::string> completed_node_prefix(
+    const std::vector<AuditSessionNodeSummary> &nodes,
+    const std::vector<std::string> &execution_order) {
+    std::unordered_map<std::string, const AuditSessionNodeSummary *> nodes_by_name;
+    for (const auto &node : nodes) {
+        nodes_by_name.emplace(node.node_name, &node);
+    }
+
+    std::vector<std::string> completed_order;
+    completed_order.reserve(execution_order.size());
+    for (const auto &node_name : execution_order) {
+        const auto found = nodes_by_name.find(node_name);
+        if (found != nodes_by_name.end() &&
+            found->second->final_status == runtime_session::NodeSessionStatus::Completed) {
+            completed_order.push_back(node_name);
+        }
+    }
+
+    return completed_order;
+}
+
+[[nodiscard]] bool is_prefix(const std::vector<std::string> &prefix,
+                             const std::vector<std::string> &full) {
+    if (prefix.size() > full.size()) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < prefix.size(); ++index) {
+        if (prefix[index] != full[index]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 } // namespace
 
 AuditReportValidationResult validate_audit_report(const AuditReport &report) {
@@ -174,10 +228,12 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
             continue;
         }
 
-        if (!session_execution_indices.insert(node.execution_index).second) {
-            result.diagnostics.error("audit report validation session_summary node '" +
-                                     node.node_name + "' reuses execution_index " +
-                                     std::to_string(node.execution_index));
+        if (node_status_is_executed(node.final_status)) {
+            if (!session_execution_indices.insert(node.execution_index).second) {
+                result.diagnostics.error("audit report validation session_summary node '" +
+                                         node.node_name + "' reuses execution_index " +
+                                         std::to_string(node.execution_index));
+            }
         }
 
         const auto plan_found = plan_nodes_by_name.find(node.node_name);
@@ -232,7 +288,8 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
             }
         }
 
-        if (report.session_summary.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
+        if (report.session_summary.workflow_status ==
+                runtime_session::WorkflowSessionStatus::Completed &&
             node.final_status != runtime_session::NodeSessionStatus::Completed) {
             result.diagnostics.error("audit report validation session_summary node '" +
                                      node.node_name +
@@ -262,19 +319,75 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
             "audit report validation journal_summary total_events must be greater than zero");
     }
 
-    if (report.journal_summary.workflow_completed_events != 1) {
+    const auto completed_node_count = count_session_nodes_with_status(
+        report.session_summary.nodes, runtime_session::NodeSessionStatus::Completed);
+    const auto failed_node_count = count_session_nodes_with_status(
+        report.session_summary.nodes, runtime_session::NodeSessionStatus::Failed);
+    const auto completed_execution_order =
+        completed_node_prefix(report.session_summary.nodes, report.plan_summary.execution_order);
+
+    if (report.journal_summary.node_completed_events != completed_node_count) {
         result.diagnostics.error(
-            "audit report validation journal_summary workflow_completed_events must equal 1");
+            "audit report validation journal_summary node_completed_events must match completed session node count");
     }
 
-    if (report.journal_summary.node_completed_events != report.session_summary.nodes.size()) {
+    if (report.journal_summary.completed_node_order != completed_execution_order) {
         result.diagnostics.error(
-            "audit report validation journal_summary node_completed_events must match session_summary node count");
+            "audit report validation journal_summary completed_node_order does not match completed execution_order prefix");
     }
 
-    if (report.journal_summary.completed_node_order != report.plan_summary.execution_order) {
-        result.diagnostics.error(
-            "audit report validation journal_summary completed_node_order does not match plan_summary execution_order");
+    switch (report.session_summary.workflow_status) {
+    case runtime_session::WorkflowSessionStatus::Completed:
+        if (report.conclusion != AuditConclusion::Passed) {
+            result.diagnostics.error(
+                "audit report validation completed workflow must use conclusion Passed");
+        }
+        if (report.journal_summary.workflow_completed_events != 1) {
+            result.diagnostics.error(
+                "audit report validation journal_summary workflow_completed_events must equal 1 for completed workflow");
+        }
+        if (report.journal_summary.workflow_failed_events != 0) {
+            result.diagnostics.error(
+                "audit report validation completed workflow must not contain workflow_failed events");
+        }
+        if (report.journal_summary.node_failed_events != 0) {
+            result.diagnostics.error(
+                "audit report validation completed workflow must not contain failed node events");
+        }
+        break;
+    case runtime_session::WorkflowSessionStatus::Failed:
+        if (report.conclusion != AuditConclusion::RuntimeFailed) {
+            result.diagnostics.error(
+                "audit report validation failed workflow must use conclusion RuntimeFailed");
+        }
+        if (report.journal_summary.workflow_completed_events != 0) {
+            result.diagnostics.error(
+                "audit report validation failed workflow must not contain workflow_completed events");
+        }
+        if (report.journal_summary.workflow_failed_events != 1) {
+            result.diagnostics.error(
+                "audit report validation failed workflow must contain exactly one workflow_failed event");
+        }
+        if (failed_node_count == 0 || report.journal_summary.node_failed_events == 0) {
+            result.diagnostics.error(
+                "audit report validation failed workflow must contain failed session nodes and failed journal events");
+        }
+        break;
+    case runtime_session::WorkflowSessionStatus::Partial:
+        if (report.conclusion != AuditConclusion::Partial) {
+            result.diagnostics.error(
+                "audit report validation partial workflow must use conclusion Partial");
+        }
+        if (report.journal_summary.workflow_completed_events != 0 ||
+            report.journal_summary.workflow_failed_events != 0) {
+            result.diagnostics.error(
+                "audit report validation partial workflow must not contain terminal workflow events");
+        }
+        if (report.journal_summary.node_failed_events != 0) {
+            result.diagnostics.error(
+                "audit report validation partial workflow must not contain failed node events");
+        }
+        break;
     }
 
     std::unordered_set<std::string> trace_execution_order_names;
@@ -291,9 +404,9 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
         }
     }
 
-    if (report.trace_summary.execution_order != report.plan_summary.execution_order) {
+    if (!is_prefix(report.plan_summary.execution_order, report.trace_summary.execution_order)) {
         result.diagnostics.error(
-            "audit report validation trace_summary execution_order does not match plan_summary execution_order");
+            "audit report validation trace_summary execution_order must contain plan_summary execution_order as prefix");
     }
 
     std::unordered_set<std::string> trace_nodes_by_name;
@@ -326,9 +439,9 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
         }
     }
 
-    if (trace_nodes_by_name.size() != report.plan_summary.execution_order.size()) {
+    if (trace_nodes_by_name.size() < report.plan_summary.execution_order.size()) {
         result.diagnostics.error(
-            "audit report validation trace_summary node count must match plan_summary execution_order size");
+            "audit report validation trace_summary node count must cover plan_summary execution_order size");
     }
 
     if (!report.replay_consistency.plan_matches_session) {
@@ -453,7 +566,12 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
         .session_id = session.session_id,
         .run_id = session.run_id,
         .input_fixture = session.input_fixture,
-        .conclusion = AuditConclusion::Passed,
+        .conclusion =
+            session.workflow_status == runtime_session::WorkflowSessionStatus::Completed
+                ? AuditConclusion::Passed
+                : (session.workflow_status == runtime_session::WorkflowSessionStatus::Failed
+                       ? AuditConclusion::RuntimeFailed
+                       : AuditConclusion::Partial),
         .plan_summary =
             AuditPlanSummary{
                 .source_execution_plan_format_version = plan.format_version,
@@ -474,7 +592,9 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
                 .node_ready_events = 0,
                 .node_started_events = 0,
                 .node_completed_events = 0,
+                .node_failed_events = 0,
                 .workflow_completed_events = 0,
+                .workflow_failed_events = 0,
                 .completed_node_order = {},
             },
         .trace_summary =
@@ -538,8 +658,15 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
                 report.journal_summary.completed_node_order.push_back(*event.node_name);
             }
             break;
+        case execution_journal::ExecutionJournalEventKind::MockMissing:
+        case execution_journal::ExecutionJournalEventKind::NodeFailed:
+            report.journal_summary.node_failed_events += 1;
+            break;
         case execution_journal::ExecutionJournalEventKind::WorkflowCompleted:
             report.journal_summary.workflow_completed_events += 1;
+            break;
+        case execution_journal::ExecutionJournalEventKind::WorkflowFailed:
+            report.journal_summary.workflow_failed_events += 1;
             break;
         }
     }
@@ -559,11 +686,11 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
         });
     }
 
-    if (trace.execution_order != replay.replay->execution_order) {
+    if (!is_prefix(replay.replay->execution_order, trace.execution_order)) {
         report.audit_consistency.journal_matches_trace = false;
         report.audit_consistency.trace_matches_replay = false;
         result.diagnostics.error(
-            "audit report bootstrap dry-run trace execution_order does not match replay view execution_order");
+            "audit report bootstrap dry-run trace execution_order does not contain replay view execution_order as prefix");
     }
 
     std::unordered_map<std::string, const AuditTraceNodeSummary *> trace_nodes_by_name;

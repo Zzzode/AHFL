@@ -7,23 +7,20 @@
     "version": "0.2.0"
   },
   "workflow_canonical_name": "app::main::ValueFlowWorkflow",
-  "session_id": "run-001",
-  "run_id": "run-001",
-  "workflow_status": "completed",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "workflow_status": "partial",
   "failure_summary": null,
-  "input_fixture": "fixture.request.basic",
+  "input_fixture": "fixture.request.partial",
   "options": {
     "sequential_mode": true
   },
-  "execution_order": [
-    "first",
-    "second"
-  ],
+  "execution_order": [],
   "nodes": [
     {
       "node_name": "first",
       "target": "lib::agents::AliasAgent",
-      "status": "completed",
+      "status": "ready",
       "execution_index": 0,
       "failure_summary": null,
       "satisfied_dependencies": [],
@@ -51,25 +48,15 @@
           "binding_key": "runtime.echo"
         }
       ],
-      "used_mocks": [
-        {
-          "selector": "capability:lib::agents::Echo",
-          "capability_name": "lib::agents::Echo",
-          "binding_key": null,
-          "result_fixture": "fixture.echo.ok",
-          "invocation_label": "echo-runtime"
-        }
-      ]
+      "used_mocks": []
     },
     {
       "node_name": "second",
       "target": "lib::agents::AliasAgent",
-      "status": "completed",
-      "execution_index": 1,
+      "status": "blocked",
+      "execution_index": 0,
       "failure_summary": null,
-      "satisfied_dependencies": [
-        "first"
-      ],
+      "satisfied_dependencies": [],
       "lifecycle": {
         "start_condition": "after_dependencies_completed",
         "completion_condition": "target_reached_final_state",
@@ -96,15 +83,7 @@
           "binding_key": "runtime.echo"
         }
       ],
-      "used_mocks": [
-        {
-          "selector": "capability:lib::agents::Echo",
-          "capability_name": "lib::agents::Echo",
-          "binding_key": null,
-          "result_fixture": "fixture.echo.ok",
-          "invocation_label": "echo-runtime"
-        }
-      ]
+      "used_mocks": []
     }
   ],
   "return_summary": {

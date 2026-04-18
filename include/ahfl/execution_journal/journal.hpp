@@ -11,14 +11,17 @@
 
 namespace ahfl::execution_journal {
 
-inline constexpr std::string_view kExecutionJournalFormatVersion = "ahfl.execution-journal.v1";
+inline constexpr std::string_view kExecutionJournalFormatVersion = "ahfl.execution-journal.v2";
 
 enum class ExecutionJournalEventKind {
     SessionStarted,
     NodeBecameReady,
     NodeStarted,
     NodeCompleted,
+    MockMissing,
+    NodeFailed,
     WorkflowCompleted,
+    WorkflowFailed,
 };
 
 struct ExecutionJournalEvent {
@@ -26,6 +29,7 @@ struct ExecutionJournalEvent {
     std::string workflow_canonical_name;
     std::optional<std::string> node_name;
     std::optional<std::size_t> execution_index;
+    std::optional<runtime_session::RuntimeFailureSummary> failure_summary;
     std::vector<std::string> satisfied_dependencies;
     std::vector<std::string> used_mock_selectors;
 };

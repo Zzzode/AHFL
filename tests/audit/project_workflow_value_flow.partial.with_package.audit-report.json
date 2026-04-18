@@ -3,33 +3,40 @@
   "source_package_identity": {
     "format_version": "ahfl.native-package.v1",
     "name": "workflow-value-flow",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
-  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
-  "session_id": "run-001",
-  "run_id": "run-001",
-  "input_fixture": "fixture.request.basic",
-  "conclusion": "passed",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "conclusion": "partial",
   "plan_summary": {
     "source_execution_plan_format_version": "ahfl.execution-plan.v1",
-    "execution_order": [
-      "first",
-      "second"
-    ],
+    "execution_order": [],
     "nodes": [
       {
         "node_name": "first",
-        "target": "ir::workflow_value_flow::EchoAgent",
+        "target": "lib::agents::AliasAgent",
         "planned_dependencies": [],
-        "capability_bindings": []
+        "capability_bindings": [
+          {
+            "capability_name": "lib::agents::Echo",
+            "binding_key": "runtime.echo"
+          }
+        ]
       },
       {
         "node_name": "second",
-        "target": "ir::workflow_value_flow::EchoAgent",
+        "target": "lib::agents::AliasAgent",
         "planned_dependencies": [
           "first"
         ],
-        "capability_bindings": []
+        "capability_bindings": [
+          {
+            "capability_name": "lib::agents::Echo",
+            "binding_key": "runtime.echo"
+          }
+        ]
       }
     ],
     "return_summary": {
@@ -46,39 +53,34 @@
   },
   "session_summary": {
     "source_runtime_session_format_version": "ahfl.runtime-session.v2",
-    "workflow_status": "completed",
+    "workflow_status": "partial",
     "nodes": [
       {
         "node_name": "first",
-        "final_status": "completed",
+        "final_status": "ready",
         "execution_index": 0,
         "satisfied_dependencies": [],
         "used_mock_selectors": []
       },
       {
         "node_name": "second",
-        "final_status": "completed",
-        "execution_index": 1,
-        "satisfied_dependencies": [
-          "first"
-        ],
+        "final_status": "blocked",
+        "execution_index": 0,
+        "satisfied_dependencies": [],
         "used_mock_selectors": []
       }
     ]
   },
   "journal_summary": {
     "source_execution_journal_format_version": "ahfl.execution-journal.v2",
-    "total_events": 8,
-    "node_ready_events": 2,
-    "node_started_events": 2,
-    "node_completed_events": 2,
+    "total_events": 1,
+    "node_ready_events": 0,
+    "node_started_events": 0,
+    "node_completed_events": 0,
     "node_failed_events": 0,
-    "workflow_completed_events": 1,
+    "workflow_completed_events": 0,
     "workflow_failed_events": 0,
-    "completed_node_order": [
-      "first",
-      "second"
-    ]
+    "completed_node_order": []
   },
   "trace_summary": {
     "source_dry_run_trace_format_version": "ahfl.dry-run-trace.v1",
@@ -91,12 +93,16 @@
       {
         "node_name": "first",
         "execution_index": 0,
-        "mock_result_selectors": []
+        "mock_result_selectors": [
+          "capability:lib::agents::Echo"
+        ]
       },
       {
         "node_name": "second",
         "execution_index": 1,
-        "mock_result_selectors": []
+        "mock_result_selectors": [
+          "capability:lib::agents::Echo"
+        ]
       }
     ],
     "return_summary": {

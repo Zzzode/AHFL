@@ -106,6 +106,9 @@ jobs:
       - name: Run V0.8 Replay And Audit Regression
         run: ctest --preset test-dev --output-on-failure -L 'v0.8-(replay-view-model|replay-view-validation|replay-view-emission|audit-report-model|audit-report-bootstrap|audit-report-emission)'
 
+      - name: Run V0.9 Failure-Path Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.9-(runtime-session-validation|runtime-session-bootstrap|runtime-session-emission|execution-journal-model|execution-journal-bootstrap|replay-view-model|replay-view-emission|audit-report-bootstrap|audit-report-emission)'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 

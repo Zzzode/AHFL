@@ -150,6 +150,30 @@ add_test(NAME ahflc.emit_runtime_session.workflow_value_flow.with_package
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_runtime_session.alias_const.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-runtime-session --package ${AHFL_TESTS_DIR}/ir/ok_alias_const.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_alias_const.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001 ${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/session/ok_alias_const.partial.with_package.runtime-session.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_replay_view.alias_const.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-replay-view --package ${AHFL_TESTS_DIR}/ir/ok_alias_const.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_alias_const.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001 ${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/replay/ok_alias_const.partial.with_package.replay-view.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_audit_report.alias_const.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-audit-report --package ${AHFL_TESTS_DIR}/ir/ok_alias_const.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_alias_const.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001 ${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/audit/ok_alias_const.partial.with_package.audit-report.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_execution_journal.workflow_value_flow.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

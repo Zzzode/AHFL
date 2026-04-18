@@ -7,25 +7,32 @@
     "version": "0.2.0"
   },
   "workflow_canonical_name": "app::main::ValueFlowWorkflow",
-  "session_id": "run-001",
-  "run_id": "run-001",
-  "workflow_status": "completed",
-  "failure_summary": null,
-  "input_fixture": "fixture.request.basic",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "workflow_status": "failed",
+  "failure_summary": {
+    "kind": "workflow_failed",
+    "node_name": "first",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  },
+  "input_fixture": "fixture.request.failed",
   "options": {
     "sequential_mode": true
   },
   "execution_order": [
-    "first",
-    "second"
+    "first"
   ],
   "nodes": [
     {
       "node_name": "first",
       "target": "lib::agents::AliasAgent",
-      "status": "completed",
+      "status": "failed",
       "execution_index": 0,
-      "failure_summary": null,
+      "failure_summary": {
+        "kind": "node_failed",
+        "node_name": "first",
+        "message": "runtime session node 'first' failed with mock result_fixture 'fixture.echo.fail'"
+      },
       "satisfied_dependencies": [],
       "lifecycle": {
         "start_condition": "immediate",
@@ -56,16 +63,16 @@
           "selector": "capability:lib::agents::Echo",
           "capability_name": "lib::agents::Echo",
           "binding_key": null,
-          "result_fixture": "fixture.echo.ok",
-          "invocation_label": "echo-runtime"
+          "result_fixture": "fixture.echo.fail",
+          "invocation_label": "echo-fail"
         }
       ]
     },
     {
       "node_name": "second",
       "target": "lib::agents::AliasAgent",
-      "status": "completed",
-      "execution_index": 1,
+      "status": "skipped",
+      "execution_index": 0,
       "failure_summary": null,
       "satisfied_dependencies": [
         "first"
@@ -96,15 +103,7 @@
           "binding_key": "runtime.echo"
         }
       ],
-      "used_mocks": [
-        {
-          "selector": "capability:lib::agents::Echo",
-          "capability_name": "lib::agents::Echo",
-          "binding_key": null,
-          "result_fixture": "fixture.echo.ok",
-          "invocation_label": "echo-runtime"
-        }
-      ]
+      "used_mocks": []
     }
   ],
   "return_summary": {

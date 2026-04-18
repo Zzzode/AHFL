@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -112,13 +113,16 @@ load_project_plan(const std::filesystem::path &project_descriptor) {
 }
 
 [[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
-build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+build_runtime_session_with_mock(const ahfl::handoff::ExecutionPlan &plan,
+                                std::string input_fixture,
+                                std::string result_fixture,
+                                std::string run_id) {
     const auto session = ahfl::runtime_session::build_runtime_session(
         plan,
         ahfl::dry_run::DryRunRequest{
             .workflow_canonical_name = "app::main::ValueFlowWorkflow",
-            .input_fixture = "fixture.request.basic",
-            .run_id = "run-001",
+            .input_fixture = std::move(input_fixture),
+            .run_id = std::move(run_id),
         },
         ahfl::dry_run::CapabilityMockSet{
             .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
@@ -127,7 +131,7 @@ build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
                     ahfl::dry_run::CapabilityMock{
                         .capability_name = std::nullopt,
                         .binding_key = std::string("runtime.echo"),
-                        .result_fixture = "fixture.echo.ok",
+                        .result_fixture = std::move(result_fixture),
                         .invocation_label = std::string("echo-1"),
                     },
                 },
@@ -138,6 +142,24 @@ build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
     }
 
     return *session.session;
+}
+
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_runtime_session_with_mock(
+        plan, "fixture.request.basic", "fixture.echo.ok", "run-001");
+}
+
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_failed_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_runtime_session_with_mock(
+        plan, "fixture.request.failed", "fixture.echo.fail", "run-failed-001");
+}
+
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_partial_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_runtime_session_with_mock(
+        plan, "fixture.request.partial", "fixture.echo.pending", "run-partial-001");
 }
 
 [[nodiscard]] std::optional<ahfl::execution_journal::ExecutionJournal>
@@ -152,13 +174,16 @@ build_valid_execution_journal(const ahfl::runtime_session::RuntimeSession &sessi
 }
 
 [[nodiscard]] std::optional<ahfl::dry_run::DryRunTrace>
-build_valid_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
+build_dry_run_trace_with_mock(const ahfl::handoff::ExecutionPlan &plan,
+                              std::string input_fixture,
+                              std::string result_fixture,
+                              std::string run_id) {
     const auto trace = ahfl::dry_run::run_local_dry_run(
         plan,
         ahfl::dry_run::DryRunRequest{
             .workflow_canonical_name = "app::main::ValueFlowWorkflow",
-            .input_fixture = "fixture.request.basic",
-            .run_id = "run-001",
+            .input_fixture = std::move(input_fixture),
+            .run_id = std::move(run_id),
         },
         ahfl::dry_run::CapabilityMockSet{
             .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
@@ -167,7 +192,7 @@ build_valid_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
                     ahfl::dry_run::CapabilityMock{
                         .capability_name = std::nullopt,
                         .binding_key = std::string("runtime.echo"),
-                        .result_fixture = "fixture.echo.ok",
+                        .result_fixture = std::move(result_fixture),
                         .invocation_label = std::string("echo-1"),
                     },
                 },
@@ -178,6 +203,24 @@ build_valid_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
     }
 
     return *trace.trace;
+}
+
+[[nodiscard]] std::optional<ahfl::dry_run::DryRunTrace>
+build_valid_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_dry_run_trace_with_mock(
+        plan, "fixture.request.basic", "fixture.echo.ok", "run-001");
+}
+
+[[nodiscard]] std::optional<ahfl::dry_run::DryRunTrace>
+build_failed_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_dry_run_trace_with_mock(
+        plan, "fixture.request.failed", "fixture.echo.fail", "run-failed-001");
+}
+
+[[nodiscard]] std::optional<ahfl::dry_run::DryRunTrace>
+build_partial_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_dry_run_trace_with_mock(
+        plan, "fixture.request.partial", "fixture.echo.pending", "run-partial-001");
 }
 
 [[nodiscard]] ahfl::audit_report::AuditReport make_valid_audit_report() {
@@ -255,7 +298,9 @@ build_valid_dry_run_trace(const ahfl::handoff::ExecutionPlan &plan) {
                 .node_ready_events = 2,
                 .node_started_events = 2,
                 .node_completed_events = 2,
+                .node_failed_events = 0,
                 .workflow_completed_events = 1,
+                .workflow_failed_events = 0,
                 .completed_node_order = {"first", "second"},
             },
         .trace_summary =
@@ -339,7 +384,7 @@ int run_validate_audit_report_rejects_journal_order_mismatch() {
 
     if (!diagnostics_contain(
             validation.diagnostics,
-            "audit report validation journal_summary completed_node_order does not match plan_summary execution_order")) {
+            "audit report validation journal_summary completed_node_order does not match completed execution_order prefix")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing journal order mismatch audit validation diagnostic\n";
         return 1;
@@ -395,6 +440,101 @@ int run_build_audit_report_project_workflow_value_flow(
         !value.audit_consistency.journal_matches_trace ||
         !value.audit_consistency.trace_matches_replay) {
         std::cerr << "unexpected audit report bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_build_audit_report_failed_workflow(
+    const std::filesystem::path &project_descriptor) {
+    const auto plan = load_project_plan(project_descriptor);
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto session = build_failed_runtime_session(*plan);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    const auto journal = build_valid_execution_journal(*session);
+    if (!journal.has_value()) {
+        return 1;
+    }
+
+    const auto trace = build_failed_dry_run_trace(*plan);
+    if (!trace.has_value()) {
+        return 1;
+    }
+
+    const auto report =
+        ahfl::audit_report::build_audit_report(*plan, *session, *journal, *trace);
+    if (report.has_errors() || !report.report.has_value()) {
+        report.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto &value = *report.report;
+    if (value.conclusion != ahfl::audit_report::AuditConclusion::RuntimeFailed ||
+        value.plan_summary.execution_order.size() != 1 ||
+        value.plan_summary.execution_order[0] != "first" ||
+        value.session_summary.workflow_status !=
+            ahfl::runtime_session::WorkflowSessionStatus::Failed ||
+        value.journal_summary.node_failed_events != 1 ||
+        value.journal_summary.workflow_failed_events != 1 ||
+        !value.journal_summary.completed_node_order.empty() ||
+        !value.audit_consistency.plan_matches_session ||
+        !value.audit_consistency.session_matches_journal ||
+        !value.audit_consistency.journal_matches_trace ||
+        !value.audit_consistency.trace_matches_replay) {
+        std::cerr << "unexpected failed audit report bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_build_audit_report_partial_workflow(
+    const std::filesystem::path &project_descriptor) {
+    const auto plan = load_project_plan(project_descriptor);
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto session = build_partial_runtime_session(*plan);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    const auto journal = build_valid_execution_journal(*session);
+    if (!journal.has_value()) {
+        return 1;
+    }
+
+    const auto trace = build_partial_dry_run_trace(*plan);
+    if (!trace.has_value()) {
+        return 1;
+    }
+
+    const auto report =
+        ahfl::audit_report::build_audit_report(*plan, *session, *journal, *trace);
+    if (report.has_errors() || !report.report.has_value()) {
+        report.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto &value = *report.report;
+    if (value.conclusion != ahfl::audit_report::AuditConclusion::Partial ||
+        !value.plan_summary.execution_order.empty() ||
+        value.session_summary.workflow_status !=
+            ahfl::runtime_session::WorkflowSessionStatus::Partial ||
+        value.journal_summary.workflow_completed_events != 0 ||
+        value.journal_summary.workflow_failed_events != 0 ||
+        value.journal_summary.node_failed_events != 0 ||
+        !value.audit_consistency.journal_matches_trace ||
+        !value.audit_consistency.trace_matches_replay) {
+        std::cerr << "unexpected partial audit report bootstrap result\n";
         return 1;
     }
 
@@ -474,7 +614,7 @@ int run_build_audit_report_rejects_trace_execution_order_mismatch(
 
     if (!diagnostics_contain(
             report.diagnostics,
-            "audit report bootstrap dry-run trace execution_order does not match replay view execution_order")) {
+            "audit report bootstrap dry-run trace execution_order does not contain replay view execution_order as prefix")) {
         report.diagnostics.render(std::cout);
         std::cerr << "missing trace execution_order mismatch audit bootstrap diagnostic\n";
         return 1;
@@ -513,6 +653,22 @@ int main(int argc, char **argv) {
             return 2;
         }
         return run_build_audit_report_project_workflow_value_flow(*project_descriptor);
+    }
+
+    if (test_case == "build-audit-report-failed-workflow") {
+        if (!project_descriptor.has_value()) {
+            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            return 2;
+        }
+        return run_build_audit_report_failed_workflow(*project_descriptor);
+    }
+
+    if (test_case == "build-audit-report-partial-workflow") {
+        if (!project_descriptor.has_value()) {
+            std::cerr << "missing project descriptor for audit bootstrap case\n";
+            return 2;
+        }
+        return run_build_audit_report_partial_workflow(*project_descriptor);
     }
 
     if (test_case == "build-audit-report-rejects-trace-workflow-mismatch") {

@@ -1,6 +1,6 @@
 {
-  "format_version": "ahfl.execution-journal.v1",
-  "source_runtime_session_format_version": "ahfl.runtime-session.v1",
+  "format_version": "ahfl.execution-journal.v2",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
   "source_execution_plan_format_version": "ahfl.execution-plan.v1",
   "source_package_identity": {
     "format_version": "ahfl.native-package.v1",
@@ -16,6 +16,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": null,
       "execution_index": null,
+      "failure_summary": null,
       "satisfied_dependencies": [],
       "used_mock_selectors": []
     },
@@ -24,6 +25,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": "first",
       "execution_index": 0,
+      "failure_summary": null,
       "satisfied_dependencies": [],
       "used_mock_selectors": []
     },
@@ -32,6 +34,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": "first",
       "execution_index": 0,
+      "failure_summary": null,
       "satisfied_dependencies": [],
       "used_mock_selectors": []
     },
@@ -40,6 +43,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": "first",
       "execution_index": 0,
+      "failure_summary": null,
       "satisfied_dependencies": [],
       "used_mock_selectors": [
         "capability:lib::agents::Echo"
@@ -50,6 +54,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": "second",
       "execution_index": 1,
+      "failure_summary": null,
       "satisfied_dependencies": [
         "first"
       ],
@@ -60,6 +65,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": "second",
       "execution_index": 1,
+      "failure_summary": null,
       "satisfied_dependencies": [
         "first"
       ],
@@ -70,6 +76,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": "second",
       "execution_index": 1,
+      "failure_summary": null,
       "satisfied_dependencies": [
         "first"
       ],
@@ -82,6 +89,7 @@
       "workflow_canonical_name": "app::main::ValueFlowWorkflow",
       "node_name": null,
       "execution_index": null,
+      "failure_summary": null,
       "satisfied_dependencies": [],
       "used_mock_selectors": []
     }

@@ -1,0 +1,10 @@
+{
+  "format_version": "ahfl.capability-mocks.v0.6",
+  "mocks": [
+    {
+      "binding_key": "runtime.echo",
+      "result_fixture": "fixture.echo.pending",
+      "invocation_label": "echo-pending"
+    }
+  ]
+}

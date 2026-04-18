@@ -1,0 +1,27 @@
+{
+  "format_version": "ahfl.package-authoring.v0.5",
+  "package": {
+    "name": "alias-const",
+    "version": "0.1.0"
+  },
+  "entry": {
+    "kind": "workflow",
+    "name": "ir::alias_const::EchoWorkflow"
+  },
+  "exports": [
+    {
+      "kind": "workflow",
+      "name": "ir::alias_const::EchoWorkflow"
+    },
+    {
+      "kind": "agent",
+      "name": "ir::alias_const::EchoAgent"
+    }
+  ],
+  "capability_bindings": [
+    {
+      "capability": "ir::alias_const::Echo",
+      "binding_key": "runtime.echo"
+    }
+  ]
+}

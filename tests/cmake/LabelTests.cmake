@@ -185,7 +185,14 @@ ahfl_label_tests(
     TESTS
         ahfl.runtime_session.model.project_workflow_value_flow
         ahfl.runtime_session.model.fail_missing_workflow
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-runtime-session-bootstrap
+    TESTS
         ahfl.runtime_session.model.fail_missing_mock
+        ahfl.runtime_session.model.partial_pending_mock
+        ahfl.runtime_session.model.fail_node_failure
 )
 
 ahfl_label_tests(
@@ -197,11 +204,27 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-runtime-session-validation
+    TESTS
+        ahfl.runtime_session.validation.partial_workflow_ok
+        ahfl.runtime_session.validation.failed_workflow_ok
+        ahfl.runtime_session.validation.fail_failed_without_failure_summary
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.7 v0.7-runtime-session-emission
     TESTS
         ahflc.emit_runtime_session.workflow_value_flow.with_package
         ahflc.emit_runtime_session.project_manifest.workflow_value_flow.with_package
         ahflc.emit_runtime_session.workspace.workflow_value_flow.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-runtime-session-emission
+    TESTS
+        ahflc.emit_runtime_session.alias_const.partial.with_package
+        ahflc.emit_runtime_session.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_runtime_session.workspace.workflow_value_flow.partial.with_package
 )
 
 ahfl_label_tests(
@@ -214,10 +237,25 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-execution-journal-model
+    TESTS
+        ahfl.execution_journal.model.failure_path_ok
+        ahfl.execution_journal.model.fail_failed_before_node_started
+        ahfl.execution_journal.model.fail_failed_without_workflow_failed
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.7 v0.7-execution-journal-bootstrap
     TESTS
         ahfl.execution_journal.bootstrap.from_runtime_session_ok
         ahfl.execution_journal.bootstrap.fail_invalid_runtime_session
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-execution-journal-bootstrap
+    TESTS
+        ahfl.execution_journal.bootstrap.from_failed_runtime_session_ok
+        ahfl.execution_journal.bootstrap.from_partial_runtime_session_ok
 )
 
 ahfl_label_tests(
@@ -237,6 +275,13 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-replay-view-model
+    TESTS
+        ahfl.replay_view.model.failed_workflow
+        ahfl.replay_view.model.partial_workflow
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.8 v0.8-replay-view-validation
     TESTS
         ahfl.replay_view.validation.project_workflow_value_flow
@@ -250,6 +295,14 @@ ahfl_label_tests(
         ahflc.emit_replay_view.workflow_value_flow.with_package
         ahflc.emit_replay_view.project_manifest.workflow_value_flow.with_package
         ahflc.emit_replay_view.workspace.workflow_value_flow.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-replay-view-emission
+    TESTS
+        ahflc.emit_replay_view.alias_const.partial.with_package
+        ahflc.emit_replay_view.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_replay_view.workspace.workflow_value_flow.partial.with_package
 )
 
 ahfl_label_tests(
@@ -269,9 +322,24 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-audit-report-bootstrap
+    TESTS
+        ahfl.audit_report.bootstrap.failed_workflow
+        ahfl.audit_report.bootstrap.partial_workflow
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.8 v0.8-audit-report-emission
     TESTS
         ahflc.emit_audit_report.workflow_value_flow.with_package
         ahflc.emit_audit_report.project_manifest.workflow_value_flow.with_package
         ahflc.emit_audit_report.workspace.workflow_value_flow.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.9 v0.9-audit-report-emission
+    TESTS
+        ahflc.emit_audit_report.alias_const.partial.with_package
+        ahflc.emit_audit_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_audit_report.workspace.workflow_value_flow.partial.with_package
 )

@@ -36,7 +36,19 @@ class AuditReportJsonPrinter final {
                 out_ << "null";
             });
             field("input_fixture", [&]() { write_string(report.input_fixture); });
-            field("conclusion", [&]() { write_string("passed"); });
+            field("conclusion", [&]() {
+                switch (report.conclusion) {
+                case audit_report::AuditConclusion::Passed:
+                    write_string("passed");
+                    return;
+                case audit_report::AuditConclusion::RuntimeFailed:
+                    write_string("runtime_failed");
+                    return;
+                case audit_report::AuditConclusion::Partial:
+                    write_string("partial");
+                    return;
+                }
+            });
             field("plan_summary", [&]() { print_plan_summary(report.plan_summary, 1); });
             field("session_summary", [&]() { print_session_summary(report.session_summary, 1); });
             field("journal_summary", [&]() { print_journal_summary(report.journal_summary, 1); });
@@ -216,6 +228,12 @@ class AuditReportJsonPrinter final {
                 case runtime_session::NodeSessionStatus::Completed:
                     write_string("completed");
                     return;
+                case runtime_session::NodeSessionStatus::Failed:
+                    write_string("failed");
+                    return;
+                case runtime_session::NodeSessionStatus::Skipped:
+                    write_string("skipped");
+                    return;
                 }
             });
             field("execution_index", [&]() { out_ << node.execution_index; });
@@ -242,7 +260,19 @@ class AuditReportJsonPrinter final {
             field("source_runtime_session_format_version", [&]() {
                 write_string(summary.source_runtime_session_format_version);
             });
-            field("workflow_status", [&]() { write_string("completed"); });
+            field("workflow_status", [&]() {
+                switch (summary.workflow_status) {
+                case runtime_session::WorkflowSessionStatus::Completed:
+                    write_string("completed");
+                    return;
+                case runtime_session::WorkflowSessionStatus::Failed:
+                    write_string("failed");
+                    return;
+                case runtime_session::WorkflowSessionStatus::Partial:
+                    write_string("partial");
+                    return;
+                }
+            });
             field("nodes", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &node : summary.nodes) {
@@ -263,8 +293,12 @@ class AuditReportJsonPrinter final {
             field("node_ready_events", [&]() { out_ << summary.node_ready_events; });
             field("node_started_events", [&]() { out_ << summary.node_started_events; });
             field("node_completed_events", [&]() { out_ << summary.node_completed_events; });
+            field("node_failed_events", [&]() { out_ << summary.node_failed_events; });
             field("workflow_completed_events", [&]() {
                 out_ << summary.workflow_completed_events;
+            });
+            field("workflow_failed_events", [&]() {
+                out_ << summary.workflow_failed_events;
             });
             field("completed_node_order", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {

@@ -1,0 +1,63 @@
+{
+  "format_version": "ahfl.runtime-session.v2",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "alias-const",
+    "version": "0.1.0"
+  },
+  "workflow_canonical_name": "ir::alias_const::EchoWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "workflow_status": "partial",
+  "failure_summary": null,
+  "input_fixture": "fixture.request.partial",
+  "options": {
+    "sequential_mode": true
+  },
+  "execution_order": [],
+  "nodes": [
+    {
+      "node_name": "run",
+      "target": "ir::alias_const::EchoAgent",
+      "status": "ready",
+      "execution_index": 0,
+      "failure_summary": null,
+      "satisfied_dependencies": [],
+      "lifecycle": {
+        "start_condition": "immediate",
+        "completion_condition": "target_reached_final_state",
+        "completion_latched": true,
+        "target_initial_state": "Init",
+        "target_final_states": [
+          "Done"
+        ]
+      },
+      "input_summary": {
+        "reads": [
+          {
+            "kind": "workflow_input",
+            "root_name": "input",
+            "members": []
+          }
+        ]
+      },
+      "capability_bindings": [
+        {
+          "capability_name": "ir::alias_const::Echo",
+          "binding_key": "runtime.echo"
+        }
+      ],
+      "used_mocks": []
+    }
+  ],
+  "return_summary": {
+    "reads": [
+      {
+        "kind": "workflow_node_output",
+        "root_name": "run",
+        "members": []
+      }
+    ]
+  }
+}

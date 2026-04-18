@@ -9,20 +9,21 @@
 - [native-runtime-session-bootstrap-v0.7.zh.md](../design/native-runtime-session-bootstrap-v0.7.zh.md)
 - [native-execution-journal-v0.7.zh.md](../design/native-execution-journal-v0.7.zh.md)
 - [native-replay-audit-bootstrap-v0.8.zh.md](../design/native-replay-audit-bootstrap-v0.8.zh.md)
-- [runtime-session-compatibility-v0.7.zh.md](../reference/runtime-session-compatibility-v0.7.zh.md)
-- [execution-journal-compatibility-v0.7.zh.md](../reference/execution-journal-compatibility-v0.7.zh.md)
-- [replay-view-compatibility-v0.8.zh.md](../reference/replay-view-compatibility-v0.8.zh.md)
-- [audit-report-compatibility-v0.8.zh.md](../reference/audit-report-compatibility-v0.8.zh.md)
-- [native-consumer-matrix-v0.8.zh.md](../reference/native-consumer-matrix-v0.8.zh.md)
-- [contributor-guide-v0.8.zh.md](../reference/contributor-guide-v0.8.zh.md)
+- [runtime-session-compatibility-v0.9.zh.md](../reference/runtime-session-compatibility-v0.9.zh.md)
+- [execution-journal-compatibility-v0.9.zh.md](../reference/execution-journal-compatibility-v0.9.zh.md)
+- [replay-view-compatibility-v0.9.zh.md](../reference/replay-view-compatibility-v0.9.zh.md)
+- [audit-report-compatibility-v0.9.zh.md](../reference/audit-report-compatibility-v0.9.zh.md)
+- [failure-path-compatibility-v0.9.zh.md](../reference/failure-path-compatibility-v0.9.zh.md)
+- [native-consumer-matrix-v0.9.zh.md](../reference/native-consumer-matrix-v0.9.zh.md)
+- [contributor-guide-v0.9.zh.md](../reference/contributor-guide-v0.9.zh.md)
 
 当前实现状态：
 
 1. V0.8 已完成 replay view、audit report、compatibility、consumer matrix、contributor guide 与 CI 闭环。
 2. 当前仓库已经能跑通 `package -> execution plan -> runtime session -> execution journal -> replay / audit` 的本地 deterministic 路径。
-3. 当前 `RuntimeSession` 仍只有 success-path 状态：workflow 只有 `Completed`，node 只有 `Blocked / Ready / Completed`。
-4. 当前 `ExecutionJournal` 仍只有 success-path 事件：`session_started`、`node_became_ready`、`node_started`、`node_completed`、`workflow_completed`。
-5. 当前 replay / audit 只能稳定消费 success-path 语义，failure-path 仍停留在 compatibility 预留口与 dry-run 层的局部诊断。
+3. 当前 `RuntimeSession` 已支持 success / failed / partial：workflow 为 `Completed / Failed / Partial`，node 为 `Blocked / Ready / Completed / Failed / Skipped`。
+4. 当前 `ExecutionJournal` 已支持 success-path 与 failure-path 事件，包括 `mock_missing`、`node_failed` 与 `workflow_failed`。
+5. 当前 replay / audit 已正式消费 failure-path，并通过 `ahfl.replay-view.v2` / `ahfl.audit-report.v2` 冻结当前 failure-aware consumer contract。
 6. 当前阶段仍未进入生产 runtime launcher、distributed scheduler、persistence、checkpoint / resume、真实 connector 或 host log ingestion。
 
 执行状态约定：
@@ -56,9 +57,9 @@ V0.9 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 01 冻结 V0.9 failure-path / partial session scope 与 scheduler prototype 非目标
-- [ ] Issue 02 冻结 partial runtime session 的最小模型与 failure taxonomy
-- [ ] Issue 03 冻结 failure-path journal / replay / audit 的分层与兼容边界
+- [x] Issue 01 冻结 V0.9 failure-path / partial session scope 与 scheduler prototype 非目标
+- [x] Issue 02 冻结 partial runtime session 的最小模型与 failure taxonomy
+- [x] Issue 03 冻结 failure-path journal / replay / audit 的分层与兼容边界
 
 目标：
 
@@ -70,9 +71,9 @@ V0.9 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 04 扩展 Runtime Session 数据模型与 validation 到 partial / failed 语义
-- [ ] Issue 05 增加 deterministic partial session bootstrap 与 failure 分类
-- [ ] Issue 06 增加 partial session 输出路径与 golden 回归
+- [x] Issue 04 扩展 Runtime Session 数据模型与 validation 到 partial / failed 语义
+- [x] Issue 05 增加 deterministic partial session bootstrap 与 failure 分类
+- [x] Issue 06 增加 partial session 输出路径与 golden 回归
 
 目标：
 
@@ -84,9 +85,9 @@ V0.9 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 07 扩展 execution journal 数据模型与 validation 到 failure-path
-- [ ] Issue 08 增加 failure-path journal bootstrap 与 replay / audit 消费升级
-- [ ] Issue 09 增加 failure-path replay / audit 输出与 golden 回归
+- [x] Issue 07 扩展 execution journal 数据模型与 validation 到 failure-path
+- [x] Issue 08 增加 failure-path journal bootstrap 与 replay / audit 消费升级
+- [x] Issue 09 增加 failure-path replay / audit 输出与 golden 回归
 
 目标：
 
@@ -98,8 +99,8 @@ V0.9 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 10 冻结 partial session / failure-path journal / replay / audit compatibility 契约
-- [ ] Issue 11 更新 native consumer matrix、contributor guide 与 richer scheduler prototype guidance
+- [x] Issue 10 冻结 partial session / failure-path journal / replay / audit compatibility 契约
+- [x] Issue 11 更新 native consumer matrix、contributor guide 与 richer scheduler prototype guidance
 
 目标：
 
@@ -111,7 +112,7 @@ V0.9 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 12 建立 V0.9 partial session / failure-path regression、CI 与 reference 文档闭环
+- [x] Issue 12 建立 V0.9 partial session / failure-path regression、CI 与 reference 文档闭环
 
 目标：
 
@@ -135,12 +136,7 @@ V0.9 仍然不直接承诺：
 
 ## 当前状态
 
-V0.9 尚未开始实现：当前仓库的 next step 已从“补 success-path replay / audit”转到“把 failure-path 与 partial session 做成正式 artifact”。建议优先顺序是：
-
-1. 先冻结 partial session / failure taxonomy 文档边界
-2. 再扩 Runtime Session / Execution Journal 模型与 direct regression
-3. 再把 replay / audit 升级到 failure-path
-4. 最后补 compatibility、matrix、guide、golden 与 CI 收口
+V0.9 已完成 M0-M4：当前仓库已补齐 partial runtime session、failure-path execution journal、failure-aware replay / audit 的模型、validation、bootstrap、CLI/backend 输出、golden regression、compatibility 契约、consumer matrix、contributor guide、CI 标签切片与 reference 文档闭环。下一步若继续推进，适合规划 V0.10 或更真实的 richer scheduler prototype / persistence 边界。
 
 ## 对应 backlog
 

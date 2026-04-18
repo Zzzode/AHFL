@@ -92,6 +92,28 @@ make_project_workflow_value_flow_metadata() {
     return false;
 }
 
+[[nodiscard]] ahfl::runtime_session::RuntimeFailureSummary
+make_workflow_failure_summary(std::string message,
+                              std::optional<std::string> node_name = std::nullopt) {
+    return ahfl::runtime_session::RuntimeFailureSummary{
+        .kind = ahfl::runtime_session::RuntimeFailureKind::WorkflowFailed,
+        .node_name = std::move(node_name),
+        .message = std::move(message),
+    };
+}
+
+[[nodiscard]] ahfl::runtime_session::RuntimeFailureSummary
+make_node_failure_summary(std::string message,
+                          std::string node_name,
+                          ahfl::runtime_session::RuntimeFailureKind kind =
+                              ahfl::runtime_session::RuntimeFailureKind::NodeFailed) {
+    return ahfl::runtime_session::RuntimeFailureSummary{
+        .kind = kind,
+        .node_name = std::move(node_name),
+        .message = std::move(message),
+    };
+}
+
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
 load_project_plan(const std::filesystem::path &project_descriptor) {
     const auto ir_program = load_project_ir(project_descriptor);
@@ -260,16 +282,22 @@ int run_build_runtime_session_rejects_missing_mock(
             .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
             .mocks = {},
         });
-    if (!session.has_errors()) {
-        std::cerr << "expected missing mock runtime session failure\n";
+    if (session.has_errors() || !session.session.has_value()) {
+        session.diagnostics.render(std::cout);
+        std::cerr << "expected failed runtime session for missing mock\n";
         return 1;
     }
 
-    if (!diagnostics_contain(
-            session.diagnostics,
-            "runtime session missing capability mock for binding key 'runtime.echo' capability 'lib::agents::Echo'")) {
-        session.diagnostics.render(std::cout);
-        std::cerr << "missing missing-mock runtime session diagnostic\n";
+    const auto &value = *session.session;
+    if (value.workflow_status != ahfl::runtime_session::WorkflowSessionStatus::Failed ||
+        !value.failure_summary.has_value() || value.execution_order.size() != 1 ||
+        value.execution_order.front() != "first" || value.nodes.size() != 2 ||
+        value.nodes[0].status != ahfl::runtime_session::NodeSessionStatus::Failed ||
+        !value.nodes[0].failure_summary.has_value() ||
+        value.nodes[0].failure_summary->kind !=
+            ahfl::runtime_session::RuntimeFailureKind::MockMissing ||
+        value.nodes[1].status != ahfl::runtime_session::NodeSessionStatus::Skipped) {
+        std::cerr << "unexpected missing-mock failed runtime session\n";
         return 1;
     }
 
@@ -293,7 +321,7 @@ int run_validate_runtime_session_rejects_incomplete_completed_workflow(
 
     if (!diagnostics_contain(
             validation.diagnostics,
-            "runtime session validation node 'second' is not completed while workflow status is Completed")) {
+            "runtime session validation node 'second' is not executable-complete while workflow status is terminal")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing incomplete-workflow validation diagnostic\n";
         return 1;
@@ -328,6 +356,178 @@ int run_validate_runtime_session_rejects_missing_used_mock(
     return 0;
 }
 
+int run_validate_runtime_session_accepts_partial_workflow(
+    const std::filesystem::path &project_descriptor) {
+    auto session = build_valid_runtime_session(project_descriptor);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    session->workflow_status = ahfl::runtime_session::WorkflowSessionStatus::Partial;
+    session->execution_order.pop_back();
+    session->nodes[1].status = ahfl::runtime_session::NodeSessionStatus::Ready;
+    session->nodes[1].used_mocks.clear();
+
+    const auto validation = ahfl::runtime_session::validate_runtime_session(*session);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        std::cerr << "expected valid partial workflow runtime session\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_validate_runtime_session_accepts_failed_workflow(
+    const std::filesystem::path &project_descriptor) {
+    auto session = build_valid_runtime_session(project_descriptor);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    session->workflow_status = ahfl::runtime_session::WorkflowSessionStatus::Failed;
+    session->failure_summary =
+        make_workflow_failure_summary("workflow failed after node terminal failure", "second");
+    session->nodes[1].status = ahfl::runtime_session::NodeSessionStatus::Failed;
+    session->nodes[1].failure_summary =
+        make_node_failure_summary("node reached terminal failure state", "second");
+
+    const auto validation = ahfl::runtime_session::validate_runtime_session(*session);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        std::cerr << "expected valid failed workflow runtime session\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_validate_runtime_session_rejects_failed_without_failure_summary(
+    const std::filesystem::path &project_descriptor) {
+    auto session = build_valid_runtime_session(project_descriptor);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    session->workflow_status = ahfl::runtime_session::WorkflowSessionStatus::Failed;
+    session->nodes[1].status = ahfl::runtime_session::NodeSessionStatus::Failed;
+
+    const auto validation = ahfl::runtime_session::validate_runtime_session(*session);
+    if (!validation.has_errors()) {
+        std::cerr << "expected failed workflow summary validation failure\n";
+        return 1;
+    }
+
+    if (!diagnostics_contain(
+            validation.diagnostics,
+            "runtime session validation failed workflow must carry failure summary") ||
+        !diagnostics_contain(
+            validation.diagnostics,
+            "runtime session validation node 'second' is Failed but has no failure summary")) {
+        validation.diagnostics.render(std::cout);
+        std::cerr << "missing failed workflow summary diagnostics\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_build_runtime_session_partial_on_pending_mock(
+    const std::filesystem::path &project_descriptor) {
+    const auto plan = load_project_plan(project_descriptor);
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto session = ahfl::runtime_session::build_runtime_session(
+        *plan,
+        ahfl::dry_run::DryRunRequest{
+            .workflow_canonical_name = "app::main::ValueFlowWorkflow",
+            .input_fixture = "fixture.request.partial",
+            .run_id = "run-partial-001",
+        },
+        ahfl::dry_run::CapabilityMockSet{
+            .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
+            .mocks =
+                {
+                    ahfl::dry_run::CapabilityMock{
+                        .capability_name = std::nullopt,
+                        .binding_key = std::string("runtime.echo"),
+                        .result_fixture = "fixture.echo.pending",
+                        .invocation_label = std::string("echo-pending"),
+                    },
+                },
+        });
+    if (session.has_errors() || !session.session.has_value()) {
+        session.diagnostics.render(std::cout);
+        std::cerr << "expected partial runtime session\n";
+        return 1;
+    }
+
+    const auto &value = *session.session;
+    if (value.workflow_status != ahfl::runtime_session::WorkflowSessionStatus::Partial ||
+        value.failure_summary.has_value() || !value.execution_order.empty() ||
+        value.nodes.size() != 2 ||
+        value.nodes[0].status != ahfl::runtime_session::NodeSessionStatus::Ready ||
+        value.nodes[0].execution_index != 0 || !value.nodes[0].used_mocks.empty() ||
+        value.nodes[1].status != ahfl::runtime_session::NodeSessionStatus::Blocked ||
+        value.nodes[1].execution_index != 0 || !value.nodes[1].used_mocks.empty()) {
+        std::cerr << "unexpected partial runtime session\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_build_runtime_session_failed_on_node_failure(
+    const std::filesystem::path &project_descriptor) {
+    const auto plan = load_project_plan(project_descriptor);
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto session = ahfl::runtime_session::build_runtime_session(
+        *plan,
+        ahfl::dry_run::DryRunRequest{
+            .workflow_canonical_name = "app::main::ValueFlowWorkflow",
+            .input_fixture = "fixture.request.failed",
+            .run_id = "run-failed-001",
+        },
+        ahfl::dry_run::CapabilityMockSet{
+            .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
+            .mocks =
+                {
+                    ahfl::dry_run::CapabilityMock{
+                        .capability_name = std::nullopt,
+                        .binding_key = std::string("runtime.echo"),
+                        .result_fixture = "fixture.echo.fail",
+                        .invocation_label = std::string("echo-fail"),
+                    },
+                },
+        });
+    if (session.has_errors() || !session.session.has_value()) {
+        session.diagnostics.render(std::cout);
+        std::cerr << "expected failed runtime session from node failure\n";
+        return 1;
+    }
+
+    const auto &value = *session.session;
+    if (value.workflow_status != ahfl::runtime_session::WorkflowSessionStatus::Failed ||
+        !value.failure_summary.has_value() || value.execution_order.size() != 1 ||
+        value.nodes.size() != 2 ||
+        value.nodes[0].status != ahfl::runtime_session::NodeSessionStatus::Failed ||
+        !value.nodes[0].failure_summary.has_value() ||
+        value.nodes[0].failure_summary->kind !=
+            ahfl::runtime_session::RuntimeFailureKind::NodeFailed ||
+        value.nodes[0].used_mocks.size() != 1 ||
+        value.nodes[1].status != ahfl::runtime_session::NodeSessionStatus::Skipped) {
+        std::cerr << "unexpected node-failed runtime session\n";
+        return 1;
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -351,6 +551,14 @@ int main(int argc, char **argv) {
         return run_build_runtime_session_rejects_missing_mock(project_descriptor);
     }
 
+    if (test_case == "build-runtime-session-partial-on-pending-mock") {
+        return run_build_runtime_session_partial_on_pending_mock(project_descriptor);
+    }
+
+    if (test_case == "build-runtime-session-failed-on-node-failure") {
+        return run_build_runtime_session_failed_on_node_failure(project_descriptor);
+    }
+
     if (test_case == "validate-runtime-session-project-workflow-value-flow") {
         return run_validate_runtime_session_project_workflow_value_flow(project_descriptor);
     }
@@ -362,6 +570,19 @@ int main(int argc, char **argv) {
 
     if (test_case == "validate-runtime-session-rejects-missing-used-mock") {
         return run_validate_runtime_session_rejects_missing_used_mock(project_descriptor);
+    }
+
+    if (test_case == "validate-runtime-session-accepts-partial-workflow") {
+        return run_validate_runtime_session_accepts_partial_workflow(project_descriptor);
+    }
+
+    if (test_case == "validate-runtime-session-accepts-failed-workflow") {
+        return run_validate_runtime_session_accepts_failed_workflow(project_descriptor);
+    }
+
+    if (test_case == "validate-runtime-session-rejects-failed-without-failure-summary") {
+        return run_validate_runtime_session_rejects_failed_without_failure_summary(
+            project_descriptor);
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

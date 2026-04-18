@@ -9,15 +9,18 @@
     "version": "0.2.0"
   },
   "workflow_canonical_name": "app::main::ValueFlowWorkflow",
-  "session_id": "run-001",
-  "run_id": "run-001",
-  "input_fixture": "fixture.request.basic",
-  "workflow_status": "completed",
-  "replay_status": "consistent",
-  "workflow_failure_summary": null,
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "workflow_status": "failed",
+  "replay_status": "runtime_failed",
+  "workflow_failure_summary": {
+    "kind": "workflow_failed",
+    "node_name": "first",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  },
   "execution_order": [
-    "first",
-    "second"
+    "first"
   ],
   "nodes": [
     {
@@ -28,33 +31,17 @@
       "satisfied_dependencies": [],
       "saw_node_became_ready": true,
       "saw_node_started": true,
-      "saw_node_completed": true,
-      "saw_node_failed": false,
-      "failure_summary": null,
+      "saw_node_completed": false,
+      "saw_node_failed": true,
+      "failure_summary": {
+        "kind": "node_failed",
+        "node_name": "first",
+        "message": "runtime session node 'first' failed with mock result_fixture 'fixture.echo.fail'"
+      },
       "used_mock_selectors": [
         "capability:lib::agents::Echo"
       ],
-      "final_status": "completed"
-    },
-    {
-      "node_name": "second",
-      "target": "lib::agents::AliasAgent",
-      "execution_index": 1,
-      "planned_dependencies": [
-        "first"
-      ],
-      "satisfied_dependencies": [
-        "first"
-      ],
-      "saw_node_became_ready": true,
-      "saw_node_started": true,
-      "saw_node_completed": true,
-      "saw_node_failed": false,
-      "failure_summary": null,
-      "used_mock_selectors": [
-        "capability:lib::agents::Echo"
-      ],
-      "final_status": "completed"
+      "final_status": "failed"
     }
   ],
   "consistency": {

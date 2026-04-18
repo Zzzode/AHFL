@@ -134,8 +134,17 @@ class ExecutionJournalJsonPrinter final {
                 case execution_journal::ExecutionJournalEventKind::NodeCompleted:
                     write_string("node_completed");
                     return;
+                case execution_journal::ExecutionJournalEventKind::MockMissing:
+                    write_string("mock_missing");
+                    return;
+                case execution_journal::ExecutionJournalEventKind::NodeFailed:
+                    write_string("node_failed");
+                    return;
                 case execution_journal::ExecutionJournalEventKind::WorkflowCompleted:
                     write_string("workflow_completed");
+                    return;
+                case execution_journal::ExecutionJournalEventKind::WorkflowFailed:
+                    write_string("workflow_failed");
                     return;
                 }
             });
@@ -156,6 +165,13 @@ class ExecutionJournalJsonPrinter final {
                 }
                 out_ << "null";
             });
+            field("failure_summary", [&]() {
+                if (event.failure_summary.has_value()) {
+                    print_failure_summary(*event.failure_summary, indent_level + 1);
+                    return;
+                }
+                out_ << "null";
+            });
             field("satisfied_dependencies", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &dependency : event.satisfied_dependencies) {
@@ -170,6 +186,33 @@ class ExecutionJournalJsonPrinter final {
                     }
                 });
             });
+        });
+    }
+
+    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
+                               int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("kind", [&]() {
+                switch (summary.kind) {
+                case runtime_session::RuntimeFailureKind::MockMissing:
+                    write_string("mock_missing");
+                    return;
+                case runtime_session::RuntimeFailureKind::NodeFailed:
+                    write_string("node_failed");
+                    return;
+                case runtime_session::RuntimeFailureKind::WorkflowFailed:
+                    write_string("workflow_failed");
+                    return;
+                }
+            });
+            field("node_name", [&]() {
+                if (summary.node_name.has_value()) {
+                    write_string(*summary.node_name);
+                    return;
+                }
+                out_ << "null";
+            });
+            field("message", [&]() { write_string(summary.message); });
         });
     }
 };

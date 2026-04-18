@@ -13,10 +13,12 @@
 
 namespace ahfl::replay_view {
 
-inline constexpr std::string_view kReplayViewFormatVersion = "ahfl.replay-view.v1";
+inline constexpr std::string_view kReplayViewFormatVersion = "ahfl.replay-view.v2";
 
 enum class ReplayStatus {
     Consistent,
+    RuntimeFailed,
+    Partial,
 };
 
 struct ReplayConsistencySummary {
@@ -34,6 +36,8 @@ struct ReplayNodeProgression {
     bool saw_node_became_ready{false};
     bool saw_node_started{false};
     bool saw_node_completed{false};
+    bool saw_node_failed{false};
+    std::optional<runtime_session::RuntimeFailureSummary> failure_summary;
     std::vector<std::string> used_mock_selectors;
     runtime_session::NodeSessionStatus final_status{
         runtime_session::NodeSessionStatus::Blocked};
@@ -54,6 +58,7 @@ struct ReplayView {
     runtime_session::WorkflowSessionStatus workflow_status{
         runtime_session::WorkflowSessionStatus::Completed};
     ReplayStatus replay_status{ReplayStatus::Consistent};
+    std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::vector<std::string> execution_order;
     std::vector<ReplayNodeProgression> nodes;
     ReplayConsistencySummary consistency;

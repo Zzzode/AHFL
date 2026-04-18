@@ -52,6 +52,24 @@ find_mock_for_binding(const dry_run::CapabilityMockSet &mock_set,
     return nullptr;
 }
 
+[[nodiscard]] bool workflow_references_mock_selector(const handoff::WorkflowPlan &workflow,
+                                                     const dry_run::CapabilityMock &mock) {
+    for (const auto &node : workflow.nodes) {
+        for (const auto &binding : node.capability_bindings) {
+            if (mock.binding_key.has_value() && *mock.binding_key == binding.binding_key) {
+                return true;
+            }
+
+            if (mock.capability_name.has_value() &&
+                *mock.capability_name == binding.capability_name) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 void validate_capability_mock_set(const dry_run::CapabilityMockSet &mock_set,
                                   const handoff::WorkflowPlan &workflow,
                                   DiagnosticBag &diagnostics) {
@@ -77,26 +95,7 @@ void validate_capability_mock_set(const dry_run::CapabilityMockSet &mock_set,
             diagnostics.error("runtime session capability mock set contains duplicate mock selector '" +
                               selector + "'");
         }
-    }
-
-    std::unordered_set<std::string> used_mock_selectors;
-    for (const auto &node : workflow.nodes) {
-        for (const auto &binding : node.capability_bindings) {
-            const auto *mock = find_mock_for_binding(mock_set, binding);
-            if (mock == nullptr) {
-                diagnostics.error("runtime session missing capability mock for binding key '" +
-                                  binding.binding_key + "' capability '" +
-                                  binding.capability_name + "'");
-                continue;
-            }
-
-            used_mock_selectors.insert(mock_selector_key(*mock));
-        }
-    }
-
-    for (const auto &mock : mock_set.mocks) {
-        const auto selector = mock_selector_key(mock);
-        if (!selector.empty() && !used_mock_selectors.contains(selector)) {
+        if (!workflow_references_mock_selector(workflow, mock)) {
             diagnostics.error("runtime session capability mock set contains unused mock selector '" +
                               selector + "'");
         }
@@ -144,6 +143,36 @@ make_mock_usage(const dry_run::CapabilityMock &mock) {
     return false;
 }
 
+[[nodiscard]] bool node_status_is_executed(NodeSessionStatus status) {
+    return status == NodeSessionStatus::Completed || status == NodeSessionStatus::Failed;
+}
+
+[[nodiscard]] bool workflow_status_is_terminal(WorkflowSessionStatus status) {
+    return status == WorkflowSessionStatus::Completed || status == WorkflowSessionStatus::Failed;
+}
+
+[[nodiscard]] bool mock_result_fixture_requests_failure(std::string_view fixture) {
+    return fixture.ends_with(".fail") || fixture.ends_with(".failed");
+}
+
+[[nodiscard]] bool mock_result_fixture_requests_partial(std::string_view fixture) {
+    return fixture.ends_with(".pending") || fixture.ends_with(".partial");
+}
+
+void validate_failure_summary(const RuntimeFailureSummary &summary,
+                              std::string_view owner_name,
+                              DiagnosticBag &diagnostics) {
+    if (summary.message.empty()) {
+        diagnostics.error("runtime session validation " + std::string(owner_name) +
+                          " contains failure summary with empty message");
+    }
+
+    if (summary.node_name.has_value() && summary.node_name->empty()) {
+        diagnostics.error("runtime session validation " + std::string(owner_name) +
+                          " contains failure summary with empty node_name");
+    }
+}
+
 } // namespace
 
 RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &session) {
@@ -176,6 +205,10 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
         result.diagnostics.error("runtime session validation contains empty input_fixture");
     }
 
+    if (session.failure_summary.has_value()) {
+        validate_failure_summary(*session.failure_summary, "workflow", result.diagnostics);
+    }
+
     if (!session.options.sequential_mode) {
         result.diagnostics.error(
             "runtime session validation currently requires sequential_mode=true");
@@ -184,6 +217,9 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
     std::unordered_map<std::string, const RuntimeSessionNode *> nodes_by_name;
     std::unordered_set<std::string> execution_order_names;
     std::unordered_set<std::size_t> execution_indices;
+    std::size_t failed_node_count = 0;
+    std::size_t non_completed_node_count = 0;
+    std::size_t skipped_node_count = 0;
 
     for (const auto &node_name : session.execution_order) {
         if (node_name.empty()) {
@@ -215,6 +251,16 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
         if (node.target.empty()) {
             result.diagnostics.error("runtime session validation node '" + node.node_name +
                                      "' has empty target");
+        }
+
+        if (node.failure_summary.has_value()) {
+            validate_failure_summary(
+                *node.failure_summary, "node '" + node.node_name + "'", result.diagnostics);
+            if (node.failure_summary->node_name.has_value() &&
+                *node.failure_summary->node_name != node.node_name) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' failure summary node_name does not match node");
+            }
         }
 
         std::unordered_set<std::string> satisfied_dependencies;
@@ -306,7 +352,7 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
                 }
             }
 
-            if (!matched_mock) {
+            if (node.status == NodeSessionStatus::Completed && !matched_mock) {
                 result.diagnostics.error("runtime session validation node '" + node.node_name +
                                          "' missing used mock for binding key '" +
                                          binding.binding_key + "'");
@@ -315,6 +361,40 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
 
         switch (node.status) {
         case NodeSessionStatus::Completed:
+            if (node.failure_summary.has_value()) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' must not carry failure summary while status is Completed");
+            }
+            if (!execution_indices.insert(node.execution_index).second) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' reuses execution_index " +
+                                         std::to_string(node.execution_index));
+            }
+
+            if (node.execution_index >= session.execution_order.size()) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' execution_index " +
+                                         std::to_string(node.execution_index) +
+                                         " is outside execution_order");
+                break;
+            }
+
+            if (session.execution_order[node.execution_index] != node.node_name) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' execution_index does not match execution_order");
+            }
+            break;
+        case NodeSessionStatus::Failed:
+            ++failed_node_count;
+            ++non_completed_node_count;
+            if (!node.failure_summary.has_value()) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' is Failed but has no failure summary");
+            } else if (node.failure_summary->kind == RuntimeFailureKind::WorkflowFailed) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' failure summary must not use WorkflowFailed kind");
+            }
+
             if (!execution_indices.insert(node.execution_index).second) {
                 result.diagnostics.error("runtime session validation node '" + node.node_name +
                                          "' reuses execution_index " +
@@ -336,13 +416,42 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
             break;
         case NodeSessionStatus::Blocked:
         case NodeSessionStatus::Ready:
-            if (session.workflow_status == WorkflowSessionStatus::Completed) {
+            ++non_completed_node_count;
+            if (node.failure_summary.has_value()) {
                 result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' is not completed while workflow status is Completed");
+                                         "' must not carry failure summary unless status is Failed");
+            }
+            if (!node.used_mocks.empty()) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' must not carry used_mocks unless node was executed");
+            }
+            if (workflow_status_is_terminal(session.workflow_status)) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' is not executable-complete while workflow status is terminal");
             }
             if (execution_order_names.contains(node.node_name)) {
                 result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' appears in execution_order but is not Completed");
+                                         "' appears in execution_order but is not executed");
+            }
+            break;
+        case NodeSessionStatus::Skipped:
+            ++non_completed_node_count;
+            ++skipped_node_count;
+            if (node.failure_summary.has_value()) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' must not carry failure summary unless status is Failed");
+            }
+            if (!node.used_mocks.empty()) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' must not carry used_mocks unless node was executed");
+            }
+            if (session.workflow_status != WorkflowSessionStatus::Failed) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' is Skipped but workflow status is not Failed");
+            }
+            if (execution_order_names.contains(node.node_name)) {
+                result.diagnostics.error("runtime session validation node '" + node.node_name +
+                                         "' appears in execution_order but is not executed");
             }
             break;
         }
@@ -357,9 +466,9 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
             continue;
         }
 
-        if (found->second->status != NodeSessionStatus::Completed) {
+        if (!node_status_is_executed(found->second->status)) {
             result.diagnostics.error("runtime session validation execution_order node '" +
-                                     node_name + "' is not Completed");
+                                     node_name + "' is not executed");
         }
         if (found->second->execution_index != index) {
             result.diagnostics.error("runtime session validation execution_order node '" +
@@ -367,10 +476,45 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
         }
     }
 
-    if (session.workflow_status == WorkflowSessionStatus::Completed &&
-        session.execution_order.size() != session.nodes.size()) {
-        result.diagnostics.error(
-            "runtime session validation completed workflow must include every node in execution_order");
+    switch (session.workflow_status) {
+    case WorkflowSessionStatus::Completed:
+        if (session.failure_summary.has_value()) {
+            result.diagnostics.error(
+                "runtime session validation completed workflow must not carry failure summary");
+        }
+        if (session.execution_order.size() != session.nodes.size()) {
+            result.diagnostics.error(
+                "runtime session validation completed workflow must include every node in execution_order");
+        }
+        if (non_completed_node_count != 0) {
+            result.diagnostics.error(
+                "runtime session validation completed workflow must not contain non-completed nodes");
+        }
+        break;
+    case WorkflowSessionStatus::Failed:
+        if (!session.failure_summary.has_value()) {
+            result.diagnostics.error(
+                "runtime session validation failed workflow must carry failure summary");
+        }
+        if (failed_node_count == 0) {
+            result.diagnostics.error(
+                "runtime session validation failed workflow must contain at least one Failed node");
+        }
+        break;
+    case WorkflowSessionStatus::Partial:
+        if (failed_node_count != 0) {
+            result.diagnostics.error(
+                "runtime session validation partial workflow must not contain Failed nodes");
+        }
+        if (skipped_node_count != 0) {
+            result.diagnostics.error(
+                "runtime session validation partial workflow must not contain Skipped nodes");
+        }
+        if (non_completed_node_count == 0) {
+            result.diagnostics.error(
+                "runtime session validation partial workflow must contain at least one non-completed node");
+        }
+        break;
     }
 
     return result;
@@ -431,6 +575,7 @@ RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
         .session_id = default_session_id(request),
         .run_id = request.run_id,
         .workflow_status = WorkflowSessionStatus::Completed,
+        .failure_summary = std::nullopt,
         .input_fixture = request.input_fixture,
         .options = options,
         .execution_order = {},
@@ -441,29 +586,91 @@ RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
     session.nodes.reserve(workflow->nodes.size());
 
     std::unordered_set<std::string> executed_nodes;
+    bool terminal_failure = false;
+    bool partial_stop = false;
     for (std::size_t ready_index = 0; ready_index < ready_nodes.size(); ++ready_index) {
         const auto *node = ready_nodes[ready_index];
         if (node == nullptr || executed_nodes.contains(node->name)) {
             continue;
         }
 
-        executed_nodes.insert(node->name);
-        session.execution_order.push_back(node->name);
-
         std::vector<RuntimeSessionMockUsage> used_mocks;
         used_mocks.reserve(node->capability_bindings.size());
+        std::optional<RuntimeFailureSummary> node_failure_summary;
+        bool requests_partial = false;
         for (const auto &binding : node->capability_bindings) {
             const auto *mock = find_mock_for_binding(mock_set, binding);
-            if (mock != nullptr) {
-                used_mocks.push_back(make_mock_usage(*mock));
+            if (mock == nullptr) {
+                node_failure_summary = RuntimeFailureSummary{
+                    .kind = RuntimeFailureKind::MockMissing,
+                    .node_name = node->name,
+                    .message = "runtime session node '" + node->name +
+                               "' is missing capability mock for binding key '" +
+                               binding.binding_key + "' capability '" +
+                               binding.capability_name + "'",
+                };
+                break;
+            }
+
+            if (mock_result_fixture_requests_partial(mock->result_fixture)) {
+                requests_partial = true;
+                continue;
+            }
+
+            used_mocks.push_back(make_mock_usage(*mock));
+
+            if (mock_result_fixture_requests_failure(mock->result_fixture)) {
+                node_failure_summary = RuntimeFailureSummary{
+                    .kind = RuntimeFailureKind::NodeFailed,
+                    .node_name = node->name,
+                    .message = "runtime session node '" + node->name +
+                               "' failed with mock result_fixture '" +
+                               mock->result_fixture + "'",
+                };
+                break;
             }
         }
 
+        if (node_failure_summary.has_value()) {
+            executed_nodes.insert(node->name);
+            session.execution_order.push_back(node->name);
+            session.nodes.push_back(RuntimeSessionNode{
+                .node_name = node->name,
+                .target = node->target,
+                .status = NodeSessionStatus::Failed,
+                .execution_index = session.execution_order.size() - 1U,
+                .failure_summary = node_failure_summary,
+                .satisfied_dependencies = node->after,
+                .lifecycle = node->lifecycle,
+                .input_summary = node->input_summary,
+                .capability_bindings = node->capability_bindings,
+                .used_mocks = std::move(used_mocks),
+            });
+            session.workflow_status = WorkflowSessionStatus::Failed;
+            session.failure_summary = RuntimeFailureSummary{
+                .kind = RuntimeFailureKind::WorkflowFailed,
+                .node_name = node->name,
+                .message = "runtime session workflow '" + workflow->workflow_canonical_name +
+                           "' failed at node '" + node->name + "'",
+            };
+            terminal_failure = true;
+            break;
+        }
+
+        if (requests_partial) {
+            session.workflow_status = WorkflowSessionStatus::Partial;
+            partial_stop = true;
+            break;
+        }
+
+        executed_nodes.insert(node->name);
+        session.execution_order.push_back(node->name);
         session.nodes.push_back(RuntimeSessionNode{
             .node_name = node->name,
             .target = node->target,
             .status = NodeSessionStatus::Completed,
-            .execution_index = session.nodes.size(),
+            .execution_index = session.execution_order.size() - 1U,
+            .failure_summary = std::nullopt,
             .satisfied_dependencies = node->after,
             .lifecycle = node->lifecycle,
             .input_summary = node->input_summary,
@@ -495,7 +702,38 @@ RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
         }
     }
 
-    if (executed_nodes.size() != workflow->nodes.size()) {
+    if (partial_stop || terminal_failure) {
+        for (const auto &node : workflow->nodes) {
+            if (executed_nodes.contains(node.name)) {
+                continue;
+            }
+
+            std::vector<std::string> satisfied_dependencies;
+            for (const auto &dependency : node.after) {
+                if (executed_nodes.contains(dependency)) {
+                    satisfied_dependencies.push_back(dependency);
+                }
+            }
+
+            const auto node_status =
+                terminal_failure
+                    ? NodeSessionStatus::Skipped
+                    : (remaining_dependencies[node.name] == 0U ? NodeSessionStatus::Ready
+                                                               : NodeSessionStatus::Blocked);
+            session.nodes.push_back(RuntimeSessionNode{
+                .node_name = node.name,
+                .target = node.target,
+                .status = node_status,
+                .execution_index = 0,
+                .failure_summary = std::nullopt,
+                .satisfied_dependencies = std::move(satisfied_dependencies),
+                .lifecycle = node.lifecycle,
+                .input_summary = node.input_summary,
+                .capability_bindings = node.capability_bindings,
+                .used_mocks = {},
+            });
+        }
+    } else if (executed_nodes.size() != workflow->nodes.size()) {
         result.diagnostics.error("runtime session could not schedule all workflow nodes for '" +
                                  workflow->workflow_canonical_name + "'");
         return result;

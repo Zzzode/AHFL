@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -50,6 +51,35 @@ find_workflow_node(const handoff::WorkflowPlan &workflow, std::string_view node_
     return std::string(node_name) + "#" + std::to_string(execution_index);
 }
 
+[[nodiscard]] bool failure_summary_equals(
+    const std::optional<runtime_session::RuntimeFailureSummary> &lhs,
+    const std::optional<runtime_session::RuntimeFailureSummary> &rhs) {
+    if (lhs.has_value() != rhs.has_value()) {
+        return false;
+    }
+
+    if (!lhs.has_value()) {
+        return true;
+    }
+
+    return lhs->kind == rhs->kind && lhs->node_name == rhs->node_name &&
+           lhs->message == rhs->message;
+}
+
+void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
+                              std::string_view owner_name,
+                              DiagnosticBag &diagnostics) {
+    if (summary.message.empty()) {
+        diagnostics.error("replay view validation " + std::string(owner_name) +
+                          " contains failure summary with empty message");
+    }
+
+    if (summary.node_name.has_value() && summary.node_name->empty()) {
+        diagnostics.error("replay view validation " + std::string(owner_name) +
+                          " contains failure summary with empty node_name");
+    }
+}
+
 } // namespace
 
 ReplayViewValidationResult validate_replay_view(const ReplayView &replay) {
@@ -94,6 +124,11 @@ ReplayViewValidationResult validate_replay_view(const ReplayView &replay) {
 
     if (replay.input_fixture.empty()) {
         result.diagnostics.error("replay view validation contains empty input_fixture");
+    }
+
+    if (replay.workflow_failure_summary.has_value()) {
+        validate_failure_summary(
+            *replay.workflow_failure_summary, "workflow", result.diagnostics);
     }
 
     std::unordered_map<std::string, const ReplayNodeProgression *> nodes_by_name;
@@ -189,14 +224,45 @@ ReplayViewValidationResult validate_replay_view(const ReplayView &replay) {
             }
         }
 
-        if (!node.saw_node_became_ready || !node.saw_node_started || !node.saw_node_completed) {
-            result.diagnostics.error("replay view validation node '" + node.node_name +
-                                     "' does not contain a complete ready/start/completed progression");
+        if (node.failure_summary.has_value()) {
+            validate_failure_summary(
+                *node.failure_summary, "node '" + node.node_name + "'", result.diagnostics);
+            if (node.failure_summary->node_name.has_value() &&
+                *node.failure_summary->node_name != node.node_name) {
+                result.diagnostics.error("replay view validation node '" + node.node_name +
+                                         "' failure summary node_name does not match node");
+            }
         }
 
-        if (node.final_status != runtime_session::NodeSessionStatus::Completed) {
+        switch (node.final_status) {
+        case runtime_session::NodeSessionStatus::Completed:
+            if (!node.saw_node_became_ready || !node.saw_node_started || !node.saw_node_completed ||
+                node.saw_node_failed) {
+                result.diagnostics.error("replay view validation node '" + node.node_name +
+                                         "' does not contain a complete ready/start/completed progression");
+            }
+            if (node.failure_summary.has_value()) {
+                result.diagnostics.error("replay view validation node '" + node.node_name +
+                                         "' must not carry failure summary while final_status is Completed");
+            }
+            break;
+        case runtime_session::NodeSessionStatus::Failed:
+            if (!node.saw_node_became_ready || !node.saw_node_started || node.saw_node_completed ||
+                !node.saw_node_failed) {
+                result.diagnostics.error("replay view validation node '" + node.node_name +
+                                         "' does not contain a complete ready/start/failed progression");
+            }
+            if (!node.failure_summary.has_value()) {
+                result.diagnostics.error("replay view validation node '" + node.node_name +
+                                         "' must carry failure summary while final_status is Failed");
+            }
+            break;
+        case runtime_session::NodeSessionStatus::Blocked:
+        case runtime_session::NodeSessionStatus::Ready:
+        case runtime_session::NodeSessionStatus::Skipped:
             result.diagnostics.error("replay view validation node '" + node.node_name +
-                                     "' is not Completed in final_status");
+                                     "' is not executable terminal in replay progression");
+            break;
         }
     }
 
@@ -215,10 +281,42 @@ ReplayViewValidationResult validate_replay_view(const ReplayView &replay) {
         }
     }
 
-    if (replay.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
-        replay.execution_order.size() != replay.nodes.size()) {
+    if (replay.execution_order.size() != replay.nodes.size()) {
         result.diagnostics.error(
-            "replay view validation completed workflow must include every node in execution_order");
+            "replay view validation execution_order size must match replay node count");
+    }
+
+    switch (replay.workflow_status) {
+    case runtime_session::WorkflowSessionStatus::Completed:
+        if (replay.replay_status != ReplayStatus::Consistent) {
+            result.diagnostics.error(
+                "replay view validation completed workflow must use replay_status Consistent");
+        }
+        if (replay.workflow_failure_summary.has_value()) {
+            result.diagnostics.error(
+                "replay view validation completed workflow must not carry workflow failure summary");
+        }
+        break;
+    case runtime_session::WorkflowSessionStatus::Failed:
+        if (replay.replay_status != ReplayStatus::RuntimeFailed) {
+            result.diagnostics.error(
+                "replay view validation failed workflow must use replay_status RuntimeFailed");
+        }
+        if (!replay.workflow_failure_summary.has_value()) {
+            result.diagnostics.error(
+                "replay view validation failed workflow must carry workflow failure summary");
+        }
+        break;
+    case runtime_session::WorkflowSessionStatus::Partial:
+        if (replay.replay_status != ReplayStatus::Partial) {
+            result.diagnostics.error(
+                "replay view validation partial workflow must use replay_status Partial");
+        }
+        if (replay.workflow_failure_summary.has_value()) {
+            result.diagnostics.error(
+                "replay view validation partial workflow must not carry workflow failure summary");
+        }
+        break;
     }
 
     if (!replay.consistency.plan_matches_session) {
@@ -315,6 +413,16 @@ ReplayViewResult build_replay_view(const handoff::ExecutionPlan &plan,
         session_nodes.emplace(node.node_name, &node);
     }
 
+    std::vector<std::string> session_completed_order;
+    session_completed_order.reserve(session.execution_order.size());
+    for (const auto &node_name : session.execution_order) {
+        const auto found = session_nodes.find(node_name);
+        if (found != session_nodes.end() &&
+            found->second->status == runtime_session::NodeSessionStatus::Completed) {
+            session_completed_order.push_back(node_name);
+        }
+    }
+
     std::unordered_map<std::string, std::vector<const execution_journal::ExecutionJournalEvent *>>
         journal_events_by_node;
     std::vector<std::string> journal_completed_order;
@@ -341,7 +449,13 @@ ReplayViewResult build_replay_view(const handoff::ExecutionPlan &plan,
         .run_id = session.run_id,
         .input_fixture = session.input_fixture,
         .workflow_status = session.workflow_status,
-        .replay_status = ReplayStatus::Consistent,
+        .replay_status =
+            session.workflow_status == runtime_session::WorkflowSessionStatus::Completed
+                ? ReplayStatus::Consistent
+                : (session.workflow_status == runtime_session::WorkflowSessionStatus::Failed
+                       ? ReplayStatus::RuntimeFailed
+                       : ReplayStatus::Partial),
+        .workflow_failure_summary = session.failure_summary,
         .execution_order = session.execution_order,
         .nodes = {},
         .consistency =
@@ -353,10 +467,10 @@ ReplayViewResult build_replay_view(const handoff::ExecutionPlan &plan,
     };
     replay.nodes.reserve(session.execution_order.size());
 
-    if (journal_completed_order != session.execution_order) {
+    if (journal_completed_order != session_completed_order) {
         replay.consistency.journal_matches_execution_order = false;
         result.diagnostics.error(
-            "replay view execution journal completed node order does not match runtime session execution_order");
+            "replay view execution journal completed node order does not match runtime session completed execution_order");
     }
 
     for (const auto &node_name : session.execution_order) {
@@ -402,6 +516,8 @@ ReplayViewResult build_replay_view(const handoff::ExecutionPlan &plan,
             .saw_node_became_ready = false,
             .saw_node_started = false,
             .saw_node_completed = false,
+            .saw_node_failed = false,
+            .failure_summary = std::nullopt,
             .used_mock_selectors = {},
             .final_status = session_node.status,
         };
@@ -418,17 +534,49 @@ ReplayViewResult build_replay_view(const handoff::ExecutionPlan &plan,
                 progression.saw_node_completed = true;
                 progression.used_mock_selectors = event->used_mock_selectors;
                 break;
+            case execution_journal::ExecutionJournalEventKind::MockMissing:
+            case execution_journal::ExecutionJournalEventKind::NodeFailed:
+                progression.saw_node_failed = true;
+                progression.failure_summary = event->failure_summary;
+                progression.used_mock_selectors = event->used_mock_selectors;
+                break;
             case execution_journal::ExecutionJournalEventKind::SessionStarted:
+            case execution_journal::ExecutionJournalEventKind::WorkflowFailed:
             case execution_journal::ExecutionJournalEventKind::WorkflowCompleted:
                 break;
             }
         }
 
-        if (!progression.saw_node_became_ready || !progression.saw_node_started ||
-            !progression.saw_node_completed) {
+        switch (session_node.status) {
+        case runtime_session::NodeSessionStatus::Completed:
+            if (!progression.saw_node_became_ready || !progression.saw_node_started ||
+                !progression.saw_node_completed || progression.saw_node_failed) {
+                replay.consistency.session_matches_journal = false;
+                result.diagnostics.error("replay view node '" + node_name +
+                                         "' does not have a complete ready/start/completed event sequence");
+            }
+            break;
+        case runtime_session::NodeSessionStatus::Failed:
+            if (!progression.saw_node_became_ready || !progression.saw_node_started ||
+                progression.saw_node_completed || !progression.saw_node_failed) {
+                replay.consistency.session_matches_journal = false;
+                result.diagnostics.error("replay view node '" + node_name +
+                                         "' does not have a complete ready/start/failed event sequence");
+            }
+            if (!failure_summary_equals(progression.failure_summary,
+                                        session_node.failure_summary)) {
+                replay.consistency.session_matches_journal = false;
+                result.diagnostics.error("replay view node '" + node_name +
+                                         "' failure summary does not match runtime session");
+            }
+            break;
+        case runtime_session::NodeSessionStatus::Blocked:
+        case runtime_session::NodeSessionStatus::Ready:
+        case runtime_session::NodeSessionStatus::Skipped:
             replay.consistency.session_matches_journal = false;
-            result.diagnostics.error("replay view node '" + node_name +
-                                     "' does not have a complete ready/start/completed event sequence");
+            result.diagnostics.error("replay view execution_order node '" + node_name +
+                                     "' is not executable terminal in runtime session");
+            break;
         }
 
         replay.nodes.push_back(std::move(progression));

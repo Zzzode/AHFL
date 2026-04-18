@@ -1,8 +1,8 @@
 {
-  "format_version": "ahfl.replay-view.v1",
+  "format_version": "ahfl.replay-view.v2",
   "source_execution_plan_format_version": "ahfl.execution-plan.v1",
-  "source_runtime_session_format_version": "ahfl.runtime-session.v1",
-  "source_execution_journal_format_version": "ahfl.execution-journal.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+  "source_execution_journal_format_version": "ahfl.execution-journal.v2",
   "source_package_identity": {
     "format_version": "ahfl.native-package.v1",
     "name": "workflow-value-flow",
@@ -14,6 +14,7 @@
   "input_fixture": "fixture.request.basic",
   "workflow_status": "completed",
   "replay_status": "consistent",
+  "workflow_failure_summary": null,
   "execution_order": [
     "first",
     "second"
@@ -28,6 +29,8 @@
       "saw_node_became_ready": true,
       "saw_node_started": true,
       "saw_node_completed": true,
+      "saw_node_failed": false,
+      "failure_summary": null,
       "used_mock_selectors": [],
       "final_status": "completed"
     },
@@ -44,6 +47,8 @@
       "saw_node_became_ready": true,
       "saw_node_started": true,
       "saw_node_completed": true,
+      "saw_node_failed": false,
+      "failure_summary": null,
       "used_mock_selectors": [],
       "final_status": "completed"
     }

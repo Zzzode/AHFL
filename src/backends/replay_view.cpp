@@ -42,8 +42,39 @@ class ReplayViewJsonPrinter final {
                 out_ << "null";
             });
             field("input_fixture", [&]() { write_string(replay.input_fixture); });
-            field("workflow_status", [&]() { write_string("completed"); });
-            field("replay_status", [&]() { write_string("consistent"); });
+            field("workflow_status", [&]() {
+                switch (replay.workflow_status) {
+                case runtime_session::WorkflowSessionStatus::Completed:
+                    write_string("completed");
+                    return;
+                case runtime_session::WorkflowSessionStatus::Failed:
+                    write_string("failed");
+                    return;
+                case runtime_session::WorkflowSessionStatus::Partial:
+                    write_string("partial");
+                    return;
+                }
+            });
+            field("replay_status", [&]() {
+                switch (replay.replay_status) {
+                case replay_view::ReplayStatus::Consistent:
+                    write_string("consistent");
+                    return;
+                case replay_view::ReplayStatus::RuntimeFailed:
+                    write_string("runtime_failed");
+                    return;
+                case replay_view::ReplayStatus::Partial:
+                    write_string("partial");
+                    return;
+                }
+            });
+            field("workflow_failure_summary", [&]() {
+                if (replay.workflow_failure_summary.has_value()) {
+                    print_failure_summary(*replay.workflow_failure_summary, 1);
+                    return;
+                }
+                out_ << "null";
+            });
             field("execution_order", [&]() {
                 print_array(1, [&](const auto &item) {
                     for (const auto &node_name : replay.execution_order) {
@@ -174,6 +205,16 @@ class ReplayViewJsonPrinter final {
             field("saw_node_completed", [&]() {
                 out_ << (node.saw_node_completed ? "true" : "false");
             });
+            field("saw_node_failed", [&]() {
+                out_ << (node.saw_node_failed ? "true" : "false");
+            });
+            field("failure_summary", [&]() {
+                if (node.failure_summary.has_value()) {
+                    print_failure_summary(*node.failure_summary, indent_level + 1);
+                    return;
+                }
+                out_ << "null";
+            });
             field("used_mock_selectors", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &selector : node.used_mock_selectors) {
@@ -192,8 +233,41 @@ class ReplayViewJsonPrinter final {
                 case runtime_session::NodeSessionStatus::Completed:
                     write_string("completed");
                     return;
+                case runtime_session::NodeSessionStatus::Failed:
+                    write_string("failed");
+                    return;
+                case runtime_session::NodeSessionStatus::Skipped:
+                    write_string("skipped");
+                    return;
                 }
             });
+        });
+    }
+
+    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
+                               int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("kind", [&]() {
+                switch (summary.kind) {
+                case runtime_session::RuntimeFailureKind::MockMissing:
+                    write_string("mock_missing");
+                    return;
+                case runtime_session::RuntimeFailureKind::NodeFailed:
+                    write_string("node_failed");
+                    return;
+                case runtime_session::RuntimeFailureKind::WorkflowFailed:
+                    write_string("workflow_failed");
+                    return;
+                }
+            });
+            field("node_name", [&]() {
+                if (summary.node_name.has_value()) {
+                    write_string(*summary.node_name);
+                    return;
+                }
+                out_ << "null";
+            });
+            field("message", [&]() { write_string(summary.message); });
         });
     }
 };

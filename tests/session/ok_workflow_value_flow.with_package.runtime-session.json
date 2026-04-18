@@ -1,5 +1,5 @@
 {
-  "format_version": "ahfl.runtime-session.v1",
+  "format_version": "ahfl.runtime-session.v2",
   "source_execution_plan_format_version": "ahfl.execution-plan.v1",
   "source_package_identity": {
     "format_version": "ahfl.native-package.v1",
@@ -10,6 +10,7 @@
   "session_id": "run-001",
   "run_id": "run-001",
   "workflow_status": "completed",
+  "failure_summary": null,
   "input_fixture": "fixture.request.basic",
   "options": {
     "sequential_mode": true
@@ -24,6 +25,7 @@
       "target": "ir::workflow_value_flow::EchoAgent",
       "status": "completed",
       "execution_index": 0,
+      "failure_summary": null,
       "satisfied_dependencies": [],
       "lifecycle": {
         "start_condition": "immediate",
@@ -51,6 +53,7 @@
       "target": "ir::workflow_value_flow::EchoAgent",
       "status": "completed",
       "execution_index": 1,
+      "failure_summary": null,
       "satisfied_dependencies": [
         "first"
       ],

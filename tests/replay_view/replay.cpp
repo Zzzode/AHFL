@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -112,13 +113,16 @@ load_project_plan(const std::filesystem::path &project_descriptor) {
 }
 
 [[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
-build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+build_runtime_session_with_mock(const ahfl::handoff::ExecutionPlan &plan,
+                                std::string input_fixture,
+                                std::string result_fixture,
+                                std::string run_id) {
     const auto session = ahfl::runtime_session::build_runtime_session(
         plan,
         ahfl::dry_run::DryRunRequest{
             .workflow_canonical_name = "app::main::ValueFlowWorkflow",
-            .input_fixture = "fixture.request.basic",
-            .run_id = "run-001",
+            .input_fixture = std::move(input_fixture),
+            .run_id = std::move(run_id),
         },
         ahfl::dry_run::CapabilityMockSet{
             .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
@@ -127,7 +131,7 @@ build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
                     ahfl::dry_run::CapabilityMock{
                         .capability_name = std::nullopt,
                         .binding_key = std::string("runtime.echo"),
-                        .result_fixture = "fixture.echo.ok",
+                        .result_fixture = std::move(result_fixture),
                         .invocation_label = std::string("echo-1"),
                     },
                 },
@@ -140,6 +144,24 @@ build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
     return *session.session;
 }
 
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_valid_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_runtime_session_with_mock(
+        plan, "fixture.request.basic", "fixture.echo.ok", "run-001");
+}
+
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_failed_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_runtime_session_with_mock(
+        plan, "fixture.request.failed", "fixture.echo.fail", "run-failed-001");
+}
+
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_partial_runtime_session(const ahfl::handoff::ExecutionPlan &plan) {
+    return build_runtime_session_with_mock(
+        plan, "fixture.request.partial", "fixture.echo.pending", "run-partial-001");
+}
+
 [[nodiscard]] std::optional<ahfl::execution_journal::ExecutionJournal>
 build_valid_execution_journal(const ahfl::runtime_session::RuntimeSession &session) {
     const auto journal = ahfl::execution_journal::build_execution_journal(session);
@@ -149,6 +171,23 @@ build_valid_execution_journal(const ahfl::runtime_session::RuntimeSession &sessi
     }
 
     return *journal.journal;
+}
+
+[[nodiscard]] std::optional<ahfl::replay_view::ReplayView>
+build_replay_view_from_session(const ahfl::handoff::ExecutionPlan &plan,
+                               const ahfl::runtime_session::RuntimeSession &session) {
+    const auto journal = build_valid_execution_journal(session);
+    if (!journal.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto replay = ahfl::replay_view::build_replay_view(plan, session, *journal);
+    if (replay.has_errors() || !replay.replay.has_value()) {
+        replay.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *replay.replay;
 }
 
 [[nodiscard]] std::optional<ahfl::replay_view::ReplayView>
@@ -249,6 +288,68 @@ int run_validate_replay_view_project_workflow_value_flow(
     const auto validation = ahfl::replay_view::validate_replay_view(*replay);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_build_replay_view_failed_workflow(
+    const std::filesystem::path &project_descriptor) {
+    const auto plan = load_project_plan(project_descriptor);
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto session = build_failed_runtime_session(*plan);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    const auto replay = build_replay_view_from_session(*plan, *session);
+    if (!replay.has_value()) {
+        return 1;
+    }
+
+    if (replay->workflow_status != ahfl::runtime_session::WorkflowSessionStatus::Failed ||
+        replay->replay_status != ahfl::replay_view::ReplayStatus::RuntimeFailed ||
+        !replay->workflow_failure_summary.has_value() || replay->execution_order.size() != 1 ||
+        replay->nodes.size() != 1 || replay->nodes[0].final_status !=
+                                          ahfl::runtime_session::NodeSessionStatus::Failed ||
+        !replay->nodes[0].saw_node_became_ready || !replay->nodes[0].saw_node_started ||
+        replay->nodes[0].saw_node_completed || !replay->nodes[0].saw_node_failed ||
+        !replay->nodes[0].failure_summary.has_value() ||
+        replay->nodes[0].used_mock_selectors.size() != 1 ||
+        replay->nodes[0].used_mock_selectors.front() != "binding:runtime.echo") {
+        std::cerr << "unexpected failed replay view\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_build_replay_view_partial_workflow(
+    const std::filesystem::path &project_descriptor) {
+    const auto plan = load_project_plan(project_descriptor);
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto session = build_partial_runtime_session(*plan);
+    if (!session.has_value()) {
+        return 1;
+    }
+
+    const auto replay = build_replay_view_from_session(*plan, *session);
+    if (!replay.has_value()) {
+        return 1;
+    }
+
+    if (replay->workflow_status != ahfl::runtime_session::WorkflowSessionStatus::Partial ||
+        replay->replay_status != ahfl::replay_view::ReplayStatus::Partial ||
+        replay->workflow_failure_summary.has_value() || !replay->execution_order.empty() ||
+        !replay->nodes.empty()) {
+        std::cerr << "unexpected partial replay view\n";
         return 1;
     }
 
@@ -392,6 +493,14 @@ int main(int argc, char **argv) {
 
     if (test_case == "build-replay-view-project-workflow-value-flow") {
         return run_build_replay_view_project_workflow_value_flow(project_descriptor);
+    }
+
+    if (test_case == "build-replay-view-failed-workflow") {
+        return run_build_replay_view_failed_workflow(project_descriptor);
+    }
+
+    if (test_case == "build-replay-view-partial-workflow") {
+        return run_build_replay_view_partial_workflow(project_descriptor);
     }
 
     if (test_case == "validate-replay-view-project-workflow-value-flow") {

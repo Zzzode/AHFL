@@ -12,16 +12,32 @@
 
 namespace ahfl::runtime_session {
 
-inline constexpr std::string_view kRuntimeSessionFormatVersion = "ahfl.runtime-session.v1";
+inline constexpr std::string_view kRuntimeSessionFormatVersion = "ahfl.runtime-session.v2";
 
 enum class WorkflowSessionStatus {
     Completed,
+    Failed,
+    Partial,
 };
 
 enum class NodeSessionStatus {
     Blocked,
     Ready,
     Completed,
+    Failed,
+    Skipped,
+};
+
+enum class RuntimeFailureKind {
+    MockMissing,
+    NodeFailed,
+    WorkflowFailed,
+};
+
+struct RuntimeFailureSummary {
+    RuntimeFailureKind kind{RuntimeFailureKind::WorkflowFailed};
+    std::optional<std::string> node_name;
+    std::string message;
 };
 
 struct RuntimeSessionOptions {
@@ -41,6 +57,7 @@ struct RuntimeSessionNode {
     std::string target;
     NodeSessionStatus status{NodeSessionStatus::Blocked};
     std::size_t execution_index{0};
+    std::optional<RuntimeFailureSummary> failure_summary;
     std::vector<std::string> satisfied_dependencies;
     handoff::WorkflowNodeLifecycleSummary lifecycle;
     ahfl::ir::WorkflowExprSummary input_summary;
@@ -56,6 +73,7 @@ struct RuntimeSession {
     std::string session_id;
     std::optional<std::string> run_id;
     WorkflowSessionStatus workflow_status{WorkflowSessionStatus::Completed};
+    std::optional<RuntimeFailureSummary> failure_summary;
     std::string input_fixture;
     RuntimeSessionOptions options;
     std::vector<std::string> execution_order;

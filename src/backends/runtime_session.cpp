@@ -38,7 +38,24 @@ class RuntimeSessionJsonPrinter final {
                 out_ << "null";
             });
             field("workflow_status", [&]() {
-                write_string("completed");
+                switch (session.workflow_status) {
+                case runtime_session::WorkflowSessionStatus::Completed:
+                    write_string("completed");
+                    return;
+                case runtime_session::WorkflowSessionStatus::Failed:
+                    write_string("failed");
+                    return;
+                case runtime_session::WorkflowSessionStatus::Partial:
+                    write_string("partial");
+                    return;
+                }
+            });
+            field("failure_summary", [&]() {
+                if (session.failure_summary.has_value()) {
+                    print_failure_summary(*session.failure_summary, 1);
+                    return;
+                }
+                out_ << "null";
             });
             field("input_fixture", [&]() { write_string(session.input_fixture); });
             field("options", [&]() { print_options(session.options, 1); });
@@ -229,6 +246,33 @@ class RuntimeSessionJsonPrinter final {
         });
     }
 
+    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
+                               int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("kind", [&]() {
+                switch (summary.kind) {
+                case runtime_session::RuntimeFailureKind::MockMissing:
+                    write_string("mock_missing");
+                    return;
+                case runtime_session::RuntimeFailureKind::NodeFailed:
+                    write_string("node_failed");
+                    return;
+                case runtime_session::RuntimeFailureKind::WorkflowFailed:
+                    write_string("workflow_failed");
+                    return;
+                }
+            });
+            field("node_name", [&]() {
+                if (summary.node_name.has_value()) {
+                    write_string(*summary.node_name);
+                    return;
+                }
+                out_ << "null";
+            });
+            field("message", [&]() { write_string(summary.message); });
+        });
+    }
+
     void print_node(const runtime_session::RuntimeSessionNode &node, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("node_name", [&]() { write_string(node.node_name); });
@@ -244,9 +288,22 @@ class RuntimeSessionJsonPrinter final {
                 case runtime_session::NodeSessionStatus::Completed:
                     write_string("completed");
                     return;
+                case runtime_session::NodeSessionStatus::Failed:
+                    write_string("failed");
+                    return;
+                case runtime_session::NodeSessionStatus::Skipped:
+                    write_string("skipped");
+                    return;
                 }
             });
             field("execution_index", [&]() { out_ << node.execution_index; });
+            field("failure_summary", [&]() {
+                if (node.failure_summary.has_value()) {
+                    print_failure_summary(*node.failure_summary, indent_level + 1);
+                    return;
+                }
+                out_ << "null";
+            });
             field("satisfied_dependencies", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &dependency : node.satisfied_dependencies) {

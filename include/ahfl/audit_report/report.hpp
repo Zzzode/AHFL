@@ -15,10 +15,12 @@
 
 namespace ahfl::audit_report {
 
-inline constexpr std::string_view kAuditReportFormatVersion = "ahfl.audit-report.v1";
+inline constexpr std::string_view kAuditReportFormatVersion = "ahfl.audit-report.v2";
 
 enum class AuditConclusion {
     Passed,
+    RuntimeFailed,
+    Partial,
 };
 
 struct AuditPlanNodeSummary {
@@ -59,7 +61,9 @@ struct AuditJournalSummary {
     std::size_t node_ready_events{0};
     std::size_t node_started_events{0};
     std::size_t node_completed_events{0};
+    std::size_t node_failed_events{0};
     std::size_t workflow_completed_events{0};
+    std::size_t workflow_failed_events{0};
     std::vector<std::string> completed_node_order;
 };
 
