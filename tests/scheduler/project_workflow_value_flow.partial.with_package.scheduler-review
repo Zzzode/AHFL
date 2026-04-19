@@ -1,0 +1,34 @@
+ahfl.scheduler-review.v1
+source_snapshot_format ahfl.scheduler-snapshot.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+workflow_status partial
+snapshot_status runnable
+checkpoint_friendly true
+next_action run_ready_node
+next_step run ready node 'first'
+next_candidate first
+terminal_reason none
+workflow_failure_summary {
+  value none
+}
+executed_prefix {
+  count 0
+  - none
+}
+ready_set {
+  count 1
+  - first target=lib::agents::AliasAgent execution_index=0
+    planned_dependencies none
+    satisfied_dependencies none
+}
+blocked_frontier {
+  count 1
+  - second target=lib::agents::AliasAgent execution_index=1
+    blocked_reason waiting_on_dependencies
+    may_become_ready true
+    missing_dependencies 1
+      - first
+}

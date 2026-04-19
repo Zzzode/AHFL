@@ -1,0 +1,33 @@
+ahfl.scheduler-review.v1
+source_snapshot_format ahfl.scheduler-snapshot.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+workflow_status failed
+snapshot_status terminal_failed
+checkpoint_friendly true
+next_action investigate_failure
+next_step inspect workflow failure at node 'first'; do not continue scheduling
+next_candidate none
+terminal_reason workflow_failed
+workflow_failure_summary {
+  kind workflow_failed
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+executed_prefix {
+  count 0
+  - none
+}
+ready_set {
+  count 0
+  - none
+}
+blocked_frontier {
+  count 1
+  - second target=lib::agents::AliasAgent execution_index=1
+    blocked_reason workflow_terminal_failure
+    may_become_ready false
+    missing_dependencies none
+}

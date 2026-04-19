@@ -1,0 +1,29 @@
+ahfl.scheduler-review.v1
+source_snapshot_format ahfl.scheduler-snapshot.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+workflow_status completed
+snapshot_status terminal_completed
+checkpoint_friendly true
+next_action workflow_completed
+next_step workflow is complete; no further scheduler action
+next_candidate none
+terminal_reason workflow_completed
+workflow_failure_summary {
+  value none
+}
+executed_prefix {
+  count 2
+  - first
+  - second
+}
+ready_set {
+  count 0
+  - none
+}
+blocked_frontier {
+  count 0
+  - none
+}

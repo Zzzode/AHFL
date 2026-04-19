@@ -1,0 +1,69 @@
+{
+  "format_version": "ahfl.scheduler-snapshot.v1",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+  "source_execution_journal_format_version": "ahfl.execution-journal.v2",
+  "source_replay_view_format_version": "ahfl.replay-view.v2",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "workflow_status": "partial",
+  "snapshot_status": "runnable",
+  "workflow_failure_summary": null,
+  "execution_order": [
+    "first",
+    "second"
+  ],
+  "ready_nodes": [
+    {
+      "node_name": "first",
+      "target": "lib::agents::AliasAgent",
+      "execution_index": 0,
+      "planned_dependencies": [],
+      "satisfied_dependencies": [],
+      "input_summary": {
+        "reads": [
+          {
+            "kind": "workflow_input",
+            "root_name": "input",
+            "members": []
+          }
+        ]
+      },
+      "capability_bindings": [
+        {
+          "capability_name": "lib::agents::Echo",
+          "binding_key": "runtime.echo"
+        }
+      ]
+    }
+  ],
+  "blocked_nodes": [
+    {
+      "node_name": "second",
+      "target": "lib::agents::AliasAgent",
+      "execution_index": 1,
+      "planned_dependencies": [
+        "first"
+      ],
+      "missing_dependencies": [
+        "first"
+      ],
+      "blocked_reason": "waiting_on_dependencies",
+      "may_become_ready": true,
+      "blocking_failure_summary": null
+    }
+  ],
+  "cursor": {
+    "completed_prefix_size": 0,
+    "completed_prefix": [],
+    "next_candidate_node_name": "first",
+    "checkpoint_friendly": true
+  }
+}

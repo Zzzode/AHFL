@@ -343,3 +343,109 @@ ahfl_label_tests(
         ahflc.emit_audit_report.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_audit_report.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-snapshot-model
+    TESTS
+        ahfl.scheduler_snapshot.model.validate_ok
+        ahfl.scheduler_snapshot.model.validate_failed_ok
+        ahfl.scheduler_snapshot.model.fail_runnable_without_ready_nodes
+        ahfl.scheduler_snapshot.model.fail_next_candidate_not_ready
+        ahfl.scheduler_snapshot.model.fail_non_prefix_cursor
+        ahfl.scheduler_snapshot.model.fail_ready_dependency_outside_planned_set
+        ahfl.scheduler_snapshot.model.fail_unknown_ready_node
+        ahfl.scheduler_snapshot.model.fail_blocked_terminal_failure_without_summary
+        ahfl.scheduler_snapshot.model.fail_terminal_completed_without_full_prefix
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-snapshot-bootstrap
+    TESTS
+        ahfl.scheduler_snapshot.bootstrap.project_workflow_value_flow
+        ahfl.scheduler_snapshot.bootstrap.failed_workflow
+        ahfl.scheduler_snapshot.bootstrap.partial_workflow
+        ahfl.scheduler_snapshot.bootstrap.fail_replay_workflow_mismatch
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-review-model
+    TESTS
+        ahfl.scheduler_review.model.completed_summary
+        ahfl.scheduler_review.model.failed_summary
+        ahfl.scheduler_review.model.partial_summary
+        ahfl.scheduler_review.model.fail_invalid_snapshot
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-compatibility
+    TESTS
+        ahfl.scheduler_snapshot.compat.fail_unsupported_format_version
+        ahfl.scheduler_snapshot.compat.fail_unsupported_source_replay_view_format_version
+        ahfl.scheduler_review.compat.validate_ok
+        ahfl.scheduler_review.compat.fail_unsupported_format_version
+        ahfl.scheduler_review.compat.fail_unsupported_source_snapshot_format_version
+        ahfl.scheduler_review.compat.fail_prefix_size_mismatch
+        ahfl.scheduler_review.compat.fail_runnable_terminal_reason
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-snapshot-emission
+    TESTS
+        ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
+        ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-review-emission
+    TESTS
+        ahflc.emit_scheduler_review.workflow_value_flow.with_package
+        ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-golden
+    TESTS
+        ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
+        ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_scheduler_review.workflow_value_flow.with_package
+        ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.10 v0.10-scheduler-regression
+    TESTS
+        ahfl.scheduler_snapshot.model.validate_ok
+        ahfl.scheduler_snapshot.model.validate_failed_ok
+        ahfl.scheduler_snapshot.model.fail_runnable_without_ready_nodes
+        ahfl.scheduler_snapshot.model.fail_next_candidate_not_ready
+        ahfl.scheduler_snapshot.model.fail_non_prefix_cursor
+        ahfl.scheduler_snapshot.model.fail_ready_dependency_outside_planned_set
+        ahfl.scheduler_snapshot.model.fail_unknown_ready_node
+        ahfl.scheduler_snapshot.model.fail_blocked_terminal_failure_without_summary
+        ahfl.scheduler_snapshot.model.fail_terminal_completed_without_full_prefix
+        ahfl.scheduler_snapshot.compat.fail_unsupported_format_version
+        ahfl.scheduler_snapshot.compat.fail_unsupported_source_replay_view_format_version
+        ahfl.scheduler_snapshot.bootstrap.project_workflow_value_flow
+        ahfl.scheduler_snapshot.bootstrap.failed_workflow
+        ahfl.scheduler_snapshot.bootstrap.partial_workflow
+        ahfl.scheduler_snapshot.bootstrap.fail_replay_workflow_mismatch
+        ahfl.scheduler_review.model.completed_summary
+        ahfl.scheduler_review.model.failed_summary
+        ahfl.scheduler_review.model.partial_summary
+        ahfl.scheduler_review.model.fail_invalid_snapshot
+        ahfl.scheduler_review.compat.validate_ok
+        ahfl.scheduler_review.compat.fail_unsupported_format_version
+        ahfl.scheduler_review.compat.fail_unsupported_source_snapshot_format_version
+        ahfl.scheduler_review.compat.fail_prefix_size_mismatch
+        ahfl.scheduler_review.compat.fail_runnable_terminal_reason
+        ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
+        ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_scheduler_review.workflow_value_flow.with_package
+        ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
+)

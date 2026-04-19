@@ -458,6 +458,133 @@ add_test(NAME ahfl.audit_report.bootstrap.fail_trace_execution_order_mismatch
             "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
 )
 
+add_test(NAME ahfl.scheduler_snapshot.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-ok
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.validate_failed_ok
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-failed-ok
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_runnable_without_ready_nodes
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-runnable-without-ready-nodes
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_next_candidate_not_ready
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-next-candidate-not-ready
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_non_prefix_cursor
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-non-prefix-cursor
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_ready_dependency_outside_planned_set
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-ready-dependency-outside-planned-set
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_unknown_ready_node
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-unknown-ready-node
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_blocked_terminal_failure_without_summary
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-blocked-terminal-failure-without-summary
+)
+
+add_test(NAME ahfl.scheduler_snapshot.model.fail_terminal_completed_without_full_prefix
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-terminal-completed-without-full-prefix
+)
+
+add_test(NAME ahfl.scheduler_snapshot.compat.fail_unsupported_format_version
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-unsupported-format-version
+)
+
+add_test(NAME ahfl.scheduler_snapshot.compat.fail_unsupported_source_replay_view_format_version
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-snapshot-rejects-unsupported-source-replay-view-format-version
+)
+
+add_test(NAME ahfl.scheduler_snapshot.bootstrap.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-snapshot-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_snapshot.bootstrap.failed_workflow
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-snapshot-failed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_snapshot.bootstrap.partial_workflow
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-snapshot-partial-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_snapshot.bootstrap.fail_replay_workflow_mismatch
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-snapshot-rejects-replay-workflow-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_review.model.completed_summary
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-decision-summary-completed
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_review.model.failed_summary
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-decision-summary-failed
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_review.model.partial_summary
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-decision-summary-partial
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.scheduler_review.model.fail_invalid_snapshot
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            build-scheduler-decision-summary-rejects-invalid-snapshot
+)
+
+add_test(NAME ahfl.scheduler_review.compat.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-decision-summary-ok
+)
+
+add_test(NAME ahfl.scheduler_review.compat.fail_unsupported_format_version
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-decision-summary-rejects-unsupported-format-version
+)
+
+add_test(NAME ahfl.scheduler_review.compat.fail_unsupported_source_snapshot_format_version
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-decision-summary-rejects-unsupported-source-snapshot-format-version
+)
+
+add_test(NAME ahfl.scheduler_review.compat.fail_prefix_size_mismatch
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-decision-summary-rejects-prefix-size-mismatch
+)
+
+add_test(NAME ahfl.scheduler_review.compat.fail_runnable_terminal_reason
+    COMMAND $<TARGET_FILE:ahfl_scheduler_snapshot_tests>
+            validate-scheduler-decision-summary-rejects-runnable-terminal-reason
+)
+
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
     COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
             normalize-identity-format-version
@@ -683,6 +810,22 @@ add_test(NAME ahflc.emit_audit_report.project_manifest.workflow_value_flow.faile
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-scheduler-snapshot --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/scheduler/project_workflow_value_flow.failed.with_package.scheduler-snapshot.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-scheduler-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/scheduler/project_workflow_value_flow.failed.with_package.scheduler-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_native_json.workspace.workflow_value_flow
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -779,6 +922,22 @@ add_test(NAME ahflc.emit_audit_report.workspace.workflow_value_flow.partial.with
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-scheduler-snapshot --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/scheduler/project_workflow_value_flow.partial.with_package.scheduler-snapshot.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-scheduler-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/scheduler/project_workflow_value_flow.partial.with_package.scheduler-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_summary.project_manifest.workflow_value_flow
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -838,7 +997,7 @@ add_test(NAME ahflc.check.project_manifest.fail_package_without_native_json
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
             "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
-            "-DEXPECTED_REGEX=--package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-runtime-session, emit-dry-run-trace, or emit-package-review"
+            "-DEXPECTED_REGEX=--package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 

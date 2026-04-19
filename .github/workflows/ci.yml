@@ -109,6 +109,9 @@ jobs:
       - name: Run V0.9 Failure-Path Regression
         run: ctest --preset test-dev --output-on-failure -L 'v0.9-(runtime-session-validation|runtime-session-bootstrap|runtime-session-emission|execution-journal-model|execution-journal-bootstrap|replay-view-model|replay-view-emission|audit-report-bootstrap|audit-report-emission)'
 
+      - name: Run V0.10 Scheduler Prototype Regression
+        run: ctest --preset test-dev --output-on-failure -L 'v0.10-scheduler-regression'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -135,6 +138,9 @@ jobs:
 
       - name: Build
         run: cmake --build --preset build-asan
+
+      - name: Run V0.10 Scheduler Prototype Regression
+        run: ctest --preset test-asan --output-on-failure -L 'v0.10-scheduler-regression'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

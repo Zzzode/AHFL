@@ -88,3 +88,12 @@ target_link_libraries(ahfl_audit_report_tests
         ahfl_audit_report
 )
 ahfl_apply_project_warnings(ahfl_audit_report_tests)
+
+add_executable(ahfl_scheduler_snapshot_tests
+    scheduler_snapshot/snapshot.cpp
+)
+target_link_libraries(ahfl_scheduler_snapshot_tests
+    PRIVATE
+        ahfl_scheduler_snapshot
+)
+ahfl_apply_project_warnings(ahfl_scheduler_snapshot_tests)

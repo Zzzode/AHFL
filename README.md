@@ -130,6 +130,8 @@ Backend outputs:
 | `emit-runtime-session` | deterministic runtime session snapshot for local runtime bootstrap |
 | `emit-execution-journal` | deterministic event journal for replay / audit bootstrap |
 | `emit-replay-view` | deterministic replay projection over plan, session, and journal |
+| `emit-scheduler-snapshot` | deterministic scheduler-facing snapshot over plan, session, journal, and replay |
+| `emit-scheduler-review` | reviewer-facing scheduler decision summary over scheduler snapshot |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -206,7 +208,7 @@ Available configure presets:
 Start here instead of reading a wall of filenames:
 
 - [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) — normative Core language spec
-- [`docs/reference/cli-commands-v0.5.zh.md`](docs/reference/cli-commands-v0.5.zh.md) — CLI command reference
+- [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md) — current CLI command reference
 - [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) — project / workspace / package authoring usage
 - [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md) — stable IR reference
 - [`docs/reference/native-package-authoring-compatibility-v0.5.zh.md`](docs/reference/native-package-authoring-compatibility-v0.5.zh.md) — Native package authoring compatibility
@@ -216,8 +218,10 @@ Start here instead of reading a wall of filenames:
 - [`docs/reference/replay-view-compatibility-v0.9.zh.md`](docs/reference/replay-view-compatibility-v0.9.zh.md) — V0.9 replay view compatibility
 - [`docs/reference/audit-report-compatibility-v0.9.zh.md`](docs/reference/audit-report-compatibility-v0.9.zh.md) — V0.9 audit report compatibility
 - [`docs/reference/failure-path-compatibility-v0.9.zh.md`](docs/reference/failure-path-compatibility-v0.9.zh.md) — V0.9 failure-path compatibility
-- [`docs/reference/native-consumer-matrix-v0.9.zh.md`](docs/reference/native-consumer-matrix-v0.9.zh.md) — V0.9 native consumer matrix
-- [`docs/reference/contributor-guide-v0.9.zh.md`](docs/reference/contributor-guide-v0.9.zh.md) — contributor guide for V0.9 failure-path artifacts
+- [`docs/reference/scheduler-prototype-compatibility-v0.10.zh.md`](docs/reference/scheduler-prototype-compatibility-v0.10.zh.md) — V0.10 scheduler prototype compatibility
+- [`docs/reference/native-consumer-matrix-v0.10.zh.md`](docs/reference/native-consumer-matrix-v0.10.zh.md) — current native consumer matrix
+- [`docs/reference/contributor-guide-v0.10.zh.md`](docs/reference/contributor-guide-v0.10.zh.md) — current contributor guide for scheduler-facing artifacts
+- [`docs/design/native-scheduler-prototype-bootstrap-v0.10.zh.md`](docs/design/native-scheduler-prototype-bootstrap-v0.10.zh.md) — scheduler prototype / checkpoint-friendly boundary
 - [`docs/design/native-execution-plan-architecture-v0.6.zh.md`](docs/design/native-execution-plan-architecture-v0.6.zh.md) — Execution plan boundary
 - [`docs/design/native-dry-run-bootstrap-v0.6.zh.md`](docs/design/native-dry-run-bootstrap-v0.6.zh.md) — local dry-run bootstrap boundary
 - [`docs/design/native-runtime-session-bootstrap-v0.7.zh.md`](docs/design/native-runtime-session-bootstrap-v0.7.zh.md) — runtime session boundary
@@ -227,8 +231,10 @@ Start here instead of reading a wall of filenames:
 - [`docs/design/native-package-authoring-architecture-v0.5.zh.md`](docs/design/native-package-authoring-architecture-v0.5.zh.md) — Native package authoring boundary
 - [`docs/design/native-consumer-bootstrap-v0.5.zh.md`](docs/design/native-consumer-bootstrap-v0.5.zh.md) — Native consumer bootstrap boundary
 - [`docs/design/testing-strategy-v0.5.zh.md`](docs/design/testing-strategy-v0.5.zh.md) — V0.5 testing strategy
-- [`docs/plan/roadmap-v0.9.zh.md`](docs/plan/roadmap-v0.9.zh.md) — current execution plan
-- [`docs/plan/issue-backlog-v0.9.zh.md`](docs/plan/issue-backlog-v0.9.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.10.zh.md`](docs/plan/roadmap-v0.10.zh.md) — current execution plan
+- [`docs/plan/issue-backlog-v0.10.zh.md`](docs/plan/issue-backlog-v0.10.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.9.zh.md`](docs/plan/roadmap-v0.9.zh.md) — completed V0.9 baseline
+- [`docs/plan/issue-backlog-v0.9.zh.md`](docs/plan/issue-backlog-v0.9.zh.md) — completed V0.9 backlog
 - [`docs/plan/roadmap-v0.8.zh.md`](docs/plan/roadmap-v0.8.zh.md) — completed V0.8 baseline
 - [`docs/plan/issue-backlog-v0.8.zh.md`](docs/plan/issue-backlog-v0.8.zh.md) — completed V0.8 backlog
 - [`docs/design/compiler-architecture-v0.2.zh.md`](docs/design/compiler-architecture-v0.2.zh.md) — compiler architecture
