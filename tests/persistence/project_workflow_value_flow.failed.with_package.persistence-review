@@ -1,0 +1,32 @@
+ahfl.persistence-review.v1
+source_descriptor_format ahfl.persistence-descriptor.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+workflow_status failed
+checkpoint_status terminal_failed
+persistence_status terminal_failed
+planned_durable_identity plan::workflow-value-flow::run-failed-001::prefix-0
+export_basis_kind local_planning_only
+export_ready false
+next_action investigate_failure
+store_boundary local persistence planning only; durable store mutation ABI not yet promised
+export_preview workflow failed at node 'first'; export is closed for current descriptor
+next_step inspect workflow failure before planning durable export
+next_export_candidate none
+workflow_failure_summary {
+  kind workflow_failed
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+persistence_blocker {
+  kind workflow_failure
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+exportable_prefix {
+  count 0
+  - none
+}

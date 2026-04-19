@@ -1,0 +1,35 @@
+{
+  "format_version": "ahfl.persistence-descriptor.v1",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+  "source_execution_journal_format_version": "ahfl.execution-journal.v2",
+  "source_replay_view_format_version": "ahfl.replay-view.v2",
+  "source_scheduler_snapshot_format_version": "ahfl.scheduler-snapshot.v1",
+  "source_checkpoint_record_format_version": "ahfl.checkpoint-record.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "workflow_status": "partial",
+  "checkpoint_status": "ready_to_persist",
+  "persistence_status": "ready_to_export",
+  "workflow_failure_summary": null,
+  "execution_order": [
+    "first",
+    "second"
+  ],
+  "planned_durable_identity": "plan::workflow-value-flow::run-partial-001::prefix-0",
+  "export_basis_kind": "local_planning_only",
+  "cursor": {
+    "exportable_prefix_size": 0,
+    "exportable_prefix": [],
+    "next_export_candidate_node_name": "first",
+    "export_ready": true
+  },
+  "persistence_blocker": null
+}

@@ -702,6 +702,124 @@ add_test(NAME ahfl.checkpoint_review.compat.fail_ready_terminal_reason
             validate-checkpoint-review-rejects-ready-terminal-reason
 )
 
+add_test(NAME ahfl.persistence_descriptor.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-ok
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.validate_blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-blocked-ok
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.validate_terminal_failed_ok
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-terminal-failed-ok
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.validate_terminal_partial_ok
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-terminal-partial-ok
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_missing_planned_identity
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-missing-planned-identity
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_non_prefix_cursor
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-non-prefix-cursor
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_export_ready_with_blocker
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-export-ready-with-blocker
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_unsupported_checkpoint_record_format
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-unsupported-checkpoint-record-format
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_ready_from_blocked_checkpoint
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-ready-from-blocked-checkpoint
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_terminal_failed_export_ready
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-terminal-failed-export-ready
+)
+
+add_test(NAME ahfl.persistence_descriptor.model.fail_store_adjacent_blocked
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-descriptor-rejects-store-adjacent-blocked
+)
+
+add_test(NAME ahfl.persistence_descriptor.bootstrap.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-descriptor-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_descriptor.bootstrap.failed_workflow
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-descriptor-failed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_descriptor.bootstrap.partial_workflow
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-descriptor-partial-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_descriptor.bootstrap.fail_invalid_checkpoint_record
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-descriptor-rejects-invalid-checkpoint-record
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_descriptor.bootstrap.fail_checkpoint_workflow_mismatch
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-descriptor-rejects-checkpoint-workflow-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-review-ok
+)
+
+add_test(NAME ahfl.persistence_review.model.fail_unsupported_source_descriptor_format
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            validate-persistence-review-rejects-unsupported-source-descriptor-format
+)
+
+add_test(NAME ahfl.persistence_review.model.fail_invalid_descriptor
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-review-rejects-invalid-descriptor
+)
+
+add_test(NAME ahfl.persistence_review.model.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-review-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_review.model.failed_workflow
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-review-failed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.persistence_review.model.partial_workflow
+    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+            build-persistence-review-partial-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
     COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
             normalize-identity-format-version
@@ -951,6 +1069,22 @@ add_test(NAME ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_persistence_descriptor.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-persistence-descriptor --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/project_workflow_value_flow.failed.with_package.persistence-descriptor.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-persistence-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/project_workflow_value_flow.failed.with_package.persistence-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -1076,6 +1210,22 @@ add_test(NAME ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-checkpoint-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/project_workflow_value_flow.partial.with_package.checkpoint-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_persistence_descriptor.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-persistence-descriptor --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/project_workflow_value_flow.partial.with_package.persistence-descriptor.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_persistence_review.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-persistence-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/project_workflow_value_flow.partial.with_package.persistence-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 

@@ -222,6 +222,22 @@ add_test(NAME ahflc.emit_checkpoint_review.workflow_value_flow.with_package
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_persistence_descriptor.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-persistence-descriptor --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/ok_workflow_value_flow.with_package.persistence-descriptor.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_persistence_review.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-persistence-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/ok_workflow_value_flow.with_package.persistence-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_scheduler_review.workflow_value_flow.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

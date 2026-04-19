@@ -1,0 +1,29 @@
+ahfl.persistence-review.v1
+source_descriptor_format ahfl.persistence-descriptor.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+workflow_status completed
+checkpoint_status terminal_completed
+persistence_status terminal_completed
+planned_durable_identity plan::workflow-value-flow::run-001::prefix-2
+export_basis_kind local_planning_only
+export_ready false
+next_action workflow_completed
+store_boundary local persistence planning only; durable store mutation ABI not yet promised
+export_preview workflow already completed; completed exportable prefix is retained for archival review
+next_step archive completed persistence handoff; no further export action
+next_export_candidate none
+workflow_failure_summary {
+  value none
+}
+persistence_blocker {
+  value none
+}
+exportable_prefix {
+  count 2
+  - first
+  - second
+}

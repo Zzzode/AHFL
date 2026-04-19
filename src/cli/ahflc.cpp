@@ -6,6 +6,8 @@
 #include "ahfl/backends/dry_run_trace.hpp"
 #include "ahfl/backends/execution_plan.hpp"
 #include "ahfl/backends/execution_journal.hpp"
+#include "ahfl/backends/persistence_descriptor.hpp"
+#include "ahfl/backends/persistence_review.hpp"
 #include "ahfl/backends/replay_view.hpp"
 #include "ahfl/backends/scheduler_review.hpp"
 #include "ahfl/backends/runtime_session.hpp"
@@ -15,6 +17,8 @@
 #include "ahfl/dry_run/runner.hpp"
 #include "ahfl/execution_journal/journal.hpp"
 #include "ahfl/frontend/frontend.hpp"
+#include "ahfl/persistence_descriptor/descriptor.hpp"
+#include "ahfl/persistence_descriptor/review.hpp"
 #include "ahfl/replay_view/replay.hpp"
 #include "ahfl/runtime_session/session.hpp"
 #include "ahfl/scheduler_snapshot/review.hpp"
@@ -51,6 +55,8 @@ struct CommandLineOptions {
     bool emit_scheduler_snapshot{false};
     bool emit_checkpoint_record{false};
     bool emit_checkpoint_review{false};
+    bool emit_persistence_descriptor{false};
+    bool emit_persistence_review{false};
     bool emit_scheduler_review{false};
     bool emit_runtime_session{false};
     bool emit_dry_run_trace{false};
@@ -73,12 +79,12 @@ void print_usage(std::ostream &out) {
     out << "Usage:\n"
         << "  ahflc "
            "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
-           "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-runtime-session|emit-dry-run-trace|emit-"
+           "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-runtime-session|emit-dry-run-trace|emit-"
            "scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --project "
            "<ahfl.project.json>\n"
         << "  ahflc "
            "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
-           "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-runtime-session|emit-dry-run-trace|emit-"
+           "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-runtime-session|emit-dry-run-trace|emit-"
            "scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --workspace "
            "<ahfl.workspace.json> --project-name <name>\n"
         << "  ahflc check [--search-root <dir>]... [--dump-ast] <input.ahfl>\n"
@@ -109,6 +115,12 @@ void print_usage(std::ostream &out) {
         << "  ahflc emit-checkpoint-review --package <ahfl.package.json> --capability-mocks "
            "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
            "[--search-root <dir>]... <input.ahfl>\n"
+        << "  ahflc emit-persistence-descriptor --package <ahfl.package.json> --capability-mocks "
+           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
+           "[--search-root <dir>]... <input.ahfl>\n"
+        << "  ahflc emit-persistence-review --package <ahfl.package.json> --capability-mocks "
+           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
+           "[--search-root <dir>]... <input.ahfl>\n"
         << "  ahflc emit-scheduler-review --package <ahfl.package.json> --capability-mocks "
            "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
            "[--search-root <dir>]... <input.ahfl>\n"
@@ -132,6 +144,8 @@ void print_usage(std::ostream &out) {
            argument == "emit-execution-journal" || argument == "emit-replay-view" ||
            argument == "emit-audit-report" || argument == "emit-scheduler-snapshot" ||
            argument == "emit-checkpoint-record" || argument == "emit-checkpoint-review" ||
+           argument == "emit-persistence-descriptor" ||
+           argument == "emit-persistence-review" ||
            argument == "emit-scheduler-review" ||
            argument == "emit-runtime-session" ||
            argument == "emit-dry-run-trace" ||
@@ -177,6 +191,14 @@ void print_usage(std::ostream &out) {
     }
 
     if (options.emit_checkpoint_review) {
+        return std::nullopt;
+    }
+
+    if (options.emit_persistence_descriptor) {
+        return std::nullopt;
+    }
+
+    if (options.emit_persistence_review) {
         return std::nullopt;
     }
 
@@ -811,6 +833,173 @@ template <typename InputT>
     return 0;
 }
 
+[[nodiscard]] int emit_persistence_descriptor_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan_result = ahfl::handoff::build_execution_plan(
+        ahfl::handoff::lower_package(program, metadata));
+    plan_result.diagnostics.render(std::cerr);
+    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+        return 1;
+    }
+
+    auto workflow_name =
+        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
+    if (!workflow_name.has_value()) {
+        workflow_name = plan_result.plan->entry_workflow_canonical_name;
+    }
+
+    if (!workflow_name.has_value()) {
+        std::cerr << "error: emit-persistence-descriptor requires --workflow or package workflow entry\n";
+        return 1;
+    }
+
+    const auto session = ahfl::runtime_session::build_runtime_session(
+        *plan_result.plan,
+        ahfl::dry_run::DryRunRequest{
+            .workflow_canonical_name = std::move(*workflow_name),
+            .input_fixture = std::string(*options.input_fixture),
+            .run_id =
+                options.run_id.transform([](std::string_view value) { return std::string(value); }),
+        },
+        mock_set);
+    session.diagnostics.render(std::cerr);
+    if (session.has_errors() || !session.session.has_value()) {
+        return 1;
+    }
+
+    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
+    journal.diagnostics.render(std::cerr);
+    if (journal.has_errors() || !journal.journal.has_value()) {
+        return 1;
+    }
+
+    const auto replay =
+        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
+    replay.diagnostics.render(std::cerr);
+    if (replay.has_errors() || !replay.replay.has_value()) {
+        return 1;
+    }
+
+    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
+    snapshot.diagnostics.render(std::cerr);
+    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+        return 1;
+    }
+
+    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
+    record.diagnostics.render(std::cerr);
+    if (record.has_errors() || !record.record.has_value()) {
+        return 1;
+    }
+
+    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record);
+    descriptor.diagnostics.render(std::cerr);
+    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_persistence_descriptor_json(*descriptor.descriptor, std::cout);
+    return 0;
+}
+
+[[nodiscard]] int emit_persistence_review_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan_result = ahfl::handoff::build_execution_plan(
+        ahfl::handoff::lower_package(program, metadata));
+    plan_result.diagnostics.render(std::cerr);
+    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+        return 1;
+    }
+
+    auto workflow_name =
+        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
+    if (!workflow_name.has_value()) {
+        workflow_name = plan_result.plan->entry_workflow_canonical_name;
+    }
+
+    if (!workflow_name.has_value()) {
+        std::cerr << "error: emit-persistence-review requires --workflow or package workflow entry\n";
+        return 1;
+    }
+
+    const auto session = ahfl::runtime_session::build_runtime_session(
+        *plan_result.plan,
+        ahfl::dry_run::DryRunRequest{
+            .workflow_canonical_name = std::move(*workflow_name),
+            .input_fixture = std::string(*options.input_fixture),
+            .run_id =
+                options.run_id.transform([](std::string_view value) { return std::string(value); }),
+        },
+        mock_set);
+    session.diagnostics.render(std::cerr);
+    if (session.has_errors() || !session.session.has_value()) {
+        return 1;
+    }
+
+    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
+    journal.diagnostics.render(std::cerr);
+    if (journal.has_errors() || !journal.journal.has_value()) {
+        return 1;
+    }
+
+    const auto replay =
+        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
+    replay.diagnostics.render(std::cerr);
+    if (replay.has_errors() || !replay.replay.has_value()) {
+        return 1;
+    }
+
+    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
+    snapshot.diagnostics.render(std::cerr);
+    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+        return 1;
+    }
+
+    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
+    record.diagnostics.render(std::cerr);
+    if (record.has_errors() || !record.record.has_value()) {
+        return 1;
+    }
+
+    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record);
+    descriptor.diagnostics.render(std::cerr);
+    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+        return 1;
+    }
+
+    const auto summary = ahfl::persistence_descriptor::build_persistence_review_summary(
+        *descriptor.descriptor);
+    summary.diagnostics.render(std::cerr);
+    if (summary.has_errors() || !summary.summary.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_persistence_review(*summary.summary, std::cout);
+    return 0;
+}
+
 template <typename ResultT>
 void render_diagnostics(const ResultT &result, MaybeSourceFile source_file, std::ostream &out) {
     if (source_file.has_value()) {
@@ -965,6 +1154,16 @@ template <typename InputT>
 
         if (options.emit_checkpoint_review) {
             return emit_checkpoint_review_with_diagnostics(
+                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        }
+
+        if (options.emit_persistence_descriptor) {
+            return emit_persistence_descriptor_with_diagnostics(
+                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        }
+
+        if (options.emit_persistence_review) {
+            return emit_persistence_review_with_diagnostics(
                 ir_program, metadata_validation.metadata, *capability_mock_set, options);
         }
 
@@ -1164,6 +1363,12 @@ template <typename InputT>
             if (argument == "emit-checkpoint-review") {
                 options.emit_checkpoint_review = true;
             }
+            if (argument == "emit-persistence-descriptor") {
+                options.emit_persistence_descriptor = true;
+            }
+            if (argument == "emit-persistence-review") {
+                options.emit_persistence_review = true;
+            }
             if (argument == "emit-scheduler-review") {
                 options.emit_scheduler_review = true;
             }
@@ -1214,6 +1419,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         static_cast<int>(options.emit_scheduler_snapshot) +
         static_cast<int>(options.emit_checkpoint_record) +
         static_cast<int>(options.emit_checkpoint_review) +
+        static_cast<int>(options.emit_persistence_descriptor) +
+        static_cast<int>(options.emit_persistence_review) +
         static_cast<int>(options.emit_scheduler_review) +
         static_cast<int>(options.emit_runtime_session) +
         static_cast<int>(options.emit_dry_run_trace) +
@@ -1221,7 +1428,7 @@ int run_cli(std::span<const std::string_view> arguments) {
         static_cast<int>(options.emit_smv);
     if (action_count > 1) {
         std::cerr << "error: choose at most one of dump-ast, dump-types, dump-project, emit-ir, "
-           "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
+           "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
            "emit-package-review, emit-summary, or emit-smv\n";
         print_usage(std::cerr);
         return 2;
@@ -1273,11 +1480,13 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_scheduler_snapshot &&
         !options.emit_checkpoint_record &&
         !options.emit_checkpoint_review &&
+        !options.emit_persistence_descriptor &&
+        !options.emit_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session &&
         !options.emit_dry_run_trace &&
         !options.emit_package_review) {
-        std::cerr << "error: --package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review\n";
+        std::cerr << "error: --package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1289,9 +1498,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_scheduler_snapshot &&
         !options.emit_checkpoint_record &&
         !options.emit_checkpoint_review &&
+        !options.emit_persistence_descriptor &&
+        !options.emit_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1303,9 +1514,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_scheduler_snapshot &&
         !options.emit_checkpoint_record &&
         !options.emit_checkpoint_review &&
+        !options.emit_persistence_descriptor &&
+        !options.emit_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1317,9 +1530,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_scheduler_snapshot &&
         !options.emit_checkpoint_record &&
         !options.emit_checkpoint_review &&
+        !options.emit_persistence_descriptor &&
+        !options.emit_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --run-id is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --run-id is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1331,9 +1546,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_scheduler_snapshot &&
         !options.emit_checkpoint_record &&
         !options.emit_checkpoint_review &&
+        !options.emit_persistence_descriptor &&
+        !options.emit_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --workflow is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --workflow is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1342,7 +1559,8 @@ int run_cli(std::span<const std::string_view> arguments) {
     if (options.emit_dry_run_trace || options.emit_execution_journal ||
         options.emit_replay_view || options.emit_audit_report ||
         options.emit_scheduler_snapshot || options.emit_checkpoint_record ||
-        options.emit_checkpoint_review ||
+        options.emit_checkpoint_review || options.emit_persistence_descriptor ||
+        options.emit_persistence_review ||
         options.emit_scheduler_review ||
         options.emit_runtime_session) {
         if (!options.package_descriptor.has_value()) {
@@ -1359,6 +1577,10 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-checkpoint-record"
                               : options.emit_checkpoint_review
                                     ? "emit-checkpoint-review"
+                              : options.emit_persistence_descriptor
+                                    ? "emit-persistence-descriptor"
+                              : options.emit_persistence_review
+                                    ? "emit-persistence-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"
@@ -1381,6 +1603,10 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-checkpoint-record"
                               : options.emit_checkpoint_review
                                     ? "emit-checkpoint-review"
+                              : options.emit_persistence_descriptor
+                                    ? "emit-persistence-descriptor"
+                              : options.emit_persistence_review
+                                    ? "emit-persistence-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"
@@ -1403,6 +1629,10 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-checkpoint-record"
                               : options.emit_checkpoint_review
                                     ? "emit-checkpoint-review"
+                              : options.emit_persistence_descriptor
+                                    ? "emit-persistence-descriptor"
+                              : options.emit_persistence_review
+                                    ? "emit-persistence-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"

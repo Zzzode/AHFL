@@ -513,3 +513,67 @@ ahfl_label_tests(
         ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.12 v0.12-persistence-descriptor-model
+    TESTS
+        ahfl.persistence_descriptor.model.validate_ok
+        ahfl.persistence_descriptor.model.validate_blocked_ok
+        ahfl.persistence_descriptor.model.validate_terminal_failed_ok
+        ahfl.persistence_descriptor.model.validate_terminal_partial_ok
+        ahfl.persistence_descriptor.model.fail_missing_planned_identity
+        ahfl.persistence_descriptor.model.fail_non_prefix_cursor
+        ahfl.persistence_descriptor.model.fail_export_ready_with_blocker
+        ahfl.persistence_descriptor.model.fail_unsupported_checkpoint_record_format
+        ahfl.persistence_descriptor.model.fail_ready_from_blocked_checkpoint
+        ahfl.persistence_descriptor.model.fail_terminal_failed_export_ready
+        ahfl.persistence_descriptor.model.fail_store_adjacent_blocked
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.12 v0.12-persistence-descriptor-bootstrap
+    TESTS
+        ahfl.persistence_descriptor.bootstrap.project_workflow_value_flow
+        ahfl.persistence_descriptor.bootstrap.failed_workflow
+        ahfl.persistence_descriptor.bootstrap.partial_workflow
+        ahfl.persistence_descriptor.bootstrap.fail_invalid_checkpoint_record
+        ahfl.persistence_descriptor.bootstrap.fail_checkpoint_workflow_mismatch
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.12 v0.12-persistence-descriptor-emission
+    TESTS
+        ahflc.emit_persistence_descriptor.workflow_value_flow.with_package
+        ahflc.emit_persistence_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_descriptor.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.12 v0.12-persistence-review-model
+    TESTS
+        ahfl.persistence_review.model.validate_ok
+        ahfl.persistence_review.model.fail_unsupported_source_descriptor_format
+        ahfl.persistence_review.model.fail_invalid_descriptor
+        ahfl.persistence_review.model.project_workflow_value_flow
+        ahfl.persistence_review.model.failed_workflow
+        ahfl.persistence_review.model.partial_workflow
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.12 v0.12-persistence-review-emission
+    TESTS
+        ahflc.emit_persistence_review.workflow_value_flow.with_package
+        ahflc.emit_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.12 v0.12-persistence-golden
+    TESTS
+        ahflc.emit_persistence_descriptor.workflow_value_flow.with_package
+        ahflc.emit_persistence_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_descriptor.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_persistence_review.workflow_value_flow.with_package
+        ahflc.emit_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_persistence_review.workspace.workflow_value_flow.partial.with_package
+)

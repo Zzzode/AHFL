@@ -108,6 +108,28 @@ target_link_libraries(ahfl_backend_checkpoint_review
 
 ahfl_apply_project_warnings(ahfl_backend_checkpoint_review)
 
+add_library(ahfl_backend_persistence_descriptor STATIC
+    persistence_descriptor.cpp
+)
+
+target_link_libraries(ahfl_backend_persistence_descriptor
+    PUBLIC
+        ahfl_persistence_descriptor
+)
+
+ahfl_apply_project_warnings(ahfl_backend_persistence_descriptor)
+
+add_library(ahfl_backend_persistence_review STATIC
+    persistence_review.cpp
+)
+
+target_link_libraries(ahfl_backend_persistence_review
+    PUBLIC
+        ahfl_persistence_descriptor
+)
+
+ahfl_apply_project_warnings(ahfl_backend_persistence_review)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -168,6 +190,8 @@ target_link_libraries(ahfl_backend
         ahfl_backend_scheduler_snapshot
         ahfl_backend_checkpoint_record
         ahfl_backend_checkpoint_review
+        ahfl_backend_persistence_descriptor
+        ahfl_backend_persistence_review
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

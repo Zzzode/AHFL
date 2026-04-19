@@ -106,3 +106,12 @@ target_link_libraries(ahfl_checkpoint_record_tests
         ahfl_checkpoint_record
 )
 ahfl_apply_project_warnings(ahfl_checkpoint_record_tests)
+
+add_executable(ahfl_persistence_descriptor_tests
+    persistence_descriptor/descriptor.cpp
+)
+target_link_libraries(ahfl_persistence_descriptor_tests
+    PRIVATE
+        ahfl_persistence_descriptor
+)
+ahfl_apply_project_warnings(ahfl_persistence_descriptor_tests)

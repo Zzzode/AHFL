@@ -1,0 +1,28 @@
+ahfl.persistence-review.v1
+source_descriptor_format ahfl.persistence-descriptor.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+workflow_status partial
+checkpoint_status ready_to_persist
+persistence_status ready_to_export
+planned_durable_identity plan::workflow-value-flow::run-partial-001::prefix-0
+export_basis_kind local_planning_only
+export_ready true
+next_action export_persistence_handoff
+store_boundary local persistence planning only; durable store mutation ABI not yet promised
+export_preview descriptor can export current prefix before node 'first' with planned durable identity 'plan::workflow-value-flow::run-partial-001::prefix-0'
+next_step export current persistence handoff before future durable-store work
+next_export_candidate first
+workflow_failure_summary {
+  value none
+}
+persistence_blocker {
+  value none
+}
+exportable_prefix {
+  count 0
+  - none
+}
