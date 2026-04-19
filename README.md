@@ -209,12 +209,14 @@ Available configure presets:
 
 Start here instead of reading a wall of filenames:
 
-- [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md) — current V0.13 execution roadmap
-- [`docs/plan/issue-backlog-v0.13.zh.md`](docs/plan/issue-backlog-v0.13.zh.md) — current V0.13 issue backlog
+- [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md) — current V0.14 execution roadmap
+- [`docs/plan/issue-backlog-v0.14.zh.md`](docs/plan/issue-backlog-v0.14.zh.md) — current V0.14 issue backlog
+- [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md) — completed V0.13 execution roadmap
+- [`docs/plan/issue-backlog-v0.13.zh.md`](docs/plan/issue-backlog-v0.13.zh.md) — completed V0.13 issue backlog
 - [`docs/design/native-export-package-prototype-bootstrap-v0.13.zh.md`](docs/design/native-export-package-prototype-bootstrap-v0.13.zh.md) — V0.13 export package prototype scope and layering
 - [`docs/reference/export-package-prototype-compatibility-v0.13.zh.md`](docs/reference/export-package-prototype-compatibility-v0.13.zh.md) — V0.13 export package artifact compatibility contract
 - [`docs/reference/native-consumer-matrix-v0.13.zh.md`](docs/reference/native-consumer-matrix-v0.13.zh.md) — V0.13 export-package-facing native consumer matrix
-- [`docs/reference/contributor-guide-v0.13.zh.md`](docs/reference/contributor-guide-v0.13.zh.md) — current contributor guide for export-package-facing artifacts
+- [`docs/reference/contributor-guide-v0.13.zh.md`](docs/reference/contributor-guide-v0.13.zh.md) — completed contributor guide for export-package-facing artifacts
 - [`docs/plan/roadmap-v0.12.zh.md`](docs/plan/roadmap-v0.12.zh.md) — completed V0.12 execution roadmap
 - [`docs/plan/issue-backlog-v0.12.zh.md`](docs/plan/issue-backlog-v0.12.zh.md) — completed V0.12 issue backlog
 - [`docs/design/native-persistence-prototype-bootstrap-v0.12.zh.md`](docs/design/native-persistence-prototype-bootstrap-v0.12.zh.md) — V0.12 persistence prototype scope and layering
@@ -259,8 +261,10 @@ Start here instead of reading a wall of filenames:
 - [`docs/design/native-package-authoring-architecture-v0.5.zh.md`](docs/design/native-package-authoring-architecture-v0.5.zh.md) — Native package authoring boundary
 - [`docs/design/native-consumer-bootstrap-v0.5.zh.md`](docs/design/native-consumer-bootstrap-v0.5.zh.md) — Native consumer bootstrap boundary
 - [`docs/design/testing-strategy-v0.5.zh.md`](docs/design/testing-strategy-v0.5.zh.md) — V0.5 testing strategy
-- [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md) — current execution plan
-- [`docs/plan/issue-backlog-v0.13.zh.md`](docs/plan/issue-backlog-v0.13.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md) — current execution plan
+- [`docs/plan/issue-backlog-v0.14.zh.md`](docs/plan/issue-backlog-v0.14.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md) — completed V0.13 baseline
+- [`docs/plan/issue-backlog-v0.13.zh.md`](docs/plan/issue-backlog-v0.13.zh.md) — completed V0.13 backlog
 - [`docs/plan/roadmap-v0.12.zh.md`](docs/plan/roadmap-v0.12.zh.md) — completed V0.12 baseline
 - [`docs/plan/issue-backlog-v0.12.zh.md`](docs/plan/issue-backlog-v0.12.zh.md) — completed V0.12 backlog
 - [`docs/plan/roadmap-v0.11.zh.md`](docs/plan/roadmap-v0.11.zh.md) — completed V0.11 baseline
