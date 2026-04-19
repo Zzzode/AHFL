@@ -97,3 +97,12 @@ target_link_libraries(ahfl_scheduler_snapshot_tests
         ahfl_scheduler_snapshot
 )
 ahfl_apply_project_warnings(ahfl_scheduler_snapshot_tests)
+
+add_executable(ahfl_checkpoint_record_tests
+    checkpoint_record/record.cpp
+)
+target_link_libraries(ahfl_checkpoint_record_tests
+    PRIVATE
+        ahfl_checkpoint_record
+)
+ahfl_apply_project_warnings(ahfl_checkpoint_record_tests)

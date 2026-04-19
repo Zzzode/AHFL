@@ -86,6 +86,28 @@ target_link_libraries(ahfl_backend_scheduler_snapshot
 
 ahfl_apply_project_warnings(ahfl_backend_scheduler_snapshot)
 
+add_library(ahfl_backend_checkpoint_record STATIC
+    checkpoint_record.cpp
+)
+
+target_link_libraries(ahfl_backend_checkpoint_record
+    PUBLIC
+        ahfl_checkpoint_record
+)
+
+ahfl_apply_project_warnings(ahfl_backend_checkpoint_record)
+
+add_library(ahfl_backend_checkpoint_review STATIC
+    checkpoint_review.cpp
+)
+
+target_link_libraries(ahfl_backend_checkpoint_review
+    PUBLIC
+        ahfl_checkpoint_record
+)
+
+ahfl_apply_project_warnings(ahfl_backend_checkpoint_review)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -144,6 +166,8 @@ target_link_libraries(ahfl_backend
         ahfl_backend_execution_journal
         ahfl_backend_replay_view
         ahfl_backend_scheduler_snapshot
+        ahfl_backend_checkpoint_record
+        ahfl_backend_checkpoint_review
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

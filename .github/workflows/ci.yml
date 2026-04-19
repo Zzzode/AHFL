@@ -112,6 +112,9 @@ jobs:
       - name: Run V0.10 Scheduler Prototype Regression
         run: ctest --preset test-dev --output-on-failure -L 'v0.10-scheduler-regression'
 
+      - name: Run V0.11 Checkpoint Prototype Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.11'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -141,6 +144,9 @@ jobs:
 
       - name: Run V0.10 Scheduler Prototype Regression
         run: ctest --preset test-asan --output-on-failure -L 'v0.10-scheduler-regression'
+
+      - name: Run V0.11 Checkpoint Prototype Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.11'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

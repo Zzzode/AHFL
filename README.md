@@ -131,6 +131,8 @@ Backend outputs:
 | `emit-execution-journal` | deterministic event journal for replay / audit bootstrap |
 | `emit-replay-view` | deterministic replay projection over plan, session, and journal |
 | `emit-scheduler-snapshot` | deterministic scheduler-facing snapshot over plan, session, journal, and replay |
+| `emit-checkpoint-record` | deterministic checkpoint-facing record over plan, session, journal, replay, and snapshot |
+| `emit-checkpoint-review` | reviewer-facing checkpoint summary over checkpoint record |
 | `emit-scheduler-review` | reviewer-facing scheduler decision summary over scheduler snapshot |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
@@ -207,6 +209,12 @@ Available configure presets:
 
 Start here instead of reading a wall of filenames:
 
+- [`docs/plan/roadmap-v0.11.zh.md`](docs/plan/roadmap-v0.11.zh.md) — current V0.11 execution roadmap
+- [`docs/plan/issue-backlog-v0.11.zh.md`](docs/plan/issue-backlog-v0.11.zh.md) — current V0.11 issue backlog
+- [`docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md`](docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md) — V0.11 checkpoint prototype scope and layering
+- [`docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md`](docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md) — V0.11 checkpoint artifact compatibility baseline
+- [`docs/reference/native-consumer-matrix-v0.11.zh.md`](docs/reference/native-consumer-matrix-v0.11.zh.md) — V0.11 native consumer matrix
+- [`docs/reference/contributor-guide-v0.11.zh.md`](docs/reference/contributor-guide-v0.11.zh.md) — current contributor guide for checkpoint-facing artifacts
 - [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) — normative Core language spec
 - [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md) — current CLI command reference
 - [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) — project / workspace / package authoring usage
@@ -218,9 +226,13 @@ Start here instead of reading a wall of filenames:
 - [`docs/reference/replay-view-compatibility-v0.9.zh.md`](docs/reference/replay-view-compatibility-v0.9.zh.md) — V0.9 replay view compatibility
 - [`docs/reference/audit-report-compatibility-v0.9.zh.md`](docs/reference/audit-report-compatibility-v0.9.zh.md) — V0.9 audit report compatibility
 - [`docs/reference/failure-path-compatibility-v0.9.zh.md`](docs/reference/failure-path-compatibility-v0.9.zh.md) — V0.9 failure-path compatibility
+- [`docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md`](docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md) — V0.11 checkpoint prototype compatibility baseline
 - [`docs/reference/scheduler-prototype-compatibility-v0.10.zh.md`](docs/reference/scheduler-prototype-compatibility-v0.10.zh.md) — V0.10 scheduler prototype compatibility
-- [`docs/reference/native-consumer-matrix-v0.10.zh.md`](docs/reference/native-consumer-matrix-v0.10.zh.md) — current native consumer matrix
-- [`docs/reference/contributor-guide-v0.10.zh.md`](docs/reference/contributor-guide-v0.10.zh.md) — current contributor guide for scheduler-facing artifacts
+- [`docs/reference/native-consumer-matrix-v0.11.zh.md`](docs/reference/native-consumer-matrix-v0.11.zh.md) — current native consumer matrix
+- [`docs/reference/contributor-guide-v0.11.zh.md`](docs/reference/contributor-guide-v0.11.zh.md) — current contributor guide for checkpoint-facing artifacts
+- [`docs/reference/native-consumer-matrix-v0.10.zh.md`](docs/reference/native-consumer-matrix-v0.10.zh.md) — completed scheduler-facing consumer matrix baseline
+- [`docs/reference/contributor-guide-v0.10.zh.md`](docs/reference/contributor-guide-v0.10.zh.md) — completed scheduler-facing contributor guide baseline
+- [`docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md`](docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md) — checkpoint prototype / resume-basis boundary
 - [`docs/design/native-scheduler-prototype-bootstrap-v0.10.zh.md`](docs/design/native-scheduler-prototype-bootstrap-v0.10.zh.md) — scheduler prototype / checkpoint-friendly boundary
 - [`docs/design/native-execution-plan-architecture-v0.6.zh.md`](docs/design/native-execution-plan-architecture-v0.6.zh.md) — Execution plan boundary
 - [`docs/design/native-dry-run-bootstrap-v0.6.zh.md`](docs/design/native-dry-run-bootstrap-v0.6.zh.md) — local dry-run bootstrap boundary
@@ -231,8 +243,10 @@ Start here instead of reading a wall of filenames:
 - [`docs/design/native-package-authoring-architecture-v0.5.zh.md`](docs/design/native-package-authoring-architecture-v0.5.zh.md) — Native package authoring boundary
 - [`docs/design/native-consumer-bootstrap-v0.5.zh.md`](docs/design/native-consumer-bootstrap-v0.5.zh.md) — Native consumer bootstrap boundary
 - [`docs/design/testing-strategy-v0.5.zh.md`](docs/design/testing-strategy-v0.5.zh.md) — V0.5 testing strategy
-- [`docs/plan/roadmap-v0.10.zh.md`](docs/plan/roadmap-v0.10.zh.md) — current execution plan
-- [`docs/plan/issue-backlog-v0.10.zh.md`](docs/plan/issue-backlog-v0.10.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.11.zh.md`](docs/plan/roadmap-v0.11.zh.md) — current execution plan
+- [`docs/plan/issue-backlog-v0.11.zh.md`](docs/plan/issue-backlog-v0.11.zh.md) — current execution backlog
+- [`docs/plan/roadmap-v0.10.zh.md`](docs/plan/roadmap-v0.10.zh.md) — completed V0.10 baseline
+- [`docs/plan/issue-backlog-v0.10.zh.md`](docs/plan/issue-backlog-v0.10.zh.md) — completed V0.10 backlog
 - [`docs/plan/roadmap-v0.9.zh.md`](docs/plan/roadmap-v0.9.zh.md) — completed V0.9 baseline
 - [`docs/plan/issue-backlog-v0.9.zh.md`](docs/plan/issue-backlog-v0.9.zh.md) — completed V0.9 backlog
 - [`docs/plan/roadmap-v0.8.zh.md`](docs/plan/roadmap-v0.8.zh.md) — completed V0.8 baseline
@@ -263,4 +277,5 @@ semantics. Its current boundary is documented in
 ## CI
 
 CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
-project / IR / backend regression slices, and then runs the full `ctest` suite.
+project / IR / backend / scheduler / checkpoint regression slices, and then runs
+the full `ctest` suite.

@@ -1,0 +1,29 @@
+ahfl.checkpoint-review.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+workflow_status completed
+snapshot_status terminal_completed
+checkpoint_status terminal_completed
+basis_kind local_only
+checkpoint_friendly_source true
+resume_ready false
+next_action workflow_completed
+checkpoint_boundary local checkpoint basis only; durable recovery ABI not yet promised
+resume_preview workflow already completed; no resume is required
+next_step archive completed checkpoint basis; no further resume action
+resume_candidate none
+terminal_reason workflow_completed
+workflow_failure_summary {
+  value none
+}
+resume_blocker {
+  value none
+}
+persistable_prefix {
+  count 2
+  - first
+  - second
+}

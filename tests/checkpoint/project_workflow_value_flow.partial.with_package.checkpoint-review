@@ -1,0 +1,28 @@
+ahfl.checkpoint-review.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+workflow_status partial
+snapshot_status runnable
+checkpoint_status ready_to_persist
+basis_kind local_only
+checkpoint_friendly_source true
+resume_ready true
+next_action persist_checkpoint
+checkpoint_boundary local checkpoint basis only; durable recovery ABI not yet promised
+resume_preview checkpoint can resume from node 'first' after persisting current prefix
+next_step persist current checkpoint basis before future resume
+resume_candidate first
+terminal_reason none
+workflow_failure_summary {
+  value none
+}
+resume_blocker {
+  value none
+}
+persistable_prefix {
+  count 0
+  - none
+}

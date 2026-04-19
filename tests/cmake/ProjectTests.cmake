@@ -585,6 +585,123 @@ add_test(NAME ahfl.scheduler_review.compat.fail_runnable_terminal_reason
             validate-scheduler-decision-summary-rejects-runnable-terminal-reason
 )
 
+add_test(NAME ahfl.checkpoint_record.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-ok
+)
+
+add_test(NAME ahfl.checkpoint_record.model.validate_blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-blocked-ok
+)
+
+add_test(NAME ahfl.checkpoint_record.model.validate_terminal_completed_ok
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-terminal-completed-ok
+)
+
+add_test(NAME ahfl.checkpoint_record.model.validate_terminal_failed_ok
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-terminal-failed-ok
+)
+
+add_test(NAME ahfl.checkpoint_record.model.fail_non_prefix_cursor
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-rejects-non-prefix-cursor
+)
+
+add_test(NAME ahfl.checkpoint_record.model.fail_resume_ready_with_blocker
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-rejects-resume-ready-with-blocker
+)
+
+add_test(NAME ahfl.checkpoint_record.model.fail_terminal_completed_without_full_prefix
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-rejects-terminal-completed-without-full-prefix
+)
+
+add_test(NAME ahfl.checkpoint_record.model.fail_terminal_failed_without_failure_summary
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-rejects-terminal-failed-without-failure-summary
+)
+
+add_test(NAME ahfl.checkpoint_record.model.fail_durable_adjacent_without_checkpoint_friendly_source
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-record-rejects-durable-adjacent-without-checkpoint-friendly-source
+)
+
+add_test(NAME ahfl.checkpoint_record.bootstrap.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-record-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_record.bootstrap.failed_workflow
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-record-failed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_record.bootstrap.partial_workflow
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-record-partial-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_record.bootstrap.fail_snapshot_workflow_mismatch
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-record-rejects-snapshot-workflow-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_review.model.completed_summary
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-review-completed
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_review.model.failed_summary
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-review-failed
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_review.model.partial_summary
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-review-partial
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.checkpoint_review.model.fail_invalid_record
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            build-checkpoint-review-rejects-invalid-record
+)
+
+add_test(NAME ahfl.checkpoint_review.compat.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-review-ok
+)
+
+add_test(NAME ahfl.checkpoint_review.compat.fail_unsupported_format_version
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-review-rejects-unsupported-format-version
+)
+
+add_test(NAME ahfl.checkpoint_review.compat.fail_unsupported_source_record_format_version
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-review-rejects-unsupported-source-record-format-version
+)
+
+add_test(NAME ahfl.checkpoint_review.compat.fail_prefix_size_mismatch
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-review-rejects-prefix-size-mismatch
+)
+
+add_test(NAME ahfl.checkpoint_review.compat.fail_ready_terminal_reason
+    COMMAND $<TARGET_FILE:ahfl_checkpoint_record_tests>
+            validate-checkpoint-review-rejects-ready-terminal-reason
+)
+
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
     COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
             normalize-identity-format-version
@@ -818,6 +935,22 @@ add_test(NAME ahflc.emit_scheduler_snapshot.project_manifest.workflow_value_flow
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_checkpoint_record.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-checkpoint-record --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/project_workflow_value_flow.failed.with_package.checkpoint-record.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-checkpoint-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/project_workflow_value_flow.failed.with_package.checkpoint-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -930,6 +1063,22 @@ add_test(NAME ahflc.emit_scheduler_snapshot.workspace.workflow_value_flow.partia
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_checkpoint_record.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-checkpoint-record --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/project_workflow_value_flow.partial.with_package.checkpoint-record.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-checkpoint-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/project_workflow_value_flow.partial.with_package.checkpoint-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -997,7 +1146,7 @@ add_test(NAME ahflc.check.project_manifest.fail_package_without_native_json
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
             "-DAHFLC_ARGS=check\;--project\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json\;--package\;${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json"
-            "-DEXPECTED_REGEX=--package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review"
+            "-DEXPECTED_REGEX=--package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 

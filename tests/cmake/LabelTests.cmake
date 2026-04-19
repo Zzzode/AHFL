@@ -449,3 +449,67 @@ ahfl_label_tests(
         ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_scheduler_review.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.11 v0.11-checkpoint-record-model
+    TESTS
+        ahfl.checkpoint_record.model.validate_ok
+        ahfl.checkpoint_record.model.validate_blocked_ok
+        ahfl.checkpoint_record.model.validate_terminal_completed_ok
+        ahfl.checkpoint_record.model.validate_terminal_failed_ok
+        ahfl.checkpoint_record.model.fail_non_prefix_cursor
+        ahfl.checkpoint_record.model.fail_resume_ready_with_blocker
+        ahfl.checkpoint_record.model.fail_terminal_completed_without_full_prefix
+        ahfl.checkpoint_record.model.fail_terminal_failed_without_failure_summary
+        ahfl.checkpoint_record.model.fail_durable_adjacent_without_checkpoint_friendly_source
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.11 v0.11-checkpoint-record-bootstrap
+    TESTS
+        ahfl.checkpoint_record.bootstrap.project_workflow_value_flow
+        ahfl.checkpoint_record.bootstrap.failed_workflow
+        ahfl.checkpoint_record.bootstrap.partial_workflow
+        ahfl.checkpoint_record.bootstrap.fail_snapshot_workflow_mismatch
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.11 v0.11-checkpoint-record-emission
+    TESTS
+        ahflc.emit_checkpoint_record.workflow_value_flow.with_package
+        ahflc.emit_checkpoint_record.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_record.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.11 v0.11-checkpoint-review-model
+    TESTS
+        ahfl.checkpoint_review.model.completed_summary
+        ahfl.checkpoint_review.model.failed_summary
+        ahfl.checkpoint_review.model.partial_summary
+        ahfl.checkpoint_review.model.fail_invalid_record
+        ahfl.checkpoint_review.compat.validate_ok
+        ahfl.checkpoint_review.compat.fail_unsupported_format_version
+        ahfl.checkpoint_review.compat.fail_unsupported_source_record_format_version
+        ahfl.checkpoint_review.compat.fail_prefix_size_mismatch
+        ahfl.checkpoint_review.compat.fail_ready_terminal_reason
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.11 v0.11-checkpoint-review-emission
+    TESTS
+        ahflc.emit_checkpoint_review.workflow_value_flow.with_package
+        ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.11 v0.11-checkpoint-golden
+    TESTS
+        ahflc.emit_checkpoint_record.workflow_value_flow.with_package
+        ahflc.emit_checkpoint_record.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_record.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_checkpoint_review.workflow_value_flow.with_package
+        ahflc.emit_checkpoint_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_checkpoint_review.workspace.workflow_value_flow.partial.with_package
+)

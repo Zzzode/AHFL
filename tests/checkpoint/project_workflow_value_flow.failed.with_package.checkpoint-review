@@ -1,0 +1,32 @@
+ahfl.checkpoint-review.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+workflow_status failed
+snapshot_status terminal_failed
+checkpoint_status terminal_failed
+basis_kind local_only
+checkpoint_friendly_source true
+resume_ready false
+next_action investigate_failure
+checkpoint_boundary local checkpoint basis only; durable recovery ABI not yet promised
+resume_preview workflow failed at node 'first'; resume is not available from current checkpoint
+next_step inspect workflow failure before attempting a new run
+resume_candidate none
+terminal_reason workflow_failed
+workflow_failure_summary {
+  kind workflow_failed
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+resume_blocker {
+  kind workflow_failure
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+persistable_prefix {
+  count 0
+  - none
+}

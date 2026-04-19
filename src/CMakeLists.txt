@@ -16,6 +16,7 @@ add_subdirectory(execution_journal)
 add_subdirectory(replay_view)
 add_subdirectory(audit_report)
 add_subdirectory(scheduler_snapshot)
+add_subdirectory(checkpoint_record)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
@@ -28,6 +29,7 @@ target_link_libraries(ahfl_compiler
         ahfl_replay_view
         ahfl_audit_report
         ahfl_scheduler_snapshot
+        ahfl_checkpoint_record
         ahfl_backend
 )
 

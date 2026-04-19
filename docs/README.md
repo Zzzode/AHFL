@@ -73,6 +73,7 @@ Avoid:
 - [native-dry-run-bootstrap-v0.6.zh.md](./design/native-dry-run-bootstrap-v0.6.zh.md)
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
+- [native-checkpoint-prototype-bootstrap-v0.11.zh.md](./design/native-checkpoint-prototype-bootstrap-v0.11.zh.md)
 - [native-scheduler-prototype-bootstrap-v0.10.zh.md](./design/native-scheduler-prototype-bootstrap-v0.10.zh.md)
 - [native-replay-audit-bootstrap-v0.8.zh.md](./design/native-replay-audit-bootstrap-v0.8.zh.md)
 - [native-runtime-session-bootstrap-v0.7.zh.md](./design/native-runtime-session-bootstrap-v0.7.zh.md)
@@ -90,8 +91,10 @@ Avoid:
 
 ### Plan
 
-- [roadmap-v0.10.zh.md](./plan/roadmap-v0.10.zh.md) - current execution plan
-- [issue-backlog-v0.10.zh.md](./plan/issue-backlog-v0.10.zh.md) - current execution backlog
+- [roadmap-v0.11.zh.md](./plan/roadmap-v0.11.zh.md) - current execution plan
+- [issue-backlog-v0.11.zh.md](./plan/issue-backlog-v0.11.zh.md) - current execution backlog
+- [roadmap-v0.10.zh.md](./plan/roadmap-v0.10.zh.md) - completed baseline
+- [issue-backlog-v0.10.zh.md](./plan/issue-backlog-v0.10.zh.md) - completed baseline
 - [roadmap-v0.9.zh.md](./plan/roadmap-v0.9.zh.md) - completed baseline
 - [issue-backlog-v0.9.zh.md](./plan/issue-backlog-v0.9.zh.md) - completed baseline
 - [roadmap-v0.8.zh.md](./plan/roadmap-v0.8.zh.md) - completed baseline
@@ -124,6 +127,8 @@ Avoid:
 - [native-package-compatibility-v0.4.zh.md](./reference/native-package-compatibility-v0.4.zh.md)
 - [execution-plan-compatibility-v0.6.zh.md](./reference/execution-plan-compatibility-v0.6.zh.md)
 - [native-consumer-matrix-v0.10.zh.md](./reference/native-consumer-matrix-v0.10.zh.md)
+- [native-consumer-matrix-v0.11.zh.md](./reference/native-consumer-matrix-v0.11.zh.md)
+- [contributor-guide-v0.11.zh.md](./reference/contributor-guide-v0.11.zh.md)
 - [contributor-guide-v0.10.zh.md](./reference/contributor-guide-v0.10.zh.md)
 - [native-consumer-matrix-v0.9.zh.md](./reference/native-consumer-matrix-v0.9.zh.md)
 - [contributor-guide-v0.9.zh.md](./reference/contributor-guide-v0.9.zh.md)
@@ -132,6 +137,7 @@ Avoid:
 - [replay-view-compatibility-v0.9.zh.md](./reference/replay-view-compatibility-v0.9.zh.md)
 - [audit-report-compatibility-v0.9.zh.md](./reference/audit-report-compatibility-v0.9.zh.md)
 - [failure-path-compatibility-v0.9.zh.md](./reference/failure-path-compatibility-v0.9.zh.md)
+- [checkpoint-prototype-compatibility-v0.11.zh.md](./reference/checkpoint-prototype-compatibility-v0.11.zh.md)
 - [scheduler-prototype-compatibility-v0.10.zh.md](./reference/scheduler-prototype-compatibility-v0.10.zh.md)
 - [runtime-session-compatibility-v0.7.zh.md](./reference/runtime-session-compatibility-v0.7.zh.md)
 - [execution-journal-compatibility-v0.7.zh.md](./reference/execution-journal-compatibility-v0.7.zh.md)
