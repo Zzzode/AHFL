@@ -1,0 +1,53 @@
+{
+  "format_version": "ahfl.persistence-export-manifest.v1",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+  "source_execution_journal_format_version": "ahfl.execution-journal.v2",
+  "source_replay_view_format_version": "ahfl.replay-view.v2",
+  "source_scheduler_snapshot_format_version": "ahfl.scheduler-snapshot.v1",
+  "source_checkpoint_record_format_version": "ahfl.checkpoint-record.v1",
+  "source_persistence_descriptor_format_version": "ahfl.persistence-descriptor.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "workflow_status": "failed",
+  "checkpoint_status": "terminal_failed",
+  "persistence_status": "terminal_failed",
+  "manifest_status": "terminal_failed",
+  "workflow_failure_summary": {
+    "kind": "workflow_failed",
+    "node_name": "first",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  },
+  "export_package_identity": "export::workflow-value-flow::run-failed-001::prefix-0",
+  "planned_durable_identity": "plan::workflow-value-flow::run-failed-001::prefix-0",
+  "manifest_boundary_kind": "local_bundle_only",
+  "artifact_bundle": {
+    "entry_count": 2,
+    "entries": [
+      {
+        "artifact_kind": "persistence_descriptor",
+        "logical_artifact_name": "persistence-descriptor.json",
+        "source_format_version": "ahfl.persistence-descriptor.v1"
+      },
+      {
+        "artifact_kind": "checkpoint_record",
+        "logical_artifact_name": "checkpoint-record.json",
+        "source_format_version": "ahfl.checkpoint-record.v1"
+      }
+    ]
+  },
+  "manifest_ready": false,
+  "next_required_artifact_kind": null,
+  "store_import_blocker": {
+    "kind": "workflow_failure",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'",
+    "logical_artifact_name": null
+  }
+}

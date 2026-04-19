@@ -130,6 +130,28 @@ target_link_libraries(ahfl_backend_persistence_review
 
 ahfl_apply_project_warnings(ahfl_backend_persistence_review)
 
+add_library(ahfl_backend_persistence_export_manifest STATIC
+    persistence_export_manifest.cpp
+)
+
+target_link_libraries(ahfl_backend_persistence_export_manifest
+    PUBLIC
+        ahfl_persistence_export
+)
+
+ahfl_apply_project_warnings(ahfl_backend_persistence_export_manifest)
+
+add_library(ahfl_backend_persistence_export_review STATIC
+    persistence_export_review.cpp
+)
+
+target_link_libraries(ahfl_backend_persistence_export_review
+    PUBLIC
+        ahfl_persistence_export
+)
+
+ahfl_apply_project_warnings(ahfl_backend_persistence_export_review)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -192,6 +214,8 @@ target_link_libraries(ahfl_backend
         ahfl_backend_checkpoint_review
         ahfl_backend_persistence_descriptor
         ahfl_backend_persistence_review
+        ahfl_backend_persistence_export_manifest
+        ahfl_backend_persistence_export_review
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

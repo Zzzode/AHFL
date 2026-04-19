@@ -560,6 +560,70 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.13 v0.13-persistence-export-manifest-model
+    TESTS
+        ahfl.persistence_export_manifest.model.validate_ok
+        ahfl.persistence_export_manifest.model.validate_blocked_ok
+        ahfl.persistence_export_manifest.model.validate_terminal_failed_ok
+        ahfl.persistence_export_manifest.model.validate_terminal_partial_ok
+        ahfl.persistence_export_manifest.model.fail_missing_export_package_identity
+        ahfl.persistence_export_manifest.model.fail_duplicate_artifact_name
+        ahfl.persistence_export_manifest.model.fail_ready_with_blocker
+        ahfl.persistence_export_manifest.model.fail_ready_from_blocked_persistence
+        ahfl.persistence_export_manifest.model.fail_unsupported_source_descriptor_format
+        ahfl.persistence_export_manifest.model.fail_store_import_adjacent_blocked
+        ahfl.persistence_export_manifest.model.fail_terminal_failed_without_failure_summary
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.13 v0.13-persistence-export-manifest-bootstrap
+    TESTS
+        ahfl.persistence_export_manifest.bootstrap.project_workflow_value_flow
+        ahfl.persistence_export_manifest.bootstrap.failed_workflow
+        ahfl.persistence_export_manifest.bootstrap.partial_workflow
+        ahfl.persistence_export_manifest.bootstrap.fail_invalid_descriptor
+        ahfl.persistence_export_manifest.bootstrap.fail_descriptor_workflow_mismatch
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.13 v0.13-persistence-export-manifest-emission
+    TESTS
+        ahflc.emit_export_manifest.workflow_value_flow.with_package
+        ahflc.emit_export_manifest.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_manifest.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.13 v0.13-persistence-export-review-model
+    TESTS
+        ahfl.persistence_export_review.model.validate_ok
+        ahfl.persistence_export_review.model.fail_unsupported_source_manifest_format
+        ahfl.persistence_export_review.model.fail_invalid_manifest
+        ahfl.persistence_export_review.model.project_workflow_value_flow
+        ahfl.persistence_export_review.model.failed_workflow
+        ahfl.persistence_export_review.model.partial_workflow
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.13 v0.13-persistence-export-review-emission
+    TESTS
+        ahflc.emit_export_review.workflow_value_flow.with_package
+        ahflc.emit_export_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.13 v0.13-export-golden
+    TESTS
+        ahflc.emit_export_manifest.workflow_value_flow.with_package
+        ahflc.emit_export_manifest.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_manifest.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_export_review.workflow_value_flow.with_package
+        ahflc.emit_export_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_export_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.12 v0.12-persistence-review-emission
     TESTS
         ahflc.emit_persistence_review.workflow_value_flow.with_package

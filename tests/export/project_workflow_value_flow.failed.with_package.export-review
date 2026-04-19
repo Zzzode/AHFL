@@ -1,0 +1,36 @@
+ahfl.persistence-export-review.v1
+source_manifest_format ahfl.persistence-export-manifest.v1
+source_descriptor_format ahfl.persistence-descriptor.v1
+source_record_format ahfl.checkpoint-record.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+workflow_status failed
+checkpoint_status terminal_failed
+persistence_status terminal_failed
+manifest_status terminal_failed
+export_package_identity export::workflow-value-flow::run-failed-001::prefix-0
+planned_durable_identity plan::workflow-value-flow::run-failed-001::prefix-0
+manifest_boundary_kind local_bundle_only
+manifest_ready false
+next_action investigate_export_failure
+store_boundary local export bundle only; durable store import ABI not yet promised
+import_preview workflow failed at node 'first'; export package handoff is closed
+next_step inspect workflow failure before planning store import
+next_required_artifact none
+workflow_failure_summary {
+  kind workflow_failed
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+store_import_blocker {
+  kind workflow_failure
+  logical_artifact_name none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+artifact_bundle_preview {
+  count 2
+  - persistence_descriptor persistence-descriptor.json
+  - checkpoint_record checkpoint-record.json
+}

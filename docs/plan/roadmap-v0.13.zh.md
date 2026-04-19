@@ -6,6 +6,10 @@
 
 - [roadmap-v0.12.zh.md](./roadmap-v0.12.zh.md)（已完成基线）
 - [issue-backlog-v0.12.zh.md](./issue-backlog-v0.12.zh.md)（已完成基线）
+- [native-export-package-prototype-bootstrap-v0.13.zh.md](../design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [export-package-prototype-compatibility-v0.13.zh.md](../reference/export-package-prototype-compatibility-v0.13.zh.md)
+- [native-consumer-matrix-v0.13.zh.md](../reference/native-consumer-matrix-v0.13.zh.md)
+- [contributor-guide-v0.13.zh.md](../reference/contributor-guide-v0.13.zh.md)
 - [native-persistence-prototype-bootstrap-v0.12.zh.md](../design/native-persistence-prototype-bootstrap-v0.12.zh.md)
 - [persistence-prototype-compatibility-v0.12.zh.md](../reference/persistence-prototype-compatibility-v0.12.zh.md)
 - [native-consumer-matrix-v0.12.zh.md](../reference/native-consumer-matrix-v0.12.zh.md)
@@ -53,9 +57,9 @@ V0.13 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 01 冻结 V0.13 export package manifest scope 与 non-goals
-- [ ] Issue 02 冻结 export manifest / artifact bundle layout 的最小模型与 store-import 边界
-- [ ] Issue 03 冻结 persistence descriptor、export manifest 与 future durable store adapter 的分层关系
+- [x] Issue 01 冻结 V0.13 export package manifest scope 与 non-goals
+- [x] Issue 02 冻结 export manifest / artifact bundle layout 的最小模型与 store-import 边界
+- [x] Issue 03 冻结 persistence descriptor、export manifest 与 future durable store adapter 的分层关系
 
 目标：
 
@@ -67,9 +71,9 @@ V0.13 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 04 引入 persistence export manifest 数据模型
-- [ ] Issue 05 增加 export manifest validation 与 direct regression
-- [ ] Issue 06 增加 deterministic export manifest bootstrap
+- [x] Issue 04 引入 persistence export manifest 数据模型
+- [x] Issue 05 增加 export manifest validation 与 direct regression
+- [x] Issue 06 增加 deterministic export manifest bootstrap
 
 目标：
 
@@ -81,9 +85,9 @@ V0.13 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 07 增加 export manifest 输出路径
-- [ ] Issue 08 增加 export package review / import preview surface
-- [ ] Issue 09 增加 single-file / project / workspace export package golden 回归
+- [x] Issue 07 增加 export manifest 输出路径
+- [x] Issue 08 增加 export package review / import preview surface
+- [x] Issue 09 增加 single-file / project / workspace export package golden 回归
 
 目标：
 
@@ -95,8 +99,8 @@ V0.13 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 10 冻结 export manifest / review compatibility 契约
-- [ ] Issue 11 更新 native consumer matrix、contributor guide 与 future store adapter boundary guidance
+- [x] Issue 10 冻结 export manifest / review compatibility 契约
+- [x] Issue 11 更新 native consumer matrix、contributor guide 与 future store adapter boundary guidance
 
 目标：
 
@@ -108,12 +112,12 @@ V0.13 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 12 建立 V0.13 export package prototype regression、CI 与 reference 文档闭环
+- [x] Issue 12 建立 V0.13 export package prototype regression、CI 与 reference 文档闭环
 
 目标：
 
 1. 让 export manifest、compatibility、consumer matrix 与 contributor guidance 进入持续回归。
-2. 让新贡献者能按文档跑通“package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint -> persistence descriptor -> export manifest”的 V0.13 路径。
+2. 让新贡献者能按文档跑通“package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint -> persistence descriptor -> export manifest -> export review”的 V0.13 路径。
 
 ## 关键依赖顺序
 
@@ -131,7 +135,7 @@ V0.13 仍然不直接承诺：
 
 ## 当前状态
 
-V0.12 已完成并成为 V0.13 的正式上游基线；当前 `Issue 01-12` 均未开始。建议先执行 `Issue 01-03`，冻结 export package manifest 的 scope、artifact bundle layout 与 layering，再进入 model / validation / bootstrap 实现。V0.13 当前建议闭环路径为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> PersistenceExportReviewSummary`，并继续明确不承诺真实 durable store、resume token、recovery daemon、host telemetry、provider payload、store URI 或 object path。
+V0.12 已完成并成为 V0.13 的正式上游基线；当前 `Issue 01-12` 已完成。仓库现已新增 V0.13 scope 文档、export package compatibility contract、native consumer matrix、contributor guide、`PersistenceExportManifest` / `PersistenceExportReviewSummary` direct model、validation、deterministic bootstrap、backend / CLI emission 与 `v0.13-persistence-export-manifest-model` / `v0.13-persistence-export-manifest-bootstrap` / `v0.13-persistence-export-manifest-emission` / `v0.13-persistence-export-review-model` / `v0.13-persistence-export-review-emission` / `v0.13-export-golden` 回归切片，并把 `ahfl-v0.13` 显式接入 `.github/workflows/ci.yml` 的 dev / asan 回归路径，明确当前阶段只交付 local/offline export package manifest prototype 与 reviewer-facing import preview surface，不交付真实 durable store、resume token、recovery daemon、host telemetry、provider payload、store URI 或 object path。V0.13 当前闭环路径为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> PersistenceExportReviewSummary`；若继续推进，建议进入下一版本规划，而不是再扩张当前 prototype 的稳定边界。
 
 ## 对应 backlog
 

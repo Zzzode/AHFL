@@ -18,6 +18,7 @@ add_subdirectory(audit_report)
 add_subdirectory(scheduler_snapshot)
 add_subdirectory(checkpoint_record)
 add_subdirectory(persistence_descriptor)
+add_subdirectory(persistence_export)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
@@ -32,6 +33,7 @@ target_link_libraries(ahfl_compiler
         ahfl_scheduler_snapshot
         ahfl_checkpoint_record
         ahfl_persistence_descriptor
+        ahfl_persistence_export
         ahfl_backend
 )
 
