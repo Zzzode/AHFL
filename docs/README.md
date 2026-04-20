@@ -138,6 +138,8 @@ Avoid:
 ### Reference
 
 - [durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md](./reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md)
+- [native-consumer-matrix-v0.18.zh.md](./reference/native-consumer-matrix-v0.18.zh.md)
+- [contributor-guide-v0.18.zh.md](./reference/contributor-guide-v0.18.zh.md)
 - [durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md](./reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md)
 - [native-consumer-matrix-v0.17.zh.md](./reference/native-consumer-matrix-v0.17.zh.md)
 - [contributor-guide-v0.17.zh.md](./reference/contributor-guide-v0.17.zh.md)

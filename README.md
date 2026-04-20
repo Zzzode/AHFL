@@ -229,6 +229,8 @@ Recommended entry points:
 - Current durable-adapter-receipt-persistence boundary
   - [`docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md`](docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md)
   - [`docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md`](docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.18.zh.md`](docs/reference/native-consumer-matrix-v0.18.zh.md)
+  - [`docs/reference/contributor-guide-v0.18.zh.md`](docs/reference/contributor-guide-v0.18.zh.md)
 - Previous completed baseline
   - [`docs/plan/roadmap-v0.17.zh.md`](docs/plan/roadmap-v0.17.zh.md)
   - [`docs/plan/issue-backlog-v0.17.zh.md`](docs/plan/issue-backlog-v0.17.zh.md)
@@ -276,5 +278,5 @@ semantics. Its current boundary is documented in
 
 CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
 project / IR / backend / scheduler / checkpoint / persistence / export-package /
-durable-adapter-decision / durable-adapter-receipt regression slices, and then
-runs the full `ctest` suite.
+durable-adapter-decision / durable-adapter-receipt / durable-adapter-receipt-persistence
+regression slices, and then runs the full `ctest` suite.

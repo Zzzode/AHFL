@@ -6,6 +6,8 @@
 
 - [native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md](../design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md)
 - [durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md](../reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md)
+- [native-consumer-matrix-v0.18.zh.md](../reference/native-consumer-matrix-v0.18.zh.md)
+- [contributor-guide-v0.18.zh.md](../reference/contributor-guide-v0.18.zh.md)
 - [roadmap-v0.17.zh.md](./roadmap-v0.17.zh.md)（已完成基线）
 - [issue-backlog-v0.17.zh.md](./issue-backlog-v0.17.zh.md)（已完成基线）
 - [native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md](../design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md)
@@ -17,7 +19,7 @@
 
 1. V0.17 已完成 durable adapter receipt / review 的模型、validation、bootstrap、CLI/backend 输出、golden regression、compatibility、consumer matrix、contributor guide 与 CI 闭环。
 2. 当前仓库已经能稳定跑通 `package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint record -> persistence descriptor -> export manifest -> store import descriptor -> durable store import request -> durable store import decision -> durable store import decision receipt -> durable store import decision receipt review` 的本地 deterministic 路径。
-3. 当前仓库已提供 `DurableStoreImportDecisionReceiptPersistenceRequest` 的 direct model、validation 与 bootstrap；`DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 direct model、CLI/backend 输出与 golden regression 尚未提供。
+3. 当前仓库已提供 `DurableStoreImportDecisionReceiptPersistenceRequest` 与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 direct model、validation、bootstrap、CLI/backend 输出与 single-file / project / workspace golden regression。
 4. 当前阶段仍明确停留在 local/offline durable adapter receipt persistence contract handoff，不进入真实 object storage、database write、receipt persistence id、retry token、host telemetry、provider connector、retention/GC 或 crash recovery runtime 领域。
 
 执行状态约定：
@@ -93,8 +95,8 @@ V0.18 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 10 冻结 durable adapter receipt persistence / review compatibility 契约
-- [ ] Issue 11 更新 native consumer matrix、contributor guide 与 future real durable store adapter boundary guidance
+- [x] Issue 10 冻结 durable adapter receipt persistence / review compatibility 契约
+- [x] Issue 11 更新 native consumer matrix、contributor guide 与 future real durable store adapter boundary guidance
 
 目标：
 
@@ -106,7 +108,7 @@ V0.18 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 12 建立 V0.18 durable adapter receipt persistence prototype regression、CI 与 reference 文档闭环
+- [x] Issue 12 建立 V0.18 durable adapter receipt persistence prototype regression、CI 与 reference 文档闭环
 
 目标：
 
@@ -129,7 +131,7 @@ V0.18 仍然不直接承诺：
 
 ## 当前状态
 
-V0.17 已完成并成为 V0.18 的正式上游基线；当前 `Issue 01-09` 已完成。仓库现已新增 V0.18 scope 文档、durable adapter receipt persistence compatibility 基线文档，并冻结 durable receipt / durable receipt persistence request / persistence review / future real adapter 的分层关系；同时已落地 `DurableStoreImportDecisionReceiptPersistenceRequest` 与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 direct model、validation、bootstrap、CLI/backend 输出、single-file/project/workspace golden 与 `ahfl-v0.18` 标签回归。consumer matrix、contributor guide、compatibility 收口与 CI 编排仍未完成。建议下一步进入 `Issue 10-12`，补齐 compatibility contract、consumer guidance 与工程化收口。V0.18 当前建议目标链路为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> DurableStoreImportRequest -> DurableStoreImportDecision -> DurableStoreImportDecisionReceipt -> DurableStoreImportDecisionReceiptPersistenceRequest -> DurableStoreImportDecisionReceiptPersistenceReviewSummary`。
+V0.17 已完成并成为 V0.18 的正式上游基线；当前 `Issue 01-12` 已全部完成。仓库现已完成 V0.18 scope、compatibility、consumer matrix、contributor guide、direct model、validation、bootstrap、CLI/backend 输出、single-file/project/workspace golden、`ahfl-v0.18` 标签回归与 CI 切片收口。V0.18 当前建议目标链路为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> DurableStoreImportRequest -> DurableStoreImportDecision -> DurableStoreImportDecisionReceipt -> DurableStoreImportDecisionReceiptPersistenceRequest -> DurableStoreImportDecisionReceiptPersistenceReviewSummary`。
 
 ## 对应 backlog
 

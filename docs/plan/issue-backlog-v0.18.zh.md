@@ -285,7 +285,7 @@ durable adapter receipt persistence prototype 若只有 machine-facing persisten
 2. 已在 `tests/cmake/SingleFileCliTests.cmake` 与 `tests/cmake/ProjectTests.cmake` 增加对应 CLI 回归，并在 `tests/cmake/LabelTests.cmake` 增加 `v0.18-durable-store-import-receipt-persistence-emission`、`v0.18-durable-store-import-receipt-persistence-golden` 与 `v0.18-durable-store-import-receipt-persistence-review-model`
 3. 当前回归状态：`ctest --preset test-dev -L ahfl-v0.18 --output-on-failure` 与 `ctest --preset test-dev -L ahfl-v0.17 --output-on-failure` 均已通过
 
-## [ ] Issue 10
+## [x] Issue 10
 
 标题：
 冻结 durable adapter receipt persistence / review compatibility 契约
@@ -312,9 +312,11 @@ durable adapter receipt persistence prototype 若只有 machine-facing persisten
 
 当前实现备注：
 
-1. 尚未开始
+1. `docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md` 已按 artifact 分节冻结 `DurableStoreImportDecisionReceiptPersistenceRequest`（`ahfl.durable-store-import-decision-receipt-persistence-request.v1`）与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary`（`ahfl.durable-store-import-decision-receipt-persistence-review.v1`）的版本入口
+2. 同一文档已冻结 source artifact version chain 与稳定字段边界，并明确 request/review 不可承诺 import receipt persistence id、resume token、store URI、object path、database key、credential 等 future real adapter 字段
+3. 文档已补齐 layering-sensitive breaking-change 规则，明确哪些变化必须 bump version，并要求 docs / code / golden / tests 同步演进
 
-## [ ] Issue 11
+## [x] Issue 11
 
 标题：
 更新 native consumer matrix、contributor guide 与 future real durable store adapter boundary guidance
@@ -342,9 +344,11 @@ durable adapter receipt persistence prototype 若只有 machine-facing persisten
 
 当前实现备注：
 
-1. 尚未开始
+1. 已新增 `docs/reference/native-consumer-matrix-v0.18.zh.md`，冻结 `ExecutionPlan -> ... -> DurableStoreImportDecisionReceiptPersistenceRequest -> DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 consumer 顺序、稳定输入边界与反模式
+2. 已新增 `docs/reference/contributor-guide-v0.18.zh.md`，补齐 contributor 扩展顺序、最小验证清单与 future real durable store adapter boundary guidance
+3. 已同步更新 `README.md` 与 `docs/README.md`，将 V0.18 compatibility / consumer matrix / contributor guide 纳入统一入口
 
-## [ ] Issue 12
+## [x] Issue 12
 
 标题：
 建立 V0.18 durable adapter receipt persistence prototype regression、CI 与 reference 文档闭环
@@ -375,4 +379,7 @@ adapter-receipt-persistence-facing artifact 一旦进入主线而没有单独标
 
 当前实现备注：
 
-1. 尚未开始
+1. `tests/` 已完成 durable receipt persistence request / review 的 direct、CLI emission 与 single-file/project/workspace golden 回归，并通过 `ahfl-v0.18` 与 `v0.18-durable-store-import-receipt-persistence-*` 标签统一切片
+2. `.github/workflows/ci.yml` 已在 `build-and-test` 与 `asan-linux` job 显式加入 `ahfl-v0.18` 切片，再执行全量测试，形成分层回归闭环
+3. `README.md`、`docs/README.md`、`docs/plan/roadmap-v0.18.zh.md` 与本 backlog 已同步更新，V0.18 reference / regression / CI 入口一致
+4. 本地回归状态：`ctest --preset test-dev --output-on-failure -L ahfl-v0.18` 与 `ctest --preset test-dev --output-on-failure -L ahfl-v0.17` 均已通过
