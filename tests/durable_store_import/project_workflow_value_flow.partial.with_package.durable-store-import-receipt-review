@@ -1,0 +1,37 @@
+ahfl.durable-store-import-decision-receipt-review.v1
+source_receipt_format ahfl.durable-store-import-decision-receipt.v1
+source_decision_format ahfl.durable-store-import-decision.v1
+source_request_format ahfl.durable-store-import-request.v1
+source_descriptor_format ahfl.store-import-descriptor.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+workflow_status partial
+checkpoint_status ready_to_persist
+persistence_status ready_to_export
+manifest_status ready_to_import
+descriptor_status ready_to_import
+request_status ready_for_adapter
+decision_status accepted
+receipt_status ready_for_archive
+receipt_boundary_kind adapter_receipt_consumable
+receipt_outcome archive_accepted_decision
+accepted_for_receipt_archive true
+next_action handoff_durable_store_import_decision_receipt
+export_package_identity export::workflow-value-flow::run-partial-001::prefix-0
+store_import_candidate_identity store-import::workflow-value-flow::run-partial-001::stage-3
+durable_store_import_request_identity durable-store-import::workflow-value-flow::run-partial-001::request-4
+durable_store_import_decision_identity durable-store-import-decision::workflow-value-flow::run-partial-001::accepted
+durable_store_import_receipt_identity durable-store-import-receipt::workflow-value-flow::run-partial-001::archive-ready
+planned_durable_identity plan::workflow-value-flow::run-partial-001::prefix-0
+next_required_adapter_capability none
+adapter_receipt_contract adapter-receipt-consumable contract shape available; real receipt persistence and executor ABI still not promised
+receipt_preview durable adapter receipt 'durable-store-import-receipt::workflow-value-flow::run-partial-001::archive-ready' is ready for future adapter archive handoff
+next_step handoff current durable adapter receipt before real adapter implementation work
+workflow_failure_summary {
+  value none
+}
+receipt_blocker {
+  value none
+}

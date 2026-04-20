@@ -74,6 +74,7 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md](./design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md)
 - [native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md](./design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md)
 - [native-durable-store-import-prototype-bootstrap-v0.15.zh.md](./design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md)
 - [native-store-import-prototype-bootstrap-v0.14.zh.md](./design/native-store-import-prototype-bootstrap-v0.14.zh.md)
@@ -96,8 +97,10 @@ Avoid:
 
 ### Plan
 
-- [roadmap-v0.16.zh.md](./plan/roadmap-v0.16.zh.md) - current execution plan
-- [issue-backlog-v0.16.zh.md](./plan/issue-backlog-v0.16.zh.md) - current execution backlog
+- [roadmap-v0.17.zh.md](./plan/roadmap-v0.17.zh.md) - current execution plan
+- [issue-backlog-v0.17.zh.md](./plan/issue-backlog-v0.17.zh.md) - current execution backlog
+- [roadmap-v0.16.zh.md](./plan/roadmap-v0.16.zh.md) - completed baseline
+- [issue-backlog-v0.16.zh.md](./plan/issue-backlog-v0.16.zh.md) - completed baseline
 - [roadmap-v0.15.zh.md](./plan/roadmap-v0.15.zh.md) - completed baseline
 - [issue-backlog-v0.15.zh.md](./plan/issue-backlog-v0.15.zh.md) - completed baseline
 - [roadmap-v0.14.zh.md](./plan/roadmap-v0.14.zh.md) - completed baseline
@@ -131,6 +134,9 @@ Avoid:
 
 ### Reference
 
+- [durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md](./reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md)
+- [native-consumer-matrix-v0.17.zh.md](./reference/native-consumer-matrix-v0.17.zh.md)
+- [contributor-guide-v0.17.zh.md](./reference/contributor-guide-v0.17.zh.md)
 - [durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md](./reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md)
 - [native-consumer-matrix-v0.16.zh.md](./reference/native-consumer-matrix-v0.16.zh.md)
 - [contributor-guide-v0.16.zh.md](./reference/contributor-guide-v0.16.zh.md)

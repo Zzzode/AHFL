@@ -224,14 +224,20 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.17.zh.md`](docs/plan/roadmap-v0.17.zh.md)
+  - [`docs/plan/issue-backlog-v0.17.zh.md`](docs/plan/issue-backlog-v0.17.zh.md)
+- Current durable-adapter-receipt boundary
+  - [`docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md`](docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md)
+  - [`docs/reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md`](docs/reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.17.zh.md`](docs/reference/native-consumer-matrix-v0.17.zh.md)
+  - [`docs/reference/contributor-guide-v0.17.zh.md`](docs/reference/contributor-guide-v0.17.zh.md)
+- Previous completed baseline
   - [`docs/plan/roadmap-v0.16.zh.md`](docs/plan/roadmap-v0.16.zh.md)
   - [`docs/plan/issue-backlog-v0.16.zh.md`](docs/plan/issue-backlog-v0.16.zh.md)
-- Current durable-adapter-decision boundary
   - [`docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md`](docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md)
   - [`docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md`](docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md)
   - [`docs/reference/native-consumer-matrix-v0.16.zh.md`](docs/reference/native-consumer-matrix-v0.16.zh.md)
   - [`docs/reference/contributor-guide-v0.16.zh.md`](docs/reference/contributor-guide-v0.16.zh.md)
-- Previous completed baseline
   - [`docs/plan/roadmap-v0.15.zh.md`](docs/plan/roadmap-v0.15.zh.md)
   - [`docs/plan/issue-backlog-v0.15.zh.md`](docs/plan/issue-backlog-v0.15.zh.md)
   - [`docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md`](docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md)
@@ -266,4 +272,5 @@ semantics. Its current boundary is documented in
 
 CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
 project / IR / backend / scheduler / checkpoint / persistence / export-package /
-durable-adapter-decision regression slices, and then runs the full `ctest` suite.
+durable-adapter-decision / durable-adapter-receipt regression slices, and then
+runs the full `ctest` suite.
