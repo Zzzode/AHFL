@@ -1252,6 +1252,91 @@ add_test(NAME ahfl.durable_store_import_receipt.bootstrap.fail_invalid_decision
             build-durable-store-import-receipt-rejects-invalid-decision
 )
 
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-blocked-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_deferred_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-deferred-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_rejected_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-rejected-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.fail_missing_request_identity
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-rejects-missing-request-identity
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.fail_unsupported_source_receipt_format
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-rejects-unsupported-source-receipt-format
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.fail_ready_with_blocker
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-request-rejects-ready-with-blocker
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.ready_receipt
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-request-ready-receipt
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.blocked_receipt
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-request-blocked-receipt
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.deferred_receipt
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-request-deferred-receipt
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.rejected_receipt
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-request-rejected-receipt
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.fail_invalid_receipt
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-request-rejects-invalid-receipt
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_review.model.fail_unsupported_source_request_format
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-receipt-persistence-review-rejects-unsupported-source-request-format
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_review.bootstrap.ready_request
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-review-ready-request-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_review.bootstrap.rejected_request
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-review-rejected-request-ok
+)
+
+add_test(NAME ahfl.durable_store_import_receipt_persistence_review.bootstrap.fail_invalid_request
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-receipt-persistence-review-rejects-invalid-request
+)
+
 add_test(NAME ahfl.durable_store_import_receipt_review.model.validate_ok
     COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-ok
@@ -1646,11 +1731,27 @@ add_test(NAME ahflc.emit_durable_store_import_receipt.project_manifest.workflow_
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_request.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-request --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-receipt-persistence-request.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_durable_store_import_receipt_review.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-durable-store-import-receipt-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-receipt-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-receipt-persistence-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
@@ -1870,11 +1971,27 @@ add_test(NAME ahflc.emit_durable_store_import_receipt.workspace.workflow_value_f
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_request.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-request --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-receipt-persistence-request.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_durable_store_import_receipt_review.workspace.workflow_value_flow.partial.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-durable-store-import-receipt-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-receipt-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_review.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-receipt-persistence-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 

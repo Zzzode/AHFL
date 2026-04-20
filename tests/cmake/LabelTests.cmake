@@ -784,6 +784,60 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-model
+    TESTS
+        ahfl.durable_store_import_receipt_persistence_request.model.validate_ok
+        ahfl.durable_store_import_receipt_persistence_request.model.validate_blocked_ok
+        ahfl.durable_store_import_receipt_persistence_request.model.validate_deferred_ok
+        ahfl.durable_store_import_receipt_persistence_request.model.validate_rejected_ok
+        ahfl.durable_store_import_receipt_persistence_request.model.fail_missing_request_identity
+        ahfl.durable_store_import_receipt_persistence_request.model.fail_unsupported_source_receipt_format
+        ahfl.durable_store_import_receipt_persistence_request.model.fail_ready_with_blocker
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-bootstrap
+    TESTS
+        ahfl.durable_store_import_receipt_persistence_request.bootstrap.ready_receipt
+        ahfl.durable_store_import_receipt_persistence_request.bootstrap.blocked_receipt
+        ahfl.durable_store_import_receipt_persistence_request.bootstrap.deferred_receipt
+        ahfl.durable_store_import_receipt_persistence_request.bootstrap.rejected_receipt
+        ahfl.durable_store_import_receipt_persistence_request.bootstrap.fail_invalid_receipt
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-review-model
+    TESTS
+        ahfl.durable_store_import_receipt_persistence_review.model.validate_ok
+        ahfl.durable_store_import_receipt_persistence_review.model.fail_unsupported_source_request_format
+        ahfl.durable_store_import_receipt_persistence_review.bootstrap.ready_request
+        ahfl.durable_store_import_receipt_persistence_review.bootstrap.rejected_request
+        ahfl.durable_store_import_receipt_persistence_review.bootstrap.fail_invalid_request
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-emission
+    TESTS
+        ahflc.emit_durable_store_import_receipt_persistence_request.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_request.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.18 v0.18-durable-store-import-receipt-persistence-golden
+    TESTS
+        ahflc.emit_durable_store_import_receipt_persistence_request.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_request.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.16 v0.16-durable-store-import-decision-bootstrap
     TESTS
         ahfl.durable_store_import_decision.bootstrap.ready_request

@@ -224,14 +224,18 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.18.zh.md`](docs/plan/roadmap-v0.18.zh.md)
+  - [`docs/plan/issue-backlog-v0.18.zh.md`](docs/plan/issue-backlog-v0.18.zh.md)
+- Current durable-adapter-receipt-persistence boundary
+  - [`docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md`](docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md)
+  - [`docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md`](docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md)
+- Previous completed baseline
   - [`docs/plan/roadmap-v0.17.zh.md`](docs/plan/roadmap-v0.17.zh.md)
   - [`docs/plan/issue-backlog-v0.17.zh.md`](docs/plan/issue-backlog-v0.17.zh.md)
-- Current durable-adapter-receipt boundary
   - [`docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md`](docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md)
   - [`docs/reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md`](docs/reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md)
   - [`docs/reference/native-consumer-matrix-v0.17.zh.md`](docs/reference/native-consumer-matrix-v0.17.zh.md)
   - [`docs/reference/contributor-guide-v0.17.zh.md`](docs/reference/contributor-guide-v0.17.zh.md)
-- Previous completed baseline
   - [`docs/plan/roadmap-v0.16.zh.md`](docs/plan/roadmap-v0.16.zh.md)
   - [`docs/plan/issue-backlog-v0.16.zh.md`](docs/plan/issue-backlog-v0.16.zh.md)
   - [`docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md`](docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md)

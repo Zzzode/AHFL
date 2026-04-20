@@ -5,7 +5,9 @@
 #include "ahfl/backends/durable_store_import_request.hpp"
 #include "ahfl/backends/durable_store_import_decision.hpp"
 #include "ahfl/backends/durable_store_import_receipt.hpp"
+#include "ahfl/backends/durable_store_import_receipt_persistence_request.hpp"
 #include "ahfl/backends/durable_store_import_decision_review.hpp"
+#include "ahfl/backends/durable_store_import_receipt_persistence_review.hpp"
 #include "ahfl/backends/durable_store_import_receipt_review.hpp"
 #include "ahfl/backends/durable_store_import_review.hpp"
 #include "ahfl/backends/audit_report.hpp"
@@ -28,7 +30,9 @@
 #include "ahfl/durable_store_import/request.hpp"
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
+#include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
+#include "ahfl/durable_store_import/receipt_persistence_review.hpp"
 #include "ahfl/durable_store_import/receipt_review.hpp"
 #include "ahfl/durable_store_import/review.hpp"
 #include "ahfl/execution_journal/journal.hpp"
@@ -85,8 +89,10 @@ struct CommandLineOptions {
     bool emit_durable_store_import_review{false};
     bool emit_durable_store_import_decision{false};
     bool emit_durable_store_import_receipt{false};
+    bool emit_durable_store_import_receipt_persistence_request{false};
     bool emit_durable_store_import_decision_review{false};
     bool emit_durable_store_import_receipt_review{false};
+    bool emit_durable_store_import_receipt_persistence_review{false};
     bool emit_scheduler_review{false};
     bool emit_runtime_session{false};
     bool emit_dry_run_trace{false};
@@ -110,12 +116,12 @@ void print_usage(std::ostream &out) {
         << "  ahflc "
            "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
            "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-export-manifest|emit-export-review|emit-runtime-session|emit-dry-run-trace|emit-"
-           "store-import-descriptor|emit-store-import-review|emit-durable-store-import-request|emit-durable-store-import-review|emit-durable-store-import-decision|emit-durable-store-import-receipt|emit-durable-store-import-decision-review|emit-durable-store-import-receipt-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --project "
+           "store-import-descriptor|emit-store-import-review|emit-durable-store-import-request|emit-durable-store-import-review|emit-durable-store-import-decision|emit-durable-store-import-receipt|emit-durable-store-import-receipt-persistence-request|emit-durable-store-import-decision-review|emit-durable-store-import-receipt-review|emit-durable-store-import-receipt-persistence-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --project "
            "<ahfl.project.json>\n"
         << "  ahflc "
            "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
            "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-export-manifest|emit-export-review|emit-runtime-session|emit-dry-run-trace|emit-"
-           "store-import-descriptor|emit-store-import-review|emit-durable-store-import-request|emit-durable-store-import-review|emit-durable-store-import-decision|emit-durable-store-import-receipt|emit-durable-store-import-decision-review|emit-durable-store-import-receipt-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --workspace "
+           "store-import-descriptor|emit-store-import-review|emit-durable-store-import-request|emit-durable-store-import-review|emit-durable-store-import-decision|emit-durable-store-import-receipt|emit-durable-store-import-receipt-persistence-request|emit-durable-store-import-decision-review|emit-durable-store-import-receipt-review|emit-durable-store-import-receipt-persistence-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --workspace "
            "<ahfl.workspace.json> --project-name <name>\n"
         << "  ahflc check [--search-root <dir>]... [--dump-ast] <input.ahfl>\n"
         << "  ahflc dump-ast [--search-root <dir>]... <input.ahfl>\n"
@@ -181,6 +187,12 @@ void print_usage(std::ostream &out) {
         << "  ahflc emit-durable-store-import-receipt-review --package <ahfl.package.json> "
            "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
            "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
+        << "  ahflc emit-durable-store-import-receipt-persistence-request --package "
+           "<ahfl.package.json> --capability-mocks <mocks.json> --input-fixture <fixture> "
+           "[--workflow <canonical>] [--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
+        << "  ahflc emit-durable-store-import-receipt-persistence-review --package "
+           "<ahfl.package.json> --capability-mocks <mocks.json> --input-fixture <fixture> "
+           "[--workflow <canonical>] [--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
         << "  ahflc emit-scheduler-review --package <ahfl.package.json> --capability-mocks "
            "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
            "[--search-root <dir>]... <input.ahfl>\n"
@@ -214,8 +226,10 @@ void print_usage(std::ostream &out) {
            argument == "emit-durable-store-import-review" ||
            argument == "emit-durable-store-import-decision" ||
            argument == "emit-durable-store-import-receipt" ||
+           argument == "emit-durable-store-import-receipt-persistence-request" ||
            argument == "emit-durable-store-import-decision-review" ||
            argument == "emit-durable-store-import-receipt-review" ||
+           argument == "emit-durable-store-import-receipt-persistence-review" ||
            argument == "emit-scheduler-review" ||
            argument == "emit-runtime-session" ||
            argument == "emit-dry-run-trace" ||
@@ -304,11 +318,19 @@ void print_usage(std::ostream &out) {
         return std::nullopt;
     }
 
+    if (options.emit_durable_store_import_receipt_persistence_request) {
+        return std::nullopt;
+    }
+
     if (options.emit_durable_store_import_decision_review) {
         return std::nullopt;
     }
 
     if (options.emit_durable_store_import_receipt_review) {
+        return std::nullopt;
+    }
+
+    if (options.emit_durable_store_import_receipt_persistence_review) {
         return std::nullopt;
     }
 
@@ -1690,6 +1712,30 @@ build_durable_store_import_receipt_for_cli(
     return *receipt.receipt;
 }
 
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequest>
+build_durable_store_import_receipt_persistence_request_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto receipt = build_durable_store_import_receipt_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!receipt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto request = ahfl::durable_store_import::
+        build_durable_store_import_decision_receipt_persistence_request(*receipt);
+    request.diagnostics.render(std::cerr);
+    if (request.has_errors() || !request.request.has_value()) {
+        return std::nullopt;
+    }
+
+    return *request.request;
+}
+
 [[nodiscard]] int emit_durable_store_import_request_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1757,6 +1803,25 @@ build_durable_store_import_receipt_for_cli(
     return 0;
 }
 
+[[nodiscard]] int emit_durable_store_import_receipt_persistence_request_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto request = build_durable_store_import_receipt_persistence_request_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-receipt-persistence-request");
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_receipt_persistence_request_json(*request, std::cout);
+    return 0;
+}
+
 [[nodiscard]] std::optional<
     ahfl::durable_store_import::DurableStoreImportDecisionReceiptReviewSummary>
 build_durable_store_import_receipt_review_for_cli(
@@ -1798,6 +1863,50 @@ build_durable_store_import_receipt_review_for_cli(
     }
 
     ahfl::print_durable_store_import_receipt_review(*review, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewSummary>
+build_durable_store_import_receipt_persistence_review_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto request = build_durable_store_import_receipt_persistence_request_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!request.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::
+            build_durable_store_import_decision_receipt_persistence_review_summary(*request);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.summary.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.summary;
+}
+
+[[nodiscard]] int emit_durable_store_import_receipt_persistence_review_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_receipt_persistence_review_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-receipt-persistence-review");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_receipt_persistence_review(*review, std::cout);
     return 0;
 }
 
@@ -2030,6 +2139,11 @@ template <typename InputT>
                 ir_program, metadata_validation.metadata, *capability_mock_set, options);
         }
 
+        if (options.emit_durable_store_import_receipt_persistence_request) {
+            return emit_durable_store_import_receipt_persistence_request_with_diagnostics(
+                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        }
+
         if (options.emit_durable_store_import_decision_review) {
             return emit_durable_store_import_decision_review_with_diagnostics(
                 ir_program, metadata_validation.metadata, *capability_mock_set, options);
@@ -2037,6 +2151,11 @@ template <typename InputT>
 
         if (options.emit_durable_store_import_receipt_review) {
             return emit_durable_store_import_receipt_review_with_diagnostics(
+                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        }
+
+        if (options.emit_durable_store_import_receipt_persistence_review) {
+            return emit_durable_store_import_receipt_persistence_review_with_diagnostics(
                 ir_program, metadata_validation.metadata, *capability_mock_set, options);
         }
 
@@ -2266,11 +2385,17 @@ template <typename InputT>
             if (argument == "emit-durable-store-import-receipt") {
                 options.emit_durable_store_import_receipt = true;
             }
+            if (argument == "emit-durable-store-import-receipt-persistence-request") {
+                options.emit_durable_store_import_receipt_persistence_request = true;
+            }
             if (argument == "emit-durable-store-import-decision-review") {
                 options.emit_durable_store_import_decision_review = true;
             }
             if (argument == "emit-durable-store-import-receipt-review") {
                 options.emit_durable_store_import_receipt_review = true;
+            }
+            if (argument == "emit-durable-store-import-receipt-persistence-review") {
+                options.emit_durable_store_import_receipt_persistence_review = true;
             }
             if (argument == "emit-scheduler-review") {
                 options.emit_scheduler_review = true;
@@ -2332,17 +2457,31 @@ int run_cli(std::span<const std::string_view> arguments) {
         static_cast<int>(options.emit_durable_store_import_review) +
         static_cast<int>(options.emit_durable_store_import_decision) +
         static_cast<int>(options.emit_durable_store_import_receipt) +
+        static_cast<int>(options.emit_durable_store_import_receipt_persistence_request) +
         static_cast<int>(options.emit_durable_store_import_decision_review) +
         static_cast<int>(options.emit_durable_store_import_receipt_review) +
+        static_cast<int>(options.emit_durable_store_import_receipt_persistence_review) +
         static_cast<int>(options.emit_scheduler_review) +
         static_cast<int>(options.emit_runtime_session) +
         static_cast<int>(options.emit_dry_run_trace) +
         static_cast<int>(options.emit_package_review) + static_cast<int>(options.emit_summary) +
         static_cast<int>(options.emit_smv);
     if (action_count > 1) {
-        std::cerr << "error: choose at most one of dump-ast, dump-types, dump-project, emit-ir, "
-           "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-durable-store-import-request, emit-durable-store-import-review, emit-durable-store-import-decision, emit-durable-store-import-receipt, emit-durable-store-import-decision-review, emit-durable-store-import-receipt-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
-           "emit-package-review, emit-summary, or emit-smv\n";
+        std::cerr
+            << "error: choose at most one of dump-ast, dump-types, dump-project, emit-ir, "
+               "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, "
+               "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
+               "emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, "
+               "emit-persistence-review, emit-export-manifest, emit-export-review, "
+               "emit-store-import-descriptor, emit-store-import-review, "
+               "emit-durable-store-import-request, emit-durable-store-import-review, "
+               "emit-durable-store-import-decision, emit-durable-store-import-receipt, "
+               "emit-durable-store-import-receipt-persistence-request, "
+               "emit-durable-store-import-decision-review, "
+               "emit-durable-store-import-receipt-review, "
+               "emit-durable-store-import-receipt-persistence-review, emit-scheduler-review, "
+               "emit-runtime-session, emit-dry-run-trace, emit-package-review, emit-summary, "
+               "or emit-smv\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2403,13 +2542,28 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_durable_store_import_review &&
         !options.emit_durable_store_import_decision &&
         !options.emit_durable_store_import_receipt &&
+        !options.emit_durable_store_import_receipt_persistence_request &&
         !options.emit_durable_store_import_decision_review &&
         !options.emit_durable_store_import_receipt_review &&
+        !options.emit_durable_store_import_receipt_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session &&
         !options.emit_dry_run_trace &&
         !options.emit_package_review) {
-        std::cerr << "error: --package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-durable-store-import-request, emit-durable-store-import-review, emit-durable-store-import-decision, emit-durable-store-import-receipt, emit-durable-store-import-decision-review, emit-durable-store-import-receipt-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review\n";
+        std::cerr << "error: --package is only supported with emit-native-json, "
+                     "emit-execution-plan, emit-execution-journal, emit-replay-view, "
+                     "emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, "
+                     "emit-checkpoint-review, emit-persistence-descriptor, "
+                     "emit-persistence-review, emit-export-manifest, emit-export-review, "
+                     "emit-store-import-descriptor, emit-store-import-review, "
+                     "emit-durable-store-import-request, emit-durable-store-import-review, "
+                     "emit-durable-store-import-decision, emit-durable-store-import-receipt, "
+                     "emit-durable-store-import-receipt-persistence-request, "
+                     "emit-durable-store-import-decision-review, "
+                     "emit-durable-store-import-receipt-review, "
+                     "emit-durable-store-import-receipt-persistence-review, "
+                     "emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
+                     "or emit-package-review\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2431,11 +2585,25 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_durable_store_import_review &&
         !options.emit_durable_store_import_decision &&
         !options.emit_durable_store_import_receipt &&
+        !options.emit_durable_store_import_receipt_persistence_request &&
         !options.emit_durable_store_import_decision_review &&
         !options.emit_durable_store_import_receipt_review &&
+        !options.emit_durable_store_import_receipt_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-durable-store-import-request, emit-durable-store-import-review, emit-durable-store-import-decision, emit-durable-store-import-receipt, emit-durable-store-import-decision-review, emit-durable-store-import-receipt-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, "
+                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
+                     "emit-checkpoint-record, emit-checkpoint-review, "
+                     "emit-persistence-descriptor, emit-persistence-review, "
+                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
+                     "emit-store-import-review, emit-durable-store-import-request, "
+                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
+                     "emit-durable-store-import-receipt, "
+                     "emit-durable-store-import-receipt-persistence-request, "
+                     "emit-durable-store-import-decision-review, "
+                     "emit-durable-store-import-receipt-review, "
+                     "emit-durable-store-import-receipt-persistence-review, "
+                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2457,11 +2625,25 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_durable_store_import_review &&
         !options.emit_durable_store_import_decision &&
         !options.emit_durable_store_import_receipt &&
+        !options.emit_durable_store_import_receipt_persistence_request &&
         !options.emit_durable_store_import_decision_review &&
         !options.emit_durable_store_import_receipt_review &&
+        !options.emit_durable_store_import_receipt_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-durable-store-import-request, emit-durable-store-import-review, emit-durable-store-import-decision, emit-durable-store-import-receipt, emit-durable-store-import-decision-review, emit-durable-store-import-receipt-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, "
+                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
+                     "emit-checkpoint-record, emit-checkpoint-review, "
+                     "emit-persistence-descriptor, emit-persistence-review, "
+                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
+                     "emit-store-import-review, emit-durable-store-import-request, "
+                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
+                     "emit-durable-store-import-receipt, "
+                     "emit-durable-store-import-receipt-persistence-request, "
+                     "emit-durable-store-import-decision-review, "
+                     "emit-durable-store-import-receipt-review, "
+                     "emit-durable-store-import-receipt-persistence-review, "
+                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2483,11 +2665,25 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_durable_store_import_review &&
         !options.emit_durable_store_import_decision &&
         !options.emit_durable_store_import_receipt &&
+        !options.emit_durable_store_import_receipt_persistence_request &&
         !options.emit_durable_store_import_decision_review &&
         !options.emit_durable_store_import_receipt_review &&
+        !options.emit_durable_store_import_receipt_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --run-id is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-durable-store-import-request, emit-durable-store-import-review, emit-durable-store-import-decision, emit-durable-store-import-receipt, emit-durable-store-import-decision-review, emit-durable-store-import-receipt-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --run-id is only supported with emit-execution-journal, "
+                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
+                     "emit-checkpoint-record, emit-checkpoint-review, "
+                     "emit-persistence-descriptor, emit-persistence-review, "
+                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
+                     "emit-store-import-review, emit-durable-store-import-request, "
+                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
+                     "emit-durable-store-import-receipt, "
+                     "emit-durable-store-import-receipt-persistence-request, "
+                     "emit-durable-store-import-decision-review, "
+                     "emit-durable-store-import-receipt-review, "
+                     "emit-durable-store-import-receipt-persistence-review, "
+                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2509,11 +2705,25 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_durable_store_import_review &&
         !options.emit_durable_store_import_decision &&
         !options.emit_durable_store_import_receipt &&
+        !options.emit_durable_store_import_receipt_persistence_request &&
         !options.emit_durable_store_import_decision_review &&
         !options.emit_durable_store_import_receipt_review &&
+        !options.emit_durable_store_import_receipt_persistence_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --workflow is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-durable-store-import-request, emit-durable-store-import-review, emit-durable-store-import-decision, emit-durable-store-import-receipt, emit-durable-store-import-decision-review, emit-durable-store-import-receipt-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --workflow is only supported with emit-execution-journal, "
+                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
+                     "emit-checkpoint-record, emit-checkpoint-review, "
+                     "emit-persistence-descriptor, emit-persistence-review, "
+                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
+                     "emit-store-import-review, emit-durable-store-import-request, "
+                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
+                     "emit-durable-store-import-receipt, "
+                     "emit-durable-store-import-receipt-persistence-request, "
+                     "emit-durable-store-import-decision-review, "
+                     "emit-durable-store-import-receipt-review, "
+                     "emit-durable-store-import-receipt-persistence-review, "
+                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2532,8 +2742,10 @@ int run_cli(std::span<const std::string_view> arguments) {
         options.emit_durable_store_import_review ||
         options.emit_durable_store_import_decision ||
         options.emit_durable_store_import_receipt ||
+        options.emit_durable_store_import_receipt_persistence_request ||
         options.emit_durable_store_import_decision_review ||
         options.emit_durable_store_import_receipt_review ||
+        options.emit_durable_store_import_receipt_persistence_review ||
         options.emit_scheduler_review ||
         options.emit_runtime_session) {
         if (!options.package_descriptor.has_value()) {
@@ -2570,10 +2782,14 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-durable-store-import-decision"
                               : options.emit_durable_store_import_receipt
                                     ? "emit-durable-store-import-receipt"
+                              : options.emit_durable_store_import_receipt_persistence_request
+                                    ? "emit-durable-store-import-receipt-persistence-request"
                               : options.emit_durable_store_import_decision_review
                                     ? "emit-durable-store-import-decision-review"
                               : options.emit_durable_store_import_receipt_review
                                     ? "emit-durable-store-import-receipt-review"
+                              : options.emit_durable_store_import_receipt_persistence_review
+                                    ? "emit-durable-store-import-receipt-persistence-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"
@@ -2616,10 +2832,14 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-durable-store-import-decision"
                               : options.emit_durable_store_import_receipt
                                     ? "emit-durable-store-import-receipt"
+                              : options.emit_durable_store_import_receipt_persistence_request
+                                    ? "emit-durable-store-import-receipt-persistence-request"
                               : options.emit_durable_store_import_decision_review
                                     ? "emit-durable-store-import-decision-review"
                               : options.emit_durable_store_import_receipt_review
                                     ? "emit-durable-store-import-receipt-review"
+                              : options.emit_durable_store_import_receipt_persistence_review
+                                    ? "emit-durable-store-import-receipt-persistence-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"
@@ -2662,10 +2882,14 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-durable-store-import-decision"
                               : options.emit_durable_store_import_receipt
                                     ? "emit-durable-store-import-receipt"
+                              : options.emit_durable_store_import_receipt_persistence_request
+                                    ? "emit-durable-store-import-receipt-persistence-request"
                               : options.emit_durable_store_import_decision_review
                                     ? "emit-durable-store-import-decision-review"
                               : options.emit_durable_store_import_receipt_review
                                     ? "emit-durable-store-import-receipt-review"
+                              : options.emit_durable_store_import_receipt_persistence_review
+                                    ? "emit-durable-store-import-receipt-persistence-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"

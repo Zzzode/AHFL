@@ -302,11 +302,27 @@ add_test(NAME ahflc.emit_durable_store_import_receipt.workflow_value_flow.with_p
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_request.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-request --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-persistence-request.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_durable_store_import_receipt_review.workflow_value_flow.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-durable-store-import-receipt-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_review.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-persistence-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 

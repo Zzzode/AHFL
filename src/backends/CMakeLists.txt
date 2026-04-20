@@ -218,6 +218,17 @@ target_link_libraries(ahfl_backend_durable_store_import_receipt
 
 ahfl_apply_project_warnings(ahfl_backend_durable_store_import_receipt)
 
+add_library(ahfl_backend_durable_store_import_receipt_persistence_request STATIC
+    durable_store_import_receipt_persistence_request.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_receipt_persistence_request
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_receipt_persistence_request)
+
 add_library(ahfl_backend_durable_store_import_decision_review STATIC
     durable_store_import_decision_review.cpp
 )
@@ -239,6 +250,17 @@ target_link_libraries(ahfl_backend_durable_store_import_receipt_review
 )
 
 ahfl_apply_project_warnings(ahfl_backend_durable_store_import_receipt_review)
+
+add_library(ahfl_backend_durable_store_import_receipt_persistence_review STATIC
+    durable_store_import_receipt_persistence_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_receipt_persistence_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_receipt_persistence_review)
 
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
@@ -310,8 +332,10 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_review
         ahfl_backend_durable_store_import_decision
         ahfl_backend_durable_store_import_receipt
+        ahfl_backend_durable_store_import_receipt_persistence_request
         ahfl_backend_durable_store_import_decision_review
         ahfl_backend_durable_store_import_receipt_review
+        ahfl_backend_durable_store_import_receipt_persistence_review
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session
