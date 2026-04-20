@@ -1,0 +1,69 @@
+{
+  "format_version": "ahfl.durable-store-import-request.v1",
+  "source_store_import_descriptor_format_version": "ahfl.store-import-descriptor.v1",
+  "source_execution_plan_format_version": "ahfl.execution-plan.v1",
+  "source_runtime_session_format_version": "ahfl.runtime-session.v2",
+  "source_execution_journal_format_version": "ahfl.execution-journal.v2",
+  "source_replay_view_format_version": "ahfl.replay-view.v2",
+  "source_scheduler_snapshot_format_version": "ahfl.scheduler-snapshot.v1",
+  "source_checkpoint_record_format_version": "ahfl.checkpoint-record.v1",
+  "source_persistence_descriptor_format_version": "ahfl.persistence-descriptor.v1",
+  "source_export_manifest_format_version": "ahfl.persistence-export-manifest.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "workflow_status": "partial",
+  "checkpoint_status": "ready_to_persist",
+  "persistence_status": "ready_to_export",
+  "manifest_status": "ready_to_import",
+  "descriptor_status": "ready_to_import",
+  "workflow_failure_summary": null,
+  "export_package_identity": "export::workflow-value-flow::run-partial-001::prefix-0",
+  "store_import_candidate_identity": "store-import::workflow-value-flow::run-partial-001::stage-3",
+  "durable_store_import_request_identity": "durable-store-import::workflow-value-flow::run-partial-001::request-4",
+  "planned_durable_identity": "plan::workflow-value-flow::run-partial-001::prefix-0",
+  "request_boundary_kind": "adapter_contract_consumable",
+  "requested_artifact_set": {
+    "entry_count": 4,
+    "entries": [
+      {
+        "artifact_kind": "store_import_descriptor",
+        "logical_artifact_name": "store-import-descriptor.json",
+        "source_format_version": "ahfl.store-import-descriptor.v1",
+        "required_for_import": true,
+        "adapter_role": "request_anchor"
+      },
+      {
+        "artifact_kind": "export_manifest",
+        "logical_artifact_name": "export-manifest.json",
+        "source_format_version": "ahfl.persistence-export-manifest.v1",
+        "required_for_import": true,
+        "adapter_role": "import_manifest"
+      },
+      {
+        "artifact_kind": "persistence_descriptor",
+        "logical_artifact_name": "persistence-descriptor.json",
+        "source_format_version": "ahfl.persistence-descriptor.v1",
+        "required_for_import": true,
+        "adapter_role": "durable_state_descriptor"
+      },
+      {
+        "artifact_kind": "checkpoint_record",
+        "logical_artifact_name": "checkpoint-record.json",
+        "source_format_version": "ahfl.checkpoint-record.v1",
+        "required_for_import": true,
+        "adapter_role": "checkpoint_payload"
+      }
+    ]
+  },
+  "adapter_ready": true,
+  "next_required_adapter_artifact_kind": null,
+  "request_status": "ready_for_adapter",
+  "adapter_blocker": null
+}

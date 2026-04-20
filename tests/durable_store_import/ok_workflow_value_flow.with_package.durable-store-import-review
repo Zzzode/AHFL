@@ -1,0 +1,38 @@
+ahfl.durable-store-import-review.v1
+source_request_format ahfl.durable-store-import-request.v1
+source_descriptor_format ahfl.store-import-descriptor.v1
+source_manifest_format ahfl.persistence-export-manifest.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+workflow_status completed
+checkpoint_status terminal_completed
+persistence_status terminal_completed
+manifest_status terminal_completed
+descriptor_status terminal_completed
+request_status terminal_completed
+export_package_identity export::workflow-value-flow::run-001::prefix-2
+store_import_candidate_identity store-import::workflow-value-flow::run-001::stage-3
+durable_store_import_request_identity durable-store-import::workflow-value-flow::run-001::request-4
+planned_durable_identity plan::workflow-value-flow::run-001::prefix-2
+request_boundary_kind adapter_contract_consumable
+adapter_ready true
+next_action archive_completed_durable_store_import_state
+adapter_boundary adapter-contract-consumable request shape available; durable mutation ABI still not promised
+request_preview workflow already completed; durable store import request is retained for archival review
+next_step archive completed durable store import request; no further import action
+next_required_adapter_artifact none
+workflow_failure_summary {
+  value none
+}
+adapter_blocker {
+  value none
+}
+requested_artifact_preview {
+  count 4
+  - required store_import_descriptor store-import-descriptor.json role request_anchor
+  - required export_manifest export-manifest.json role import_manifest
+  - required persistence_descriptor persistence-descriptor.json role durable_state_descriptor
+  - required checkpoint_record checkpoint-record.json role checkpoint_payload
+}

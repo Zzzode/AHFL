@@ -683,6 +683,61 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.15 v0.15-durable-store-import-request-model
+    TESTS
+        ahfl.durable_store_import_request.model.validate_ok
+        ahfl.durable_store_import_request.model.validate_blocked_ok
+        ahfl.durable_store_import_request.model.validate_terminal_failed_ok
+        ahfl.durable_store_import_request.model.validate_terminal_partial_ok
+        ahfl.durable_store_import_request.model.fail_missing_request_identity
+        ahfl.durable_store_import_request.model.fail_duplicate_artifact_name
+        ahfl.durable_store_import_request.model.fail_ready_with_blocker
+        ahfl.durable_store_import_request.model.fail_unsupported_source_descriptor_format
+        ahfl.durable_store_import_request.model.fail_adapter_contract_blocked
+        ahfl.durable_store_import_request.model.fail_terminal_failed_without_failure_summary
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.15 v0.15-durable-store-import-request-bootstrap
+    TESTS
+        ahfl.durable_store_import_request.bootstrap.ready_descriptor
+        ahfl.durable_store_import_request.bootstrap.completed_descriptor
+        ahfl.durable_store_import_request.bootstrap.fail_invalid_descriptor
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.15 v0.15-durable-store-import-review-model
+    TESTS
+        ahfl.durable_store_import_review.model.validate_ok
+        ahfl.durable_store_import_review.model.fail_unsupported_source_request_format
+        ahfl.durable_store_import_review.model.ready_request
+        ahfl.durable_store_import_review.model.failed_request
+        ahfl.durable_store_import_review.model.fail_invalid_request
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.15 v0.15-durable-store-import-emission
+    TESTS
+        ahflc.emit_durable_store_import_request.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_request.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.15 v0.15-durable-store-import-golden
+    TESTS
+        ahflc.emit_durable_store_import_request.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_request.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.12 v0.12-persistence-review-emission
     TESTS
         ahflc.emit_persistence_review.workflow_value_flow.with_package

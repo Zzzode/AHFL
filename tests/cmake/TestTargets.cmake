@@ -134,3 +134,13 @@ target_link_libraries(ahfl_store_import_tests
         ahfl_persistence_export
 )
 ahfl_apply_project_warnings(ahfl_store_import_tests)
+
+add_executable(ahfl_durable_store_import_tests
+    durable_store_import/request.cpp
+)
+target_link_libraries(ahfl_durable_store_import_tests
+    PRIVATE
+        ahfl_durable_store_import
+        ahfl_store_import
+)
+ahfl_apply_project_warnings(ahfl_durable_store_import_tests)

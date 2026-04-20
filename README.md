@@ -134,6 +134,14 @@ Backend outputs:
 | `emit-checkpoint-record` | deterministic checkpoint-facing record over plan, session, journal, replay, and snapshot |
 | `emit-checkpoint-review` | reviewer-facing checkpoint summary over checkpoint record |
 | `emit-scheduler-review` | reviewer-facing scheduler decision summary over scheduler snapshot |
+| `emit-persistence-descriptor` | deterministic persistence descriptor over checkpoint record |
+| `emit-persistence-review` | reviewer-facing persistence summary over persistence descriptor |
+| `emit-export-manifest` | deterministic export manifest for store-import bootstrap |
+| `emit-export-review` | reviewer-facing export summary over export manifest |
+| `emit-store-import-descriptor` | deterministic store-import descriptor over export manifest |
+| `emit-store-import-review` | reviewer-facing store-import summary over store-import descriptor |
+| `emit-durable-store-import-request` | durable-store-import request artifact for adapter-facing handoff |
+| `emit-durable-store-import-review` | reviewer-facing durable-store-import summary over durable request |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -178,6 +186,7 @@ cmake --build --preset build-format-check
 # Test
 ctest --preset test-dev
 ctest --preset test-dev -L ahfl-v0.3
+ctest --preset test-dev -L ahfl-v0.15
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -214,14 +223,17 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
-  - [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md)
-  - [`docs/plan/issue-backlog-v0.14.zh.md`](docs/plan/issue-backlog-v0.14.zh.md)
-- Current store-import boundary
-  - [`docs/design/native-store-import-prototype-bootstrap-v0.14.zh.md`](docs/design/native-store-import-prototype-bootstrap-v0.14.zh.md)
-  - [`docs/reference/store-import-prototype-compatibility-v0.14.zh.md`](docs/reference/store-import-prototype-compatibility-v0.14.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.14.zh.md`](docs/reference/native-consumer-matrix-v0.14.zh.md)
-  - [`docs/reference/contributor-guide-v0.14.zh.md`](docs/reference/contributor-guide-v0.14.zh.md)
+  - [`docs/plan/roadmap-v0.15.zh.md`](docs/plan/roadmap-v0.15.zh.md)
+  - [`docs/plan/issue-backlog-v0.15.zh.md`](docs/plan/issue-backlog-v0.15.zh.md)
+- Current durable-store-import boundary
+  - [`docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md`](docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md)
+  - [`docs/reference/durable-store-import-prototype-compatibility-v0.15.zh.md`](docs/reference/durable-store-import-prototype-compatibility-v0.15.zh.md)
+- Current durable-store-import consumer guidance
+  - [`docs/reference/native-consumer-matrix-v0.15.zh.md`](docs/reference/native-consumer-matrix-v0.15.zh.md)
+  - [`docs/reference/contributor-guide-v0.15.zh.md`](docs/reference/contributor-guide-v0.15.zh.md)
 - Previous completed baseline
+  - [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md)
+  - [`docs/reference/store-import-prototype-compatibility-v0.14.zh.md`](docs/reference/store-import-prototype-compatibility-v0.14.zh.md)
   - [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md)
   - [`docs/reference/export-package-prototype-compatibility-v0.13.zh.md`](docs/reference/export-package-prototype-compatibility-v0.13.zh.md)
 - Core references

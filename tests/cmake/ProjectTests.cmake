@@ -1057,6 +1057,96 @@ add_test(NAME ahfl.store_import_review.model.fail_invalid_descriptor
             "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
 )
 
+add_test(NAME ahfl.durable_store_import_request.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-ok
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.validate_blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-blocked-ok
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.validate_terminal_failed_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-terminal-failed-ok
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.validate_terminal_partial_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-terminal-partial-ok
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.fail_missing_request_identity
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-rejects-missing-request-identity
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.fail_duplicate_artifact_name
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-rejects-duplicate-artifact-name
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.fail_ready_with_blocker
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-rejects-ready-with-blocker
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.fail_unsupported_source_descriptor_format
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-rejects-unsupported-source-descriptor-format
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.fail_adapter_contract_blocked
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-rejects-adapter-contract-blocked
+)
+
+add_test(NAME ahfl.durable_store_import_request.model.fail_terminal_failed_without_failure_summary
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-request-rejects-terminal-failed-without-failure-summary
+)
+
+add_test(NAME ahfl.durable_store_import_request.bootstrap.ready_descriptor
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            build-durable-store-import-request-ready-descriptor
+)
+
+add_test(NAME ahfl.durable_store_import_request.bootstrap.completed_descriptor
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            build-durable-store-import-request-completed-descriptor
+)
+
+add_test(NAME ahfl.durable_store_import_request.bootstrap.fail_invalid_descriptor
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            build-durable-store-import-request-rejects-invalid-descriptor
+)
+
+add_test(NAME ahfl.durable_store_import_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_review.model.fail_unsupported_source_request_format
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            validate-durable-store-import-review-rejects-unsupported-source-request-format
+)
+
+add_test(NAME ahfl.durable_store_import_review.model.ready_request
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            build-durable-store-import-review-ready-request
+)
+
+add_test(NAME ahfl.durable_store_import_review.model.failed_request
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            build-durable-store-import-review-failed-request
+)
+
+add_test(NAME ahfl.durable_store_import_review.model.fail_invalid_request
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+            build-durable-store-import-review-rejects-invalid-request
+)
+
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
     COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
             normalize-identity-format-version
@@ -1354,6 +1444,22 @@ add_test(NAME ahflc.emit_store_import_review.project_manifest.workflow_value_flo
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_durable_store_import_request.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-request --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-request.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -1527,6 +1633,22 @@ add_test(NAME ahflc.emit_store_import_review.workspace.workflow_value_flow.parti
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-store-import-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/project_workflow_value_flow.partial.with_package.store-import-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_request.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-request --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-request.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_review.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 

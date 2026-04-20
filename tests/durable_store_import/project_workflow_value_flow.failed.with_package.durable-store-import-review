@@ -1,0 +1,42 @@
+ahfl.durable-store-import-review.v1
+source_request_format ahfl.durable-store-import-request.v1
+source_descriptor_format ahfl.store-import-descriptor.v1
+source_manifest_format ahfl.persistence-export-manifest.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+workflow_status failed
+checkpoint_status terminal_failed
+persistence_status terminal_failed
+manifest_status terminal_failed
+descriptor_status terminal_failed
+request_status terminal_failed
+export_package_identity export::workflow-value-flow::run-failed-001::prefix-0
+store_import_candidate_identity store-import::workflow-value-flow::run-failed-001::stage-3
+durable_store_import_request_identity durable-store-import::workflow-value-flow::run-failed-001::request-4
+planned_durable_identity plan::workflow-value-flow::run-failed-001::prefix-0
+request_boundary_kind local_intent_only
+adapter_ready false
+next_action investigate_durable_store_import_failure
+adapter_boundary local durable store import intent only; real adapter ABI not yet promised
+request_preview workflow failed at node 'first'; durable store import request handoff is closed
+next_step inspect workflow failure before planning durable store adapter handoff
+next_required_adapter_artifact none
+workflow_failure_summary {
+  kind workflow_failed
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+adapter_blocker {
+  kind workflow_failure
+  logical_artifact_name none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+requested_artifact_preview {
+  count 4
+  - required store_import_descriptor store-import-descriptor.json role request_anchor
+  - required export_manifest export-manifest.json role import_manifest
+  - required persistence_descriptor persistence-descriptor.json role durable_state_descriptor
+  - required checkpoint_record checkpoint-record.json role checkpoint_payload
+}

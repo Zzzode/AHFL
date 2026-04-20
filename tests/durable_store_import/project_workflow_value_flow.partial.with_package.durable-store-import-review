@@ -1,0 +1,38 @@
+ahfl.durable-store-import-review.v1
+source_request_format ahfl.durable-store-import-request.v1
+source_descriptor_format ahfl.store-import-descriptor.v1
+source_manifest_format ahfl.persistence-export-manifest.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+workflow_status partial
+checkpoint_status ready_to_persist
+persistence_status ready_to_export
+manifest_status ready_to_import
+descriptor_status ready_to_import
+request_status ready_for_adapter
+export_package_identity export::workflow-value-flow::run-partial-001::prefix-0
+store_import_candidate_identity store-import::workflow-value-flow::run-partial-001::stage-3
+durable_store_import_request_identity durable-store-import::workflow-value-flow::run-partial-001::request-4
+planned_durable_identity plan::workflow-value-flow::run-partial-001::prefix-0
+request_boundary_kind adapter_contract_consumable
+adapter_ready true
+next_action handoff_durable_store_import_request
+adapter_boundary adapter-contract-consumable request shape available; durable mutation ABI still not promised
+request_preview durable store import request 'durable-store-import::workflow-value-flow::run-partial-001::request-4' can be handed off with current requested artifact set
+next_step handoff current durable store import request before real adapter implementation work
+next_required_adapter_artifact none
+workflow_failure_summary {
+  value none
+}
+adapter_blocker {
+  value none
+}
+requested_artifact_preview {
+  count 4
+  - required store_import_descriptor store-import-descriptor.json role request_anchor
+  - required export_manifest export-manifest.json role import_manifest
+  - required persistence_descriptor persistence-descriptor.json role durable_state_descriptor
+  - required checkpoint_record checkpoint-record.json role checkpoint_payload
+}

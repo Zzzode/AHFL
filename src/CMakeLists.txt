@@ -20,6 +20,7 @@ add_subdirectory(checkpoint_record)
 add_subdirectory(persistence_descriptor)
 add_subdirectory(persistence_export)
 add_subdirectory(store_import)
+add_subdirectory(durable_store_import)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
@@ -36,6 +37,7 @@ target_link_libraries(ahfl_compiler
         ahfl_persistence_descriptor
         ahfl_persistence_export
         ahfl_store_import
+        ahfl_durable_store_import
         ahfl_backend
 )
 
