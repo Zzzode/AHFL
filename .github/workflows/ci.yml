@@ -127,6 +127,9 @@ jobs:
       - name: Run V0.15 Durable Store Import Prototype Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.15'
 
+      - name: Run V0.16 Durable Adapter Decision Prototype Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.16'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -171,6 +174,9 @@ jobs:
 
       - name: Run V0.15 Durable Store Import Prototype Regression
         run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.15'
+
+      - name: Run V0.16 Durable Adapter Decision Prototype Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.16'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

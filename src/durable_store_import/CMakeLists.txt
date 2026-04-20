@@ -1,4 +1,6 @@
 add_library(ahfl_durable_store_import STATIC
+    decision.cpp
+    decision_review.cpp
     request.cpp
     review.cpp
 )

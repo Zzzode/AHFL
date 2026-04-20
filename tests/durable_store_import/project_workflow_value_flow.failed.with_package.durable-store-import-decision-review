@@ -1,0 +1,38 @@
+ahfl.durable-store-import-decision-review.v1
+source_decision_format ahfl.durable-store-import-decision.v1
+source_request_format ahfl.durable-store-import-request.v1
+source_descriptor_format ahfl.store-import-descriptor.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+workflow_status failed
+checkpoint_status terminal_failed
+persistence_status terminal_failed
+manifest_status terminal_failed
+descriptor_status terminal_failed
+request_status terminal_failed
+decision_status rejected
+decision_boundary_kind local_contract_only
+decision_outcome reject_failed_request
+accepted_for_future_execution false
+next_action investigate_durable_store_import_decision_rejection
+export_package_identity export::workflow-value-flow::run-failed-001::prefix-0
+store_import_candidate_identity store-import::workflow-value-flow::run-failed-001::stage-3
+durable_store_import_request_identity durable-store-import::workflow-value-flow::run-failed-001::request-4
+durable_store_import_decision_identity durable-store-import-decision::workflow-value-flow::run-failed-001::rejected
+planned_durable_identity plan::workflow-value-flow::run-failed-001::prefix-0
+next_required_adapter_capability none
+adapter_contract local durable adapter contract reasoning only; real receipt and executor ABI not yet promised
+decision_preview workflow failed at node 'first'; durable adapter decision rejects future execution
+next_step inspect workflow failure before planning future durable adapter execution
+workflow_failure_summary {
+  kind workflow_failed
+  node_name first
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}
+decision_blocker {
+  kind workflow_failure
+  required_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

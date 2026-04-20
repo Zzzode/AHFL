@@ -187,6 +187,7 @@ cmake --build --preset build-format-check
 ctest --preset test-dev
 ctest --preset test-dev -L ahfl-v0.3
 ctest --preset test-dev -L ahfl-v0.15
+ctest --preset test-dev -L ahfl-v0.16
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -223,15 +224,20 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.16.zh.md`](docs/plan/roadmap-v0.16.zh.md)
+  - [`docs/plan/issue-backlog-v0.16.zh.md`](docs/plan/issue-backlog-v0.16.zh.md)
+- Current durable-adapter-decision boundary
+  - [`docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md`](docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md)
+  - [`docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md`](docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.16.zh.md`](docs/reference/native-consumer-matrix-v0.16.zh.md)
+  - [`docs/reference/contributor-guide-v0.16.zh.md`](docs/reference/contributor-guide-v0.16.zh.md)
+- Previous completed baseline
   - [`docs/plan/roadmap-v0.15.zh.md`](docs/plan/roadmap-v0.15.zh.md)
   - [`docs/plan/issue-backlog-v0.15.zh.md`](docs/plan/issue-backlog-v0.15.zh.md)
-- Current durable-store-import boundary
   - [`docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md`](docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md)
   - [`docs/reference/durable-store-import-prototype-compatibility-v0.15.zh.md`](docs/reference/durable-store-import-prototype-compatibility-v0.15.zh.md)
-- Current durable-store-import consumer guidance
   - [`docs/reference/native-consumer-matrix-v0.15.zh.md`](docs/reference/native-consumer-matrix-v0.15.zh.md)
   - [`docs/reference/contributor-guide-v0.15.zh.md`](docs/reference/contributor-guide-v0.15.zh.md)
-- Previous completed baseline
   - [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md)
   - [`docs/reference/store-import-prototype-compatibility-v0.14.zh.md`](docs/reference/store-import-prototype-compatibility-v0.14.zh.md)
   - [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md)
@@ -259,5 +265,5 @@ semantics. Its current boundary is documented in
 ## CI
 
 CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
-project / IR / backend / scheduler / checkpoint / persistence / export-package
-regression slices, and then runs the full `ctest` suite.
+project / IR / backend / scheduler / checkpoint / persistence / export-package /
+durable-adapter-decision regression slices, and then runs the full `ctest` suite.

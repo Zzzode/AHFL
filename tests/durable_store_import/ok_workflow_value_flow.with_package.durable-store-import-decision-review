@@ -1,0 +1,34 @@
+ahfl.durable-store-import-decision-review.v1
+source_decision_format ahfl.durable-store-import-decision.v1
+source_request_format ahfl.durable-store-import-request.v1
+source_descriptor_format ahfl.store-import-descriptor.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+workflow_status completed
+checkpoint_status terminal_completed
+persistence_status terminal_completed
+manifest_status terminal_completed
+descriptor_status terminal_completed
+request_status terminal_completed
+decision_status accepted
+decision_boundary_kind adapter_decision_consumable
+decision_outcome accept_request
+accepted_for_future_execution true
+next_action archive_completed_durable_store_import_decision
+export_package_identity export::workflow-value-flow::run-001::prefix-2
+store_import_candidate_identity store-import::workflow-value-flow::run-001::stage-3
+durable_store_import_request_identity durable-store-import::workflow-value-flow::run-001::request-4
+durable_store_import_decision_identity durable-store-import-decision::workflow-value-flow::run-001::accepted
+planned_durable_identity plan::workflow-value-flow::run-001::prefix-2
+next_required_adapter_capability none
+adapter_contract adapter-decision-consumable contract shape available; real receipt and executor ABI still not promised
+decision_preview workflow already completed; durable adapter decision is retained for archival review
+next_step archive completed durable adapter decision; no further adapter action
+workflow_failure_summary {
+  value none
+}
+decision_blocker {
+  value none
+}

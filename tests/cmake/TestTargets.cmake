@@ -144,3 +144,13 @@ target_link_libraries(ahfl_durable_store_import_tests
         ahfl_store_import
 )
 ahfl_apply_project_warnings(ahfl_durable_store_import_tests)
+
+add_executable(ahfl_durable_store_import_decision_tests
+    durable_store_import/decision.cpp
+)
+target_link_libraries(ahfl_durable_store_import_decision_tests
+    PRIVATE
+        ahfl_durable_store_import
+        ahfl_store_import
+)
+ahfl_apply_project_warnings(ahfl_durable_store_import_decision_tests)
