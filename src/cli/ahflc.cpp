@@ -51,6 +51,7 @@
 #include "ahfl/store_import/descriptor.hpp"
 #include "ahfl/store_import/review.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <functional>
 #include <iostream>
@@ -59,6 +60,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -120,178 +122,184 @@ struct CommandLineOptions {
 
 [[nodiscard]] std::string_view command_name(CommandKind command);
 
-constexpr CommandKind kUsageProjectAwareCommands[] = {
-    CommandKind::Check,
-    CommandKind::DumpAst,
-    CommandKind::DumpProject,
-    CommandKind::DumpTypes,
-    CommandKind::EmitIr,
-    CommandKind::EmitIrJson,
-    CommandKind::EmitNativeJson,
-    CommandKind::EmitExecutionPlan,
-    CommandKind::EmitExecutionJournal,
-    CommandKind::EmitReplayView,
-    CommandKind::EmitAuditReport,
-    CommandKind::EmitSchedulerSnapshot,
-    CommandKind::EmitCheckpointRecord,
-    CommandKind::EmitCheckpointReview,
-    CommandKind::EmitPersistenceDescriptor,
-    CommandKind::EmitPersistenceReview,
-    CommandKind::EmitExportManifest,
-    CommandKind::EmitExportReview,
-    CommandKind::EmitRuntimeSession,
-    CommandKind::EmitDryRunTrace,
-    CommandKind::EmitStoreImportDescriptor,
-    CommandKind::EmitStoreImportReview,
-    CommandKind::EmitDurableStoreImportRequest,
-    CommandKind::EmitDurableStoreImportReview,
-    CommandKind::EmitDurableStoreImportDecision,
-    CommandKind::EmitDurableStoreImportReceipt,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-    CommandKind::EmitDurableStoreImportDecisionReview,
-    CommandKind::EmitDurableStoreImportReceiptReview,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
-    CommandKind::EmitSchedulerReview,
-    CommandKind::EmitPackageReview,
-    CommandKind::EmitSummary,
-    CommandKind::EmitSmv,
+constexpr int kNotListed = -1;
+
+struct CommandSpec {
+    CommandKind kind;
+    std::string_view token;
+    int usage_project_aware_order{kNotListed};
+    int action_order{kNotListed};
+    int inference_order{kNotListed};
+    int package_supported_order{kNotListed};
+    int capability_input_supported_order{kNotListed};
 };
 
-constexpr CommandKind kActionCommands[] = {
-    CommandKind::DumpAst,
-    CommandKind::DumpTypes,
-    CommandKind::DumpProject,
-    CommandKind::EmitIr,
-    CommandKind::EmitIrJson,
-    CommandKind::EmitNativeJson,
-    CommandKind::EmitExecutionPlan,
-    CommandKind::EmitExecutionJournal,
-    CommandKind::EmitReplayView,
-    CommandKind::EmitAuditReport,
-    CommandKind::EmitSchedulerSnapshot,
-    CommandKind::EmitCheckpointRecord,
-    CommandKind::EmitCheckpointReview,
-    CommandKind::EmitPersistenceDescriptor,
-    CommandKind::EmitPersistenceReview,
-    CommandKind::EmitExportManifest,
-    CommandKind::EmitExportReview,
-    CommandKind::EmitStoreImportDescriptor,
-    CommandKind::EmitStoreImportReview,
-    CommandKind::EmitDurableStoreImportRequest,
-    CommandKind::EmitDurableStoreImportReview,
-    CommandKind::EmitDurableStoreImportDecision,
-    CommandKind::EmitDurableStoreImportReceipt,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-    CommandKind::EmitDurableStoreImportDecisionReview,
-    CommandKind::EmitDurableStoreImportReceiptReview,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
-    CommandKind::EmitSchedulerReview,
-    CommandKind::EmitRuntimeSession,
-    CommandKind::EmitDryRunTrace,
-    CommandKind::EmitPackageReview,
-    CommandKind::EmitSummary,
-    CommandKind::EmitSmv,
+enum class CommandListKind {
+    UsageProjectAware,
+    Action,
+    Inference,
+    PackageSupported,
+    CapabilityInputSupported,
 };
 
-constexpr CommandKind kCommandInferenceOrder[] = {
-    CommandKind::DumpProject,
-    CommandKind::EmitIr,
-    CommandKind::EmitIrJson,
-    CommandKind::EmitNativeJson,
-    CommandKind::EmitExecutionPlan,
-    CommandKind::EmitExecutionJournal,
-    CommandKind::EmitReplayView,
-    CommandKind::EmitAuditReport,
-    CommandKind::EmitSchedulerSnapshot,
-    CommandKind::EmitCheckpointRecord,
-    CommandKind::EmitCheckpointReview,
-    CommandKind::EmitPersistenceDescriptor,
-    CommandKind::EmitPersistenceReview,
-    CommandKind::EmitExportManifest,
-    CommandKind::EmitExportReview,
-    CommandKind::EmitStoreImportDescriptor,
-    CommandKind::EmitStoreImportReview,
-    CommandKind::EmitDurableStoreImportRequest,
-    CommandKind::EmitDurableStoreImportReview,
-    CommandKind::EmitDurableStoreImportDecision,
-    CommandKind::EmitDurableStoreImportReceipt,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-    CommandKind::EmitDurableStoreImportDecisionReview,
-    CommandKind::EmitDurableStoreImportReceiptReview,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
-    CommandKind::EmitSchedulerReview,
-    CommandKind::EmitRuntimeSession,
-    CommandKind::EmitDryRunTrace,
-    CommandKind::EmitPackageReview,
-    CommandKind::EmitSummary,
-    CommandKind::EmitSmv,
-    CommandKind::DumpTypes,
-    CommandKind::DumpAst,
+constexpr CommandSpec kCommandSpecs[] = {
+    {CommandKind::Check, "check", 0},
+    {CommandKind::DumpAst, "dump-ast", 1, 0, 32},
+    {CommandKind::DumpTypes, "dump-types", 3, 1, 31},
+    {CommandKind::DumpProject, "dump-project", 2, 2, 0},
+    {CommandKind::EmitIr, "emit-ir", 4, 3, 1},
+    {CommandKind::EmitIrJson, "emit-ir-json", 5, 4, 2},
+    {CommandKind::EmitNativeJson, "emit-native-json", 6, 5, 3, 0},
+    {CommandKind::EmitExecutionPlan, "emit-execution-plan", 7, 6, 4, 1},
+    {CommandKind::EmitExecutionJournal, "emit-execution-journal", 8, 7, 5, 2, 0},
+    {CommandKind::EmitReplayView, "emit-replay-view", 9, 8, 6, 3, 1},
+    {CommandKind::EmitAuditReport, "emit-audit-report", 10, 9, 7, 4, 2},
+    {CommandKind::EmitSchedulerSnapshot, "emit-scheduler-snapshot", 11, 10, 8, 5, 3},
+    {CommandKind::EmitCheckpointRecord, "emit-checkpoint-record", 12, 11, 9, 6, 4},
+    {CommandKind::EmitCheckpointReview, "emit-checkpoint-review", 13, 12, 10, 7, 5},
+    {CommandKind::EmitPersistenceDescriptor, "emit-persistence-descriptor", 14, 13, 11, 26, 6},
+    {CommandKind::EmitPersistenceReview, "emit-persistence-review", 15, 14, 12, 27, 7},
+    {CommandKind::EmitExportManifest, "emit-export-manifest", 16, 15, 13, 28, 8},
+    {CommandKind::EmitExportReview, "emit-export-review", 17, 16, 14, 29, 9},
+    {CommandKind::EmitStoreImportDescriptor, "emit-store-import-descriptor", 20, 17, 15, 30, 10},
+    {CommandKind::EmitStoreImportReview, "emit-store-import-review", 21, 18, 16, 31, 11},
+    {CommandKind::EmitDurableStoreImportRequest,
+     "emit-durable-store-import-request",
+     22,
+     19,
+     17,
+     32,
+     12},
+    {CommandKind::EmitDurableStoreImportReview, "emit-durable-store-import-review", 23, 20, 18, 33, 13},
+    {CommandKind::EmitDurableStoreImportDecision,
+     "emit-durable-store-import-decision",
+     24,
+     21,
+     19,
+     34,
+     14},
+    {CommandKind::EmitDurableStoreImportReceipt, "emit-durable-store-import-receipt", 25, 22, 20, 35, 15},
+    {CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+     "emit-durable-store-import-receipt-persistence-request",
+     26,
+     23,
+     21,
+     36,
+     16},
+    {CommandKind::EmitDurableStoreImportDecisionReview,
+     "emit-durable-store-import-decision-review",
+     27,
+     24,
+     22,
+     37,
+     17},
+    {CommandKind::EmitDurableStoreImportReceiptReview,
+     "emit-durable-store-import-receipt-review",
+     28,
+     25,
+     23,
+     38,
+     18},
+    {CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+     "emit-durable-store-import-receipt-persistence-review",
+     29,
+     26,
+     24,
+     39,
+     19},
+    {CommandKind::EmitSchedulerReview, "emit-scheduler-review", 30, 27, 25, 8, 20},
+    {CommandKind::EmitRuntimeSession, "emit-runtime-session", 18, 28, 26, 9, 21},
+    {CommandKind::EmitDryRunTrace, "emit-dry-run-trace", 19, 29, 27, 10, 22},
+    {CommandKind::EmitPackageReview, "emit-package-review", 31, 30, 28, 11},
+    {CommandKind::EmitSummary, "emit-summary", 32, 31, 29},
+    {CommandKind::EmitSmv, "emit-smv", 33, 32, 30},
 };
 
-constexpr CommandKind kPackageSupportedCommands[] = {
-    CommandKind::EmitNativeJson,
-    CommandKind::EmitExecutionPlan,
-    CommandKind::EmitExecutionJournal,
-    CommandKind::EmitReplayView,
-    CommandKind::EmitAuditReport,
-    CommandKind::EmitSchedulerSnapshot,
-    CommandKind::EmitCheckpointRecord,
-    CommandKind::EmitCheckpointReview,
-    CommandKind::EmitPersistenceDescriptor,
-    CommandKind::EmitPersistenceReview,
-    CommandKind::EmitExportManifest,
-    CommandKind::EmitExportReview,
-    CommandKind::EmitStoreImportDescriptor,
-    CommandKind::EmitStoreImportReview,
-    CommandKind::EmitDurableStoreImportRequest,
-    CommandKind::EmitDurableStoreImportReview,
-    CommandKind::EmitDurableStoreImportDecision,
-    CommandKind::EmitDurableStoreImportReceipt,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-    CommandKind::EmitDurableStoreImportDecisionReview,
-    CommandKind::EmitDurableStoreImportReceiptReview,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
-    CommandKind::EmitSchedulerReview,
-    CommandKind::EmitRuntimeSession,
-    CommandKind::EmitDryRunTrace,
-    CommandKind::EmitPackageReview,
-};
-
-constexpr CommandKind kCapabilityInputSupportedCommands[] = {
-    CommandKind::EmitExecutionJournal,
-    CommandKind::EmitReplayView,
-    CommandKind::EmitAuditReport,
-    CommandKind::EmitSchedulerSnapshot,
-    CommandKind::EmitCheckpointRecord,
-    CommandKind::EmitCheckpointReview,
-    CommandKind::EmitPersistenceDescriptor,
-    CommandKind::EmitPersistenceReview,
-    CommandKind::EmitExportManifest,
-    CommandKind::EmitExportReview,
-    CommandKind::EmitStoreImportDescriptor,
-    CommandKind::EmitStoreImportReview,
-    CommandKind::EmitDurableStoreImportRequest,
-    CommandKind::EmitDurableStoreImportReview,
-    CommandKind::EmitDurableStoreImportDecision,
-    CommandKind::EmitDurableStoreImportReceipt,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-    CommandKind::EmitDurableStoreImportDecisionReview,
-    CommandKind::EmitDurableStoreImportReceiptReview,
-    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
-    CommandKind::EmitSchedulerReview,
-    CommandKind::EmitRuntimeSession,
-    CommandKind::EmitDryRunTrace,
-};
-
-[[nodiscard]] bool is_command_in_list(CommandKind command,
-                                      std::span<const CommandKind> commands) {
-    for (const auto item : commands) {
-        if (item == command) {
-            return true;
+[[nodiscard]] const CommandSpec *find_command_spec(CommandKind command) {
+    for (const auto &spec : kCommandSpecs) {
+        if (spec.kind == command) {
+            return &spec;
         }
     }
-    return false;
+
+    return nullptr;
+}
+
+[[nodiscard]] const CommandSpec *find_command_spec(std::string_view token) {
+    for (const auto &spec : kCommandSpecs) {
+        if (spec.token == token) {
+            return &spec;
+        }
+    }
+
+    return nullptr;
+}
+
+[[nodiscard]] int command_list_order(const CommandSpec &spec, CommandListKind list_kind) {
+    switch (list_kind) {
+    case CommandListKind::UsageProjectAware:
+        return spec.usage_project_aware_order;
+    case CommandListKind::Action:
+        return spec.action_order;
+    case CommandListKind::Inference:
+        return spec.inference_order;
+    case CommandListKind::PackageSupported:
+        return spec.package_supported_order;
+    case CommandListKind::CapabilityInputSupported:
+        return spec.capability_input_supported_order;
+    }
+
+    return kNotListed;
+}
+
+[[nodiscard]] std::vector<CommandKind> build_command_list(CommandListKind list_kind) {
+    std::vector<std::pair<int, CommandKind>> ordered_commands;
+    ordered_commands.reserve(std::size(kCommandSpecs));
+    for (const auto &spec : kCommandSpecs) {
+        if (const auto order = command_list_order(spec, list_kind); order != kNotListed) {
+            ordered_commands.emplace_back(order, spec.kind);
+        }
+    }
+
+    std::sort(ordered_commands.begin(), ordered_commands.end(), [](const auto &lhs, const auto &rhs) {
+        return lhs.first < rhs.first;
+    });
+
+    std::vector<CommandKind> commands;
+    commands.reserve(ordered_commands.size());
+    for (const auto &[_, command] : ordered_commands) {
+        commands.push_back(command);
+    }
+    return commands;
+}
+
+[[nodiscard]] const std::vector<CommandKind> &command_list(CommandListKind list_kind) {
+    static const auto kUsageProjectAware = build_command_list(CommandListKind::UsageProjectAware);
+    static const auto kAction = build_command_list(CommandListKind::Action);
+    static const auto kInference = build_command_list(CommandListKind::Inference);
+    static const auto kPackageSupported = build_command_list(CommandListKind::PackageSupported);
+    static const auto kCapabilityInputSupported =
+        build_command_list(CommandListKind::CapabilityInputSupported);
+
+    switch (list_kind) {
+    case CommandListKind::UsageProjectAware:
+        return kUsageProjectAware;
+    case CommandListKind::Action:
+        return kAction;
+    case CommandListKind::Inference:
+        return kInference;
+    case CommandListKind::PackageSupported:
+        return kPackageSupported;
+    case CommandListKind::CapabilityInputSupported:
+        return kCapabilityInputSupported;
+    }
+
+    return kAction;
+}
+
+[[nodiscard]] bool command_in_list(CommandKind command, CommandListKind list_kind) {
+    const auto *const spec = find_command_spec(command);
+    return spec != nullptr && command_list_order(*spec, list_kind) != kNotListed;
 }
 
 [[nodiscard]] std::string format_pipe_separated_commands(std::span<const CommandKind> commands) {
@@ -337,7 +345,7 @@ infer_effective_command(const CommandLineOptions &options) {
         return options.selected_command;
     }
 
-    for (const auto command : kCommandInferenceOrder) {
+    for (const auto command : command_list(CommandListKind::Inference)) {
         if (is_action_enabled(options, command)) {
             return command;
         }
@@ -348,14 +356,15 @@ infer_effective_command(const CommandLineOptions &options) {
 
 [[nodiscard]] int count_enabled_actions(const CommandLineOptions &options) {
     int count = 0;
-    for (const auto command : kActionCommands) {
+    for (const auto command : command_list(CommandListKind::Action)) {
         count += static_cast<int>(is_action_enabled(options, command));
     }
     return count;
 }
 
 void print_usage(std::ostream &out) {
-    const auto project_aware_commands = format_pipe_separated_commands(kUsageProjectAwareCommands);
+    const auto project_aware_commands =
+        format_pipe_separated_commands(command_list(CommandListKind::UsageProjectAware));
     out << "Usage:\n"
         << "  ahflc <" << project_aware_commands
         << "> [--package <ahfl.package.json>] --project <ahfl.project.json>\n"
@@ -449,191 +458,27 @@ void print_usage(std::ostream &out) {
 }
 
 [[nodiscard]] std::optional<CommandKind> command_token_to_kind(std::string_view argument) {
-    if (argument == "check") {
-        return CommandKind::Check;
+    if (const auto *const spec = find_command_spec(argument); spec != nullptr) {
+        return spec->kind;
     }
-    if (argument == "dump-ast") {
-        return CommandKind::DumpAst;
-    }
-    if (argument == "dump-types") {
-        return CommandKind::DumpTypes;
-    }
-    if (argument == "dump-project") {
-        return CommandKind::DumpProject;
-    }
-    if (argument == "emit-ir") {
-        return CommandKind::EmitIr;
-    }
-    if (argument == "emit-ir-json") {
-        return CommandKind::EmitIrJson;
-    }
-    if (argument == "emit-native-json") {
-        return CommandKind::EmitNativeJson;
-    }
-    if (argument == "emit-execution-plan") {
-        return CommandKind::EmitExecutionPlan;
-    }
-    if (argument == "emit-execution-journal") {
-        return CommandKind::EmitExecutionJournal;
-    }
-    if (argument == "emit-replay-view") {
-        return CommandKind::EmitReplayView;
-    }
-    if (argument == "emit-audit-report") {
-        return CommandKind::EmitAuditReport;
-    }
-    if (argument == "emit-scheduler-snapshot") {
-        return CommandKind::EmitSchedulerSnapshot;
-    }
-    if (argument == "emit-checkpoint-record") {
-        return CommandKind::EmitCheckpointRecord;
-    }
-    if (argument == "emit-checkpoint-review") {
-        return CommandKind::EmitCheckpointReview;
-    }
-    if (argument == "emit-persistence-descriptor") {
-        return CommandKind::EmitPersistenceDescriptor;
-    }
-    if (argument == "emit-persistence-review") {
-        return CommandKind::EmitPersistenceReview;
-    }
-    if (argument == "emit-export-manifest") {
-        return CommandKind::EmitExportManifest;
-    }
-    if (argument == "emit-export-review") {
-        return CommandKind::EmitExportReview;
-    }
-    if (argument == "emit-store-import-descriptor") {
-        return CommandKind::EmitStoreImportDescriptor;
-    }
-    if (argument == "emit-store-import-review") {
-        return CommandKind::EmitStoreImportReview;
-    }
-    if (argument == "emit-durable-store-import-request") {
-        return CommandKind::EmitDurableStoreImportRequest;
-    }
-    if (argument == "emit-durable-store-import-review") {
-        return CommandKind::EmitDurableStoreImportReview;
-    }
-    if (argument == "emit-durable-store-import-decision") {
-        return CommandKind::EmitDurableStoreImportDecision;
-    }
-    if (argument == "emit-durable-store-import-receipt") {
-        return CommandKind::EmitDurableStoreImportReceipt;
-    }
-    if (argument == "emit-durable-store-import-receipt-persistence-request") {
-        return CommandKind::EmitDurableStoreImportReceiptPersistenceRequest;
-    }
-    if (argument == "emit-durable-store-import-decision-review") {
-        return CommandKind::EmitDurableStoreImportDecisionReview;
-    }
-    if (argument == "emit-durable-store-import-receipt-review") {
-        return CommandKind::EmitDurableStoreImportReceiptReview;
-    }
-    if (argument == "emit-durable-store-import-receipt-persistence-review") {
-        return CommandKind::EmitDurableStoreImportReceiptPersistenceReview;
-    }
-    if (argument == "emit-scheduler-review") {
-        return CommandKind::EmitSchedulerReview;
-    }
-    if (argument == "emit-runtime-session") {
-        return CommandKind::EmitRuntimeSession;
-    }
-    if (argument == "emit-dry-run-trace") {
-        return CommandKind::EmitDryRunTrace;
-    }
-    if (argument == "emit-package-review") {
-        return CommandKind::EmitPackageReview;
-    }
-    if (argument == "emit-summary") {
-        return CommandKind::EmitSummary;
-    }
-    if (argument == "emit-smv") {
-        return CommandKind::EmitSmv;
-    }
+
     return std::nullopt;
 }
 
 [[nodiscard]] std::string_view command_name(CommandKind command) {
-    switch (command) {
-    case CommandKind::Check:
-        return "check";
-    case CommandKind::DumpAst:
-        return "dump-ast";
-    case CommandKind::DumpTypes:
-        return "dump-types";
-    case CommandKind::DumpProject:
-        return "dump-project";
-    case CommandKind::EmitIr:
-        return "emit-ir";
-    case CommandKind::EmitIrJson:
-        return "emit-ir-json";
-    case CommandKind::EmitNativeJson:
-        return "emit-native-json";
-    case CommandKind::EmitExecutionPlan:
-        return "emit-execution-plan";
-    case CommandKind::EmitExecutionJournal:
-        return "emit-execution-journal";
-    case CommandKind::EmitReplayView:
-        return "emit-replay-view";
-    case CommandKind::EmitAuditReport:
-        return "emit-audit-report";
-    case CommandKind::EmitSchedulerSnapshot:
-        return "emit-scheduler-snapshot";
-    case CommandKind::EmitCheckpointRecord:
-        return "emit-checkpoint-record";
-    case CommandKind::EmitCheckpointReview:
-        return "emit-checkpoint-review";
-    case CommandKind::EmitPersistenceDescriptor:
-        return "emit-persistence-descriptor";
-    case CommandKind::EmitPersistenceReview:
-        return "emit-persistence-review";
-    case CommandKind::EmitExportManifest:
-        return "emit-export-manifest";
-    case CommandKind::EmitExportReview:
-        return "emit-export-review";
-    case CommandKind::EmitStoreImportDescriptor:
-        return "emit-store-import-descriptor";
-    case CommandKind::EmitStoreImportReview:
-        return "emit-store-import-review";
-    case CommandKind::EmitDurableStoreImportRequest:
-        return "emit-durable-store-import-request";
-    case CommandKind::EmitDurableStoreImportReview:
-        return "emit-durable-store-import-review";
-    case CommandKind::EmitDurableStoreImportDecision:
-        return "emit-durable-store-import-decision";
-    case CommandKind::EmitDurableStoreImportReceipt:
-        return "emit-durable-store-import-receipt";
-    case CommandKind::EmitDurableStoreImportReceiptPersistenceRequest:
-        return "emit-durable-store-import-receipt-persistence-request";
-    case CommandKind::EmitDurableStoreImportDecisionReview:
-        return "emit-durable-store-import-decision-review";
-    case CommandKind::EmitDurableStoreImportReceiptReview:
-        return "emit-durable-store-import-receipt-review";
-    case CommandKind::EmitDurableStoreImportReceiptPersistenceReview:
-        return "emit-durable-store-import-receipt-persistence-review";
-    case CommandKind::EmitSchedulerReview:
-        return "emit-scheduler-review";
-    case CommandKind::EmitRuntimeSession:
-        return "emit-runtime-session";
-    case CommandKind::EmitDryRunTrace:
-        return "emit-dry-run-trace";
-    case CommandKind::EmitPackageReview:
-        return "emit-package-review";
-    case CommandKind::EmitSummary:
-        return "emit-summary";
-    case CommandKind::EmitSmv:
-        return "emit-smv";
+    if (const auto *const spec = find_command_spec(command); spec != nullptr) {
+        return spec->token;
     }
+
     return "check";
 }
 
 [[nodiscard]] bool is_package_supported_command(CommandKind command) {
-    return is_command_in_list(command, kPackageSupportedCommands);
+    return command_in_list(command, CommandListKind::PackageSupported);
 }
 
 [[nodiscard]] bool is_capability_input_supported_command(CommandKind command) {
-    return is_command_in_list(command, kCapabilityInputSupportedCommands);
+    return command_in_list(command, CommandListKind::CapabilityInputSupported);
 }
 
 [[nodiscard]] bool is_command_requiring_package(CommandKind command) {
@@ -724,16 +569,178 @@ template <typename InputT>
     return true;
 }
 
+[[nodiscard]] std::optional<std::string> to_owned_string(
+    std::optional<std::string_view> value) {
+    return value.transform([](std::string_view text) { return std::string(text); });
+}
+
+[[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
+build_execution_plan_for_cli(const ahfl::ir::Program &program,
+                             const ahfl::handoff::PackageMetadata &metadata) {
+    auto plan_result = ahfl::handoff::build_execution_plan(
+        ahfl::handoff::lower_package(program, metadata));
+    plan_result.diagnostics.render(std::cerr);
+    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*plan_result.plan);
+}
+
+[[nodiscard]] std::optional<ahfl::dry_run::DryRunRequest>
+build_dry_run_request_for_cli(const ahfl::handoff::ExecutionPlan &plan,
+                              const CommandLineOptions &options,
+                              std::string_view command_name) {
+    auto workflow_name = to_owned_string(options.workflow_name);
+    if (!workflow_name.has_value()) {
+        workflow_name = plan.entry_workflow_canonical_name;
+    }
+
+    if (!workflow_name.has_value()) {
+        std::cerr << "error: " << command_name
+                  << " requires --workflow or package workflow entry\n";
+        return std::nullopt;
+    }
+
+    return ahfl::dry_run::DryRunRequest{
+        .workflow_canonical_name = std::move(*workflow_name),
+        .input_fixture = std::string(*options.input_fixture),
+        .run_id = to_owned_string(options.run_id),
+    };
+}
+
+[[nodiscard]] std::optional<ahfl::runtime_session::RuntimeSession>
+build_runtime_session_for_cli(const ahfl::handoff::ExecutionPlan &plan,
+                              const ahfl::dry_run::DryRunRequest &request,
+                              const ahfl::dry_run::CapabilityMockSet &mock_set) {
+    auto session_result = ahfl::runtime_session::build_runtime_session(plan, request, mock_set);
+    session_result.diagnostics.render(std::cerr);
+    if (session_result.has_errors() || !session_result.session.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*session_result.session);
+}
+
+[[nodiscard]] std::optional<ahfl::execution_journal::ExecutionJournal>
+build_execution_journal_for_cli(const ahfl::runtime_session::RuntimeSession &session) {
+    auto journal_result = ahfl::execution_journal::build_execution_journal(session);
+    journal_result.diagnostics.render(std::cerr);
+    if (journal_result.has_errors() || !journal_result.journal.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*journal_result.journal);
+}
+
+[[nodiscard]] std::optional<ahfl::replay_view::ReplayView> build_replay_view_for_cli(
+    const ahfl::handoff::ExecutionPlan &plan,
+    const ahfl::runtime_session::RuntimeSession &session,
+    const ahfl::execution_journal::ExecutionJournal &journal) {
+    auto replay_result = ahfl::replay_view::build_replay_view(plan, session, journal);
+    replay_result.diagnostics.render(std::cerr);
+    if (replay_result.has_errors() || !replay_result.replay.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*replay_result.replay);
+}
+
+[[nodiscard]] std::optional<ahfl::scheduler_snapshot::SchedulerSnapshot>
+build_scheduler_snapshot_for_cli(const ahfl::handoff::ExecutionPlan &plan,
+                                 const ahfl::runtime_session::RuntimeSession &session,
+                                 const ahfl::execution_journal::ExecutionJournal &journal,
+                                 const ahfl::replay_view::ReplayView &replay) {
+    auto snapshot_result =
+        ahfl::scheduler_snapshot::build_scheduler_snapshot(plan, session, journal, replay);
+    snapshot_result.diagnostics.render(std::cerr);
+    if (snapshot_result.has_errors() || !snapshot_result.snapshot.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*snapshot_result.snapshot);
+}
+
+[[nodiscard]] std::optional<ahfl::checkpoint_record::CheckpointRecord>
+build_checkpoint_record_for_cli(const ahfl::handoff::ExecutionPlan &plan,
+                                const ahfl::runtime_session::RuntimeSession &session,
+                                const ahfl::execution_journal::ExecutionJournal &journal,
+                                const ahfl::replay_view::ReplayView &replay,
+                                const ahfl::scheduler_snapshot::SchedulerSnapshot &snapshot) {
+    auto record_result =
+        ahfl::checkpoint_record::build_checkpoint_record(plan, session, journal, replay, snapshot);
+    record_result.diagnostics.render(std::cerr);
+    if (record_result.has_errors() || !record_result.record.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*record_result.record);
+}
+
+[[nodiscard]] std::optional<ahfl::persistence_descriptor::CheckpointPersistenceDescriptor>
+build_persistence_descriptor_for_cli(const ahfl::handoff::ExecutionPlan &plan,
+                                     const ahfl::runtime_session::RuntimeSession &session,
+                                     const ahfl::execution_journal::ExecutionJournal &journal,
+                                     const ahfl::replay_view::ReplayView &replay,
+                                     const ahfl::scheduler_snapshot::SchedulerSnapshot &snapshot,
+                                     const ahfl::checkpoint_record::CheckpointRecord &record) {
+    auto descriptor_result = ahfl::persistence_descriptor::build_persistence_descriptor(
+        plan, session, journal, replay, snapshot, record);
+    descriptor_result.diagnostics.render(std::cerr);
+    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*descriptor_result.descriptor);
+}
+
+[[nodiscard]] std::optional<ahfl::persistence_export::PersistenceExportManifest>
+build_export_manifest_for_cli(
+    const ahfl::handoff::ExecutionPlan &plan,
+    const ahfl::runtime_session::RuntimeSession &session,
+    const ahfl::execution_journal::ExecutionJournal &journal,
+    const ahfl::replay_view::ReplayView &replay,
+    const ahfl::scheduler_snapshot::SchedulerSnapshot &snapshot,
+    const ahfl::checkpoint_record::CheckpointRecord &record,
+    const ahfl::persistence_descriptor::CheckpointPersistenceDescriptor &descriptor) {
+    auto manifest_result = ahfl::persistence_export::build_persistence_export_manifest(
+        plan, session, journal, replay, snapshot, record, descriptor);
+    manifest_result.diagnostics.render(std::cerr);
+    if (manifest_result.has_errors() || !manifest_result.manifest.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*manifest_result.manifest);
+}
+
+[[nodiscard]] std::optional<ahfl::store_import::StoreImportDescriptor>
+build_store_import_descriptor_for_cli(
+    const ahfl::handoff::ExecutionPlan &plan,
+    const ahfl::runtime_session::RuntimeSession &session,
+    const ahfl::execution_journal::ExecutionJournal &journal,
+    const ahfl::replay_view::ReplayView &replay,
+    const ahfl::scheduler_snapshot::SchedulerSnapshot &snapshot,
+    const ahfl::checkpoint_record::CheckpointRecord &record,
+    const ahfl::persistence_descriptor::CheckpointPersistenceDescriptor &descriptor,
+    const ahfl::persistence_export::PersistenceExportManifest &manifest) {
+    auto store_import_result = ahfl::store_import::build_store_import_descriptor(
+        plan, session, journal, replay, snapshot, record, descriptor, manifest);
+    store_import_result.diagnostics.render(std::cerr);
+    if (store_import_result.has_errors() || !store_import_result.descriptor.has_value()) {
+        return std::nullopt;
+    }
+
+    return std::move(*store_import_result.descriptor);
+}
+
 [[nodiscard]] int emit_execution_plan_with_diagnostics(const ahfl::ir::Program &program,
                                                        const ahfl::handoff::PackageMetadata &metadata) {
-    const auto result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    result.diagnostics.render(std::cerr);
-    if (result.has_errors() || !result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    ahfl::print_execution_plan_json(*result.plan, std::cout);
+    ahfl::print_execution_plan_json(*plan, std::cout);
     return 0;
 }
 
@@ -758,33 +765,18 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-dry-run-trace requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-dry-run-trace");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto dry_run = ahfl::dry_run::run_local_dry_run(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
+    const auto dry_run = ahfl::dry_run::run_local_dry_run(*plan, *request, mock_set);
     dry_run.diagnostics.render(std::cerr);
     if (dry_run.has_errors() || !dry_run.trace.has_value()) {
         return 1;
@@ -799,40 +791,23 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-runtime-session requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-runtime-session");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    ahfl::print_runtime_session_json(*session.session, std::cout);
+    ahfl::print_runtime_session_json(*session, std::cout);
     return 0;
 }
 
@@ -841,46 +816,28 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-execution-journal requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-execution-journal");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    ahfl::print_execution_journal_json(*journal.journal, std::cout);
+    ahfl::print_execution_journal_json(*journal, std::cout);
     return 0;
 }
 
@@ -889,52 +846,33 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-replay-view requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-replay-view");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    ahfl::print_replay_view_json(*replay.replay, std::cout);
+    ahfl::print_replay_view_json(*replay, std::cout);
     return 0;
 }
 
@@ -943,52 +881,35 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-audit-report requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-audit-report");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto request = ahfl::dry_run::DryRunRequest{
-        .workflow_canonical_name = *workflow_name,
-        .input_fixture = std::string(*options.input_fixture),
-        .run_id =
-            options.run_id.transform([](std::string_view value) { return std::string(value); }),
-    };
-
-    const auto session =
-        ahfl::runtime_session::build_runtime_session(*plan_result.plan, request, mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto trace = ahfl::dry_run::run_local_dry_run(*plan_result.plan, request, mock_set);
+    const auto trace = ahfl::dry_run::run_local_dry_run(*plan, *request, mock_set);
     trace.diagnostics.render(std::cerr);
     if (trace.has_errors() || !trace.trace.has_value()) {
         return 1;
     }
 
     const auto report = ahfl::audit_report::build_audit_report(
-        *plan_result.plan, *session.session, *journal.journal, *trace.trace);
+        *plan, *session, *journal, *trace.trace);
     report.diagnostics.render(std::cerr);
     if (report.has_errors() || !report.report.has_value()) {
         return 1;
@@ -1003,60 +924,38 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-scheduler-snapshot requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-scheduler-snapshot");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    ahfl::print_scheduler_snapshot_json(*snapshot.snapshot, std::cout);
+    ahfl::print_scheduler_snapshot_json(*snapshot, std::cout);
     return 0;
 }
 
@@ -1065,61 +964,39 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-scheduler-review requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-scheduler-review");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
     const auto summary =
-        ahfl::scheduler_snapshot::build_scheduler_decision_summary(*snapshot.snapshot);
+        ahfl::scheduler_snapshot::build_scheduler_decision_summary(*snapshot);
     summary.diagnostics.render(std::cerr);
     if (summary.has_errors() || !summary.summary.has_value()) {
         return 1;
@@ -1134,67 +1011,44 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-checkpoint-record requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-checkpoint-record");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    ahfl::print_checkpoint_record_json(*record.record, std::cout);
+    ahfl::print_checkpoint_record_json(*record, std::cout);
     return 0;
 }
 
@@ -1203,68 +1057,44 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-checkpoint-review requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-checkpoint-review");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto summary =
-        ahfl::checkpoint_record::build_checkpoint_review_summary(*record.record);
+    const auto summary = ahfl::checkpoint_record::build_checkpoint_review_summary(*record);
     summary.diagnostics.render(std::cerr);
     if (summary.has_errors() || !summary.summary.has_value()) {
         return 1;
@@ -1279,78 +1109,50 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-persistence-descriptor requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-persistence-descriptor");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return 1;
     }
 
-    ahfl::print_persistence_descriptor_json(*descriptor.descriptor, std::cout);
+    ahfl::print_persistence_descriptor_json(*descriptor, std::cout);
     return 0;
 }
 
@@ -1359,79 +1161,51 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-persistence-review requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-persistence-review");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return 1;
     }
 
-    const auto summary = ahfl::persistence_descriptor::build_persistence_review_summary(
-        *descriptor.descriptor);
+    const auto summary =
+        ahfl::persistence_descriptor::build_persistence_review_summary(*descriptor);
     summary.diagnostics.render(std::cerr);
     if (summary.has_errors() || !summary.summary.has_value()) {
         return 1;
@@ -1446,91 +1220,56 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-export-manifest requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-export-manifest");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return 1;
     }
 
-    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor);
-    manifest.diagnostics.render(std::cerr);
-    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+    const auto manifest = build_export_manifest_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor);
+    if (!manifest.has_value()) {
         return 1;
     }
 
-    ahfl::print_persistence_export_manifest_json(*manifest.manifest, std::cout);
+    ahfl::print_persistence_export_manifest_json(*manifest, std::cout);
     return 0;
 }
 
@@ -1539,92 +1278,57 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: emit-export-review requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-export-review");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return 1;
     }
 
-    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor);
-    manifest.diagnostics.render(std::cerr);
-    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+    const auto manifest = build_export_manifest_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor);
+    if (!manifest.has_value()) {
         return 1;
     }
 
     const auto review =
-        ahfl::persistence_export::build_persistence_export_review_summary(*manifest.manifest);
+        ahfl::persistence_export::build_persistence_export_review_summary(*manifest);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
         return 1;
@@ -1639,107 +1343,62 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-store-import-descriptor requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-store-import-descriptor");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return 1;
     }
 
-    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor);
-    manifest.diagnostics.render(std::cerr);
-    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+    const auto manifest = build_export_manifest_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor);
+    if (!manifest.has_value()) {
         return 1;
     }
 
-    const auto store_import_descriptor = ahfl::store_import::build_store_import_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor,
-        *manifest.manifest);
-    store_import_descriptor.diagnostics.render(std::cerr);
-    if (store_import_descriptor.has_errors() ||
-        !store_import_descriptor.descriptor.has_value()) {
+    const auto store_import_descriptor = build_store_import_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor, *manifest);
+    if (!store_import_descriptor.has_value()) {
         return 1;
     }
 
-    ahfl::print_store_import_descriptor_json(*store_import_descriptor.descriptor, std::cout);
+    ahfl::print_store_import_descriptor_json(*store_import_descriptor, std::cout);
     return 0;
 }
 
@@ -1748,108 +1407,63 @@ template <typename InputT>
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return 1;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr
-            << "error: emit-store-import-review requires --workflow or package workflow entry\n";
+    const auto request =
+        build_dry_run_request_for_cli(*plan, options, "emit-store-import-review");
+    if (!request.has_value()) {
         return 1;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *request, mock_set);
+    if (!session.has_value()) {
         return 1;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return 1;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return 1;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return 1;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return 1;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return 1;
     }
 
-    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor);
-    manifest.diagnostics.render(std::cerr);
-    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+    const auto manifest = build_export_manifest_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor);
+    if (!manifest.has_value()) {
         return 1;
     }
 
-    const auto store_import_descriptor = ahfl::store_import::build_store_import_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor,
-        *manifest.manifest);
-    store_import_descriptor.diagnostics.render(std::cerr);
-    if (store_import_descriptor.has_errors() ||
-        !store_import_descriptor.descriptor.has_value()) {
+    const auto store_import_descriptor = build_store_import_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor, *manifest);
+    if (!store_import_descriptor.has_value()) {
         return 1;
     }
 
-    const auto review = ahfl::store_import::build_store_import_review_summary(
-        *store_import_descriptor.descriptor);
+    const auto review =
+        ahfl::store_import::build_store_import_review_summary(*store_import_descriptor);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
         return 1;
@@ -2617,7 +2231,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     const auto action_count = count_enabled_actions(options);
     if (action_count > 1) {
         std::cerr << "error: choose at most one of "
-                  << format_comma_or_commands(kActionCommands) << "\n";
+                  << format_comma_or_commands(command_list(CommandListKind::Action)) << "\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2663,7 +2277,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         (!effective_command.has_value() ||
          !is_package_supported_command(*effective_command))) {
         std::cerr << "error: --package is only supported with "
-                  << format_comma_or_commands(kPackageSupportedCommands) << "\n";
+                  << format_comma_or_commands(command_list(CommandListKind::PackageSupported))
+                  << "\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2672,7 +2287,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         (!effective_command.has_value() ||
          !is_capability_input_supported_command(*effective_command))) {
         std::cerr << "error: --capability-mocks is only supported with "
-                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
+                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << "\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2681,7 +2297,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         (!effective_command.has_value() ||
          !is_capability_input_supported_command(*effective_command))) {
         std::cerr << "error: --input-fixture is only supported with "
-                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
+                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << "\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2690,7 +2307,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         (!effective_command.has_value() ||
          !is_capability_input_supported_command(*effective_command))) {
         std::cerr << "error: --run-id is only supported with "
-                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
+                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << "\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2699,7 +2317,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         (!effective_command.has_value() ||
          !is_capability_input_supported_command(*effective_command))) {
         std::cerr << "error: --workflow is only supported with "
-                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
+                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << "\n";
         print_usage(std::cerr);
         return 2;
     }

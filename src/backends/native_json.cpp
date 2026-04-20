@@ -102,9 +102,9 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     return "invalid";
 }
 
-class NativeJsonPrinter final {
+class NativeJsonPrinter final : private PrettyJsonWriter {
   public:
-    explicit NativeJsonPrinter(std::ostream &out) : out_(out) {}
+    explicit NativeJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
 
     void print(const handoff::Package &package) {
         print_object(0, [&](const auto &field) {
@@ -143,64 +143,6 @@ class NativeJsonPrinter final {
     }
 
   private:
-    std::ostream &out_;
-
-    void write_indent(int indent_level) {
-        out_ << std::string(static_cast<std::size_t>(indent_level) * 2, ' ');
-    }
-
-    void newline_and_indent(int indent_level) {
-        out_ << '\n';
-        write_indent(indent_level);
-    }
-
-    void write_string(std::string_view value) {
-        write_escaped_json_string(out_, value);
-    }
-
-    template <typename WriteFields> void print_object(int indent_level, WriteFields write_fields) {
-        out_ << '{';
-        bool wrote_any_field = false;
-
-        const auto field = [&](std::string_view name, const auto &write_value) {
-            if (wrote_any_field) {
-                out_ << ',';
-            }
-            wrote_any_field = true;
-            newline_and_indent(indent_level + 1);
-            write_string(name);
-            out_ << ": ";
-            write_value();
-        };
-
-        write_fields(field);
-
-        if (wrote_any_field) {
-            newline_and_indent(indent_level);
-        }
-        out_ << '}';
-    }
-
-    template <typename WriteItems> void print_array(int indent_level, WriteItems write_items) {
-        out_ << '[';
-        bool wrote_any_item = false;
-
-        const auto item = [&](const auto &write_value) {
-            if (wrote_any_item) {
-                out_ << ',';
-            }
-            wrote_any_item = true;
-            newline_and_indent(indent_level + 1);
-            write_value();
-        };
-
-        write_items(item);
-
-        if (wrote_any_item) {
-            newline_and_indent(indent_level);
-        }
-        out_ << ']';
-    }
 
     void print_provenance(const ir::DeclarationProvenance &provenance, int indent_level) {
         print_object(indent_level, [&](const auto &field) {

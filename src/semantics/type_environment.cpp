@@ -11,8 +11,9 @@ namespace ahfl {
 
 namespace {
 
-[[nodiscard]] bool same_range(SourceRange lhs, SourceRange rhs) noexcept {
-    return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
+[[nodiscard]] std::size_t hash_mix(std::size_t seed, std::size_t value) noexcept {
+    seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+    return seed;
 }
 
 template <typename T>
@@ -132,13 +133,54 @@ MaybeCRef<WorkflowTypeInfo> TypeEnvironment::get_workflow(SymbolId id) const {
 
 MaybeCRef<ExpressionTypeInfo>
 TypeCheckResult::find_expression_type(SourceRange range, std::optional<SourceId> source_id) const {
-    for (const auto &entry : expression_types) {
-        if (same_range(entry.range, range) && entry.source_id == source_id) {
-            return std::cref(entry);
-        }
+    ensure_expression_type_lookup_cache();
+
+    const auto iter = expression_type_lookup_cache_.find(ExpressionTypeLookupKey{
+        .begin_offset = range.begin_offset,
+        .end_offset = range.end_offset,
+        .source_id = source_id,
+    });
+    if (iter == expression_type_lookup_cache_.end()) {
+        return std::nullopt;
     }
 
-    return std::nullopt;
+    return std::cref(expression_types[iter->second]);
+}
+
+std::size_t TypeCheckResult::ExpressionTypeLookupKeyHash::operator()(
+    const TypeCheckResult::ExpressionTypeLookupKey &key) const noexcept {
+    auto seed = std::hash<std::size_t>{}(key.begin_offset);
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.end_offset));
+    seed = hash_mix(seed, std::hash<bool>{}(key.source_id.has_value()));
+    if (key.source_id.has_value()) {
+        seed = hash_mix(seed, std::hash<std::size_t>{}(key.source_id->value));
+    }
+    return seed;
+}
+
+void TypeCheckResult::rebuild_expression_type_lookup_cache() const {
+    expression_type_lookup_cache_.clear();
+    expression_type_lookup_cache_.reserve(expression_types.size());
+
+    for (std::size_t index = 0; index < expression_types.size(); ++index) {
+        const auto &entry = expression_types[index];
+        expression_type_lookup_cache_.try_emplace(ExpressionTypeLookupKey{
+                                                      .begin_offset = entry.range.begin_offset,
+                                                      .end_offset = entry.range.end_offset,
+                                                      .source_id = entry.source_id,
+                                                  },
+                                                  index);
+    }
+
+    expression_type_lookup_cache_size_ = expression_types.size();
+    expression_type_lookup_cache_data_ = expression_types.data();
+}
+
+void TypeCheckResult::ensure_expression_type_lookup_cache() const {
+    if (expression_type_lookup_cache_size_ != expression_types.size() ||
+        expression_type_lookup_cache_data_ != expression_types.data()) {
+        rebuild_expression_type_lookup_cache();
+    }
 }
 
 void dump_type_environment(const TypeEnvironment &environment,

@@ -10,9 +10,9 @@ namespace ahfl {
 
 namespace {
 
-class DryRunTraceJsonPrinter final {
+class DryRunTraceJsonPrinter final : private PrettyJsonWriter {
   public:
-    explicit DryRunTraceJsonPrinter(std::ostream &out) : out_(out) {}
+    explicit DryRunTraceJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
 
     void print(const dry_run::DryRunTrace &trace) {
         print_object(0, [&](const auto &field) {
@@ -60,64 +60,6 @@ class DryRunTraceJsonPrinter final {
     }
 
   private:
-    std::ostream &out_;
-
-    void write_indent(int indent_level) {
-        out_ << std::string(static_cast<std::size_t>(indent_level) * 2, ' ');
-    }
-
-    void newline_and_indent(int indent_level) {
-        out_ << '\n';
-        write_indent(indent_level);
-    }
-
-    void write_string(std::string_view value) {
-        write_escaped_json_string(out_, value);
-    }
-
-    template <typename WriteFields> void print_object(int indent_level, WriteFields write_fields) {
-        out_ << '{';
-        bool wrote_any_field = false;
-
-        const auto field = [&](std::string_view name, const auto &write_value) {
-            if (wrote_any_field) {
-                out_ << ',';
-            }
-            wrote_any_field = true;
-            newline_and_indent(indent_level + 1);
-            write_string(name);
-            out_ << ": ";
-            write_value();
-        };
-
-        write_fields(field);
-
-        if (wrote_any_field) {
-            newline_and_indent(indent_level);
-        }
-        out_ << '}';
-    }
-
-    template <typename WriteItems> void print_array(int indent_level, WriteItems write_items) {
-        out_ << '[';
-        bool wrote_any_item = false;
-
-        const auto item = [&](const auto &write_value) {
-            if (wrote_any_item) {
-                out_ << ',';
-            }
-            wrote_any_item = true;
-            newline_and_indent(indent_level + 1);
-            write_value();
-        };
-
-        write_items(item);
-
-        if (wrote_any_item) {
-            newline_and_indent(indent_level);
-        }
-        out_ << ']';
-    }
 
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {

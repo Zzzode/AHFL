@@ -162,6 +162,30 @@ struct TypeCheckResult {
 
     [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
     find_expression_type(SourceRange range, std::optional<SourceId> source_id = std::nullopt) const;
+
+  private:
+    struct ExpressionTypeLookupKey {
+        std::size_t begin_offset{0};
+        std::size_t end_offset{0};
+        std::optional<SourceId> source_id;
+
+        [[nodiscard]] friend bool operator==(const ExpressionTypeLookupKey &lhs,
+                                             const ExpressionTypeLookupKey &rhs) noexcept = default;
+    };
+
+    struct ExpressionTypeLookupKeyHash {
+        [[nodiscard]] std::size_t operator()(const ExpressionTypeLookupKey &key) const noexcept;
+    };
+
+    void rebuild_expression_type_lookup_cache() const;
+    void ensure_expression_type_lookup_cache() const;
+
+    mutable std::unordered_map<ExpressionTypeLookupKey,
+                               std::size_t,
+                               ExpressionTypeLookupKeyHash>
+        expression_type_lookup_cache_;
+    mutable std::size_t expression_type_lookup_cache_size_{0};
+    mutable const ExpressionTypeInfo *expression_type_lookup_cache_data_{nullptr};
 };
 
 class TypeChecker {

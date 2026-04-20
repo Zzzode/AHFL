@@ -133,6 +133,46 @@ struct ResolveResult {
     find_reference(ReferenceKind kind,
                    SourceRange range,
                    std::optional<SourceId> source_id = std::nullopt) const;
+
+  private:
+    struct ReferenceLookupKey {
+        ReferenceKind kind{ReferenceKind::TypeName};
+        std::size_t begin_offset{0};
+        std::size_t end_offset{0};
+        std::optional<SourceId> source_id;
+
+        [[nodiscard]] friend bool
+        operator==(const ReferenceLookupKey &lhs, const ReferenceLookupKey &rhs) noexcept = default;
+    };
+
+    struct ReferenceLookupKeyHash {
+        [[nodiscard]] std::size_t operator()(const ReferenceLookupKey &key) const noexcept;
+    };
+
+    struct ReferenceLookupNoSourceKey {
+        ReferenceKind kind{ReferenceKind::TypeName};
+        std::size_t begin_offset{0};
+        std::size_t end_offset{0};
+
+        [[nodiscard]] friend bool operator==(const ReferenceLookupNoSourceKey &lhs,
+                                             const ReferenceLookupNoSourceKey &rhs) noexcept = default;
+    };
+
+    struct ReferenceLookupNoSourceKeyHash {
+        [[nodiscard]] std::size_t operator()(const ReferenceLookupNoSourceKey &key) const noexcept;
+    };
+
+    void rebuild_reference_lookup_cache() const;
+    void ensure_reference_lookup_cache() const;
+
+    mutable std::unordered_map<ReferenceLookupKey, std::size_t, ReferenceLookupKeyHash>
+        reference_lookup_cache_;
+    mutable std::unordered_map<ReferenceLookupNoSourceKey,
+                               std::size_t,
+                               ReferenceLookupNoSourceKeyHash>
+        reference_lookup_no_source_cache_;
+    mutable std::size_t reference_lookup_cache_size_{0};
+    mutable const ResolvedReference *reference_lookup_cache_data_{nullptr};
 };
 
 class Resolver {

@@ -63,6 +63,11 @@ namespace {
     return owner;
 }
 
+[[nodiscard]] std::size_t hash_mix(std::size_t seed, std::size_t value) noexcept {
+    seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+    return seed;
+}
+
 } // namespace
 
 namespace detail {
@@ -1040,15 +1045,87 @@ SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space) {
 
 MaybeCRef<ResolvedReference> ResolveResult::find_reference(
     ReferenceKind kind, SourceRange range, std::optional<SourceId> source_id) const {
-    for (const auto &reference : references) {
-        if (reference.kind == kind && reference.range.begin_offset == range.begin_offset &&
-            reference.range.end_offset == range.end_offset &&
-            (!source_id.has_value() || reference.source_id == source_id)) {
-            return std::cref(reference);
+    ensure_reference_lookup_cache();
+
+    if (source_id.has_value()) {
+        const auto iter = reference_lookup_cache_.find(ReferenceLookupKey{
+            .kind = kind,
+            .begin_offset = range.begin_offset,
+            .end_offset = range.end_offset,
+            .source_id = source_id,
+        });
+        if (iter == reference_lookup_cache_.end()) {
+            return std::nullopt;
         }
+
+        return std::cref(references[iter->second]);
     }
 
-    return std::nullopt;
+    const auto iter = reference_lookup_no_source_cache_.find(ReferenceLookupNoSourceKey{
+        .kind = kind,
+        .begin_offset = range.begin_offset,
+        .end_offset = range.end_offset,
+    });
+    if (iter == reference_lookup_no_source_cache_.end()) {
+        return std::nullopt;
+    }
+
+    return std::cref(references[iter->second]);
+}
+
+std::size_t ResolveResult::ReferenceLookupKeyHash::operator()(
+    const ResolveResult::ReferenceLookupKey &key) const noexcept {
+    auto seed = std::hash<int>{}(static_cast<int>(key.kind));
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.begin_offset));
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.end_offset));
+    seed = hash_mix(seed, std::hash<bool>{}(key.source_id.has_value()));
+    if (key.source_id.has_value()) {
+        seed = hash_mix(seed, std::hash<std::size_t>{}(key.source_id->value));
+    }
+    return seed;
+}
+
+std::size_t ResolveResult::ReferenceLookupNoSourceKeyHash::operator()(
+    const ResolveResult::ReferenceLookupNoSourceKey &key) const noexcept {
+    auto seed = std::hash<int>{}(static_cast<int>(key.kind));
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.begin_offset));
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.end_offset));
+    return seed;
+}
+
+void ResolveResult::rebuild_reference_lookup_cache() const {
+    reference_lookup_cache_.clear();
+    reference_lookup_no_source_cache_.clear();
+
+    reference_lookup_cache_.reserve(references.size());
+    reference_lookup_no_source_cache_.reserve(references.size());
+
+    for (std::size_t index = 0; index < references.size(); ++index) {
+        const auto &reference = references[index];
+        reference_lookup_cache_.try_emplace(ReferenceLookupKey{
+                                               .kind = reference.kind,
+                                               .begin_offset = reference.range.begin_offset,
+                                               .end_offset = reference.range.end_offset,
+                                               .source_id = reference.source_id,
+                                           },
+                                           index);
+        reference_lookup_no_source_cache_.try_emplace(ReferenceLookupNoSourceKey{
+                                                          .kind = reference.kind,
+                                                          .begin_offset = reference.range.begin_offset,
+                                                          .end_offset = reference.range.end_offset,
+                                                      },
+                                                      index);
+    }
+
+    reference_lookup_cache_size_ = references.size();
+    reference_lookup_cache_data_ = references.data();
+}
+
+void ResolveResult::ensure_reference_lookup_cache() const {
+    if (reference_lookup_cache_size_ != references.size() ||
+        reference_lookup_cache_data_ != references.data()) {
+        rebuild_reference_lookup_cache();
+    }
 }
 
 ResolveResult Resolver::resolve(const ast::Program &program) const {
