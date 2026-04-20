@@ -938,6 +938,125 @@ add_test(NAME ahfl.persistence_export_review.model.partial_workflow
             "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
 )
 
+add_test(NAME ahfl.store_import_descriptor.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-ok
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.validate_blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-blocked-ok
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.validate_terminal_failed_ok
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-terminal-failed-ok
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.validate_terminal_partial_ok
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-terminal-partial-ok
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_missing_candidate_identity
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-missing-candidate-identity
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_duplicate_artifact_name
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-duplicate-artifact-name
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_ready_with_blocker
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-ready-with-blocker
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_ready_from_blocked_manifest
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-ready-from-blocked-manifest
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_unsupported_source_manifest_format
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-unsupported-source-manifest-format
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_adapter_consumable_blocked
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-adapter-consumable-blocked
+)
+
+add_test(NAME ahfl.store_import_descriptor.model.fail_terminal_failed_without_failure_summary
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-descriptor-rejects-terminal-failed-without-failure-summary
+)
+
+add_test(NAME ahfl.store_import_descriptor.bootstrap.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-descriptor-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_descriptor.bootstrap.failed_workflow
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-descriptor-failed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_descriptor.bootstrap.partial_workflow
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-descriptor-partial-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_descriptor.bootstrap.fail_invalid_manifest
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-descriptor-rejects-invalid-manifest
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_descriptor.bootstrap.fail_manifest_workflow_mismatch
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-descriptor-rejects-manifest-workflow-mismatch
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-review-ok
+)
+
+add_test(NAME ahfl.store_import_review.model.fail_unsupported_source_descriptor_format
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            validate-store-import-review-rejects-unsupported-source-descriptor-format
+)
+
+add_test(NAME ahfl.store_import_review.model.project_workflow_value_flow
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-review-project-workflow-value-flow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_review.model.failed_workflow
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-review-failed-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_review.model.partial_workflow
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-review-partial-workflow
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
+add_test(NAME ahfl.store_import_review.model.fail_invalid_descriptor
+    COMMAND $<TARGET_FILE:ahfl_store_import_tests>
+            build-store-import-review-rejects-invalid-descriptor
+            "${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json"
+)
+
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
     COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
             normalize-identity-format-version
@@ -1219,6 +1338,22 @@ add_test(NAME ahflc.emit_export_review.project_manifest.workflow_value_flow.fail
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_store_import_descriptor.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-store-import-descriptor --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/project_workflow_value_flow.failed.with_package.store-import-descriptor.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-store-import-review --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/project_workflow_value_flow.failed.with_package.store-import-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_scheduler_review.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -1376,6 +1511,22 @@ add_test(NAME ahflc.emit_export_review.workspace.workflow_value_flow.partial.wit
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-export-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/export/project_workflow_value_flow.partial.with_package.export-review"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_store_import_descriptor.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-store-import-descriptor --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/project_workflow_value_flow.partial.with_package.store-import-descriptor.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_store_import_review.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-store-import-review --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/project_workflow_value_flow.partial.with_package.store-import-review"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 

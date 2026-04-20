@@ -207,82 +207,28 @@ Available configure presets:
 
 ## Documentation
 
-Start here instead of reading a wall of filenames:
+Use the repo index for the full typed doc map:
 
-- [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md) — current V0.14 execution roadmap
-- [`docs/plan/issue-backlog-v0.14.zh.md`](docs/plan/issue-backlog-v0.14.zh.md) — current V0.14 issue backlog
-- [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md) — completed V0.13 execution roadmap
-- [`docs/plan/issue-backlog-v0.13.zh.md`](docs/plan/issue-backlog-v0.13.zh.md) — completed V0.13 issue backlog
-- [`docs/design/native-export-package-prototype-bootstrap-v0.13.zh.md`](docs/design/native-export-package-prototype-bootstrap-v0.13.zh.md) — V0.13 export package prototype scope and layering
-- [`docs/reference/export-package-prototype-compatibility-v0.13.zh.md`](docs/reference/export-package-prototype-compatibility-v0.13.zh.md) — V0.13 export package artifact compatibility contract
-- [`docs/reference/native-consumer-matrix-v0.13.zh.md`](docs/reference/native-consumer-matrix-v0.13.zh.md) — V0.13 export-package-facing native consumer matrix
-- [`docs/reference/contributor-guide-v0.13.zh.md`](docs/reference/contributor-guide-v0.13.zh.md) — completed contributor guide for export-package-facing artifacts
-- [`docs/plan/roadmap-v0.12.zh.md`](docs/plan/roadmap-v0.12.zh.md) — completed V0.12 execution roadmap
-- [`docs/plan/issue-backlog-v0.12.zh.md`](docs/plan/issue-backlog-v0.12.zh.md) — completed V0.12 issue backlog
-- [`docs/design/native-persistence-prototype-bootstrap-v0.12.zh.md`](docs/design/native-persistence-prototype-bootstrap-v0.12.zh.md) — V0.12 persistence prototype scope and layering
-- [`docs/reference/persistence-prototype-compatibility-v0.12.zh.md`](docs/reference/persistence-prototype-compatibility-v0.12.zh.md) — V0.12 persistence artifact compatibility baseline
-- [`docs/reference/native-consumer-matrix-v0.12.zh.md`](docs/reference/native-consumer-matrix-v0.12.zh.md) — V0.12 persistence-facing native consumer matrix
-- [`docs/reference/contributor-guide-v0.12.zh.md`](docs/reference/contributor-guide-v0.12.zh.md) — completed contributor guide for persistence-facing artifacts
-- [`docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md`](docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md) — V0.11 checkpoint prototype scope and layering
-- [`docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md`](docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md) — V0.11 checkpoint artifact compatibility baseline
-- [`docs/reference/native-consumer-matrix-v0.11.zh.md`](docs/reference/native-consumer-matrix-v0.11.zh.md) — V0.11 native consumer matrix
-- [`docs/reference/contributor-guide-v0.11.zh.md`](docs/reference/contributor-guide-v0.11.zh.md) — completed contributor guide for checkpoint-facing artifacts
-- [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) — normative Core language spec
-- [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md) — current CLI command reference
-- [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) — project / workspace / package authoring usage
-- [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md) — stable IR reference
-- [`docs/reference/native-package-authoring-compatibility-v0.5.zh.md`](docs/reference/native-package-authoring-compatibility-v0.5.zh.md) — Native package authoring compatibility
-- [`docs/reference/native-handoff-usage-v0.5.zh.md`](docs/reference/native-handoff-usage-v0.5.zh.md) — Native handoff usage
-- [`docs/reference/runtime-session-compatibility-v0.9.zh.md`](docs/reference/runtime-session-compatibility-v0.9.zh.md) — V0.9 runtime session compatibility
-- [`docs/reference/execution-journal-compatibility-v0.9.zh.md`](docs/reference/execution-journal-compatibility-v0.9.zh.md) — V0.9 execution journal compatibility
-- [`docs/reference/replay-view-compatibility-v0.9.zh.md`](docs/reference/replay-view-compatibility-v0.9.zh.md) — V0.9 replay view compatibility
-- [`docs/reference/audit-report-compatibility-v0.9.zh.md`](docs/reference/audit-report-compatibility-v0.9.zh.md) — V0.9 audit report compatibility
-- [`docs/reference/failure-path-compatibility-v0.9.zh.md`](docs/reference/failure-path-compatibility-v0.9.zh.md) — V0.9 failure-path compatibility
-- [`docs/reference/persistence-prototype-compatibility-v0.12.zh.md`](docs/reference/persistence-prototype-compatibility-v0.12.zh.md) — V0.12 persistence prototype compatibility baseline
-- [`docs/reference/export-package-prototype-compatibility-v0.13.zh.md`](docs/reference/export-package-prototype-compatibility-v0.13.zh.md) — V0.13 export package prototype compatibility contract
-- [`docs/reference/native-consumer-matrix-v0.13.zh.md`](docs/reference/native-consumer-matrix-v0.13.zh.md) — current export-package-facing native consumer matrix
-- [`docs/reference/contributor-guide-v0.13.zh.md`](docs/reference/contributor-guide-v0.13.zh.md) — current export-package-facing contributor guide
-- [`docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md`](docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md) — V0.11 checkpoint prototype compatibility baseline
-- [`docs/reference/scheduler-prototype-compatibility-v0.10.zh.md`](docs/reference/scheduler-prototype-compatibility-v0.10.zh.md) — V0.10 scheduler prototype compatibility
-- [`docs/reference/native-consumer-matrix-v0.11.zh.md`](docs/reference/native-consumer-matrix-v0.11.zh.md) — completed native consumer matrix baseline
-- [`docs/reference/contributor-guide-v0.11.zh.md`](docs/reference/contributor-guide-v0.11.zh.md) — completed contributor guide for checkpoint-facing artifacts
-- [`docs/reference/native-consumer-matrix-v0.10.zh.md`](docs/reference/native-consumer-matrix-v0.10.zh.md) — completed scheduler-facing consumer matrix baseline
-- [`docs/reference/contributor-guide-v0.10.zh.md`](docs/reference/contributor-guide-v0.10.zh.md) — completed scheduler-facing contributor guide baseline
-- [`docs/design/native-persistence-prototype-bootstrap-v0.12.zh.md`](docs/design/native-persistence-prototype-bootstrap-v0.12.zh.md) — persistence prototype / planned durable identity boundary
-- [`docs/design/native-export-package-prototype-bootstrap-v0.13.zh.md`](docs/design/native-export-package-prototype-bootstrap-v0.13.zh.md) — export package prototype / artifact bundle boundary
-- [`docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md`](docs/design/native-checkpoint-prototype-bootstrap-v0.11.zh.md) — checkpoint prototype / resume-basis boundary
-- [`docs/design/native-scheduler-prototype-bootstrap-v0.10.zh.md`](docs/design/native-scheduler-prototype-bootstrap-v0.10.zh.md) — scheduler prototype / checkpoint-friendly boundary
-- [`docs/design/native-execution-plan-architecture-v0.6.zh.md`](docs/design/native-execution-plan-architecture-v0.6.zh.md) — Execution plan boundary
-- [`docs/design/native-dry-run-bootstrap-v0.6.zh.md`](docs/design/native-dry-run-bootstrap-v0.6.zh.md) — local dry-run bootstrap boundary
-- [`docs/design/native-runtime-session-bootstrap-v0.7.zh.md`](docs/design/native-runtime-session-bootstrap-v0.7.zh.md) — runtime session boundary
-- [`docs/design/native-execution-journal-v0.7.zh.md`](docs/design/native-execution-journal-v0.7.zh.md) — execution journal boundary
-- [`docs/design/native-replay-audit-bootstrap-v0.8.zh.md`](docs/design/native-replay-audit-bootstrap-v0.8.zh.md) — replay / audit boundary
-- [`docs/design/native-partial-session-failure-bootstrap-v0.9.zh.md`](docs/design/native-partial-session-failure-bootstrap-v0.9.zh.md) — partial session / failure-path boundary
-- [`docs/design/native-package-authoring-architecture-v0.5.zh.md`](docs/design/native-package-authoring-architecture-v0.5.zh.md) — Native package authoring boundary
-- [`docs/design/native-consumer-bootstrap-v0.5.zh.md`](docs/design/native-consumer-bootstrap-v0.5.zh.md) — Native consumer bootstrap boundary
-- [`docs/design/testing-strategy-v0.5.zh.md`](docs/design/testing-strategy-v0.5.zh.md) — V0.5 testing strategy
-- [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md) — current execution plan
-- [`docs/plan/issue-backlog-v0.14.zh.md`](docs/plan/issue-backlog-v0.14.zh.md) — current execution backlog
-- [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md) — completed V0.13 baseline
-- [`docs/plan/issue-backlog-v0.13.zh.md`](docs/plan/issue-backlog-v0.13.zh.md) — completed V0.13 backlog
-- [`docs/plan/roadmap-v0.12.zh.md`](docs/plan/roadmap-v0.12.zh.md) — completed V0.12 baseline
-- [`docs/plan/issue-backlog-v0.12.zh.md`](docs/plan/issue-backlog-v0.12.zh.md) — completed V0.12 backlog
-- [`docs/plan/roadmap-v0.11.zh.md`](docs/plan/roadmap-v0.11.zh.md) — completed V0.11 baseline
-- [`docs/plan/issue-backlog-v0.11.zh.md`](docs/plan/issue-backlog-v0.11.zh.md) — completed V0.11 backlog
-- [`docs/plan/roadmap-v0.10.zh.md`](docs/plan/roadmap-v0.10.zh.md) — completed V0.10 baseline
-- [`docs/plan/issue-backlog-v0.10.zh.md`](docs/plan/issue-backlog-v0.10.zh.md) — completed V0.10 backlog
-- [`docs/plan/roadmap-v0.9.zh.md`](docs/plan/roadmap-v0.9.zh.md) — completed V0.9 baseline
-- [`docs/plan/issue-backlog-v0.9.zh.md`](docs/plan/issue-backlog-v0.9.zh.md) — completed V0.9 backlog
-- [`docs/plan/roadmap-v0.8.zh.md`](docs/plan/roadmap-v0.8.zh.md) — completed V0.8 baseline
-- [`docs/plan/issue-backlog-v0.8.zh.md`](docs/plan/issue-backlog-v0.8.zh.md) — completed V0.8 backlog
-- [`docs/design/compiler-architecture-v0.2.zh.md`](docs/design/compiler-architecture-v0.2.zh.md) — compiler architecture
-- [`docs/design/formal-backend-v0.2.zh.md`](docs/design/formal-backend-v0.2.zh.md) — current SMV/formal backend boundary
 - [`docs/README.md`](docs/README.md) — full document index and naming rules
 
-Version note: the repo has separate document tracks. The Core language spec is
-currently V0.1, project / CLI references are V0.5, IR references are V0.3,
-Native handoff docs are V0.4-V0.5, and package authoring planning / design are
-V0.5. Execution planning / local dry-run planning is V0.6.
+Recommended entry points:
+
+- Current plan
+  - [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md)
+  - [`docs/plan/issue-backlog-v0.14.zh.md`](docs/plan/issue-backlog-v0.14.zh.md)
+- Current store-import boundary
+  - [`docs/design/native-store-import-prototype-bootstrap-v0.14.zh.md`](docs/design/native-store-import-prototype-bootstrap-v0.14.zh.md)
+  - [`docs/reference/store-import-prototype-compatibility-v0.14.zh.md`](docs/reference/store-import-prototype-compatibility-v0.14.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.14.zh.md`](docs/reference/native-consumer-matrix-v0.14.zh.md)
+  - [`docs/reference/contributor-guide-v0.14.zh.md`](docs/reference/contributor-guide-v0.14.zh.md)
+- Previous completed baseline
+  - [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md)
+  - [`docs/reference/export-package-prototype-compatibility-v0.13.zh.md`](docs/reference/export-package-prototype-compatibility-v0.13.zh.md)
+- Core references
+  - [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md)
+  - [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md)
+  - [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md)
+  - [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md)
 
 ## Current Boundaries
 

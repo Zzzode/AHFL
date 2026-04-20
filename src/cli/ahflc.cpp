@@ -14,6 +14,8 @@
 #include "ahfl/backends/scheduler_review.hpp"
 #include "ahfl/backends/runtime_session.hpp"
 #include "ahfl/backends/scheduler_snapshot.hpp"
+#include "ahfl/backends/store_import_descriptor.hpp"
+#include "ahfl/backends/store_import_review.hpp"
 #include "ahfl/checkpoint_record/record.hpp"
 #include "ahfl/checkpoint_record/review.hpp"
 #include "ahfl/dry_run/runner.hpp"
@@ -30,6 +32,8 @@
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
+#include "ahfl/store_import/descriptor.hpp"
+#include "ahfl/store_import/review.hpp"
 
 #include <fstream>
 #include <functional>
@@ -63,6 +67,8 @@ struct CommandLineOptions {
     bool emit_persistence_review{false};
     bool emit_export_manifest{false};
     bool emit_export_review{false};
+    bool emit_store_import_descriptor{false};
+    bool emit_store_import_review{false};
     bool emit_scheduler_review{false};
     bool emit_runtime_session{false};
     bool emit_dry_run_trace{false};
@@ -86,12 +92,12 @@ void print_usage(std::ostream &out) {
         << "  ahflc "
            "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
            "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-export-manifest|emit-export-review|emit-runtime-session|emit-dry-run-trace|emit-"
-           "scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --project "
+           "store-import-descriptor|emit-store-import-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --project "
            "<ahfl.project.json>\n"
         << "  ahflc "
            "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
            "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-export-manifest|emit-export-review|emit-runtime-session|emit-dry-run-trace|emit-"
-           "scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --workspace "
+           "store-import-descriptor|emit-store-import-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --workspace "
            "<ahfl.workspace.json> --project-name <name>\n"
         << "  ahflc check [--search-root <dir>]... [--dump-ast] <input.ahfl>\n"
         << "  ahflc dump-ast [--search-root <dir>]... <input.ahfl>\n"
@@ -133,6 +139,12 @@ void print_usage(std::ostream &out) {
         << "  ahflc emit-export-review --package <ahfl.package.json> --capability-mocks "
            "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
            "[--search-root <dir>]... <input.ahfl>\n"
+        << "  ahflc emit-store-import-descriptor --package <ahfl.package.json> "
+           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
+           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
+        << "  ahflc emit-store-import-review --package <ahfl.package.json> --capability-mocks "
+           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
+           "[--search-root <dir>]... <input.ahfl>\n"
         << "  ahflc emit-scheduler-review --package <ahfl.package.json> --capability-mocks "
            "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
            "[--search-root <dir>]... <input.ahfl>\n"
@@ -160,6 +172,8 @@ void print_usage(std::ostream &out) {
            argument == "emit-persistence-review" ||
            argument == "emit-export-manifest" ||
            argument == "emit-export-review" ||
+           argument == "emit-store-import-descriptor" ||
+           argument == "emit-store-import-review" ||
            argument == "emit-scheduler-review" ||
            argument == "emit-runtime-session" ||
            argument == "emit-dry-run-trace" ||
@@ -221,6 +235,14 @@ void print_usage(std::ostream &out) {
     }
 
     if (options.emit_export_review) {
+        return std::nullopt;
+    }
+
+    if (options.emit_store_import_descriptor) {
+        return std::nullopt;
+    }
+
+    if (options.emit_store_import_review) {
         return std::nullopt;
     }
 
@@ -1215,6 +1237,231 @@ template <typename InputT>
     return 0;
 }
 
+[[nodiscard]] int emit_store_import_descriptor_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan_result = ahfl::handoff::build_execution_plan(
+        ahfl::handoff::lower_package(program, metadata));
+    plan_result.diagnostics.render(std::cerr);
+    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+        return 1;
+    }
+
+    auto workflow_name =
+        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
+    if (!workflow_name.has_value()) {
+        workflow_name = plan_result.plan->entry_workflow_canonical_name;
+    }
+
+    if (!workflow_name.has_value()) {
+        std::cerr
+            << "error: emit-store-import-descriptor requires --workflow or package workflow entry\n";
+        return 1;
+    }
+
+    const auto session = ahfl::runtime_session::build_runtime_session(
+        *plan_result.plan,
+        ahfl::dry_run::DryRunRequest{
+            .workflow_canonical_name = std::move(*workflow_name),
+            .input_fixture = std::string(*options.input_fixture),
+            .run_id =
+                options.run_id.transform([](std::string_view value) { return std::string(value); }),
+        },
+        mock_set);
+    session.diagnostics.render(std::cerr);
+    if (session.has_errors() || !session.session.has_value()) {
+        return 1;
+    }
+
+    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
+    journal.diagnostics.render(std::cerr);
+    if (journal.has_errors() || !journal.journal.has_value()) {
+        return 1;
+    }
+
+    const auto replay =
+        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
+    replay.diagnostics.render(std::cerr);
+    if (replay.has_errors() || !replay.replay.has_value()) {
+        return 1;
+    }
+
+    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
+    snapshot.diagnostics.render(std::cerr);
+    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+        return 1;
+    }
+
+    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
+    record.diagnostics.render(std::cerr);
+    if (record.has_errors() || !record.record.has_value()) {
+        return 1;
+    }
+
+    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record);
+    descriptor.diagnostics.render(std::cerr);
+    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+        return 1;
+    }
+
+    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record,
+        *descriptor.descriptor);
+    manifest.diagnostics.render(std::cerr);
+    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+        return 1;
+    }
+
+    const auto store_import_descriptor = ahfl::store_import::build_store_import_descriptor(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record,
+        *descriptor.descriptor,
+        *manifest.manifest);
+    store_import_descriptor.diagnostics.render(std::cerr);
+    if (store_import_descriptor.has_errors() ||
+        !store_import_descriptor.descriptor.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_store_import_descriptor_json(*store_import_descriptor.descriptor, std::cout);
+    return 0;
+}
+
+[[nodiscard]] int emit_store_import_review_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan_result = ahfl::handoff::build_execution_plan(
+        ahfl::handoff::lower_package(program, metadata));
+    plan_result.diagnostics.render(std::cerr);
+    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+        return 1;
+    }
+
+    auto workflow_name =
+        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
+    if (!workflow_name.has_value()) {
+        workflow_name = plan_result.plan->entry_workflow_canonical_name;
+    }
+
+    if (!workflow_name.has_value()) {
+        std::cerr
+            << "error: emit-store-import-review requires --workflow or package workflow entry\n";
+        return 1;
+    }
+
+    const auto session = ahfl::runtime_session::build_runtime_session(
+        *plan_result.plan,
+        ahfl::dry_run::DryRunRequest{
+            .workflow_canonical_name = std::move(*workflow_name),
+            .input_fixture = std::string(*options.input_fixture),
+            .run_id =
+                options.run_id.transform([](std::string_view value) { return std::string(value); }),
+        },
+        mock_set);
+    session.diagnostics.render(std::cerr);
+    if (session.has_errors() || !session.session.has_value()) {
+        return 1;
+    }
+
+    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
+    journal.diagnostics.render(std::cerr);
+    if (journal.has_errors() || !journal.journal.has_value()) {
+        return 1;
+    }
+
+    const auto replay =
+        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
+    replay.diagnostics.render(std::cerr);
+    if (replay.has_errors() || !replay.replay.has_value()) {
+        return 1;
+    }
+
+    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
+    snapshot.diagnostics.render(std::cerr);
+    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+        return 1;
+    }
+
+    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
+        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
+    record.diagnostics.render(std::cerr);
+    if (record.has_errors() || !record.record.has_value()) {
+        return 1;
+    }
+
+    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record);
+    descriptor.diagnostics.render(std::cerr);
+    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+        return 1;
+    }
+
+    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record,
+        *descriptor.descriptor);
+    manifest.diagnostics.render(std::cerr);
+    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+        return 1;
+    }
+
+    const auto store_import_descriptor = ahfl::store_import::build_store_import_descriptor(
+        *plan_result.plan,
+        *session.session,
+        *journal.journal,
+        *replay.replay,
+        *snapshot.snapshot,
+        *record.record,
+        *descriptor.descriptor,
+        *manifest.manifest);
+    store_import_descriptor.diagnostics.render(std::cerr);
+    if (store_import_descriptor.has_errors() ||
+        !store_import_descriptor.descriptor.has_value()) {
+        return 1;
+    }
+
+    const auto review = ahfl::store_import::build_store_import_review_summary(
+        *store_import_descriptor.descriptor);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.summary.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_store_import_review(*review.summary, std::cout);
+    return 0;
+}
+
 template <typename ResultT>
 void render_diagnostics(const ResultT &result, MaybeSourceFile source_file, std::ostream &out) {
     if (source_file.has_value()) {
@@ -1389,6 +1636,16 @@ template <typename InputT>
 
         if (options.emit_export_review) {
             return emit_export_review_with_diagnostics(
+                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        }
+
+        if (options.emit_store_import_descriptor) {
+            return emit_store_import_descriptor_with_diagnostics(
+                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        }
+
+        if (options.emit_store_import_review) {
+            return emit_store_import_review_with_diagnostics(
                 ir_program, metadata_validation.metadata, *capability_mock_set, options);
         }
 
@@ -1600,6 +1857,12 @@ template <typename InputT>
             if (argument == "emit-export-review") {
                 options.emit_export_review = true;
             }
+            if (argument == "emit-store-import-descriptor") {
+                options.emit_store_import_descriptor = true;
+            }
+            if (argument == "emit-store-import-review") {
+                options.emit_store_import_review = true;
+            }
             if (argument == "emit-scheduler-review") {
                 options.emit_scheduler_review = true;
             }
@@ -1654,6 +1917,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         static_cast<int>(options.emit_persistence_review) +
         static_cast<int>(options.emit_export_manifest) +
         static_cast<int>(options.emit_export_review) +
+        static_cast<int>(options.emit_store_import_descriptor) +
+        static_cast<int>(options.emit_store_import_review) +
         static_cast<int>(options.emit_scheduler_review) +
         static_cast<int>(options.emit_runtime_session) +
         static_cast<int>(options.emit_dry_run_trace) +
@@ -1661,7 +1926,7 @@ int run_cli(std::span<const std::string_view> arguments) {
         static_cast<int>(options.emit_smv);
     if (action_count > 1) {
         std::cerr << "error: choose at most one of dump-ast, dump-types, dump-project, emit-ir, "
-           "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
+           "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
            "emit-package-review, emit-summary, or emit-smv\n";
         print_usage(std::cerr);
         return 2;
@@ -1717,11 +1982,13 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_persistence_review &&
         !options.emit_export_manifest &&
         !options.emit_export_review &&
+        !options.emit_store_import_descriptor &&
+        !options.emit_store_import_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session &&
         !options.emit_dry_run_trace &&
         !options.emit_package_review) {
-        std::cerr << "error: --package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review\n";
+        std::cerr << "error: --package is only supported with emit-native-json, emit-execution-plan, emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, or emit-package-review\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1737,9 +2004,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_persistence_review &&
         !options.emit_export_manifest &&
         !options.emit_export_review &&
+        !options.emit_store_import_descriptor &&
+        !options.emit_store_import_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1755,9 +2024,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_persistence_review &&
         !options.emit_export_manifest &&
         !options.emit_export_review &&
+        !options.emit_store_import_descriptor &&
+        !options.emit_store_import_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1773,9 +2044,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_persistence_review &&
         !options.emit_export_manifest &&
         !options.emit_export_review &&
+        !options.emit_store_import_descriptor &&
+        !options.emit_store_import_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --run-id is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --run-id is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1791,9 +2064,11 @@ int run_cli(std::span<const std::string_view> arguments) {
         !options.emit_persistence_review &&
         !options.emit_export_manifest &&
         !options.emit_export_review &&
+        !options.emit_store_import_descriptor &&
+        !options.emit_store_import_review &&
         !options.emit_scheduler_review &&
         !options.emit_runtime_session) {
-        std::cerr << "error: --workflow is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+        std::cerr << "error: --workflow is only supported with emit-execution-journal, emit-replay-view, emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, emit-persistence-review, emit-export-manifest, emit-export-review, emit-store-import-descriptor, emit-store-import-review, emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -1806,6 +2081,8 @@ int run_cli(std::span<const std::string_view> arguments) {
         options.emit_persistence_review ||
         options.emit_export_manifest ||
         options.emit_export_review ||
+        options.emit_store_import_descriptor ||
+        options.emit_store_import_review ||
         options.emit_scheduler_review ||
         options.emit_runtime_session) {
         if (!options.package_descriptor.has_value()) {
@@ -1830,6 +2107,10 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-export-manifest"
                               : options.emit_export_review
                                     ? "emit-export-review"
+                              : options.emit_store_import_descriptor
+                                    ? "emit-store-import-descriptor"
+                              : options.emit_store_import_review
+                                    ? "emit-store-import-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"
@@ -1860,6 +2141,10 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-export-manifest"
                               : options.emit_export_review
                                     ? "emit-export-review"
+                              : options.emit_store_import_descriptor
+                                    ? "emit-store-import-descriptor"
+                              : options.emit_store_import_review
+                                    ? "emit-store-import-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"
@@ -1890,6 +2175,10 @@ int run_cli(std::span<const std::string_view> arguments) {
                                     ? "emit-export-manifest"
                               : options.emit_export_review
                                     ? "emit-export-review"
+                              : options.emit_store_import_descriptor
+                                    ? "emit-store-import-descriptor"
+                              : options.emit_store_import_review
+                                    ? "emit-store-import-review"
                               : options.emit_scheduler_review
                                     ? "emit-scheduler-review"
                               : options.emit_runtime_session ? "emit-runtime-session"

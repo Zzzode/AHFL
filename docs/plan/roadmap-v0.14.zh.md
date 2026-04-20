@@ -4,6 +4,8 @@
 
 基线输入：
 
+- [native-store-import-prototype-bootstrap-v0.14.zh.md](../design/native-store-import-prototype-bootstrap-v0.14.zh.md)
+- [store-import-prototype-compatibility-v0.14.zh.md](../reference/store-import-prototype-compatibility-v0.14.zh.md)
 - [roadmap-v0.13.zh.md](./roadmap-v0.13.zh.md)（已完成基线）
 - [issue-backlog-v0.13.zh.md](./issue-backlog-v0.13.zh.md)（已完成基线）
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](../design/native-export-package-prototype-bootstrap-v0.13.zh.md)
@@ -20,8 +22,8 @@
 
 1. V0.13 已完成 export manifest / review 的模型、validation、bootstrap、CLI/backend 输出、golden regression、compatibility、consumer matrix、contributor guide 与 CI 闭环。
 2. 当前仓库已经能稳定跑通 `package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint record -> persistence descriptor -> export manifest -> export review` 的本地 deterministic 路径。
-3. 当前仓库仍未提供正式的 store-import-adjacent machine contract、staging blocker taxonomy、store-import candidate bundle contract 或 future durable store adapter-facing artifact。
-4. 当前 `PersistenceExportReviewSummary` 仍然只是 reviewer-facing projection，并不会承诺 store import executor ABI、store location、object path、import receipt、resume token 或 recovery command。
+3. 当前仓库已新增 `StoreImportDescriptor` 的 direct model、validation、deterministic bootstrap 与 direct regression，但 CLI/backend 输出、review surface 与 golden regression 仍未开始。
+4. 当前 `PersistenceExportReviewSummary` 仍然只是 reviewer-facing projection；`StoreImportDescriptor` 已成为 store-import-facing machine artifact 的第一实现入口，但 `StoreImportReviewSummary` 仍未实现，当前阶段并不会承诺 store import executor ABI、store location、object path、import receipt、resume token 或 recovery command。
 5. 当前阶段仍明确停留在 local/offline export package handoff，不进入真实 database / object storage、distributed recovery、host telemetry、provider connector、retention/GC 或 crash recovery runtime 领域。
 
 执行状态约定：
@@ -55,9 +57,9 @@ V0.14 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 01 冻结 V0.14 store import prototype scope 与 non-goals
-- [ ] Issue 02 冻结 store import descriptor / staging artifact set 的最小模型与 adapter 边界
-- [ ] Issue 03 冻结 export manifest、store import descriptor 与 future durable store adapter 的分层关系
+- [x] Issue 01 冻结 V0.14 store import prototype scope 与 non-goals
+- [x] Issue 02 冻结 store import descriptor / staging artifact set 的最小模型与 adapter 边界
+- [x] Issue 03 冻结 export manifest、store import descriptor 与 future durable store adapter 的分层关系
 
 目标：
 
@@ -69,9 +71,9 @@ V0.14 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 04 引入 store import descriptor 数据模型
-- [ ] Issue 05 增加 store import descriptor validation 与 direct regression
-- [ ] Issue 06 增加 deterministic store import descriptor bootstrap
+- [x] Issue 04 引入 store import descriptor 数据模型
+- [x] Issue 05 增加 store import descriptor validation 与 direct regression
+- [x] Issue 06 增加 deterministic store import descriptor bootstrap
 
 目标：
 
@@ -83,9 +85,9 @@ V0.14 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 07 增加 store import descriptor 输出路径
-- [ ] Issue 08 增加 store import review / staging preview surface
-- [ ] Issue 09 增加 single-file / project / workspace store import golden 回归
+- [x] Issue 07 增加 store import descriptor 输出路径
+- [x] Issue 08 增加 store import review / staging preview surface
+- [x] Issue 09 增加 single-file / project / workspace store import golden 回归
 
 目标：
 
@@ -97,8 +99,8 @@ V0.14 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 10 冻结 store import descriptor / review compatibility 契约
-- [ ] Issue 11 更新 native consumer matrix、contributor guide 与 future durable store adapter boundary guidance
+- [x] Issue 10 冻结 store import descriptor / review compatibility 契约
+- [x] Issue 11 更新 native consumer matrix、contributor guide 与 future durable store adapter boundary guidance
 
 目标：
 
@@ -110,7 +112,7 @@ V0.14 仍然不直接承诺：
 
 状态：
 
-- [ ] Issue 12 建立 V0.14 store import prototype regression、CI 与 reference 文档闭环
+- [x] Issue 12 建立 V0.14 store import prototype regression、CI 与 reference 文档闭环
 
 目标：
 
@@ -133,7 +135,7 @@ V0.14 仍然不直接承诺：
 
 ## 当前状态
 
-V0.13 已完成并成为 V0.14 的正式上游基线；当前仓库已经把 export package prototype 收口为稳定闭环，但还没有 store-import-facing machine contract。建议下一步进入 `Issue 01-03`，先冻结 V0.14 scope、store import descriptor 最小模型与 layering，再进入模型实现。V0.14 当前建议目标链路为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> StoreImportReviewSummary`。
+V0.13 已完成并成为 V0.14 的正式上游基线；当前 `Issue 01-12` 已完成。仓库现已新增 V0.14 scope 文档、store import compatibility contract、`StoreImportDescriptor` direct model、validation、deterministic bootstrap、CLI `emit-store-import-descriptor` 输出、`StoreImportReviewSummary` reviewer-facing staging preview、single-file / project / workspace 三条路径上的 store import golden regression、`v0.14-store-import-review-model` / `v0.14-store-import-emission` / `v0.14-store-import-golden` 回归标签，以及 V0.14 consumer matrix、contributor guide 与 CI 中显式执行的 `ahfl-v0.14` 回归切片。V0.14 当前建议目标链路为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> StoreImportReviewSummary`。若继续推进下一阶段，建议从 V0.15 scope 与真实 durable store adapter 探索边界单独立项，而不是继续在 V0.14 中扩张 ABI。
 
 ## 对应 backlog
 

@@ -624,6 +624,65 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.14 v0.14-store-import-descriptor-model
+    TESTS
+        ahfl.store_import_descriptor.model.validate_ok
+        ahfl.store_import_descriptor.model.validate_blocked_ok
+        ahfl.store_import_descriptor.model.validate_terminal_failed_ok
+        ahfl.store_import_descriptor.model.validate_terminal_partial_ok
+        ahfl.store_import_descriptor.model.fail_missing_candidate_identity
+        ahfl.store_import_descriptor.model.fail_duplicate_artifact_name
+        ahfl.store_import_descriptor.model.fail_ready_with_blocker
+        ahfl.store_import_descriptor.model.fail_ready_from_blocked_manifest
+        ahfl.store_import_descriptor.model.fail_unsupported_source_manifest_format
+        ahfl.store_import_descriptor.model.fail_adapter_consumable_blocked
+        ahfl.store_import_descriptor.model.fail_terminal_failed_without_failure_summary
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.14 v0.14-store-import-descriptor-bootstrap
+    TESTS
+        ahfl.store_import_descriptor.bootstrap.project_workflow_value_flow
+        ahfl.store_import_descriptor.bootstrap.failed_workflow
+        ahfl.store_import_descriptor.bootstrap.partial_workflow
+        ahfl.store_import_descriptor.bootstrap.fail_invalid_manifest
+        ahfl.store_import_descriptor.bootstrap.fail_manifest_workflow_mismatch
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.14 v0.14-store-import-review-model
+    TESTS
+        ahfl.store_import_review.model.validate_ok
+        ahfl.store_import_review.model.fail_unsupported_source_descriptor_format
+        ahfl.store_import_review.model.project_workflow_value_flow
+        ahfl.store_import_review.model.failed_workflow
+        ahfl.store_import_review.model.partial_workflow
+        ahfl.store_import_review.model.fail_invalid_descriptor
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.14 v0.14-store-import-emission
+    TESTS
+        ahflc.emit_store_import_descriptor.workflow_value_flow.with_package
+        ahflc.emit_store_import_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_descriptor.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_store_import_review.workflow_value_flow.with_package
+        ahflc.emit_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.14 v0.14-store-import-golden
+    TESTS
+        ahflc.emit_store_import_descriptor.workflow_value_flow.with_package
+        ahflc.emit_store_import_descriptor.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_descriptor.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_store_import_review.workflow_value_flow.with_package
+        ahflc.emit_store_import_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_store_import_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.12 v0.12-persistence-review-emission
     TESTS
         ahflc.emit_persistence_review.workflow_value_flow.with_package

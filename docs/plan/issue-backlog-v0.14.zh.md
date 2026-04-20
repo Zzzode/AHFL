@@ -2,7 +2,7 @@
 
 本文给出与 [roadmap-v0.14.zh.md](./roadmap-v0.14.zh.md) 对齐的 issue-ready backlog。目标是把 V0.13 已完成的 export manifest / review artifact，继续推进为 future durable store adapter 可稳定消费的 local store-import descriptor 边界，而不是直接进入 production durable persistence / recovery 系统。
 
-## [ ] Issue 01
+## [x] Issue 01
 
 标题：
 冻结 V0.14 store import prototype scope 与 non-goals
@@ -29,9 +29,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. 已新增 `docs/design/native-store-import-prototype-bootstrap-v0.14.zh.md`，明确 V0.14 当前只交付 store-import-facing local prototype artifact，不交付 durable store import executor、resume token、crash recovery、distributed recovery daemon、object storage layout 或 host telemetry
+2. 同一设计文档已明确 store import prototype 只能建立在 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor` 这条正式链路之上，并显式禁止回退依赖 export review、persistence review、checkpoint review、scheduler review、trace、AST、source 或 host log
+3. `docs/plan/roadmap-v0.14.zh.md` 当前已同步把 V0.14 的 next step 切到 `Issue 04-06`，确保后续先进入 store import descriptor 最小模型实现，而不是继续在 scope 未冻结前扩张私有 durable store 语义
 
-## [ ] Issue 02
+## [x] Issue 02
 
 标题：
 冻结 store import descriptor / staging artifact set 的最小模型与 adapter 边界
@@ -59,9 +61,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. 已新增 `docs/reference/store-import-prototype-compatibility-v0.14.zh.md`，给出 `StoreImportDescriptor` 的 `ahfl.store-import-descriptor.v1` 与 future `StoreImportReviewSummary` 的 `ahfl.store-import-review.v1` 计划版本入口基线，同时明确 store-import-facing artifact 只能建立在 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor` 链路之上
+2. 同一 reference 文档已列出当前最小稳定输入边界：store import candidate identity、staging artifact set entries、descriptor boundary、import readiness、staging blocker 与 source artifact version chain，并明确 durable checkpoint id、resume token、store URI、object path、database key、import receipt、store metadata 仍不属于当前版本稳定承诺
+3. `docs/plan/roadmap-v0.14.zh.md` 当前已同步收口 M0，并把 V0.14 的 next step 切到 `Issue 04-06`，确保后续进入 direct model、validation 与 bootstrap 实现，而不是在 versioning 入口未冻结前扩张私有 staging 语义
 
-## [ ] Issue 03
+## [x] Issue 03
 
 标题：
 冻结 export manifest、store import descriptor 与 future durable store adapter 的分层关系
@@ -88,9 +92,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. `docs/design/native-store-import-prototype-bootstrap-v0.14.zh.md` 已补充 layering-sensitive compatibility 规则，明确 `PersistenceExportManifest` 仍是 store import descriptor 的直接 machine-facing 上游，而 `StoreImportReviewSummary` 仍只是 projection，不得承接 durable store mutation、resume token 派发、import receipt synthesis 或 recovery command synthesis
+2. `docs/reference/store-import-prototype-compatibility-v0.14.zh.md` 已补充 layering-sensitive breaking-change 规则，明确只要让 export review / persistence review / checkpoint review / scheduler review / audit / trace 反向成为 store import descriptor 的第一输入，或让 descriptor / review 提前承诺 durable store / recovery ABI，通常就应视为 versioning 事件
+3. `docs/plan/roadmap-v0.14.zh.md` 当前已同步把 V0.14 的 next step 切到 `Issue 04-06`，确保后续先进入 store import descriptor 的 direct model、validation 与 bootstrap，而不是继续在 layering 未冻结前扩张私有 store 语义
 
-## [ ] Issue 04
+## [x] Issue 04
 
 标题：
 引入 store import descriptor 数据模型
@@ -118,9 +124,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. 已新增 `include/ahfl/store_import/descriptor.hpp`，定义 `StoreImportDescriptor`、`StagingArtifactSet`、`StagingArtifactEntry`、`StagingBlocker`、顶层 `StoreImportDescriptorStatus` / `StoreImportBoundaryKind` / `StagingArtifactKind` / `StagingBlockerKind`，以及单一 `format_version` 入口 `ahfl.store-import-descriptor.v1`
+2. 已新增 `src/store_import/descriptor.cpp` 与 `src/store_import/CMakeLists.txt`，提供 store-import-facing direct model validation 入口，并把 `ahfl_store_import` 接入主编译链路，作为后续 backend / CLI / review 的正式落点
+3. 已新增 `tests/store_import/descriptor.cpp`、`tests/cmake/TestTargets.cmake`、`tests/cmake/ProjectTests.cmake` 与 `tests/cmake/LabelTests.cmake` 覆盖基础 direct model regression，并接入 `ahfl-v0.14` / `v0.14-store-import-descriptor-model` 标签
 
-## [ ] Issue 05
+## [x] Issue 05
 
 标题：
 增加 store import descriptor validation 与 direct regression
@@ -147,9 +155,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. `src/store_import/descriptor.cpp` 已补齐 store import descriptor validation 的核心一致性约束：包括 source artifact format version gate、store import candidate identity / export package identity / planned durable identity 非空、staging artifact set entry count 与 logical name hygiene、import-ready 与 staging blocker 互斥、descriptor status 与 manifest status / workflow status / checkpoint status / persistence status 的对齐关系
+2. 同一 validator 已把 terminal failed 必须带 workflow failure summary、terminal blocked 状态禁止 next required staging artifact、adapter-consumable boundary 只能出现在 ready 或 completed descriptor status 中显式化，避免这些规则被后续 CLI / review 层隐式吞掉
+3. `tests/store_import/descriptor.cpp`、`tests/cmake/ProjectTests.cmake` 与 `tests/cmake/LabelTests.cmake` 已把 direct regression 扩展到 ready、blocked、terminal failed、terminal partial 四类正例，以及 missing candidate identity、duplicate artifact name、import-ready + blocker、ready from blocked manifest、unsupported source manifest format、adapter-consumable blocked、terminal failed without failure summary 七类负例；当前可通过 `ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-descriptor-model'` 稳定回归
 
-## [ ] Issue 06
+## [x] Issue 06
 
 标题：
 增加 deterministic store import descriptor bootstrap
@@ -176,9 +186,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. 已在 `include/ahfl/store_import/descriptor.hpp` 与 `src/store_import/descriptor.cpp` 新增 `StoreImportDescriptorResult` / `build_store_import_descriptor(...)`，把 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor` 与 `PersistenceExportManifest` 作为正式 deterministic bootstrap 输入，并继续复用 direct validator 区分 input artifact error、derived manifest mismatch 与 descriptor-facing inconsistency
+2. 同一 bootstrap 会先重建并校验 derived `PersistenceExportManifest`，再显式比对输入 manifest 与 derived manifest 的 source version chain、workflow / session / run / input / failure summary、export package identity、planned durable identity、artifact bundle、manifest readiness / blocker，最后把 export manifest 投影为 store-import-facing `store_import_candidate_identity`、`staging_artifact_set`、`descriptor_status` 与 `staging_blocker`
+3. `tests/store_import/descriptor.cpp`、`tests/cmake/ProjectTests.cmake` 与 `tests/cmake/LabelTests.cmake` 已新增 `v0.14-store-import-descriptor-bootstrap` 回归切片，覆盖 completed / failed / partial 三类 bootstrap 正例，以及 invalid manifest / manifest workflow mismatch 两类负例；当前可通过 `ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-descriptor-(model|bootstrap)'` 稳定回归
 
-## [ ] Issue 07
+## [x] Issue 07
 
 标题：
 增加 store import descriptor 输出路径
@@ -206,9 +218,11 @@ V0.13 已经把 export manifest / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 尚未开始
+1. `src/cli/ahflc.cpp` 已新增 `emit-store-import-descriptor` 命令，并沿用 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor` 的 deterministic pipeline，覆盖 single-file、project、workspace 与 `--package` 入口
+2. 已新增 `include/ahfl/backends/store_import_descriptor.hpp` 与 `src/backends/store_import_descriptor.cpp`，把 `StoreImportDescriptor` 固定输出为 machine-facing JSON，包括 source version chain、candidate identity、staging artifact set、boundary、import readiness、descriptor status 与 staging blocker
+3. 已新增 `tests/store_import/*.store-import-descriptor.json` golden 基线，以及 `tests/cmake/SingleFileCliTests.cmake` / `tests/cmake/ProjectTests.cmake` / `tests/cmake/LabelTests.cmake` 中的 `v0.14-store-import-emission` / `v0.14-store-import-golden` 覆盖，固定 completed / failed / partial 三条 CLI 输出路径
 
-## [ ] Issue 08
+## [x] Issue 08
 
 标题：
 增加 store import review / staging preview surface
@@ -236,9 +250,11 @@ store import prototype 若只有 machine-facing descriptor，而没有 reviewer-
 
 当前实现备注：
 
-1. 尚未开始
+1. 已新增 `include/ahfl/store_import/review.hpp` 与 `src/store_import/review.cpp`，定义 `StoreImportReviewSummary`、`StoreImportReviewNextActionKind`、validation 与从 `StoreImportDescriptor` 投影 review summary 的 deterministic builder，确保 review surface 只消费正式 descriptor model，而不私造 durable store / recovery 状态
+2. review summary 当前稳定覆盖 source descriptor / manifest version、descriptor status、store import candidate identity、staging artifact preview、staging blocker、boundary summary、staging preview 与 next-step recommendation，并通过 `validate-store-import-review-ok` / `build-store-import-review-*` direct regression 固定 completed / failed / partial 场景
+3. 已新增 `include/ahfl/backends/store_import_review.hpp` 与 `src/backends/store_import_review.cpp`，并在 `src/cli/ahflc.cpp` 接入 `emit-store-import-review` 命令，提供 contributor-facing staging preview 输出
 
-## [ ] Issue 09
+## [x] Issue 09
 
 标题：
 增加 single-file / project / workspace store import golden 回归
@@ -248,26 +264,28 @@ store import prototype 若只有 machine-facing descriptor，而没有 reviewer-
 
 目标：
 
-1. 固定 single-file store import golden
-2. 固定 project / workspace store import golden
-3. 保持 success / partial / failure-path 都被覆盖
+1. 为 store import descriptor / review 增加 single-file、project、workspace golden 基线
+2. 固定 completed、failed、partial 三类 store-import-facing CLI 输出
+3. 把 V0.14 store import regression 接入统一标签，避免后续修改绕过回归
 
 验收标准：
 
-1. golden 可独立运行
-2. `--package` 路径与 project / workspace 路径都被覆盖
-3. store-import-facing 变更能被稳定 diff
+1. `emit-store-import-descriptor` 与 `emit-store-import-review` 在 single-file / project / workspace 三条路径均有 golden 回归
+2. golden 覆盖 candidate identity、staging artifact set / preview、boundary、blocker 与 next-step recommendation
+3. store import CLI 输出已纳入 `ahfl-v0.14` 与专用 `v0.14-store-import-*` 标签，可用单一 label 回归
 
 主要涉及文件：
 
-- `tests/`
+- `tests/store_import/`
 - `tests/cmake/`
 
 当前实现备注：
 
-1. 尚未开始
+1. 已新增 `tests/store_import/ok_workflow_value_flow.with_package.store-import-descriptor.json`、`tests/store_import/ok_workflow_value_flow.with_package.store-import-review`、`tests/store_import/project_workflow_value_flow.failed.with_package.store-import-descriptor.json`、`tests/store_import/project_workflow_value_flow.failed.with_package.store-import-review`、`tests/store_import/project_workflow_value_flow.partial.with_package.store-import-descriptor.json` 与 `tests/store_import/project_workflow_value_flow.partial.with_package.store-import-review` 六份 golden 基线
+2. `tests/cmake/SingleFileCliTests.cmake` 与 `tests/cmake/ProjectTests.cmake` 已接入 `ahflc.emit_store_import_descriptor.*` / `ahflc.emit_store_import_review.*` 六条 CLI 输出测试，覆盖 single-file completed、project failed、workspace partial 三种代表性路径
+3. `tests/cmake/LabelTests.cmake` 已新增 `v0.14-store-import-review-model`、`v0.14-store-import-emission` 与 `v0.14-store-import-golden` 标签，可直接通过 `ctest --test-dir build/dev --output-on-failure -L 'v0.14-store-import-.*'` 回归
 
-## [ ] Issue 10
+## [x] Issue 10
 
 标题：
 冻结 store import descriptor / review compatibility 契约
@@ -294,9 +312,10 @@ store import prototype 若只有 machine-facing descriptor，而没有 reviewer-
 
 当前实现备注：
 
-1. 尚未开始
-
-## [ ] Issue 11
+1. `docs/reference/store-import-prototype-compatibility-v0.14.zh.md` 已对齐当前实现，按 `StoreImportDescriptor` / `StoreImportReviewSummary` 两个 artifact 分节冻结 `ahfl.store-import-descriptor.v1` 与 `ahfl.store-import-review.v1` 的版本入口、source version 校验顺序、最小稳定字段边界、breaking-change 候选与 non-breaking extension 候选
+2. 同一 compatibility 文档已把 descriptor / review 的当前实现入口、CLI 命令、golden / emission 标签与文档同步要求显式化，避免继续保留“规划中”表述导致的边界漂移
+3. `docs/plan/roadmap-v0.14.zh.md` 与本 backlog 已同步把 V0.14 next step 从 M3/M4 收口为完成状态，确保 compatibility contract 不再停留在未完成描述
+## [x] Issue 11
 
 标题：
 更新 native consumer matrix、contributor guide 与 future durable store adapter boundary guidance
@@ -324,9 +343,10 @@ store import prototype 若只有 machine-facing descriptor，而没有 reviewer-
 
 当前实现备注：
 
-1. 尚未开始
-
-## [ ] Issue 12
+1. 已新增 `docs/reference/native-consumer-matrix-v0.14.zh.md`，正式冻结 V0.14 store-import-facing consumer matrix，覆盖 `PersistenceExportManifest`、`StoreImportDescriptor`、`StoreImportReviewSummary` 与 future durable store adapter 的推荐消费顺序、共享入口、扩展模板与反模式
+2. 已新增 `docs/reference/contributor-guide-v0.14.zh.md`，给出 store import descriptor / review 的本地跑通路径、最小验证清单、扩展顺序、边界 guidance 与文档/测试联动约束
+3. `README.md` 与 `docs/README.md` 已新增 V0.14 store import consumer matrix / contributor guide 入口，确保新贡献者可从 repo 入口直接定位到当前 store-import-facing reference 文档
+## [x] Issue 12
 
 标题：
 建立 V0.14 store import prototype regression、CI 与 reference 文档闭环
@@ -357,4 +377,6 @@ store-import-facing artifact 一旦进入主线而没有单独标签切片、gol
 
 当前实现备注：
 
-1. 尚未开始
+1. `tests/store_import/`、`tests/cmake/SingleFileCliTests.cmake`、`tests/cmake/ProjectTests.cmake` 与 `tests/cmake/LabelTests.cmake` 已形成 V0.14 store import prototype 的 direct / golden / label 分层闭环，并可通过 `ctest --test-dir build/dev --output-on-failure -L 'v0.14-store-import-.*'` 独立回归
+2. `.github/workflows/ci.yml` 已新增 build-dev 与 ASan 两条流水线中的 `ahfl-v0.14` 显式回归步骤，保证 store-import-facing 主链路在全量 `ctest` 之前先被单独执行
+3. `docs/plan/roadmap-v0.14.zh.md`、`docs/plan/issue-backlog-v0.14.zh.md`、`docs/reference/store-import-prototype-compatibility-v0.14.zh.md`、`docs/reference/native-consumer-matrix-v0.14.zh.md`、`docs/reference/contributor-guide-v0.14.zh.md`、`docs/README.md` 与 `README.md` 已形成 V0.14 reference / README / roadmap / backlog 的最小闭环

@@ -124,3 +124,13 @@ target_link_libraries(ahfl_persistence_export_tests
         ahfl_persistence_export
 )
 ahfl_apply_project_warnings(ahfl_persistence_export_tests)
+
+add_executable(ahfl_store_import_tests
+    store_import/descriptor.cpp
+)
+target_link_libraries(ahfl_store_import_tests
+    PRIVATE
+        ahfl_store_import
+        ahfl_persistence_export
+)
+ahfl_apply_project_warnings(ahfl_store_import_tests)

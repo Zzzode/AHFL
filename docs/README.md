@@ -74,6 +74,7 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-store-import-prototype-bootstrap-v0.14.zh.md](./design/native-store-import-prototype-bootstrap-v0.14.zh.md)
 - [native-persistence-prototype-bootstrap-v0.12.zh.md](./design/native-persistence-prototype-bootstrap-v0.12.zh.md)
 - [native-checkpoint-prototype-bootstrap-v0.11.zh.md](./design/native-checkpoint-prototype-bootstrap-v0.11.zh.md)
 - [native-scheduler-prototype-bootstrap-v0.10.zh.md](./design/native-scheduler-prototype-bootstrap-v0.10.zh.md)
@@ -124,6 +125,9 @@ Avoid:
 
 ### Reference
 
+- [store-import-prototype-compatibility-v0.14.zh.md](./reference/store-import-prototype-compatibility-v0.14.zh.md)
+- [native-consumer-matrix-v0.14.zh.md](./reference/native-consumer-matrix-v0.14.zh.md)
+- [contributor-guide-v0.14.zh.md](./reference/contributor-guide-v0.14.zh.md)
 - [project-usage-v0.5.zh.md](./reference/project-usage-v0.5.zh.md)
 - [cli-commands-v0.10.zh.md](./reference/cli-commands-v0.10.zh.md)
 - [project-usage-v0.3.zh.md](./reference/project-usage-v0.3.zh.md)
