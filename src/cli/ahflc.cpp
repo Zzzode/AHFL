@@ -1,4 +1,4 @@
-#include "ahfl/backend.hpp"
+#include "ahfl/backends/driver.hpp"
 #include "ahfl/audit_report/report.hpp"
 #include "ahfl/backends/checkpoint_record.hpp"
 #include "ahfl/backends/checkpoint_review.hpp"
@@ -65,40 +65,47 @@ namespace {
 
 using MaybeSourceFile = std::optional<std::reference_wrapper<const ahfl::SourceFile>>;
 
+enum class CommandKind {
+    Check,
+    DumpAst,
+    DumpTypes,
+    DumpProject,
+    EmitIr,
+    EmitIrJson,
+    EmitNativeJson,
+    EmitExecutionPlan,
+    EmitExecutionJournal,
+    EmitReplayView,
+    EmitAuditReport,
+    EmitSchedulerSnapshot,
+    EmitCheckpointRecord,
+    EmitCheckpointReview,
+    EmitPersistenceDescriptor,
+    EmitPersistenceReview,
+    EmitExportManifest,
+    EmitExportReview,
+    EmitStoreImportDescriptor,
+    EmitStoreImportReview,
+    EmitDurableStoreImportRequest,
+    EmitDurableStoreImportReview,
+    EmitDurableStoreImportDecision,
+    EmitDurableStoreImportReceipt,
+    EmitDurableStoreImportReceiptPersistenceRequest,
+    EmitDurableStoreImportDecisionReview,
+    EmitDurableStoreImportReceiptReview,
+    EmitDurableStoreImportReceiptPersistenceReview,
+    EmitSchedulerReview,
+    EmitRuntimeSession,
+    EmitDryRunTrace,
+    EmitPackageReview,
+    EmitSummary,
+    EmitSmv,
+};
+
 struct CommandLineOptions {
-    bool dump_ast{false};
-    bool dump_types{false};
-    bool dump_project{false};
-    bool emit_ir{false};
-    bool emit_ir_json{false};
-    bool emit_native_json{false};
-    bool emit_execution_plan{false};
-    bool emit_execution_journal{false};
-    bool emit_replay_view{false};
-    bool emit_audit_report{false};
-    bool emit_scheduler_snapshot{false};
-    bool emit_checkpoint_record{false};
-    bool emit_checkpoint_review{false};
-    bool emit_persistence_descriptor{false};
-    bool emit_persistence_review{false};
-    bool emit_export_manifest{false};
-    bool emit_export_review{false};
-    bool emit_store_import_descriptor{false};
-    bool emit_store_import_review{false};
-    bool emit_durable_store_import_request{false};
-    bool emit_durable_store_import_review{false};
-    bool emit_durable_store_import_decision{false};
-    bool emit_durable_store_import_receipt{false};
-    bool emit_durable_store_import_receipt_persistence_request{false};
-    bool emit_durable_store_import_decision_review{false};
-    bool emit_durable_store_import_receipt_review{false};
-    bool emit_durable_store_import_receipt_persistence_review{false};
-    bool emit_scheduler_review{false};
-    bool emit_runtime_session{false};
-    bool emit_dry_run_trace{false};
-    bool emit_package_review{false};
-    bool emit_summary{false};
-    bool emit_smv{false};
+    std::optional<CommandKind> selected_command;
+    bool dump_ast_requested{false};
+    bool dump_types_requested{false};
     std::optional<std::string_view> package_descriptor;
     std::optional<std::string_view> capability_mocks_descriptor;
     std::optional<std::string_view> project_descriptor;
@@ -111,18 +118,250 @@ struct CommandLineOptions {
     std::vector<std::string_view> positional;
 };
 
+[[nodiscard]] std::string_view command_name(CommandKind command);
+
+constexpr CommandKind kUsageProjectAwareCommands[] = {
+    CommandKind::Check,
+    CommandKind::DumpAst,
+    CommandKind::DumpProject,
+    CommandKind::DumpTypes,
+    CommandKind::EmitIr,
+    CommandKind::EmitIrJson,
+    CommandKind::EmitNativeJson,
+    CommandKind::EmitExecutionPlan,
+    CommandKind::EmitExecutionJournal,
+    CommandKind::EmitReplayView,
+    CommandKind::EmitAuditReport,
+    CommandKind::EmitSchedulerSnapshot,
+    CommandKind::EmitCheckpointRecord,
+    CommandKind::EmitCheckpointReview,
+    CommandKind::EmitPersistenceDescriptor,
+    CommandKind::EmitPersistenceReview,
+    CommandKind::EmitExportManifest,
+    CommandKind::EmitExportReview,
+    CommandKind::EmitRuntimeSession,
+    CommandKind::EmitDryRunTrace,
+    CommandKind::EmitStoreImportDescriptor,
+    CommandKind::EmitStoreImportReview,
+    CommandKind::EmitDurableStoreImportRequest,
+    CommandKind::EmitDurableStoreImportReview,
+    CommandKind::EmitDurableStoreImportDecision,
+    CommandKind::EmitDurableStoreImportReceipt,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+    CommandKind::EmitDurableStoreImportDecisionReview,
+    CommandKind::EmitDurableStoreImportReceiptReview,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+    CommandKind::EmitSchedulerReview,
+    CommandKind::EmitPackageReview,
+    CommandKind::EmitSummary,
+    CommandKind::EmitSmv,
+};
+
+constexpr CommandKind kActionCommands[] = {
+    CommandKind::DumpAst,
+    CommandKind::DumpTypes,
+    CommandKind::DumpProject,
+    CommandKind::EmitIr,
+    CommandKind::EmitIrJson,
+    CommandKind::EmitNativeJson,
+    CommandKind::EmitExecutionPlan,
+    CommandKind::EmitExecutionJournal,
+    CommandKind::EmitReplayView,
+    CommandKind::EmitAuditReport,
+    CommandKind::EmitSchedulerSnapshot,
+    CommandKind::EmitCheckpointRecord,
+    CommandKind::EmitCheckpointReview,
+    CommandKind::EmitPersistenceDescriptor,
+    CommandKind::EmitPersistenceReview,
+    CommandKind::EmitExportManifest,
+    CommandKind::EmitExportReview,
+    CommandKind::EmitStoreImportDescriptor,
+    CommandKind::EmitStoreImportReview,
+    CommandKind::EmitDurableStoreImportRequest,
+    CommandKind::EmitDurableStoreImportReview,
+    CommandKind::EmitDurableStoreImportDecision,
+    CommandKind::EmitDurableStoreImportReceipt,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+    CommandKind::EmitDurableStoreImportDecisionReview,
+    CommandKind::EmitDurableStoreImportReceiptReview,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+    CommandKind::EmitSchedulerReview,
+    CommandKind::EmitRuntimeSession,
+    CommandKind::EmitDryRunTrace,
+    CommandKind::EmitPackageReview,
+    CommandKind::EmitSummary,
+    CommandKind::EmitSmv,
+};
+
+constexpr CommandKind kCommandInferenceOrder[] = {
+    CommandKind::DumpProject,
+    CommandKind::EmitIr,
+    CommandKind::EmitIrJson,
+    CommandKind::EmitNativeJson,
+    CommandKind::EmitExecutionPlan,
+    CommandKind::EmitExecutionJournal,
+    CommandKind::EmitReplayView,
+    CommandKind::EmitAuditReport,
+    CommandKind::EmitSchedulerSnapshot,
+    CommandKind::EmitCheckpointRecord,
+    CommandKind::EmitCheckpointReview,
+    CommandKind::EmitPersistenceDescriptor,
+    CommandKind::EmitPersistenceReview,
+    CommandKind::EmitExportManifest,
+    CommandKind::EmitExportReview,
+    CommandKind::EmitStoreImportDescriptor,
+    CommandKind::EmitStoreImportReview,
+    CommandKind::EmitDurableStoreImportRequest,
+    CommandKind::EmitDurableStoreImportReview,
+    CommandKind::EmitDurableStoreImportDecision,
+    CommandKind::EmitDurableStoreImportReceipt,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+    CommandKind::EmitDurableStoreImportDecisionReview,
+    CommandKind::EmitDurableStoreImportReceiptReview,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+    CommandKind::EmitSchedulerReview,
+    CommandKind::EmitRuntimeSession,
+    CommandKind::EmitDryRunTrace,
+    CommandKind::EmitPackageReview,
+    CommandKind::EmitSummary,
+    CommandKind::EmitSmv,
+    CommandKind::DumpTypes,
+    CommandKind::DumpAst,
+};
+
+constexpr CommandKind kPackageSupportedCommands[] = {
+    CommandKind::EmitNativeJson,
+    CommandKind::EmitExecutionPlan,
+    CommandKind::EmitExecutionJournal,
+    CommandKind::EmitReplayView,
+    CommandKind::EmitAuditReport,
+    CommandKind::EmitSchedulerSnapshot,
+    CommandKind::EmitCheckpointRecord,
+    CommandKind::EmitCheckpointReview,
+    CommandKind::EmitPersistenceDescriptor,
+    CommandKind::EmitPersistenceReview,
+    CommandKind::EmitExportManifest,
+    CommandKind::EmitExportReview,
+    CommandKind::EmitStoreImportDescriptor,
+    CommandKind::EmitStoreImportReview,
+    CommandKind::EmitDurableStoreImportRequest,
+    CommandKind::EmitDurableStoreImportReview,
+    CommandKind::EmitDurableStoreImportDecision,
+    CommandKind::EmitDurableStoreImportReceipt,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+    CommandKind::EmitDurableStoreImportDecisionReview,
+    CommandKind::EmitDurableStoreImportReceiptReview,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+    CommandKind::EmitSchedulerReview,
+    CommandKind::EmitRuntimeSession,
+    CommandKind::EmitDryRunTrace,
+    CommandKind::EmitPackageReview,
+};
+
+constexpr CommandKind kCapabilityInputSupportedCommands[] = {
+    CommandKind::EmitExecutionJournal,
+    CommandKind::EmitReplayView,
+    CommandKind::EmitAuditReport,
+    CommandKind::EmitSchedulerSnapshot,
+    CommandKind::EmitCheckpointRecord,
+    CommandKind::EmitCheckpointReview,
+    CommandKind::EmitPersistenceDescriptor,
+    CommandKind::EmitPersistenceReview,
+    CommandKind::EmitExportManifest,
+    CommandKind::EmitExportReview,
+    CommandKind::EmitStoreImportDescriptor,
+    CommandKind::EmitStoreImportReview,
+    CommandKind::EmitDurableStoreImportRequest,
+    CommandKind::EmitDurableStoreImportReview,
+    CommandKind::EmitDurableStoreImportDecision,
+    CommandKind::EmitDurableStoreImportReceipt,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+    CommandKind::EmitDurableStoreImportDecisionReview,
+    CommandKind::EmitDurableStoreImportReceiptReview,
+    CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+    CommandKind::EmitSchedulerReview,
+    CommandKind::EmitRuntimeSession,
+    CommandKind::EmitDryRunTrace,
+};
+
+[[nodiscard]] bool is_command_in_list(CommandKind command,
+                                      std::span<const CommandKind> commands) {
+    for (const auto item : commands) {
+        if (item == command) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] std::string format_pipe_separated_commands(std::span<const CommandKind> commands) {
+    std::string result;
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        if (index > 0) {
+            result += "|";
+        }
+        result += command_name(commands[index]);
+    }
+    return result;
+}
+
+[[nodiscard]] std::string format_comma_or_commands(std::span<const CommandKind> commands) {
+    std::string result;
+    for (std::size_t index = 0; index < commands.size(); ++index) {
+        if (index > 0) {
+            result += (index + 1 == commands.size()) ? ", or " : ", ";
+        }
+        result += command_name(commands[index]);
+    }
+    return result;
+}
+
+[[nodiscard]] bool is_action_enabled(const CommandLineOptions &options, CommandKind command) {
+    if (command != CommandKind::Check && options.selected_command == command) {
+        return true;
+    }
+
+    switch (command) {
+    case CommandKind::DumpAst:
+        return options.dump_ast_requested;
+    case CommandKind::DumpTypes:
+        return options.dump_types_requested;
+    default:
+        return false;
+    }
+}
+
+[[nodiscard]] std::optional<CommandKind>
+infer_effective_command(const CommandLineOptions &options) {
+    if (options.selected_command.has_value()) {
+        return options.selected_command;
+    }
+
+    for (const auto command : kCommandInferenceOrder) {
+        if (is_action_enabled(options, command)) {
+            return command;
+        }
+    }
+
+    return std::nullopt;
+}
+
+[[nodiscard]] int count_enabled_actions(const CommandLineOptions &options) {
+    int count = 0;
+    for (const auto command : kActionCommands) {
+        count += static_cast<int>(is_action_enabled(options, command));
+    }
+    return count;
+}
+
 void print_usage(std::ostream &out) {
+    const auto project_aware_commands = format_pipe_separated_commands(kUsageProjectAwareCommands);
     out << "Usage:\n"
-        << "  ahflc "
-           "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
-           "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-export-manifest|emit-export-review|emit-runtime-session|emit-dry-run-trace|emit-"
-           "store-import-descriptor|emit-store-import-review|emit-durable-store-import-request|emit-durable-store-import-review|emit-durable-store-import-decision|emit-durable-store-import-receipt|emit-durable-store-import-receipt-persistence-request|emit-durable-store-import-decision-review|emit-durable-store-import-receipt-review|emit-durable-store-import-receipt-persistence-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --project "
-           "<ahfl.project.json>\n"
-        << "  ahflc "
-           "<check|dump-ast|dump-project|dump-types|emit-ir|emit-ir-json|emit-native-json|emit-"
-           "execution-plan|emit-execution-journal|emit-replay-view|emit-audit-report|emit-scheduler-snapshot|emit-checkpoint-record|emit-checkpoint-review|emit-persistence-descriptor|emit-persistence-review|emit-export-manifest|emit-export-review|emit-runtime-session|emit-dry-run-trace|emit-"
-           "store-import-descriptor|emit-store-import-review|emit-durable-store-import-request|emit-durable-store-import-review|emit-durable-store-import-decision|emit-durable-store-import-receipt|emit-durable-store-import-receipt-persistence-request|emit-durable-store-import-decision-review|emit-durable-store-import-receipt-review|emit-durable-store-import-receipt-persistence-review|scheduler-review|emit-package-review|emit-summary|emit-smv> [--package <ahfl.package.json>] --workspace "
-           "<ahfl.workspace.json> --project-name <name>\n"
+        << "  ahflc <" << project_aware_commands
+        << "> [--package <ahfl.package.json>] --project <ahfl.project.json>\n"
+        << "  ahflc <" << project_aware_commands
+        << "> [--package <ahfl.package.json>] --workspace <ahfl.workspace.json> --project-name "
+           "<name>\n"
         << "  ahflc check [--search-root <dir>]... [--dump-ast] <input.ahfl>\n"
         << "  ahflc dump-ast [--search-root <dir>]... <input.ahfl>\n"
         << "  ahflc dump-types [--search-root <dir>]... <input.ahfl>\n"
@@ -209,156 +448,226 @@ void print_usage(std::ostream &out) {
         << "  ahflc [--dump-ast] <input.ahfl>\n";
 }
 
-[[nodiscard]] bool is_subcommand(std::string_view argument) {
-    return argument == "check" || argument == "dump-ast" || argument == "dump-types" ||
-           argument == "dump-project" || argument == "emit-ir" || argument == "emit-ir-json" ||
-           argument == "emit-native-json" || argument == "emit-execution-plan" ||
-           argument == "emit-execution-journal" || argument == "emit-replay-view" ||
-           argument == "emit-audit-report" || argument == "emit-scheduler-snapshot" ||
-           argument == "emit-checkpoint-record" || argument == "emit-checkpoint-review" ||
-           argument == "emit-persistence-descriptor" ||
-           argument == "emit-persistence-review" ||
-           argument == "emit-export-manifest" ||
-           argument == "emit-export-review" ||
-           argument == "emit-store-import-descriptor" ||
-           argument == "emit-store-import-review" ||
-           argument == "emit-durable-store-import-request" ||
-           argument == "emit-durable-store-import-review" ||
-           argument == "emit-durable-store-import-decision" ||
-           argument == "emit-durable-store-import-receipt" ||
-           argument == "emit-durable-store-import-receipt-persistence-request" ||
-           argument == "emit-durable-store-import-decision-review" ||
-           argument == "emit-durable-store-import-receipt-review" ||
-           argument == "emit-durable-store-import-receipt-persistence-review" ||
-           argument == "emit-scheduler-review" ||
-           argument == "emit-runtime-session" ||
-           argument == "emit-dry-run-trace" ||
-           argument == "emit-package-review" ||
-           argument == "emit-summary" || argument == "emit-smv";
+[[nodiscard]] std::optional<CommandKind> command_token_to_kind(std::string_view argument) {
+    if (argument == "check") {
+        return CommandKind::Check;
+    }
+    if (argument == "dump-ast") {
+        return CommandKind::DumpAst;
+    }
+    if (argument == "dump-types") {
+        return CommandKind::DumpTypes;
+    }
+    if (argument == "dump-project") {
+        return CommandKind::DumpProject;
+    }
+    if (argument == "emit-ir") {
+        return CommandKind::EmitIr;
+    }
+    if (argument == "emit-ir-json") {
+        return CommandKind::EmitIrJson;
+    }
+    if (argument == "emit-native-json") {
+        return CommandKind::EmitNativeJson;
+    }
+    if (argument == "emit-execution-plan") {
+        return CommandKind::EmitExecutionPlan;
+    }
+    if (argument == "emit-execution-journal") {
+        return CommandKind::EmitExecutionJournal;
+    }
+    if (argument == "emit-replay-view") {
+        return CommandKind::EmitReplayView;
+    }
+    if (argument == "emit-audit-report") {
+        return CommandKind::EmitAuditReport;
+    }
+    if (argument == "emit-scheduler-snapshot") {
+        return CommandKind::EmitSchedulerSnapshot;
+    }
+    if (argument == "emit-checkpoint-record") {
+        return CommandKind::EmitCheckpointRecord;
+    }
+    if (argument == "emit-checkpoint-review") {
+        return CommandKind::EmitCheckpointReview;
+    }
+    if (argument == "emit-persistence-descriptor") {
+        return CommandKind::EmitPersistenceDescriptor;
+    }
+    if (argument == "emit-persistence-review") {
+        return CommandKind::EmitPersistenceReview;
+    }
+    if (argument == "emit-export-manifest") {
+        return CommandKind::EmitExportManifest;
+    }
+    if (argument == "emit-export-review") {
+        return CommandKind::EmitExportReview;
+    }
+    if (argument == "emit-store-import-descriptor") {
+        return CommandKind::EmitStoreImportDescriptor;
+    }
+    if (argument == "emit-store-import-review") {
+        return CommandKind::EmitStoreImportReview;
+    }
+    if (argument == "emit-durable-store-import-request") {
+        return CommandKind::EmitDurableStoreImportRequest;
+    }
+    if (argument == "emit-durable-store-import-review") {
+        return CommandKind::EmitDurableStoreImportReview;
+    }
+    if (argument == "emit-durable-store-import-decision") {
+        return CommandKind::EmitDurableStoreImportDecision;
+    }
+    if (argument == "emit-durable-store-import-receipt") {
+        return CommandKind::EmitDurableStoreImportReceipt;
+    }
+    if (argument == "emit-durable-store-import-receipt-persistence-request") {
+        return CommandKind::EmitDurableStoreImportReceiptPersistenceRequest;
+    }
+    if (argument == "emit-durable-store-import-decision-review") {
+        return CommandKind::EmitDurableStoreImportDecisionReview;
+    }
+    if (argument == "emit-durable-store-import-receipt-review") {
+        return CommandKind::EmitDurableStoreImportReceiptReview;
+    }
+    if (argument == "emit-durable-store-import-receipt-persistence-review") {
+        return CommandKind::EmitDurableStoreImportReceiptPersistenceReview;
+    }
+    if (argument == "emit-scheduler-review") {
+        return CommandKind::EmitSchedulerReview;
+    }
+    if (argument == "emit-runtime-session") {
+        return CommandKind::EmitRuntimeSession;
+    }
+    if (argument == "emit-dry-run-trace") {
+        return CommandKind::EmitDryRunTrace;
+    }
+    if (argument == "emit-package-review") {
+        return CommandKind::EmitPackageReview;
+    }
+    if (argument == "emit-summary") {
+        return CommandKind::EmitSummary;
+    }
+    if (argument == "emit-smv") {
+        return CommandKind::EmitSmv;
+    }
+    return std::nullopt;
 }
 
-[[nodiscard]] std::optional<ahfl::BackendKind> selected_backend(const CommandLineOptions &options) {
-    if (options.emit_ir) {
+[[nodiscard]] std::string_view command_name(CommandKind command) {
+    switch (command) {
+    case CommandKind::Check:
+        return "check";
+    case CommandKind::DumpAst:
+        return "dump-ast";
+    case CommandKind::DumpTypes:
+        return "dump-types";
+    case CommandKind::DumpProject:
+        return "dump-project";
+    case CommandKind::EmitIr:
+        return "emit-ir";
+    case CommandKind::EmitIrJson:
+        return "emit-ir-json";
+    case CommandKind::EmitNativeJson:
+        return "emit-native-json";
+    case CommandKind::EmitExecutionPlan:
+        return "emit-execution-plan";
+    case CommandKind::EmitExecutionJournal:
+        return "emit-execution-journal";
+    case CommandKind::EmitReplayView:
+        return "emit-replay-view";
+    case CommandKind::EmitAuditReport:
+        return "emit-audit-report";
+    case CommandKind::EmitSchedulerSnapshot:
+        return "emit-scheduler-snapshot";
+    case CommandKind::EmitCheckpointRecord:
+        return "emit-checkpoint-record";
+    case CommandKind::EmitCheckpointReview:
+        return "emit-checkpoint-review";
+    case CommandKind::EmitPersistenceDescriptor:
+        return "emit-persistence-descriptor";
+    case CommandKind::EmitPersistenceReview:
+        return "emit-persistence-review";
+    case CommandKind::EmitExportManifest:
+        return "emit-export-manifest";
+    case CommandKind::EmitExportReview:
+        return "emit-export-review";
+    case CommandKind::EmitStoreImportDescriptor:
+        return "emit-store-import-descriptor";
+    case CommandKind::EmitStoreImportReview:
+        return "emit-store-import-review";
+    case CommandKind::EmitDurableStoreImportRequest:
+        return "emit-durable-store-import-request";
+    case CommandKind::EmitDurableStoreImportReview:
+        return "emit-durable-store-import-review";
+    case CommandKind::EmitDurableStoreImportDecision:
+        return "emit-durable-store-import-decision";
+    case CommandKind::EmitDurableStoreImportReceipt:
+        return "emit-durable-store-import-receipt";
+    case CommandKind::EmitDurableStoreImportReceiptPersistenceRequest:
+        return "emit-durable-store-import-receipt-persistence-request";
+    case CommandKind::EmitDurableStoreImportDecisionReview:
+        return "emit-durable-store-import-decision-review";
+    case CommandKind::EmitDurableStoreImportReceiptReview:
+        return "emit-durable-store-import-receipt-review";
+    case CommandKind::EmitDurableStoreImportReceiptPersistenceReview:
+        return "emit-durable-store-import-receipt-persistence-review";
+    case CommandKind::EmitSchedulerReview:
+        return "emit-scheduler-review";
+    case CommandKind::EmitRuntimeSession:
+        return "emit-runtime-session";
+    case CommandKind::EmitDryRunTrace:
+        return "emit-dry-run-trace";
+    case CommandKind::EmitPackageReview:
+        return "emit-package-review";
+    case CommandKind::EmitSummary:
+        return "emit-summary";
+    case CommandKind::EmitSmv:
+        return "emit-smv";
+    }
+    return "check";
+}
+
+[[nodiscard]] bool is_package_supported_command(CommandKind command) {
+    return is_command_in_list(command, kPackageSupportedCommands);
+}
+
+[[nodiscard]] bool is_capability_input_supported_command(CommandKind command) {
+    return is_command_in_list(command, kCapabilityInputSupportedCommands);
+}
+
+[[nodiscard]] bool is_command_requiring_package(CommandKind command) {
+    return is_capability_input_supported_command(command);
+}
+
+void set_command_option(CommandLineOptions &options, CommandKind command) {
+    options.selected_command = command;
+}
+
+[[nodiscard]] std::optional<ahfl::BackendKind>
+selected_backend(std::optional<CommandKind> command) {
+    if (!command.has_value()) {
+        return std::nullopt;
+    }
+
+    switch (*command) {
+    case CommandKind::EmitIr:
         return ahfl::BackendKind::Ir;
-    }
-
-    if (options.emit_ir_json) {
+    case CommandKind::EmitIrJson:
         return ahfl::BackendKind::IrJson;
-    }
-
-    if (options.emit_native_json) {
+    case CommandKind::EmitNativeJson:
         return ahfl::BackendKind::NativeJson;
-    }
-
-    if (options.emit_execution_plan) {
+    case CommandKind::EmitExecutionPlan:
         return ahfl::BackendKind::ExecutionPlan;
-    }
-
-    if (options.emit_execution_journal) {
-        return std::nullopt;
-    }
-
-    if (options.emit_replay_view) {
-        return std::nullopt;
-    }
-
-    if (options.emit_audit_report) {
-        return std::nullopt;
-    }
-
-    if (options.emit_scheduler_snapshot) {
-        return std::nullopt;
-    }
-
-    if (options.emit_checkpoint_record) {
-        return std::nullopt;
-    }
-
-    if (options.emit_checkpoint_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_persistence_descriptor) {
-        return std::nullopt;
-    }
-
-    if (options.emit_persistence_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_export_manifest) {
-        return std::nullopt;
-    }
-
-    if (options.emit_export_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_store_import_descriptor) {
-        return std::nullopt;
-    }
-
-    if (options.emit_store_import_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_request) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_decision) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_receipt) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_receipt_persistence_request) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_decision_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_receipt_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_durable_store_import_receipt_persistence_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_scheduler_review) {
-        return std::nullopt;
-    }
-
-    if (options.emit_runtime_session) {
-        return std::nullopt;
-    }
-
-    if (options.emit_dry_run_trace) {
-        return std::nullopt;
-    }
-
-    if (options.emit_package_review) {
+    case CommandKind::EmitPackageReview:
         return ahfl::BackendKind::PackageReview;
-    }
-
-    if (options.emit_summary) {
+    case CommandKind::EmitSummary:
         return ahfl::BackendKind::Summary;
-    }
-
-    if (options.emit_smv) {
+    case CommandKind::EmitSmv:
         return ahfl::BackendKind::Smv;
+    default:
+        return std::nullopt;
     }
-
-    return std::nullopt;
 }
 
 [[nodiscard]] ahfl::handoff::ExecutableKind
@@ -399,13 +708,13 @@ lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
 }
 
 template <typename InputT>
-[[nodiscard]] bool emit_selected_backend(const CommandLineOptions &options,
+[[nodiscard]] bool emit_selected_backend(std::optional<CommandKind> effective_command,
                                          const InputT &input,
                                          const ahfl::ResolveResult &resolve_result,
                                          const ahfl::TypeCheckResult &type_check_result,
                                          const ahfl::handoff::PackageMetadata *package_metadata,
                                          std::ostream &out) {
-    const auto backend = selected_backend(options);
+    const auto backend = selected_backend(effective_command);
     if (!backend.has_value()) {
         return false;
     }
@@ -2014,6 +2323,7 @@ void print_success_summary(const ahfl::SourceGraph &graph,
 
 template <typename InputT>
 [[nodiscard]] int run_analysis_pipeline(const CommandLineOptions &options,
+                                        std::optional<CommandKind> effective_command,
                                         const InputT &input,
                                         MaybeSourceFile source_file,
                                         const ahfl::handoff::PackageMetadata *package_metadata,
@@ -2029,7 +2339,7 @@ template <typename InputT>
     auto type_check_result = type_checker.check(input, resolve_result);
     render_diagnostics(type_check_result, source_file, std::cerr);
 
-    if (options.dump_types) {
+    if (is_action_enabled(options, CommandKind::DumpTypes)) {
         ahfl::dump_type_environment(
             type_check_result.environment, resolve_result.symbol_table, std::cout);
     }
@@ -2054,126 +2364,86 @@ template <typename InputT>
             return 1;
         }
 
-        if (options.emit_dry_run_trace) {
-            return emit_dry_run_trace_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
+        if (effective_command.has_value()) {
+            switch (*effective_command) {
+            case CommandKind::EmitDryRunTrace:
+                return emit_dry_run_trace_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitExecutionJournal:
+                return emit_execution_journal_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitReplayView:
+                return emit_replay_view_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitAuditReport:
+                return emit_audit_report_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitSchedulerSnapshot:
+                return emit_scheduler_snapshot_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitCheckpointRecord:
+                return emit_checkpoint_record_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitCheckpointReview:
+                return emit_checkpoint_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitPersistenceDescriptor:
+                return emit_persistence_descriptor_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitPersistenceReview:
+                return emit_persistence_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitExportManifest:
+                return emit_export_manifest_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitExportReview:
+                return emit_export_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitStoreImportDescriptor:
+                return emit_store_import_descriptor_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitStoreImportReview:
+                return emit_store_import_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportRequest:
+                return emit_durable_store_import_request_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportReview:
+                return emit_durable_store_import_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportDecision:
+                return emit_durable_store_import_decision_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportReceipt:
+                return emit_durable_store_import_receipt_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportReceiptPersistenceRequest:
+                return emit_durable_store_import_receipt_persistence_request_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportDecisionReview:
+                return emit_durable_store_import_decision_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportReceiptReview:
+                return emit_durable_store_import_receipt_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitDurableStoreImportReceiptPersistenceReview:
+                return emit_durable_store_import_receipt_persistence_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitSchedulerReview:
+                return emit_scheduler_review_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitRuntimeSession:
+                return emit_runtime_session_with_diagnostics(
+                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
+            case CommandKind::EmitExecutionPlan:
+                return emit_execution_plan_with_diagnostics(
+                    ir_program, metadata_validation.metadata);
+            default:
+                break;
+            }
         }
 
-        if (options.emit_execution_journal) {
-            return emit_execution_journal_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_replay_view) {
-            return emit_replay_view_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_audit_report) {
-            return emit_audit_report_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_scheduler_snapshot) {
-            return emit_scheduler_snapshot_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_checkpoint_record) {
-            return emit_checkpoint_record_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_checkpoint_review) {
-            return emit_checkpoint_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_persistence_descriptor) {
-            return emit_persistence_descriptor_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_persistence_review) {
-            return emit_persistence_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_export_manifest) {
-            return emit_export_manifest_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_export_review) {
-            return emit_export_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_store_import_descriptor) {
-            return emit_store_import_descriptor_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_store_import_review) {
-            return emit_store_import_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_request) {
-            return emit_durable_store_import_request_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_review) {
-            return emit_durable_store_import_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_decision) {
-            return emit_durable_store_import_decision_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_receipt) {
-            return emit_durable_store_import_receipt_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_receipt_persistence_request) {
-            return emit_durable_store_import_receipt_persistence_request_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_decision_review) {
-            return emit_durable_store_import_decision_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_receipt_review) {
-            return emit_durable_store_import_receipt_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_durable_store_import_receipt_persistence_review) {
-            return emit_durable_store_import_receipt_persistence_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_scheduler_review) {
-            return emit_scheduler_review_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_runtime_session) {
-            return emit_runtime_session_with_diagnostics(
-                ir_program, metadata_validation.metadata, *capability_mock_set, options);
-        }
-
-        if (options.emit_execution_plan) {
-            return emit_execution_plan_with_diagnostics(ir_program, metadata_validation.metadata);
-        }
-
-        if (emit_selected_backend(options,
+        if (emit_selected_backend(effective_command,
                                   ir_program,
                                   resolve_result,
                                   type_check_result,
@@ -2183,12 +2453,16 @@ template <typename InputT>
         }
     }
 
-    if (emit_selected_backend(
-            options, input, resolve_result, type_check_result, package_metadata, std::cout)) {
+    if (emit_selected_backend(effective_command,
+                              input,
+                              resolve_result,
+                              type_check_result,
+                              package_metadata,
+                              std::cout)) {
         return 0;
     }
 
-    if (!options.dump_types) {
+    if (!is_action_enabled(options, CommandKind::DumpTypes)) {
         print_success_summary(input, resolve_result, type_check_result, std::cout);
     }
 
@@ -2197,7 +2471,6 @@ template <typename InputT>
 
 [[nodiscard]] int parse_command_line(std::span<const std::string_view> arguments,
                                      CommandLineOptions &options) {
-    bool explicit_subcommand = false;
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const auto argument = arguments[index];
         if (argument == "--help" || argument == "-h") {
@@ -2305,116 +2578,19 @@ template <typename InputT>
         }
 
         if (argument == "--dump-ast") {
-            options.dump_ast = true;
+            options.dump_ast_requested = true;
             continue;
         }
 
         if (argument == "--dump-types") {
-            options.dump_types = true;
+            options.dump_types_requested = true;
             continue;
         }
 
-        if (is_subcommand(argument) && !explicit_subcommand && options.positional.empty()) {
-            explicit_subcommand = true;
-            if (argument == "dump-ast") {
-                options.dump_ast = true;
-            }
-            if (argument == "dump-types") {
-                options.dump_types = true;
-            }
-            if (argument == "dump-project") {
-                options.dump_project = true;
-            }
-            if (argument == "emit-ir") {
-                options.emit_ir = true;
-            }
-            if (argument == "emit-ir-json") {
-                options.emit_ir_json = true;
-            }
-            if (argument == "emit-native-json") {
-                options.emit_native_json = true;
-            }
-            if (argument == "emit-execution-plan") {
-                options.emit_execution_plan = true;
-            }
-            if (argument == "emit-execution-journal") {
-                options.emit_execution_journal = true;
-            }
-            if (argument == "emit-replay-view") {
-                options.emit_replay_view = true;
-            }
-            if (argument == "emit-audit-report") {
-                options.emit_audit_report = true;
-            }
-            if (argument == "emit-scheduler-snapshot") {
-                options.emit_scheduler_snapshot = true;
-            }
-            if (argument == "emit-checkpoint-record") {
-                options.emit_checkpoint_record = true;
-            }
-            if (argument == "emit-checkpoint-review") {
-                options.emit_checkpoint_review = true;
-            }
-            if (argument == "emit-persistence-descriptor") {
-                options.emit_persistence_descriptor = true;
-            }
-            if (argument == "emit-persistence-review") {
-                options.emit_persistence_review = true;
-            }
-            if (argument == "emit-export-manifest") {
-                options.emit_export_manifest = true;
-            }
-            if (argument == "emit-export-review") {
-                options.emit_export_review = true;
-            }
-            if (argument == "emit-store-import-descriptor") {
-                options.emit_store_import_descriptor = true;
-            }
-            if (argument == "emit-store-import-review") {
-                options.emit_store_import_review = true;
-            }
-            if (argument == "emit-durable-store-import-request") {
-                options.emit_durable_store_import_request = true;
-            }
-            if (argument == "emit-durable-store-import-review") {
-                options.emit_durable_store_import_review = true;
-            }
-            if (argument == "emit-durable-store-import-decision") {
-                options.emit_durable_store_import_decision = true;
-            }
-            if (argument == "emit-durable-store-import-receipt") {
-                options.emit_durable_store_import_receipt = true;
-            }
-            if (argument == "emit-durable-store-import-receipt-persistence-request") {
-                options.emit_durable_store_import_receipt_persistence_request = true;
-            }
-            if (argument == "emit-durable-store-import-decision-review") {
-                options.emit_durable_store_import_decision_review = true;
-            }
-            if (argument == "emit-durable-store-import-receipt-review") {
-                options.emit_durable_store_import_receipt_review = true;
-            }
-            if (argument == "emit-durable-store-import-receipt-persistence-review") {
-                options.emit_durable_store_import_receipt_persistence_review = true;
-            }
-            if (argument == "emit-scheduler-review") {
-                options.emit_scheduler_review = true;
-            }
-            if (argument == "emit-runtime-session") {
-                options.emit_runtime_session = true;
-            }
-            if (argument == "emit-dry-run-trace") {
-                options.emit_dry_run_trace = true;
-            }
-            if (argument == "emit-package-review") {
-                options.emit_package_review = true;
-            }
-            if (argument == "emit-summary") {
-                options.emit_summary = true;
-            }
-            if (argument == "emit-smv") {
-                options.emit_smv = true;
-            }
+        const auto command = command_token_to_kind(argument);
+        if (command.has_value() && !options.selected_command.has_value() &&
+            options.positional.empty()) {
+            set_command_option(options, *command);
             continue;
         }
 
@@ -2436,52 +2612,12 @@ int run_cli(std::span<const std::string_view> arguments) {
         return parse_status;
     }
 
-    const auto action_count =
-        static_cast<int>(options.dump_ast) + static_cast<int>(options.dump_types) +
-        static_cast<int>(options.dump_project) + static_cast<int>(options.emit_ir) +
-        static_cast<int>(options.emit_ir_json) + static_cast<int>(options.emit_native_json) +
-        static_cast<int>(options.emit_execution_plan) +
-        static_cast<int>(options.emit_execution_journal) +
-        static_cast<int>(options.emit_replay_view) +
-        static_cast<int>(options.emit_audit_report) +
-        static_cast<int>(options.emit_scheduler_snapshot) +
-        static_cast<int>(options.emit_checkpoint_record) +
-        static_cast<int>(options.emit_checkpoint_review) +
-        static_cast<int>(options.emit_persistence_descriptor) +
-        static_cast<int>(options.emit_persistence_review) +
-        static_cast<int>(options.emit_export_manifest) +
-        static_cast<int>(options.emit_export_review) +
-        static_cast<int>(options.emit_store_import_descriptor) +
-        static_cast<int>(options.emit_store_import_review) +
-        static_cast<int>(options.emit_durable_store_import_request) +
-        static_cast<int>(options.emit_durable_store_import_review) +
-        static_cast<int>(options.emit_durable_store_import_decision) +
-        static_cast<int>(options.emit_durable_store_import_receipt) +
-        static_cast<int>(options.emit_durable_store_import_receipt_persistence_request) +
-        static_cast<int>(options.emit_durable_store_import_decision_review) +
-        static_cast<int>(options.emit_durable_store_import_receipt_review) +
-        static_cast<int>(options.emit_durable_store_import_receipt_persistence_review) +
-        static_cast<int>(options.emit_scheduler_review) +
-        static_cast<int>(options.emit_runtime_session) +
-        static_cast<int>(options.emit_dry_run_trace) +
-        static_cast<int>(options.emit_package_review) + static_cast<int>(options.emit_summary) +
-        static_cast<int>(options.emit_smv);
+    const auto effective_command = infer_effective_command(options);
+
+    const auto action_count = count_enabled_actions(options);
     if (action_count > 1) {
-        std::cerr
-            << "error: choose at most one of dump-ast, dump-types, dump-project, emit-ir, "
-               "emit-ir-json, emit-native-json, emit-execution-plan, emit-execution-journal, "
-               "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
-               "emit-checkpoint-record, emit-checkpoint-review, emit-persistence-descriptor, "
-               "emit-persistence-review, emit-export-manifest, emit-export-review, "
-               "emit-store-import-descriptor, emit-store-import-review, "
-               "emit-durable-store-import-request, emit-durable-store-import-review, "
-               "emit-durable-store-import-decision, emit-durable-store-import-receipt, "
-               "emit-durable-store-import-receipt-persistence-request, "
-               "emit-durable-store-import-decision-review, "
-               "emit-durable-store-import-receipt-review, "
-               "emit-durable-store-import-receipt-persistence-review, emit-scheduler-review, "
-               "emit-runtime-session, emit-dry-run-trace, emit-package-review, emit-summary, "
-               "or emit-smv\n";
+        std::cerr << "error: choose at most one of "
+                  << format_comma_or_commands(kActionCommands) << "\n";
         print_usage(std::cerr);
         return 2;
     }
@@ -2524,377 +2660,66 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     if (options.package_descriptor.has_value() &&
-        !options.emit_native_json &&
-        !options.emit_execution_plan &&
-        !options.emit_execution_journal &&
-        !options.emit_replay_view &&
-        !options.emit_audit_report &&
-        !options.emit_scheduler_snapshot &&
-        !options.emit_checkpoint_record &&
-        !options.emit_checkpoint_review &&
-        !options.emit_persistence_descriptor &&
-        !options.emit_persistence_review &&
-        !options.emit_export_manifest &&
-        !options.emit_export_review &&
-        !options.emit_store_import_descriptor &&
-        !options.emit_store_import_review &&
-        !options.emit_durable_store_import_request &&
-        !options.emit_durable_store_import_review &&
-        !options.emit_durable_store_import_decision &&
-        !options.emit_durable_store_import_receipt &&
-        !options.emit_durable_store_import_receipt_persistence_request &&
-        !options.emit_durable_store_import_decision_review &&
-        !options.emit_durable_store_import_receipt_review &&
-        !options.emit_durable_store_import_receipt_persistence_review &&
-        !options.emit_scheduler_review &&
-        !options.emit_runtime_session &&
-        !options.emit_dry_run_trace &&
-        !options.emit_package_review) {
-        std::cerr << "error: --package is only supported with emit-native-json, "
-                     "emit-execution-plan, emit-execution-journal, emit-replay-view, "
-                     "emit-audit-report, emit-scheduler-snapshot, emit-checkpoint-record, "
-                     "emit-checkpoint-review, emit-persistence-descriptor, "
-                     "emit-persistence-review, emit-export-manifest, emit-export-review, "
-                     "emit-store-import-descriptor, emit-store-import-review, "
-                     "emit-durable-store-import-request, emit-durable-store-import-review, "
-                     "emit-durable-store-import-decision, emit-durable-store-import-receipt, "
-                     "emit-durable-store-import-receipt-persistence-request, "
-                     "emit-durable-store-import-decision-review, "
-                     "emit-durable-store-import-receipt-review, "
-                     "emit-durable-store-import-receipt-persistence-review, "
-                     "emit-scheduler-review, emit-runtime-session, emit-dry-run-trace, "
-                     "or emit-package-review\n";
+        (!effective_command.has_value() ||
+         !is_package_supported_command(*effective_command))) {
+        std::cerr << "error: --package is only supported with "
+                  << format_comma_or_commands(kPackageSupportedCommands) << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.capability_mocks_descriptor.has_value() && !options.emit_dry_run_trace &&
-        !options.emit_execution_journal &&
-        !options.emit_replay_view &&
-        !options.emit_audit_report &&
-        !options.emit_scheduler_snapshot &&
-        !options.emit_checkpoint_record &&
-        !options.emit_checkpoint_review &&
-        !options.emit_persistence_descriptor &&
-        !options.emit_persistence_review &&
-        !options.emit_export_manifest &&
-        !options.emit_export_review &&
-        !options.emit_store_import_descriptor &&
-        !options.emit_store_import_review &&
-        !options.emit_durable_store_import_request &&
-        !options.emit_durable_store_import_review &&
-        !options.emit_durable_store_import_decision &&
-        !options.emit_durable_store_import_receipt &&
-        !options.emit_durable_store_import_receipt_persistence_request &&
-        !options.emit_durable_store_import_decision_review &&
-        !options.emit_durable_store_import_receipt_review &&
-        !options.emit_durable_store_import_receipt_persistence_review &&
-        !options.emit_scheduler_review &&
-        !options.emit_runtime_session) {
-        std::cerr << "error: --capability-mocks is only supported with emit-execution-journal, "
-                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
-                     "emit-checkpoint-record, emit-checkpoint-review, "
-                     "emit-persistence-descriptor, emit-persistence-review, "
-                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
-                     "emit-store-import-review, emit-durable-store-import-request, "
-                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
-                     "emit-durable-store-import-receipt, "
-                     "emit-durable-store-import-receipt-persistence-request, "
-                     "emit-durable-store-import-decision-review, "
-                     "emit-durable-store-import-receipt-review, "
-                     "emit-durable-store-import-receipt-persistence-review, "
-                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+    if (options.capability_mocks_descriptor.has_value() &&
+        (!effective_command.has_value() ||
+         !is_capability_input_supported_command(*effective_command))) {
+        std::cerr << "error: --capability-mocks is only supported with "
+                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.input_fixture.has_value() && !options.emit_dry_run_trace &&
-        !options.emit_execution_journal &&
-        !options.emit_replay_view &&
-        !options.emit_audit_report &&
-        !options.emit_scheduler_snapshot &&
-        !options.emit_checkpoint_record &&
-        !options.emit_checkpoint_review &&
-        !options.emit_persistence_descriptor &&
-        !options.emit_persistence_review &&
-        !options.emit_export_manifest &&
-        !options.emit_export_review &&
-        !options.emit_store_import_descriptor &&
-        !options.emit_store_import_review &&
-        !options.emit_durable_store_import_request &&
-        !options.emit_durable_store_import_review &&
-        !options.emit_durable_store_import_decision &&
-        !options.emit_durable_store_import_receipt &&
-        !options.emit_durable_store_import_receipt_persistence_request &&
-        !options.emit_durable_store_import_decision_review &&
-        !options.emit_durable_store_import_receipt_review &&
-        !options.emit_durable_store_import_receipt_persistence_review &&
-        !options.emit_scheduler_review &&
-        !options.emit_runtime_session) {
-        std::cerr << "error: --input-fixture is only supported with emit-execution-journal, "
-                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
-                     "emit-checkpoint-record, emit-checkpoint-review, "
-                     "emit-persistence-descriptor, emit-persistence-review, "
-                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
-                     "emit-store-import-review, emit-durable-store-import-request, "
-                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
-                     "emit-durable-store-import-receipt, "
-                     "emit-durable-store-import-receipt-persistence-request, "
-                     "emit-durable-store-import-decision-review, "
-                     "emit-durable-store-import-receipt-review, "
-                     "emit-durable-store-import-receipt-persistence-review, "
-                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+    if (options.input_fixture.has_value() &&
+        (!effective_command.has_value() ||
+         !is_capability_input_supported_command(*effective_command))) {
+        std::cerr << "error: --input-fixture is only supported with "
+                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.run_id.has_value() && !options.emit_dry_run_trace &&
-        !options.emit_execution_journal &&
-        !options.emit_replay_view &&
-        !options.emit_audit_report &&
-        !options.emit_scheduler_snapshot &&
-        !options.emit_checkpoint_record &&
-        !options.emit_checkpoint_review &&
-        !options.emit_persistence_descriptor &&
-        !options.emit_persistence_review &&
-        !options.emit_export_manifest &&
-        !options.emit_export_review &&
-        !options.emit_store_import_descriptor &&
-        !options.emit_store_import_review &&
-        !options.emit_durable_store_import_request &&
-        !options.emit_durable_store_import_review &&
-        !options.emit_durable_store_import_decision &&
-        !options.emit_durable_store_import_receipt &&
-        !options.emit_durable_store_import_receipt_persistence_request &&
-        !options.emit_durable_store_import_decision_review &&
-        !options.emit_durable_store_import_receipt_review &&
-        !options.emit_durable_store_import_receipt_persistence_review &&
-        !options.emit_scheduler_review &&
-        !options.emit_runtime_session) {
-        std::cerr << "error: --run-id is only supported with emit-execution-journal, "
-                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
-                     "emit-checkpoint-record, emit-checkpoint-review, "
-                     "emit-persistence-descriptor, emit-persistence-review, "
-                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
-                     "emit-store-import-review, emit-durable-store-import-request, "
-                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
-                     "emit-durable-store-import-receipt, "
-                     "emit-durable-store-import-receipt-persistence-request, "
-                     "emit-durable-store-import-decision-review, "
-                     "emit-durable-store-import-receipt-review, "
-                     "emit-durable-store-import-receipt-persistence-review, "
-                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+    if (options.run_id.has_value() &&
+        (!effective_command.has_value() ||
+         !is_capability_input_supported_command(*effective_command))) {
+        std::cerr << "error: --run-id is only supported with "
+                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.workflow_name.has_value() && !options.emit_dry_run_trace &&
-        !options.emit_execution_journal &&
-        !options.emit_replay_view &&
-        !options.emit_audit_report &&
-        !options.emit_scheduler_snapshot &&
-        !options.emit_checkpoint_record &&
-        !options.emit_checkpoint_review &&
-        !options.emit_persistence_descriptor &&
-        !options.emit_persistence_review &&
-        !options.emit_export_manifest &&
-        !options.emit_export_review &&
-        !options.emit_store_import_descriptor &&
-        !options.emit_store_import_review &&
-        !options.emit_durable_store_import_request &&
-        !options.emit_durable_store_import_review &&
-        !options.emit_durable_store_import_decision &&
-        !options.emit_durable_store_import_receipt &&
-        !options.emit_durable_store_import_receipt_persistence_request &&
-        !options.emit_durable_store_import_decision_review &&
-        !options.emit_durable_store_import_receipt_review &&
-        !options.emit_durable_store_import_receipt_persistence_review &&
-        !options.emit_scheduler_review &&
-        !options.emit_runtime_session) {
-        std::cerr << "error: --workflow is only supported with emit-execution-journal, "
-                     "emit-replay-view, emit-audit-report, emit-scheduler-snapshot, "
-                     "emit-checkpoint-record, emit-checkpoint-review, "
-                     "emit-persistence-descriptor, emit-persistence-review, "
-                     "emit-export-manifest, emit-export-review, emit-store-import-descriptor, "
-                     "emit-store-import-review, emit-durable-store-import-request, "
-                     "emit-durable-store-import-review, emit-durable-store-import-decision, "
-                     "emit-durable-store-import-receipt, "
-                     "emit-durable-store-import-receipt-persistence-request, "
-                     "emit-durable-store-import-decision-review, "
-                     "emit-durable-store-import-receipt-review, "
-                     "emit-durable-store-import-receipt-persistence-review, "
-                     "emit-scheduler-review, emit-runtime-session, or emit-dry-run-trace\n";
+    if (options.workflow_name.has_value() &&
+        (!effective_command.has_value() ||
+         !is_capability_input_supported_command(*effective_command))) {
+        std::cerr << "error: --workflow is only supported with "
+                  << format_comma_or_commands(kCapabilityInputSupportedCommands) << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
     std::optional<ahfl::dry_run::CapabilityMockSet> capability_mock_set;
-    if (options.emit_dry_run_trace || options.emit_execution_journal ||
-        options.emit_replay_view || options.emit_audit_report ||
-        options.emit_scheduler_snapshot || options.emit_checkpoint_record ||
-        options.emit_checkpoint_review || options.emit_persistence_descriptor ||
-        options.emit_persistence_review ||
-        options.emit_export_manifest ||
-        options.emit_export_review ||
-        options.emit_store_import_descriptor ||
-        options.emit_store_import_review ||
-        options.emit_durable_store_import_request ||
-        options.emit_durable_store_import_review ||
-        options.emit_durable_store_import_decision ||
-        options.emit_durable_store_import_receipt ||
-        options.emit_durable_store_import_receipt_persistence_request ||
-        options.emit_durable_store_import_decision_review ||
-        options.emit_durable_store_import_receipt_review ||
-        options.emit_durable_store_import_receipt_persistence_review ||
-        options.emit_scheduler_review ||
-        options.emit_runtime_session) {
+    if (effective_command.has_value() &&
+        is_command_requiring_package(*effective_command)) {
+        const auto selected_command_name = command_name(*effective_command);
         if (!options.package_descriptor.has_value()) {
-            std::cerr << "error: "
-                      << (options.emit_execution_journal
-                              ? "emit-execution-journal"
-                              : options.emit_replay_view
-                                    ? "emit-replay-view"
-                              : options.emit_audit_report
-                                    ? "emit-audit-report"
-                              : options.emit_scheduler_snapshot
-                                    ? "emit-scheduler-snapshot"
-                              : options.emit_checkpoint_record
-                                    ? "emit-checkpoint-record"
-                              : options.emit_checkpoint_review
-                                    ? "emit-checkpoint-review"
-                              : options.emit_persistence_descriptor
-                                    ? "emit-persistence-descriptor"
-                              : options.emit_persistence_review
-                                    ? "emit-persistence-review"
-                              : options.emit_export_manifest
-                                    ? "emit-export-manifest"
-                              : options.emit_export_review
-                                    ? "emit-export-review"
-                              : options.emit_store_import_descriptor
-                                    ? "emit-store-import-descriptor"
-                              : options.emit_store_import_review
-                                    ? "emit-store-import-review"
-                              : options.emit_durable_store_import_request
-                                    ? "emit-durable-store-import-request"
-                              : options.emit_durable_store_import_review
-                                    ? "emit-durable-store-import-review"
-                              : options.emit_durable_store_import_decision
-                                    ? "emit-durable-store-import-decision"
-                              : options.emit_durable_store_import_receipt
-                                    ? "emit-durable-store-import-receipt"
-                              : options.emit_durable_store_import_receipt_persistence_request
-                                    ? "emit-durable-store-import-receipt-persistence-request"
-                              : options.emit_durable_store_import_decision_review
-                                    ? "emit-durable-store-import-decision-review"
-                              : options.emit_durable_store_import_receipt_review
-                                    ? "emit-durable-store-import-receipt-review"
-                              : options.emit_durable_store_import_receipt_persistence_review
-                                    ? "emit-durable-store-import-receipt-persistence-review"
-                              : options.emit_scheduler_review
-                                    ? "emit-scheduler-review"
-                              : options.emit_runtime_session ? "emit-runtime-session"
-                                                             : "emit-dry-run-trace")
-                      << " requires --package\n";
+            std::cerr << "error: " << selected_command_name << " requires --package\n";
             print_usage(std::cerr);
             return 2;
         }
         if (!options.capability_mocks_descriptor.has_value()) {
-            std::cerr << "error: "
-                      << (options.emit_execution_journal
-                              ? "emit-execution-journal"
-                              : options.emit_replay_view
-                                    ? "emit-replay-view"
-                              : options.emit_audit_report
-                                    ? "emit-audit-report"
-                              : options.emit_scheduler_snapshot
-                                    ? "emit-scheduler-snapshot"
-                              : options.emit_checkpoint_record
-                                    ? "emit-checkpoint-record"
-                              : options.emit_checkpoint_review
-                                    ? "emit-checkpoint-review"
-                              : options.emit_persistence_descriptor
-                                    ? "emit-persistence-descriptor"
-                              : options.emit_persistence_review
-                                    ? "emit-persistence-review"
-                              : options.emit_export_manifest
-                                    ? "emit-export-manifest"
-                              : options.emit_export_review
-                                    ? "emit-export-review"
-                              : options.emit_store_import_descriptor
-                                    ? "emit-store-import-descriptor"
-                              : options.emit_store_import_review
-                                    ? "emit-store-import-review"
-                              : options.emit_durable_store_import_request
-                                    ? "emit-durable-store-import-request"
-                              : options.emit_durable_store_import_review
-                                    ? "emit-durable-store-import-review"
-                              : options.emit_durable_store_import_decision
-                                    ? "emit-durable-store-import-decision"
-                              : options.emit_durable_store_import_receipt
-                                    ? "emit-durable-store-import-receipt"
-                              : options.emit_durable_store_import_receipt_persistence_request
-                                    ? "emit-durable-store-import-receipt-persistence-request"
-                              : options.emit_durable_store_import_decision_review
-                                    ? "emit-durable-store-import-decision-review"
-                              : options.emit_durable_store_import_receipt_review
-                                    ? "emit-durable-store-import-receipt-review"
-                              : options.emit_durable_store_import_receipt_persistence_review
-                                    ? "emit-durable-store-import-receipt-persistence-review"
-                              : options.emit_scheduler_review
-                                    ? "emit-scheduler-review"
-                              : options.emit_runtime_session ? "emit-runtime-session"
-                                                             : "emit-dry-run-trace")
-                      << " requires --capability-mocks\n";
+            std::cerr << "error: " << selected_command_name << " requires --capability-mocks\n";
             print_usage(std::cerr);
             return 2;
         }
         if (!options.input_fixture.has_value()) {
-            std::cerr << "error: "
-                      << (options.emit_execution_journal
-                              ? "emit-execution-journal"
-                              : options.emit_replay_view
-                                    ? "emit-replay-view"
-                              : options.emit_audit_report
-                                    ? "emit-audit-report"
-                              : options.emit_scheduler_snapshot
-                                    ? "emit-scheduler-snapshot"
-                              : options.emit_checkpoint_record
-                                    ? "emit-checkpoint-record"
-                              : options.emit_checkpoint_review
-                                    ? "emit-checkpoint-review"
-                              : options.emit_persistence_descriptor
-                                    ? "emit-persistence-descriptor"
-                              : options.emit_persistence_review
-                                    ? "emit-persistence-review"
-                              : options.emit_export_manifest
-                                    ? "emit-export-manifest"
-                              : options.emit_export_review
-                                    ? "emit-export-review"
-                              : options.emit_store_import_descriptor
-                                    ? "emit-store-import-descriptor"
-                              : options.emit_store_import_review
-                                    ? "emit-store-import-review"
-                              : options.emit_durable_store_import_request
-                                    ? "emit-durable-store-import-request"
-                              : options.emit_durable_store_import_review
-                                    ? "emit-durable-store-import-review"
-                              : options.emit_durable_store_import_decision
-                                    ? "emit-durable-store-import-decision"
-                              : options.emit_durable_store_import_receipt
-                                    ? "emit-durable-store-import-receipt"
-                              : options.emit_durable_store_import_receipt_persistence_request
-                                    ? "emit-durable-store-import-receipt-persistence-request"
-                              : options.emit_durable_store_import_decision_review
-                                    ? "emit-durable-store-import-decision-review"
-                              : options.emit_durable_store_import_receipt_review
-                                    ? "emit-durable-store-import-receipt-review"
-                              : options.emit_durable_store_import_receipt_persistence_review
-                                    ? "emit-durable-store-import-receipt-persistence-review"
-                              : options.emit_scheduler_review
-                                    ? "emit-scheduler-review"
-                              : options.emit_runtime_session ? "emit-runtime-session"
-                                                             : "emit-dry-run-trace")
-                      << " requires --input-fixture\n";
+            std::cerr << "error: " << selected_command_name << " requires --input-fixture\n";
             print_usage(std::cerr);
             return 2;
         }
@@ -2932,7 +2757,7 @@ int run_cli(std::span<const std::string_view> arguments) {
 
         package_metadata = lower_package_metadata(*package_result.descriptor);
     }
-    if (options.dump_project || project_mode) {
+    if (project_mode || is_action_enabled(options, CommandKind::DumpProject)) {
         ahfl::ProjectInput input;
         if (const auto load_status = load_project_input(options, frontend, input);
             load_status >= 0) {
@@ -2945,28 +2770,28 @@ int run_cli(std::span<const std::string_view> arguments) {
             return 1;
         }
 
-        if (options.dump_project) {
+        if (effective_command == CommandKind::DumpProject) {
             ahfl::dump_project_outline(project_result.graph, std::cout);
             return 0;
         }
 
-        if (options.dump_ast) {
+        if (effective_command == CommandKind::DumpAst) {
             dump_ast_outline(project_result.graph, std::cout);
             return 0;
         }
 
-        return run_analysis_pipeline(
-            options,
-            project_result.graph,
-            std::nullopt,
-            package_metadata ? &*package_metadata : nullptr,
-            capability_mock_set ? &*capability_mock_set : nullptr);
+        return run_analysis_pipeline(options,
+                                     effective_command,
+                                     project_result.graph,
+                                     std::nullopt,
+                                     package_metadata ? &*package_metadata : nullptr,
+                                     capability_mock_set ? &*capability_mock_set : nullptr);
     }
 
     auto parse_result = frontend.parse_file(std::string(options.positional.front()));
     render_diagnostics(parse_result, std::cref(parse_result.source), std::cerr);
 
-    if (parse_result.program && options.dump_ast) {
+    if (parse_result.program && effective_command == CommandKind::DumpAst) {
         dump_ast_outline(*parse_result.program, std::cout);
     }
 
@@ -2975,6 +2800,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     return run_analysis_pipeline(options,
+                                 effective_command,
                                  *parse_result.program,
                                  std::cref(parse_result.source),
                                  package_metadata ? &*package_metadata : nullptr,
