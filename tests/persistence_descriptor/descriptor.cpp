@@ -9,6 +9,8 @@
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -31,50 +33,6 @@ enum class SessionScenario {
     Failed,
     Partial,
 };
-
-[[nodiscard]] std::optional<ahfl::ir::Program>
-load_project_ir(const std::filesystem::path &project_descriptor) {
-    const ahfl::Frontend frontend;
-
-    const auto descriptor_result = frontend.load_project_descriptor(project_descriptor);
-    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-        descriptor_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const auto project_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = descriptor_result.descriptor->entry_files,
-        .search_roots = descriptor_result.descriptor->search_roots,
-    });
-    if (project_result.has_errors()) {
-        project_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(project_result.graph);
-    if (resolve_result.has_errors()) {
-        resolve_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(project_result.graph, resolve_result);
-    if (type_check_result.has_errors()) {
-        type_check_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Validator validator;
-    const auto validation_result =
-        validator.validate(project_result.graph, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        validation_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    return ahfl::lower_program_ir(project_result.graph, resolve_result, type_check_result);
-}
 
 [[nodiscard]] ahfl::handoff::PackageMetadata
 make_project_workflow_value_flow_metadata() {
@@ -99,20 +57,9 @@ make_project_workflow_value_flow_metadata() {
     return metadata;
 }
 
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
 load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -384,7 +331,7 @@ int validate_persistence_descriptor_rejects_missing_planned_identity() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "planned_durable_identity must not be empty")
                ? 0
                : 1;
@@ -402,7 +349,7 @@ int validate_persistence_descriptor_rejects_non_prefix_cursor() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "exportable_prefix must be a prefix of execution_order")
                ? 0
                : 1;
@@ -424,7 +371,7 @@ int validate_persistence_descriptor_rejects_export_ready_with_blocker() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "cannot contain persistence_blocker when cursor export_ready is true")
                ? 0
                : 1;
@@ -441,7 +388,7 @@ int validate_persistence_descriptor_rejects_unsupported_checkpoint_record_format
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_checkpoint_record_format_version must be")
                ? 0
                : 1;
@@ -458,7 +405,7 @@ int validate_persistence_descriptor_rejects_ready_from_blocked_checkpoint() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "ReadyToExport status requires ReadyToPersist checkpoint_status")
                ? 0
                : 1;
@@ -489,7 +436,7 @@ int validate_persistence_descriptor_rejects_terminal_failed_export_ready() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "terminal blocked status cannot be export_ready")
                ? 0
                : 1;
@@ -515,7 +462,7 @@ int validate_persistence_descriptor_rejects_store_adjacent_blocked() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "store-adjacent basis requires ready or completed persistence_status")
                ? 0
                : 1;
@@ -559,7 +506,7 @@ int validate_persistence_review_rejects_unsupported_source_descriptor_format() {
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                    validation.diagnostics,
                    "source_persistence_descriptor_format_version must be")
                ? 0
@@ -577,7 +524,7 @@ int build_persistence_review_rejects_invalid_descriptor() {
         return 1;
     }
 
-    return diagnostics_contain(summary.diagnostics,
+    return ahfl::test_support::diagnostics_contain(summary.diagnostics,
                                "persistence descriptor planned_durable_identity must not be empty")
                ? 0
                : 1;
@@ -724,7 +671,7 @@ int build_persistence_descriptor_rejects_invalid_checkpoint_record(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             descriptor.diagnostics,
             "checkpoint record source_scheduler_snapshot_format_version must be")) {
         descriptor.diagnostics.render(std::cout);
@@ -755,7 +702,7 @@ int build_persistence_descriptor_rejects_checkpoint_workflow_mismatch(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             descriptor.diagnostics,
             "persistence descriptor bootstrap checkpoint record workflow_canonical_name does not match runtime session")) {
         descriptor.diagnostics.render(std::cout);

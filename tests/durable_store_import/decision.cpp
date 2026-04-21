@@ -6,23 +6,14 @@
 #include "ahfl/durable_store_import/receipt_review.hpp"
 #include "ahfl/durable_store_import/request.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace {
-
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
-}
 
 [[nodiscard]] ahfl::store_import::StoreImportDescriptor make_ready_descriptor() {
     using namespace ahfl;
@@ -372,7 +363,7 @@ int validate_durable_store_import_decision_rejects_missing_decision_identity() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "durable_store_import_decision_identity must not be empty")
                ? 0
                : 1;
@@ -396,7 +387,7 @@ int validate_durable_store_import_decision_rejects_accepted_with_blocker() {
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "cannot contain decision_blocker when accepted_for_future_execution is true")
                ? 0
@@ -418,7 +409,7 @@ int validate_durable_store_import_decision_rejects_unsupported_source_request_fo
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_durable_store_import_request_format_version must be")
                ? 0
                : 1;
@@ -447,7 +438,7 @@ int validate_durable_store_import_decision_rejects_adapter_decision_consumable_b
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "adapter-decision-consumable boundary requires "
                                "accepted_for_future_execution")
                ? 0
@@ -476,7 +467,7 @@ int validate_durable_store_import_decision_rejects_rejected_without_failure_summ
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "Rejected status requires workflow_failure_summary")
                ? 0
                : 1;
@@ -549,7 +540,7 @@ int build_durable_store_import_decision_rejects_invalid_request() {
         return 1;
     }
 
-    return diagnostics_contain(decision.diagnostics,
+    return ahfl::test_support::diagnostics_contain(decision.diagnostics,
                                "durable store import request format_version must be")
                ? 0
                : 1;
@@ -704,7 +695,7 @@ int validate_durable_store_import_receipt_rejects_missing_receipt_identity() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "durable_store_import_receipt_identity must not be empty")
                ? 0
                : 1;
@@ -725,7 +716,7 @@ int validate_durable_store_import_receipt_rejects_unsupported_source_decision_fo
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_durable_store_import_decision_format_version must be")
                ? 0
                : 1;
@@ -749,7 +740,7 @@ int validate_durable_store_import_receipt_rejects_ready_with_blocker() {
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "cannot contain receipt_blocker when accepted_for_receipt_archive is true")
                ? 0
@@ -889,7 +880,7 @@ int build_durable_store_import_receipt_rejects_invalid_decision() {
         return 1;
     }
 
-    return diagnostics_contain(receipt.diagnostics,
+    return ahfl::test_support::diagnostics_contain(receipt.diagnostics,
                                "durable store import decision format_version must be")
                ? 0
                : 1;
@@ -1067,7 +1058,7 @@ int validate_durable_store_import_receipt_persistence_request_rejects_missing_re
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "durable_store_import_receipt_persistence_request_identity must not be empty")
                ? 0
                : 1;
@@ -1088,7 +1079,7 @@ int validate_durable_store_import_receipt_persistence_request_rejects_unsupporte
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "source_durable_store_import_decision_receipt_format_version must be")
                ? 0
@@ -1116,7 +1107,7 @@ int validate_durable_store_import_receipt_persistence_request_rejects_ready_with
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "cannot contain receipt_persistence_blocker when accepted_for_receipt_persistence is true")
                ? 0
@@ -1282,7 +1273,7 @@ int build_durable_store_import_receipt_persistence_request_rejects_invalid_recei
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                request.diagnostics,
                "durable store import decision receipt format_version must be")
                ? 0
@@ -1328,7 +1319,7 @@ int validate_durable_store_import_receipt_persistence_review_rejects_unsupported
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "source_durable_store_import_decision_receipt_persistence_request_format_version must be")
                ? 0
@@ -1422,7 +1413,7 @@ int build_durable_store_import_receipt_persistence_review_rejects_invalid_reques
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                summary.diagnostics,
                "durable store import receipt persistence request format_version must be")
                ? 0
@@ -1461,7 +1452,7 @@ int validate_durable_store_import_receipt_review_rejects_unsupported_source_rece
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "source_durable_store_import_decision_receipt_format_version must be")
                ? 0
@@ -1548,7 +1539,7 @@ int build_durable_store_import_receipt_review_rejects_invalid_receipt() {
         return 1;
     }
 
-    return diagnostics_contain(summary.diagnostics,
+    return ahfl::test_support::diagnostics_contain(summary.diagnostics,
                                "durable store import decision receipt format_version must be")
                ? 0
                : 1;
@@ -1601,7 +1592,7 @@ int validate_durable_store_import_decision_review_rejects_unsupported_source_dec
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_durable_store_import_decision_format_version must be")
                ? 0
                : 1;
@@ -1682,7 +1673,7 @@ int build_durable_store_import_decision_review_rejects_invalid_decision() {
         return 1;
     }
 
-    return diagnostics_contain(review.diagnostics,
+    return ahfl::test_support::diagnostics_contain(review.diagnostics,
                                "durable store import decision format_version must be")
                ? 0
                : 1;

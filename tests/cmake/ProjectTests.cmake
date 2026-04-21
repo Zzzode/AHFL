@@ -63,6 +63,18 @@ add_test(NAME ahfl.frontend.package_authoring.fail_duplicate_binding_key
             "${AHFL_TESTS_DIR}/project/package_authoring_duplicate_binding/ahfl.package.json"
 )
 
+add_test(NAME ahfl.support.diagnostics.metadata_smoke
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            diagnostics-support-metadata-smoke
+            "${AHFL_TESTS_DIR}"
+)
+
+add_test(NAME ahfl.support.source.position_smoke
+    COMMAND $<TARGET_FILE:ahfl_project_parse_tests>
+            source-file-position-smoke
+            "${AHFL_TESTS_DIR}"
+)
+
 add_test(NAME ahfl.resolver.project.ok_basic
     COMMAND $<TARGET_FILE:ahfl_project_resolve_tests>
             ok-basic

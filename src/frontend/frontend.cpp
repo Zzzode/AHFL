@@ -281,6 +281,7 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
     std::ostringstream buffer;
     buffer << input.rdbuf();
     source.content = buffer.str();
+    source.invalidate_line_starts_cache();
     return true;
 }
 
@@ -2259,6 +2260,7 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
     ParseResult result;
     result.source.display_name = std::move(display_name);
     result.source.content = std::move(text);
+    result.source.invalidate_line_starts_cache();
 
     antlr4::ANTLRInputStream input(result.source.content);
     AHFLLexer lexer(std::addressof(input));

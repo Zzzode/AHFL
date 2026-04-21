@@ -7,7 +7,6 @@
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
 
-#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -33,37 +32,12 @@ using ahfl::cli::count_enabled_actions;
 using ahfl::cli::format_comma_or_commands;
 using ahfl::cli::infer_effective_command;
 using ahfl::cli::is_action_enabled;
-using ahfl::cli::is_capability_input_supported_command;
 using ahfl::cli::is_command_requiring_package;
 using ahfl::cli::is_package_supported_command;
 using ahfl::cli::print_usage;
+using ahfl::cli::selected_backend_for_command;
 using ahfl::cli::set_command_option;
-
-[[nodiscard]] std::optional<ahfl::BackendKind>
-selected_backend(std::optional<CommandKind> command) {
-    if (!command.has_value()) {
-        return std::nullopt;
-    }
-
-    switch (*command) {
-    case CommandKind::EmitIr:
-        return ahfl::BackendKind::Ir;
-    case CommandKind::EmitIrJson:
-        return ahfl::BackendKind::IrJson;
-    case CommandKind::EmitNativeJson:
-        return ahfl::BackendKind::NativeJson;
-    case CommandKind::EmitExecutionPlan:
-        return ahfl::BackendKind::ExecutionPlan;
-    case CommandKind::EmitPackageReview:
-        return ahfl::BackendKind::PackageReview;
-    case CommandKind::EmitSummary:
-        return ahfl::BackendKind::Summary;
-    case CommandKind::EmitSmv:
-        return ahfl::BackendKind::Smv;
-    default:
-        return std::nullopt;
-    }
-}
+using ahfl::cli::supports_capability_inputs;
 
 [[nodiscard]] ahfl::handoff::ExecutableKind
 to_executable_kind(ahfl::PackageAuthoringTargetKind kind) {
@@ -109,7 +83,7 @@ template <typename InputT>
                                          const ahfl::TypeCheckResult &type_check_result,
                                          const ahfl::handoff::PackageMetadata *package_metadata,
                                          std::ostream &out) {
-    const auto backend = selected_backend(effective_command);
+    const auto backend = selected_backend_for_command(effective_command);
     if (!backend.has_value()) {
         return false;
     }
@@ -497,8 +471,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     if (options.capability_mocks_descriptor.has_value() &&
-        (!effective_command.has_value() ||
-         !is_capability_input_supported_command(*effective_command))) {
+        !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --capability-mocks is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
@@ -507,8 +480,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     if (options.input_fixture.has_value() &&
-        (!effective_command.has_value() ||
-         !is_capability_input_supported_command(*effective_command))) {
+        !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --input-fixture is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
@@ -517,8 +489,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     if (options.run_id.has_value() &&
-        (!effective_command.has_value() ||
-         !is_capability_input_supported_command(*effective_command))) {
+        !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --run-id is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
@@ -527,8 +498,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     if (options.workflow_name.has_value() &&
-        (!effective_command.has_value() ||
-         !is_capability_input_supported_command(*effective_command))) {
+        !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --workflow is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";

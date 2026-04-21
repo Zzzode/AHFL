@@ -1,4 +1,5 @@
 #include "ahfl/durable_store_import/request.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <unordered_set>
@@ -8,36 +9,23 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_REQUEST";
+
+void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
+    validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
+}
+
+
 void validate_package_identity(const handoff::PackageIdentity &identity,
                                DiagnosticBag &diagnostics) {
-    if (identity.format_version != handoff::kFormatVersion) {
-        diagnostics.error(
-            "durable store import request source_package_identity format_version must be '" +
-            std::string(handoff::kFormatVersion) + "'");
-    }
-
-    if (identity.name.empty()) {
-        diagnostics.error(
-            "durable store import request source_package_identity name must not be empty");
-    }
-
-    if (identity.version.empty()) {
-        diagnostics.error(
-            "durable store import request source_package_identity version must not be empty");
-    }
+    validation::validate_package_identity(
+        identity, diagnostics, "durable store import request");
 }
 
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error(
-            "durable store import request workflow_failure_summary message must not be empty");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error(
-            "durable store import request workflow_failure_summary node_name must not be empty");
-    }
+    validation::validate_failure_summary_field(
+        summary, diagnostics, "durable store import request");
 }
 
 [[nodiscard]] std::string build_durable_store_import_request_identity(
@@ -136,103 +124,103 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
     auto &diagnostics = result.diagnostics;
 
     if (request.format_version != kDurableStoreImportRequestFormatVersion) {
-        diagnostics.error("durable store import request format_version must be '" +
+        emit_validation_error(diagnostics, "durable store import request format_version must be '" +
                           std::string(kDurableStoreImportRequestFormatVersion) + "'");
     }
 
     if (request.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_store_import_descriptor_format_version must be '" +
             std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
     }
 
     if (request.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_execution_plan_format_version must be '" +
             std::string(handoff::kExecutionPlanFormatVersion) + "'");
     }
 
     if (request.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_runtime_session_format_version must be '" +
             std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
     }
 
     if (request.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_execution_journal_format_version must be '" +
             std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
     }
 
     if (request.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_replay_view_format_version must be '" +
             std::string(replay_view::kReplayViewFormatVersion) + "'");
     }
 
     if (request.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_scheduler_snapshot_format_version must be '" +
             std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (request.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_checkpoint_record_format_version must be '" +
             std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
     }
 
     if (request.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_persistence_descriptor_format_version must be '" +
             std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
     }
 
     if (request.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request source_export_manifest_format_version must be '" +
             std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
     }
 
     if (request.workflow_canonical_name.empty()) {
-        diagnostics.error("durable store import request workflow_canonical_name must not be empty");
+        emit_validation_error(diagnostics, "durable store import request workflow_canonical_name must not be empty");
     }
 
     if (request.session_id.empty()) {
-        diagnostics.error("durable store import request session_id must not be empty");
+        emit_validation_error(diagnostics, "durable store import request session_id must not be empty");
     }
 
     if (request.run_id.has_value() && request.run_id->empty()) {
-        diagnostics.error("durable store import request run_id must not be empty when present");
+        emit_validation_error(diagnostics, "durable store import request run_id must not be empty when present");
     }
 
     if (request.input_fixture.empty()) {
-        diagnostics.error("durable store import request input_fixture must not be empty");
+        emit_validation_error(diagnostics, "durable store import request input_fixture must not be empty");
     }
 
     if (request.export_package_identity.empty()) {
-        diagnostics.error("durable store import request export_package_identity must not be empty");
+        emit_validation_error(diagnostics, "durable store import request export_package_identity must not be empty");
     }
 
     if (request.store_import_candidate_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request store_import_candidate_identity must not be empty");
     }
 
     if (request.durable_store_import_request_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request durable_store_import_request_identity must not be empty");
     }
 
     if (request.planned_durable_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request planned_durable_identity must not be empty");
     }
 
@@ -246,159 +234,159 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
 
     if (request.requested_artifact_set.entry_count !=
         request.requested_artifact_set.entries.size()) {
-        diagnostics.error("durable store import request requested_artifact_set entry_count must "
+        emit_validation_error(diagnostics, "durable store import request requested_artifact_set entry_count must "
                           "match entries length");
     }
 
     if (request.adapter_ready && request.requested_artifact_set.entries.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request adapter_ready requires non-empty requested_artifact_set");
     }
 
     std::unordered_set<std::string> logical_names;
     for (const auto &entry : request.requested_artifact_set.entries) {
         if (entry.logical_artifact_name.empty()) {
-            diagnostics.error("durable store import request requested_artifact_set entry "
+            emit_validation_error(diagnostics, "durable store import request requested_artifact_set entry "
                               "logical_artifact_name must not be empty");
         } else if (!logical_names.insert(entry.logical_artifact_name).second) {
-            diagnostics.error("durable store import request requested_artifact_set contains "
+            emit_validation_error(diagnostics, "durable store import request requested_artifact_set contains "
                               "duplicate logical_artifact_name '" +
                               entry.logical_artifact_name + "'");
         }
 
         if (entry.source_format_version.empty()) {
-            diagnostics.error("durable store import request requested_artifact_set entry "
+            emit_validation_error(diagnostics, "durable store import request requested_artifact_set entry "
                               "source_format_version must not be empty");
         }
 
         if (entry.artifact_kind == RequestedArtifactKind::StoreImportDescriptor &&
             entry.source_format_version != request.source_store_import_descriptor_format_version) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import request store import descriptor entry source_format_version "
                 "must match source_store_import_descriptor_format_version");
         }
     }
 
     if (request.adapter_ready && request.adapter_blocker.has_value()) {
-        diagnostics.error("durable store import request cannot contain adapter_blocker when "
+        emit_validation_error(diagnostics, "durable store import request cannot contain adapter_blocker when "
                           "adapter_ready is true");
     }
 
     if (request.adapter_ready && request.next_required_adapter_artifact_kind.has_value()) {
-        diagnostics.error("durable store import request cannot contain "
+        emit_validation_error(diagnostics, "durable store import request cannot contain "
                           "next_required_adapter_artifact_kind when adapter_ready is true");
     }
 
     if (!request.adapter_ready &&
         request.request_status != DurableStoreImportRequestStatus::TerminalCompleted &&
         !request.adapter_blocker.has_value()) {
-        diagnostics.error("durable store import request must contain adapter_blocker when "
+        emit_validation_error(diagnostics, "durable store import request must contain adapter_blocker when "
                           "adapter_ready is false");
     }
 
     if (request.adapter_blocker.has_value()) {
         if (request.adapter_blocker->message.empty()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import request adapter_blocker message must not be empty");
         }
 
         if (request.adapter_blocker->logical_artifact_name.has_value() &&
             request.adapter_blocker->logical_artifact_name->empty()) {
-            diagnostics.error("durable store import request adapter_blocker logical_artifact_name "
+            emit_validation_error(diagnostics, "durable store import request adapter_blocker logical_artifact_name "
                               "must not be empty");
         }
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::ReadyForAdapter &&
         !request.adapter_ready) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request ReadyForAdapter status requires adapter_ready");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::ReadyForAdapter &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::ReadyToImport) {
-        diagnostics.error("durable store import request ReadyForAdapter status requires "
+        emit_validation_error(diagnostics, "durable store import request ReadyForAdapter status requires "
                           "ReadyToImport descriptor_status");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::Blocked &&
         request.adapter_ready) {
-        diagnostics.error("durable store import request Blocked status cannot be adapter_ready");
+        emit_validation_error(diagnostics, "durable store import request Blocked status cannot be adapter_ready");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::Blocked &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::Blocked) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request Blocked status requires Blocked descriptor_status");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::TerminalCompleted &&
         !request.adapter_ready) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request TerminalCompleted status requires adapter_ready");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::TerminalCompleted &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error("durable store import request TerminalCompleted status requires "
+        emit_validation_error(diagnostics, "durable store import request TerminalCompleted status requires "
                           "TerminalCompleted descriptor_status");
     }
 
     if ((request.request_status == DurableStoreImportRequestStatus::TerminalFailed ||
          request.request_status == DurableStoreImportRequestStatus::TerminalPartial) &&
         !request.adapter_blocker.has_value()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request terminal blocked status requires adapter_blocker");
     }
 
     if ((request.request_status == DurableStoreImportRequestStatus::TerminalFailed ||
          request.request_status == DurableStoreImportRequestStatus::TerminalPartial) &&
         request.adapter_ready) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request terminal blocked status cannot be adapter_ready");
     }
 
     if ((request.request_status == DurableStoreImportRequestStatus::TerminalFailed ||
          request.request_status == DurableStoreImportRequestStatus::TerminalPartial) &&
         request.next_required_adapter_artifact_kind.has_value()) {
-        diagnostics.error("durable store import request terminal blocked status cannot have "
+        emit_validation_error(diagnostics, "durable store import request terminal blocked status cannot have "
                           "next_required_adapter_artifact_kind");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::TerminalFailed &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error("durable store import request TerminalFailed status requires "
+        emit_validation_error(diagnostics, "durable store import request TerminalFailed status requires "
                           "TerminalFailed descriptor_status");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::TerminalPartial &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error("durable store import request TerminalPartial status requires "
+        emit_validation_error(diagnostics, "durable store import request TerminalPartial status requires "
                           "TerminalPartial descriptor_status");
     }
 
     if (request.request_status == DurableStoreImportRequestStatus::TerminalFailed &&
         !request.workflow_failure_summary.has_value()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import request TerminalFailed status requires workflow_failure_summary");
     }
 
     if (request.request_boundary_kind == RequestBoundaryKind::AdapterContractConsumable &&
         !request.adapter_ready &&
         request.request_status != DurableStoreImportRequestStatus::TerminalCompleted) {
-        diagnostics.error("durable store import request adapter-contract-consumable boundary "
+        emit_validation_error(diagnostics, "durable store import request adapter-contract-consumable boundary "
                           "requires ready or completed request_status");
     }
 
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         request.request_status != DurableStoreImportRequestStatus::TerminalCompleted) {
-        diagnostics.error("durable store import request completed workflow_status requires "
+        emit_validation_error(diagnostics, "durable store import request completed workflow_status requires "
                           "TerminalCompleted request_status");
     }
 
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         request.request_status != DurableStoreImportRequestStatus::TerminalFailed) {
-        diagnostics.error("durable store import request failed workflow_status requires "
+        emit_validation_error(diagnostics, "durable store import request failed workflow_status requires "
                           "TerminalFailed request_status");
     }
 
@@ -406,7 +394,7 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
         request.request_status != DurableStoreImportRequestStatus::ReadyForAdapter &&
         request.request_status != DurableStoreImportRequestStatus::Blocked &&
         request.request_status != DurableStoreImportRequestStatus::TerminalPartial) {
-        diagnostics.error("durable store import request partial workflow_status must map to "
+        emit_validation_error(diagnostics, "durable store import request partial workflow_status must map to "
                           "ReadyForAdapter, Blocked, or TerminalPartial request_status");
     }
 

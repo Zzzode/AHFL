@@ -1,4 +1,5 @@
 #include "ahfl/audit_report/report.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <cstddef>
 #include <string>
@@ -22,16 +23,7 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
 
 [[nodiscard]] bool package_identity_equals(const std::optional<handoff::PackageIdentity> &lhs,
                                            const std::optional<handoff::PackageIdentity> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->format_version == rhs->format_version && lhs->name == rhs->name &&
-           lhs->version == rhs->version;
+    return validation::package_identity_equals(lhs, rhs);
 }
 
 [[nodiscard]] std::string mock_selector_key(const dry_run::CapabilityMock &mock) {
@@ -87,17 +79,7 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
 
 [[nodiscard]] bool is_prefix(const std::vector<std::string> &prefix,
                              const std::vector<std::string> &full) {
-    if (prefix.size() > full.size()) {
-        return false;
-    }
-
-    for (std::size_t index = 0; index < prefix.size(); ++index) {
-        if (prefix[index] != full[index]) {
-            return false;
-        }
-    }
-
-    return true;
+    return validation::is_prefix(prefix, full);
 }
 
 } // namespace

@@ -1,4 +1,5 @@
 #include "ahfl/durable_store_import/decision_review.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -7,25 +8,23 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_DECISION_REVIEW";
+
+void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
+    validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
+}
+
+
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("durable store import decision review summary " +
-                          std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("durable store import decision review summary " +
-                          std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "durable store import decision review summary");
 }
 
 void validate_decision_blocker(const DecisionBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary decision_blocker message must not be empty");
     }
 }
@@ -142,73 +141,73 @@ validate_durable_store_import_decision_review_summary(
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kDurableStoreImportDecisionReviewSummaryFormatVersion) {
-        diagnostics.error("durable store import decision review summary format_version must be '" +
+        emit_validation_error(diagnostics, "durable store import decision review summary format_version must be '" +
                           std::string(kDurableStoreImportDecisionReviewSummaryFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_decision_format_version !=
         kDurableStoreImportDecisionFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary source_durable_store_import_decision_format_version must be '" +
             std::string(kDurableStoreImportDecisionFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_request_format_version !=
         kDurableStoreImportRequestFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary source_durable_store_import_request_format_version must be '" +
             std::string(kDurableStoreImportRequestFormatVersion) + "'");
     }
 
     if (summary.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary source_store_import_descriptor_format_version must be '" +
             std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error("durable store import decision review summary workflow_canonical_name "
+        emit_validation_error(diagnostics, "durable store import decision review summary workflow_canonical_name "
                           "must not be empty");
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary session_id must not be empty");
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error("durable store import decision review summary run_id must not be empty "
+        emit_validation_error(diagnostics, "durable store import decision review summary run_id must not be empty "
                           "when present");
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary input_fixture must not be empty");
     }
 
     if (summary.export_package_identity.empty()) {
-        diagnostics.error("durable store import decision review summary export_package_identity "
+        emit_validation_error(diagnostics, "durable store import decision review summary export_package_identity "
                           "must not be empty");
     }
 
     if (summary.store_import_candidate_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary store_import_candidate_identity must not be empty");
     }
 
     if (summary.durable_store_import_request_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary durable_store_import_request_identity must not be empty");
     }
 
     if (summary.durable_store_import_decision_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary durable_store_import_decision_identity must not be empty");
     }
 
     if (summary.planned_durable_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary planned_durable_identity must not be empty");
     }
 
@@ -217,13 +216,13 @@ validate_durable_store_import_decision_review_summary(
     }
 
     if (summary.accepted_for_future_execution && summary.decision_blocker.has_value()) {
-        diagnostics.error("durable store import decision review summary cannot contain "
+        emit_validation_error(diagnostics, "durable store import decision review summary cannot contain "
                           "decision_blocker when accepted_for_future_execution is true");
     }
 
     if (summary.accepted_for_future_execution &&
         summary.next_required_adapter_capability.has_value()) {
-        diagnostics.error("durable store import decision review summary cannot contain "
+        emit_validation_error(diagnostics, "durable store import decision review summary cannot contain "
                           "next_required_adapter_capability when "
                           "accepted_for_future_execution is true");
     }
@@ -233,17 +232,17 @@ validate_durable_store_import_decision_review_summary(
     }
 
     if (summary.adapter_contract_summary.empty()) {
-        diagnostics.error("durable store import decision review summary "
+        emit_validation_error(diagnostics, "durable store import decision review summary "
                           "adapter_contract_summary must not be empty");
     }
 
     if (summary.decision_preview.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import decision review summary decision_preview must not be empty");
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error("durable store import decision review summary "
+        emit_validation_error(diagnostics, "durable store import decision review summary "
                           "next_step_recommendation must not be empty");
     }
 
@@ -253,17 +252,17 @@ validate_durable_store_import_decision_review_summary(
             if (summary.next_action !=
                 DurableStoreImportDecisionReviewNextActionKind::
                     ArchiveCompletedDurableStoreImportDecision) {
-                diagnostics.error(
+                emit_validation_error(diagnostics, 
                     "durable store import decision review summary Accepted completed decision requires next_action archive_completed_durable_store_import_decision");
             }
         } else if (summary.next_action !=
                    DurableStoreImportDecisionReviewNextActionKind::
                        HandoffDurableStoreImportDecision) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import decision review summary Accepted decision requires next_action handoff_durable_store_import_decision");
         }
         if (!summary.accepted_for_future_execution) {
-            diagnostics.error("durable store import decision review summary Accepted decision "
+            emit_validation_error(diagnostics, "durable store import decision review summary Accepted decision "
                               "requires accepted_for_future_execution");
         }
         break;
@@ -271,15 +270,15 @@ validate_durable_store_import_decision_review_summary(
         if (summary.next_action !=
             DurableStoreImportDecisionReviewNextActionKind::
                 ResolveRequiredAdapterCapability) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import decision review summary Blocked decision requires next_action resolve_required_adapter_capability");
         }
         if (summary.accepted_for_future_execution) {
-            diagnostics.error("durable store import decision review summary Blocked decision "
+            emit_validation_error(diagnostics, "durable store import decision review summary Blocked decision "
                               "cannot be accepted_for_future_execution");
         }
         if (!summary.decision_blocker.has_value()) {
-            diagnostics.error("durable store import decision review summary Blocked decision "
+            emit_validation_error(diagnostics, "durable store import decision review summary Blocked decision "
                               "requires decision_blocker");
         }
         break;
@@ -287,11 +286,11 @@ validate_durable_store_import_decision_review_summary(
         if (summary.next_action !=
             DurableStoreImportDecisionReviewNextActionKind::
                 PreservePartialDurableStoreImportDecision) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import decision review summary Deferred decision requires next_action preserve_partial_durable_store_import_decision");
         }
         if (!summary.decision_blocker.has_value()) {
-            diagnostics.error("durable store import decision review summary Deferred decision "
+            emit_validation_error(diagnostics, "durable store import decision review summary Deferred decision "
                               "requires decision_blocker");
         }
         break;
@@ -299,11 +298,11 @@ validate_durable_store_import_decision_review_summary(
         if (summary.next_action !=
             DurableStoreImportDecisionReviewNextActionKind::
                 InvestigateDurableStoreImportDecisionRejection) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import decision review summary Rejected decision requires next_action investigate_durable_store_import_decision_rejection");
         }
         if (!summary.decision_blocker.has_value()) {
-            diagnostics.error("durable store import decision review summary Rejected decision "
+            emit_validation_error(diagnostics, "durable store import decision review summary Rejected decision "
                               "requires decision_blocker");
         }
         break;

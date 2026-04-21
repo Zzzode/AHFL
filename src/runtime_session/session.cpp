@@ -1,4 +1,5 @@
 #include "ahfl/runtime_session/session.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <cstddef>
 #include <string>
@@ -162,15 +163,8 @@ make_mock_usage(const dry_run::CapabilityMock &mock) {
 void validate_failure_summary(const RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("runtime session validation " + std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("runtime session validation " + std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "runtime session validation");
 }
 
 } // namespace

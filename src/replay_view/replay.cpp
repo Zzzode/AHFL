@@ -1,4 +1,5 @@
 #include "ahfl/replay_view/replay.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <cstddef>
 #include <string>
@@ -35,16 +36,7 @@ find_workflow_node(const handoff::WorkflowPlan &workflow, std::string_view node_
 
 [[nodiscard]] bool package_identity_equals(const std::optional<handoff::PackageIdentity> &lhs,
                                            const std::optional<handoff::PackageIdentity> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->format_version == rhs->format_version && lhs->name == rhs->name &&
-           lhs->version == rhs->version;
+    return validation::package_identity_equals(lhs, rhs);
 }
 
 [[nodiscard]] std::string node_event_key(std::string_view node_name, std::size_t execution_index) {
@@ -54,30 +46,14 @@ find_workflow_node(const handoff::WorkflowPlan &workflow, std::string_view node_
 [[nodiscard]] bool failure_summary_equals(
     const std::optional<runtime_session::RuntimeFailureSummary> &lhs,
     const std::optional<runtime_session::RuntimeFailureSummary> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->kind == rhs->kind && lhs->node_name == rhs->node_name &&
-           lhs->message == rhs->message;
+    return validation::failure_summary_equals(lhs, rhs);
 }
 
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("replay view validation " + std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("replay view validation " + std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "replay view validation");
 }
 
 } // namespace

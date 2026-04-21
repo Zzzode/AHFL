@@ -31,9 +31,49 @@ enum class DiagnosticSeverity {
     return "unknown";
 }
 
+enum class DiagnosticCategory {
+    Parse,
+    Resolve,
+    TypeCheck,
+    Validation,
+    Runtime,
+    Backend,
+    IO,
+    Internal,
+};
+
+[[nodiscard]] inline std::string_view to_string(DiagnosticCategory category) noexcept {
+    switch (category) {
+    case DiagnosticCategory::Parse:
+        return "parse";
+    case DiagnosticCategory::Resolve:
+        return "resolve";
+    case DiagnosticCategory::TypeCheck:
+        return "typecheck";
+    case DiagnosticCategory::Validation:
+        return "validation";
+    case DiagnosticCategory::Runtime:
+        return "runtime";
+    case DiagnosticCategory::Backend:
+        return "backend";
+    case DiagnosticCategory::IO:
+        return "io";
+    case DiagnosticCategory::Internal:
+        return "internal";
+    }
+
+    return "unknown";
+}
+
+struct DiagnosticCode {
+    DiagnosticCategory category{DiagnosticCategory::Validation};
+    std::string value;
+};
+
 struct Diagnostic {
     DiagnosticSeverity severity{DiagnosticSeverity::Error};
     std::string message;
+    std::optional<DiagnosticCode> code;
     std::optional<SourceRange> range;
     std::optional<std::string> source_name;
     std::optional<SourcePosition> position;
@@ -43,10 +83,12 @@ class DiagnosticBag {
   public:
     void add(DiagnosticSeverity severity,
              std::string message,
-             std::optional<SourceRange> range = std::nullopt) {
+             std::optional<SourceRange> range = std::nullopt,
+             std::optional<DiagnosticCode> code = std::nullopt) {
         diagnostics_.push_back(Diagnostic{
             .severity = severity,
             .message = std::move(message),
+            .code = std::move(code),
             .range = range,
             .source_name = std::nullopt,
             .position = std::nullopt,
@@ -56,10 +98,12 @@ class DiagnosticBag {
     void add_in_source(DiagnosticSeverity severity,
                        std::string message,
                        const SourceFile &source,
-                       std::optional<SourceRange> range = std::nullopt) {
+                       std::optional<SourceRange> range = std::nullopt,
+                       std::optional<DiagnosticCode> code = std::nullopt) {
         Diagnostic diagnostic{
             .severity = severity,
             .message = std::move(message),
+            .code = std::move(code),
             .range = range,
             .source_name = source.display_name,
             .position = std::nullopt,
@@ -76,14 +120,37 @@ class DiagnosticBag {
         add(DiagnosticSeverity::Note, std::move(message), range);
     }
 
+    void note_code(DiagnosticCategory category,
+                   std::string_view code,
+                   std::string message,
+                   std::optional<SourceRange> range = std::nullopt) {
+        add(DiagnosticSeverity::Note, std::move(message), range, make_code(category, code));
+    }
+
     void note_in_source(std::string message,
                         const SourceFile &source,
                         std::optional<SourceRange> range = std::nullopt) {
         add_in_source(DiagnosticSeverity::Note, std::move(message), source, range);
     }
 
+    void note_in_source_code(DiagnosticCategory category,
+                             std::string_view code,
+                             std::string message,
+                             const SourceFile &source,
+                             std::optional<SourceRange> range = std::nullopt) {
+        add_in_source(
+            DiagnosticSeverity::Note, std::move(message), source, range, make_code(category, code));
+    }
+
     void warning(std::string message, std::optional<SourceRange> range = std::nullopt) {
         add(DiagnosticSeverity::Warning, std::move(message), range);
+    }
+
+    void warning_code(DiagnosticCategory category,
+                      std::string_view code,
+                      std::string message,
+                      std::optional<SourceRange> range = std::nullopt) {
+        add(DiagnosticSeverity::Warning, std::move(message), range, make_code(category, code));
     }
 
     void warning_in_source(std::string message,
@@ -92,14 +159,42 @@ class DiagnosticBag {
         add_in_source(DiagnosticSeverity::Warning, std::move(message), source, range);
     }
 
+    void warning_in_source_code(DiagnosticCategory category,
+                                std::string_view code,
+                                std::string message,
+                                const SourceFile &source,
+                                std::optional<SourceRange> range = std::nullopt) {
+        add_in_source(DiagnosticSeverity::Warning,
+                      std::move(message),
+                      source,
+                      range,
+                      make_code(category, code));
+    }
+
     void error(std::string message, std::optional<SourceRange> range = std::nullopt) {
         add(DiagnosticSeverity::Error, std::move(message), range);
+    }
+
+    void error_code(DiagnosticCategory category,
+                    std::string_view code,
+                    std::string message,
+                    std::optional<SourceRange> range = std::nullopt) {
+        add(DiagnosticSeverity::Error, std::move(message), range, make_code(category, code));
     }
 
     void error_in_source(std::string message,
                          const SourceFile &source,
                          std::optional<SourceRange> range = std::nullopt) {
         add_in_source(DiagnosticSeverity::Error, std::move(message), source, range);
+    }
+
+    void error_in_source_code(DiagnosticCategory category,
+                              std::string_view code,
+                              std::string message,
+                              const SourceFile &source,
+                              std::optional<SourceRange> range = std::nullopt) {
+        add_in_source(
+            DiagnosticSeverity::Error, std::move(message), source, range, make_code(category, code));
     }
 
     [[nodiscard]] bool has_error() const noexcept {
@@ -135,9 +230,16 @@ class DiagnosticBag {
         }
     }
 
-    void render(std::ostream &out, MaybeCRef<SourceFile> source = std::nullopt) const {
+    void render(std::ostream &out,
+                MaybeCRef<SourceFile> source = std::nullopt,
+                bool include_code = false) const {
         for (const auto &diagnostic : diagnostics_) {
-            out << to_string(diagnostic.severity) << ": " << diagnostic.message;
+            out << to_string(diagnostic.severity);
+            if (include_code && diagnostic.code.has_value()) {
+                out << " [" << to_string(diagnostic.code->category) << ":"
+                    << diagnostic.code->value << "]";
+            }
+            out << ": " << diagnostic.message;
 
             if (diagnostic.source_name.has_value()) {
                 out << " (" << *diagnostic.source_name;
@@ -157,6 +259,14 @@ class DiagnosticBag {
     }
 
   private:
+    [[nodiscard]] static DiagnosticCode make_code(DiagnosticCategory category,
+                                                  std::string_view code) {
+        return DiagnosticCode{
+            .category = category,
+            .value = std::string(code),
+        };
+    }
+
     std::vector<Diagnostic> diagnostics_;
 };
 

@@ -1,4 +1,5 @@
 #include "ahfl/scheduler_snapshot/review.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -7,18 +8,18 @@ namespace ahfl::scheduler_snapshot {
 
 namespace {
 
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.SCHEDULER_REVIEW";
+
+void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
+    validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
+}
+
+
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("scheduler decision summary " + std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("scheduler decision summary " + std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "scheduler decision summary");
 }
 
 [[nodiscard]] std::optional<std::string>
@@ -93,30 +94,30 @@ validate_scheduler_decision_summary(const SchedulerDecisionSummary &summary) {
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kSchedulerDecisionSummaryFormatVersion) {
-        diagnostics.error("scheduler decision summary format_version must be '" +
+        emit_validation_error(diagnostics, "scheduler decision summary format_version must be '" +
                           std::string(kSchedulerDecisionSummaryFormatVersion) + "'");
     }
 
     if (summary.source_scheduler_snapshot_format_version != kSchedulerSnapshotFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "scheduler decision summary source_scheduler_snapshot_format_version must be '" +
             std::string(kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error("scheduler decision summary workflow_canonical_name must not be empty");
+        emit_validation_error(diagnostics, "scheduler decision summary workflow_canonical_name must not be empty");
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error("scheduler decision summary session_id must not be empty");
+        emit_validation_error(diagnostics, "scheduler decision summary session_id must not be empty");
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error("scheduler decision summary run_id must not be empty when present");
+        emit_validation_error(diagnostics, "scheduler decision summary run_id must not be empty when present");
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error("scheduler decision summary input_fixture must not be empty");
+        emit_validation_error(diagnostics, "scheduler decision summary input_fixture must not be empty");
     }
 
     if (summary.workflow_failure_summary.has_value()) {
@@ -125,71 +126,71 @@ validate_scheduler_decision_summary(const SchedulerDecisionSummary &summary) {
     }
 
     if (summary.completed_prefix_size != summary.completed_prefix.size()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "scheduler decision summary completed_prefix_size must match completed_prefix length");
     }
 
     if (summary.next_candidate_node_name.has_value() &&
         summary.next_candidate_node_name->empty()) {
-        diagnostics.error("scheduler decision summary next_candidate_node_name must not be empty");
+        emit_validation_error(diagnostics, "scheduler decision summary next_candidate_node_name must not be empty");
     }
 
     if (summary.terminal_reason.has_value() && summary.terminal_reason->empty()) {
-        diagnostics.error("scheduler decision summary terminal_reason must not be empty");
+        emit_validation_error(diagnostics, "scheduler decision summary terminal_reason must not be empty");
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error("scheduler decision summary next_step_recommendation must not be empty");
+        emit_validation_error(diagnostics, "scheduler decision summary next_step_recommendation must not be empty");
     }
 
     switch (summary.snapshot_status) {
     case SchedulerSnapshotStatus::Runnable:
         if (summary.next_action != SchedulerNextActionKind::RunReadyNode) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary runnable snapshot_status requires next_action run_ready_node");
         }
         if (summary.terminal_reason.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary runnable snapshot_status must not declare terminal_reason");
         }
         break;
     case SchedulerSnapshotStatus::Waiting:
         if (summary.next_action != SchedulerNextActionKind::AwaitDependencies) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary waiting snapshot_status requires next_action await_dependencies");
         }
         if (summary.terminal_reason.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary waiting snapshot_status must not declare terminal_reason");
         }
         break;
     case SchedulerSnapshotStatus::TerminalCompleted:
         if (summary.next_action != SchedulerNextActionKind::WorkflowCompleted) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary terminal completed snapshot_status requires next_action workflow_completed");
         }
         if (summary.terminal_reason != "workflow_completed") {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary terminal completed snapshot_status requires terminal_reason 'workflow_completed'");
         }
         break;
     case SchedulerSnapshotStatus::TerminalFailed:
         if (summary.next_action != SchedulerNextActionKind::InvestigateFailure) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary terminal failed snapshot_status requires next_action investigate_failure");
         }
         if (summary.terminal_reason != "workflow_failed") {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary terminal failed snapshot_status requires terminal_reason 'workflow_failed'");
         }
         break;
     case SchedulerSnapshotStatus::TerminalPartial:
         if (summary.next_action != SchedulerNextActionKind::PreservePartialState) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary terminal partial snapshot_status requires next_action preserve_partial_state");
         }
         if (summary.terminal_reason != "partial_snapshot_retained") {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler decision summary terminal partial snapshot_status requires terminal_reason 'partial_snapshot_retained'");
         }
         break;

@@ -6,6 +6,8 @@
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -13,50 +15,6 @@
 #include <string_view>
 
 namespace {
-
-[[nodiscard]] std::optional<ahfl::ir::Program>
-load_project_ir(const std::filesystem::path &project_descriptor) {
-    const ahfl::Frontend frontend;
-
-    const auto descriptor_result = frontend.load_project_descriptor(project_descriptor);
-    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-        descriptor_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const auto project_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = descriptor_result.descriptor->entry_files,
-        .search_roots = descriptor_result.descriptor->search_roots,
-    });
-    if (project_result.has_errors()) {
-        project_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(project_result.graph);
-    if (resolve_result.has_errors()) {
-        resolve_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(project_result.graph, resolve_result);
-    if (type_check_result.has_errors()) {
-        type_check_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Validator validator;
-    const auto validation_result =
-        validator.validate(project_result.graph, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        validation_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    return ahfl::lower_program_ir(project_result.graph, resolve_result, type_check_result);
-}
 
 [[nodiscard]] ahfl::handoff::PackageMetadata
 make_project_workflow_value_flow_metadata() {
@@ -79,17 +37,6 @@ make_project_workflow_value_flow_metadata() {
     };
     metadata.capability_binding_keys.emplace("lib::agents::Echo", "runtime.echo");
     return metadata;
-}
-
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 [[nodiscard]] ahfl::runtime_session::RuntimeFailureSummary
@@ -116,7 +63,7 @@ make_node_failure_summary(std::string message,
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
 load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -253,7 +200,7 @@ int run_build_runtime_session_rejects_missing_workflow(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             session.diagnostics,
             "runtime session request workflow 'app::main::MissingWorkflow' does not exist in execution plan")) {
         session.diagnostics.render(std::cout);
@@ -319,7 +266,7 @@ int run_validate_runtime_session_rejects_incomplete_completed_workflow(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "runtime session validation node 'second' is not executable-complete while workflow status is terminal")) {
         validation.diagnostics.render(std::cout);
@@ -345,7 +292,7 @@ int run_validate_runtime_session_rejects_missing_used_mock(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "runtime session validation node 'first' missing used mock for binding key 'runtime.echo'")) {
         validation.diagnostics.render(std::cout);
@@ -418,10 +365,10 @@ int run_validate_runtime_session_rejects_failed_without_failure_summary(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "runtime session validation failed workflow must carry failure summary") ||
-        !diagnostics_contain(
+        !ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "runtime session validation node 'second' is Failed but has no failure summary")) {
         validation.diagnostics.render(std::cout);
@@ -531,60 +478,76 @@ int run_build_runtime_session_failed_on_node_failure(
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc < 3) {
-        std::cerr << "usage: runtime_session_tests <case> <project-descriptor>\n";
-        return 2;
-    }
+    using ahfl::test_support::TestDispatchEntry;
 
-    const std::string test_case = argv[1];
-    const std::filesystem::path project_descriptor = argv[2];
+    const std::array<TestDispatchEntry, 11> entries = {{
+        {"build-runtime-session-project-workflow-value-flow",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_build_runtime_session_project_workflow_value_flow(args[0]);
+         }},
+        {"build-runtime-session-rejects-missing-workflow",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_build_runtime_session_rejects_missing_workflow(args[0]);
+         }},
+        {"build-runtime-session-rejects-missing-mock",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_build_runtime_session_rejects_missing_mock(args[0]);
+         }},
+        {"build-runtime-session-partial-on-pending-mock",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_build_runtime_session_partial_on_pending_mock(args[0]);
+         }},
+        {"build-runtime-session-failed-on-node-failure",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_build_runtime_session_failed_on_node_failure(args[0]);
+         }},
+        {"validate-runtime-session-project-workflow-value-flow",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_validate_runtime_session_project_workflow_value_flow(args[0]);
+         }},
+        {"validate-runtime-session-rejects-incomplete-completed-workflow",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_validate_runtime_session_rejects_incomplete_completed_workflow(args[0]);
+         }},
+        {"validate-runtime-session-rejects-missing-used-mock",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_validate_runtime_session_rejects_missing_used_mock(args[0]);
+         }},
+        {"validate-runtime-session-accepts-partial-workflow",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_validate_runtime_session_accepts_partial_workflow(args[0]);
+         }},
+        {"validate-runtime-session-accepts-failed-workflow",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_validate_runtime_session_accepts_failed_workflow(args[0]);
+         }},
+        {"validate-runtime-session-rejects-failed-without-failure-summary",
+         1,
+         "<project-descriptor>",
+         [](const std::span<const std::string> args) {
+             return run_validate_runtime_session_rejects_failed_without_failure_summary(args[0]);
+         }},
+    }};
 
-    if (test_case == "build-runtime-session-project-workflow-value-flow") {
-        return run_build_runtime_session_project_workflow_value_flow(project_descriptor);
-    }
-
-    if (test_case == "build-runtime-session-rejects-missing-workflow") {
-        return run_build_runtime_session_rejects_missing_workflow(project_descriptor);
-    }
-
-    if (test_case == "build-runtime-session-rejects-missing-mock") {
-        return run_build_runtime_session_rejects_missing_mock(project_descriptor);
-    }
-
-    if (test_case == "build-runtime-session-partial-on-pending-mock") {
-        return run_build_runtime_session_partial_on_pending_mock(project_descriptor);
-    }
-
-    if (test_case == "build-runtime-session-failed-on-node-failure") {
-        return run_build_runtime_session_failed_on_node_failure(project_descriptor);
-    }
-
-    if (test_case == "validate-runtime-session-project-workflow-value-flow") {
-        return run_validate_runtime_session_project_workflow_value_flow(project_descriptor);
-    }
-
-    if (test_case == "validate-runtime-session-rejects-incomplete-completed-workflow") {
-        return run_validate_runtime_session_rejects_incomplete_completed_workflow(
-            project_descriptor);
-    }
-
-    if (test_case == "validate-runtime-session-rejects-missing-used-mock") {
-        return run_validate_runtime_session_rejects_missing_used_mock(project_descriptor);
-    }
-
-    if (test_case == "validate-runtime-session-accepts-partial-workflow") {
-        return run_validate_runtime_session_accepts_partial_workflow(project_descriptor);
-    }
-
-    if (test_case == "validate-runtime-session-accepts-failed-workflow") {
-        return run_validate_runtime_session_accepts_failed_workflow(project_descriptor);
-    }
-
-    if (test_case == "validate-runtime-session-rejects-failed-without-failure-summary") {
-        return run_validate_runtime_session_rejects_failed_without_failure_summary(
-            project_descriptor);
-    }
-
-    std::cerr << "unknown test case: " << test_case << '\n';
-    return 2;
+    return ahfl::test_support::dispatch_test_case("runtime_session_tests", argc, argv, entries);
 }

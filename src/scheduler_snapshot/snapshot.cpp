@@ -1,4 +1,5 @@
 #include "ahfl/scheduler_snapshot/snapshot.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <optional>
 #include <string>
@@ -11,12 +12,24 @@ namespace ahfl::scheduler_snapshot {
 
 namespace {
 
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.SCHEDULER_SNAPSHOT";
+inline constexpr std::string_view kBootstrapDiagnosticCode = "AHFL.BE.SCHEDULER_SNAPSHOT_BOOTSTRAP";
+
+void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
+    validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
+}
+
+void emit_bootstrap_error(DiagnosticBag &diagnostics, std::string message) {
+    diagnostics.error_code(DiagnosticCategory::Backend, kBootstrapDiagnosticCode, message);
+}
+
+
 [[nodiscard]] bool insert_unique_node_name(const std::string &name,
                                            std::unordered_set<std::string> &seen_names,
                                            DiagnosticBag &diagnostics,
                                            std::string_view field_name) {
     if (!seen_names.insert(name).second) {
-        diagnostics.error("scheduler snapshot contains duplicate node '" + name + "' in " +
+        emit_validation_error(diagnostics, "scheduler snapshot contains duplicate node '" + name + "' in " +
                           std::string(field_name));
         return false;
     }
@@ -27,31 +40,13 @@ namespace {
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("scheduler snapshot " + std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("scheduler snapshot " + std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "scheduler snapshot");
 }
 
 void validate_package_identity(const handoff::PackageIdentity &identity,
                                DiagnosticBag &diagnostics) {
-    if (identity.format_version != handoff::kFormatVersion) {
-        diagnostics.error("scheduler snapshot source_package_identity format_version must be '" +
-                          std::string(handoff::kFormatVersion) + "'");
-    }
-
-    if (identity.name.empty()) {
-        diagnostics.error("scheduler snapshot source_package_identity name must not be empty");
-    }
-
-    if (identity.version.empty()) {
-        diagnostics.error("scheduler snapshot source_package_identity version must not be empty");
-    }
+    validation::validate_package_identity(identity, diagnostics, "scheduler snapshot");
 }
 
 void validate_dependency_list(const std::vector<std::string> &dependencies,
@@ -63,20 +58,20 @@ void validate_dependency_list(const std::vector<std::string> &dependencies,
     std::unordered_set<std::string> seen_dependencies;
     for (const auto &dependency : dependencies) {
         if (dependency.empty()) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) + "' contains empty " +
                               std::string(field_name));
             continue;
         }
 
         if (!seen_dependencies.insert(dependency).second) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) + "' contains duplicate " +
                               std::string(field_name) + " '" + dependency + "'");
         }
 
         if (!execution_nodes.contains(dependency)) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) + "' references unknown dependency '" +
                               dependency + "' in " + std::string(field_name));
         }
@@ -92,7 +87,7 @@ void validate_dependency_subset(const std::vector<std::string> &subset,
     const std::unordered_set<std::string> declared_dependencies{superset.begin(), superset.end()};
     for (const auto &dependency : subset) {
         if (!declared_dependencies.contains(dependency)) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) + "' contains " +
                               std::string(subset_field_name) + " '" + dependency +
                               "' not declared in planned_dependencies");
@@ -108,20 +103,20 @@ void validate_capability_bindings(
     std::unordered_set<std::string> seen_bindings;
     for (const auto &binding : capability_bindings) {
         if (binding.capability_name.empty()) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) +
                               "' contains capability binding with empty capability_name");
         }
 
         if (binding.binding_key.empty()) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) +
                               "' contains capability binding with empty binding_key");
         }
 
         const auto binding_identity = binding.capability_name + "#" + binding.binding_key;
         if (!seen_bindings.insert(binding_identity).second) {
-            diagnostics.error("scheduler snapshot " + std::string(owner_kind) + " '" +
+            emit_validation_error(diagnostics, "scheduler snapshot " + std::string(owner_kind) + " '" +
                               std::string(owner_name) + "' contains duplicate capability binding '" +
                               binding_identity + "'");
         }
@@ -141,46 +136,18 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
 
 [[nodiscard]] bool package_identity_equals(const std::optional<handoff::PackageIdentity> &lhs,
                                            const std::optional<handoff::PackageIdentity> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->format_version == rhs->format_version && lhs->name == rhs->name &&
-           lhs->version == rhs->version;
+    return validation::package_identity_equals(lhs, rhs);
 }
 
 [[nodiscard]] bool is_prefix(const std::vector<std::string> &prefix,
                              const std::vector<std::string> &full) {
-    if (prefix.size() > full.size()) {
-        return false;
-    }
-
-    for (std::size_t index = 0; index < prefix.size(); ++index) {
-        if (prefix[index] != full[index]) {
-            return false;
-        }
-    }
-
-    return true;
+    return validation::is_prefix(prefix, full);
 }
 
 [[nodiscard]] bool failure_summary_equals(
     const std::optional<runtime_session::RuntimeFailureSummary> &lhs,
     const std::optional<runtime_session::RuntimeFailureSummary> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->kind == rhs->kind && lhs->node_name == rhs->node_name &&
-           lhs->message == rhs->message;
+    return validation::failure_summary_equals(lhs, rhs);
 }
 
 } // namespace
@@ -191,43 +158,43 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
     auto &diagnostics = result.diagnostics;
 
     if (snapshot.format_version != kSchedulerSnapshotFormatVersion) {
-        diagnostics.error("scheduler snapshot format_version must be '" +
+        emit_validation_error(diagnostics, "scheduler snapshot format_version must be '" +
                           std::string(kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (snapshot.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        diagnostics.error("scheduler snapshot source_execution_plan_format_version must be '" +
+        emit_validation_error(diagnostics, "scheduler snapshot source_execution_plan_format_version must be '" +
                           std::string(handoff::kExecutionPlanFormatVersion) + "'");
     }
 
     if (snapshot.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        diagnostics.error("scheduler snapshot source_runtime_session_format_version must be '" +
+        emit_validation_error(diagnostics, "scheduler snapshot source_runtime_session_format_version must be '" +
                           std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
     }
 
     if (snapshot.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "scheduler snapshot source_execution_journal_format_version must be '" +
             std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
     }
 
     if (snapshot.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        diagnostics.error("scheduler snapshot source_replay_view_format_version must be '" +
+        emit_validation_error(diagnostics, "scheduler snapshot source_replay_view_format_version must be '" +
                           std::string(replay_view::kReplayViewFormatVersion) + "'");
     }
 
     if (snapshot.workflow_canonical_name.empty()) {
-        diagnostics.error("scheduler snapshot workflow_canonical_name must not be empty");
+        emit_validation_error(diagnostics, "scheduler snapshot workflow_canonical_name must not be empty");
     }
 
     if (snapshot.session_id.empty()) {
-        diagnostics.error("scheduler snapshot session_id must not be empty");
+        emit_validation_error(diagnostics, "scheduler snapshot session_id must not be empty");
     }
 
     if (snapshot.input_fixture.empty()) {
-        diagnostics.error("scheduler snapshot input_fixture must not be empty");
+        emit_validation_error(diagnostics, "scheduler snapshot input_fixture must not be empty");
     }
 
     if (snapshot.source_package_identity.has_value()) {
@@ -241,29 +208,29 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
     std::unordered_set<std::string> execution_nodes;
     for (const auto &node_name : snapshot.execution_order) {
         if (node_name.empty()) {
-            diagnostics.error("scheduler snapshot execution_order contains empty node name");
+            emit_validation_error(diagnostics, "scheduler snapshot execution_order contains empty node name");
             continue;
         }
 
         if (!execution_nodes.insert(node_name).second) {
-            diagnostics.error("scheduler snapshot execution_order contains duplicate node '" +
+            emit_validation_error(diagnostics, "scheduler snapshot execution_order contains duplicate node '" +
                               node_name + "'");
         }
     }
 
     if (snapshot.cursor.completed_prefix_size != snapshot.cursor.completed_prefix.size()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "scheduler snapshot cursor completed_prefix_size must match completed_prefix length");
     }
 
     if (snapshot.cursor.completed_prefix.size() > snapshot.execution_order.size()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "scheduler snapshot cursor completed_prefix cannot be longer than execution_order");
     }
 
     for (std::size_t index = 0; index < snapshot.cursor.completed_prefix.size(); ++index) {
         if (snapshot.cursor.completed_prefix[index] != snapshot.execution_order[index]) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot cursor completed_prefix must be a prefix of execution_order");
             break;
         }
@@ -271,18 +238,18 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
 
     if (snapshot.cursor.next_candidate_node_name.has_value()) {
         if (snapshot.cursor.next_candidate_node_name->empty()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot cursor next_candidate_node_name must not be empty");
         }
 
         if (!execution_nodes.contains(*snapshot.cursor.next_candidate_node_name)) {
-            diagnostics.error("scheduler snapshot cursor next_candidate_node_name '" +
+            emit_validation_error(diagnostics, "scheduler snapshot cursor next_candidate_node_name '" +
                               *snapshot.cursor.next_candidate_node_name +
                               "' does not exist in execution_order");
         } else {
             for (const auto &completed_node : snapshot.cursor.completed_prefix) {
                 if (completed_node == *snapshot.cursor.next_candidate_node_name) {
-                    diagnostics.error("scheduler snapshot cursor next_candidate_node_name '" +
+                    emit_validation_error(diagnostics, "scheduler snapshot cursor next_candidate_node_name '" +
                                       *snapshot.cursor.next_candidate_node_name +
                                       "' cannot already be in completed_prefix");
                     break;
@@ -301,29 +268,29 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
         static_cast<void>(ready_node_names.insert(node.node_name));
 
         if (node.node_name.empty()) {
-            diagnostics.error("scheduler snapshot ready node must not have empty node_name");
+            emit_validation_error(diagnostics, "scheduler snapshot ready node must not have empty node_name");
             continue;
         }
 
         if (node.target.empty()) {
-            diagnostics.error("scheduler snapshot ready node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot ready node '" + node.node_name +
                               "' must not have empty target");
         }
 
         if (!execution_nodes.contains(node.node_name)) {
-            diagnostics.error("scheduler snapshot ready node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot ready node '" + node.node_name +
                               "' does not exist in execution_order");
         } else if (node.execution_index >= snapshot.execution_order.size()) {
-            diagnostics.error("scheduler snapshot ready node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot ready node '" + node.node_name +
                               "' has execution_index outside execution_order");
         } else if (snapshot.execution_order[node.execution_index] != node.node_name) {
-            diagnostics.error("scheduler snapshot ready node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot ready node '" + node.node_name +
                               "' has execution_index that does not match execution_order");
         }
 
         for (const auto &completed_node : snapshot.cursor.completed_prefix) {
             if (completed_node == node.node_name) {
-                diagnostics.error("scheduler snapshot ready node '" + node.node_name +
+                emit_validation_error(diagnostics, "scheduler snapshot ready node '" + node.node_name +
                                   "' cannot already be in completed_prefix");
                 break;
             }
@@ -357,31 +324,31 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
         static_cast<void>(blocked_node_names.insert(node.node_name));
 
         if (node.node_name.empty()) {
-            diagnostics.error("scheduler snapshot blocked node must not have empty node_name");
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node must not have empty node_name");
             continue;
         }
 
         if (node.target.empty()) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' must not have empty target");
         }
 
         if (!execution_nodes.contains(node.node_name)) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' does not exist in execution_order");
         } else if (node.execution_index.has_value() &&
                    *node.execution_index >= snapshot.execution_order.size()) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' has execution_index outside execution_order");
         } else if (node.execution_index.has_value() &&
                    snapshot.execution_order[*node.execution_index] != node.node_name) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' has execution_index that does not match execution_order");
         }
 
         for (const auto &completed_node : snapshot.cursor.completed_prefix) {
             if (completed_node == node.node_name) {
-                diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+                emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                                   "' cannot already be in completed_prefix");
                 break;
             }
@@ -415,30 +382,30 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
 
         if (node.blocked_reason == SchedulerBlockedReasonKind::WaitingOnDependencies) {
             if (node.missing_dependencies.empty()) {
-                diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+                emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                                   "' waiting_on_dependencies requires missing_dependencies");
             }
             if (node.blocking_failure_summary.has_value()) {
-                diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+                emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                                   "' waiting_on_dependencies must not carry blocking_failure_summary");
             }
         }
 
         if (node.blocked_reason == SchedulerBlockedReasonKind::WorkflowTerminalFailure &&
             node.may_become_ready) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' cannot be marked may_become_ready under workflow terminal failure");
         }
 
         if (node.blocked_reason == SchedulerBlockedReasonKind::WorkflowTerminalFailure &&
             !node.blocking_failure_summary.has_value()) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' workflow terminal failure requires blocking_failure_summary");
         }
 
         if (node.blocked_reason == SchedulerBlockedReasonKind::UpstreamPartial &&
             node.may_become_ready) {
-            diagnostics.error("scheduler snapshot blocked node '" + node.node_name +
+            emit_validation_error(diagnostics, "scheduler snapshot blocked node '" + node.node_name +
                               "' cannot be marked may_become_ready under upstream partial");
         }
     }
@@ -446,31 +413,31 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
     switch (snapshot.workflow_status) {
     case runtime_session::WorkflowSessionStatus::Completed:
         if (snapshot.snapshot_status != SchedulerSnapshotStatus::TerminalCompleted) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot completed workflow must use terminal_completed status");
         }
         if (snapshot.workflow_failure_summary.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot completed workflow must not carry workflow_failure_summary");
         }
         break;
     case runtime_session::WorkflowSessionStatus::Failed:
         if (snapshot.snapshot_status != SchedulerSnapshotStatus::TerminalFailed) {
-            diagnostics.error("scheduler snapshot failed workflow must use terminal_failed status");
+            emit_validation_error(diagnostics, "scheduler snapshot failed workflow must use terminal_failed status");
         }
         if (!snapshot.workflow_failure_summary.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot failed workflow must carry workflow_failure_summary");
         }
         break;
     case runtime_session::WorkflowSessionStatus::Partial:
         if (snapshot.snapshot_status == SchedulerSnapshotStatus::TerminalCompleted ||
             snapshot.snapshot_status == SchedulerSnapshotStatus::TerminalFailed) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot partial workflow cannot use completed/failed terminal status");
         }
         if (snapshot.workflow_failure_summary.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot partial workflow must not carry workflow_failure_summary");
         }
         break;
@@ -479,63 +446,63 @@ validate_scheduler_snapshot(const SchedulerSnapshot &snapshot) {
     switch (snapshot.snapshot_status) {
     case SchedulerSnapshotStatus::Runnable:
         if (snapshot.workflow_status != runtime_session::WorkflowSessionStatus::Partial) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot runnable status requires partial workflow_status");
         }
         if (snapshot.ready_nodes.empty()) {
-            diagnostics.error("scheduler snapshot runnable status requires at least one ready node");
+            emit_validation_error(diagnostics, "scheduler snapshot runnable status requires at least one ready node");
         }
         if (snapshot.cursor.next_candidate_node_name.has_value() &&
             !ready_node_names.contains(*snapshot.cursor.next_candidate_node_name)) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot runnable status next candidate must reference a ready node");
         }
         break;
     case SchedulerSnapshotStatus::Waiting:
         if (snapshot.workflow_status != runtime_session::WorkflowSessionStatus::Partial) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot waiting status requires partial workflow_status");
         }
         if (!snapshot.ready_nodes.empty()) {
-            diagnostics.error("scheduler snapshot waiting status must not contain ready nodes");
+            emit_validation_error(diagnostics, "scheduler snapshot waiting status must not contain ready nodes");
         }
         if (snapshot.blocked_nodes.empty()) {
-            diagnostics.error("scheduler snapshot waiting status requires at least one blocked node");
+            emit_validation_error(diagnostics, "scheduler snapshot waiting status requires at least one blocked node");
         }
         if (snapshot.cursor.next_candidate_node_name.has_value() &&
             !blocked_node_names.contains(*snapshot.cursor.next_candidate_node_name)) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot waiting status next candidate must reference a blocked node");
         }
         break;
     case SchedulerSnapshotStatus::TerminalCompleted:
         if (snapshot.cursor.completed_prefix_size != snapshot.execution_order.size()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot terminal completed status requires fully completed prefix");
         }
         if (!snapshot.blocked_nodes.empty()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot terminal completed status must not contain blocked nodes");
         }
         [[fallthrough]];
     case SchedulerSnapshotStatus::TerminalFailed:
         if (snapshot.snapshot_status == SchedulerSnapshotStatus::TerminalFailed &&
             snapshot.workflow_status != runtime_session::WorkflowSessionStatus::Failed) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot terminal failed status requires failed workflow_status");
         }
         [[fallthrough]];
     case SchedulerSnapshotStatus::TerminalPartial:
         if (snapshot.snapshot_status == SchedulerSnapshotStatus::TerminalPartial &&
             snapshot.workflow_status != runtime_session::WorkflowSessionStatus::Partial) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "scheduler snapshot terminal partial status requires partial workflow_status");
         }
         if (!snapshot.ready_nodes.empty()) {
-            diagnostics.error("scheduler snapshot terminal status must not contain ready nodes");
+            emit_validation_error(diagnostics, "scheduler snapshot terminal status must not contain ready nodes");
         }
         if (snapshot.cursor.next_candidate_node_name.has_value()) {
-            diagnostics.error("scheduler snapshot terminal status must not contain next candidate");
+            emit_validation_error(diagnostics, "scheduler snapshot terminal status must not contain next candidate");
         }
         break;
     }
@@ -569,104 +536,104 @@ SchedulerSnapshotResult build_scheduler_snapshot(const handoff::ExecutionPlan &p
     }
 
     if (session.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap runtime session source_execution_plan_format_version does not match execution plan");
     }
 
     if (journal.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap execution journal source_execution_plan_format_version does not match execution plan");
     }
 
     if (journal.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap execution journal source_runtime_session_format_version does not match runtime session");
     }
 
     if (replay.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view source_execution_plan_format_version does not match execution plan");
     }
 
     if (replay.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view source_runtime_session_format_version does not match runtime session");
     }
 
     if (replay.source_execution_journal_format_version != journal.format_version) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view source_execution_journal_format_version does not match execution journal");
     }
 
     if (!package_identity_equals(plan.source_package_identity, session.source_package_identity)) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap runtime session source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity, journal.source_package_identity)) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap execution journal source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity, replay.source_package_identity)) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view source_package_identity does not match execution plan");
     }
 
     if (session.workflow_canonical_name != journal.workflow_canonical_name) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap execution journal workflow_canonical_name does not match runtime session");
     }
 
     if (session.workflow_canonical_name != replay.workflow_canonical_name) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view workflow_canonical_name does not match runtime session");
     }
 
     if (session.session_id != journal.session_id) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap execution journal session_id does not match runtime session");
     }
 
     if (session.session_id != replay.session_id) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view session_id does not match runtime session");
     }
 
     if (session.run_id != journal.run_id) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap execution journal run_id does not match runtime session");
     }
 
     if (session.run_id != replay.run_id) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view run_id does not match runtime session");
     }
 
     if (session.input_fixture != replay.input_fixture) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view input_fixture does not match runtime session");
     }
 
     if (session.workflow_status != replay.workflow_status) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view workflow_status does not match runtime session");
     }
 
     if (!failure_summary_equals(session.failure_summary, replay.workflow_failure_summary)) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view workflow_failure_summary does not match runtime session");
     }
 
     if (!replay.consistency.plan_matches_session || !replay.consistency.session_matches_journal ||
         !replay.consistency.journal_matches_execution_order) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view consistency must hold before building snapshot");
     }
 
     const auto *workflow = find_workflow_plan(plan, session.workflow_canonical_name);
     if (workflow == nullptr) {
-        result.diagnostics.error("scheduler snapshot bootstrap workflow '" +
+        emit_bootstrap_error(result.diagnostics, "scheduler snapshot bootstrap workflow '" +
                                  session.workflow_canonical_name +
                                  "' does not exist in execution plan");
     }
@@ -686,7 +653,7 @@ SchedulerSnapshotResult build_scheduler_snapshot(const handoff::ExecutionPlan &p
     }
 
     if (!is_prefix(replay.execution_order, execution_order)) {
-        result.diagnostics.error(
+        emit_bootstrap_error(result.diagnostics, 
             "scheduler snapshot bootstrap replay view execution_order must be a prefix of execution plan workflow order");
         return result;
     }
@@ -702,7 +669,7 @@ SchedulerSnapshotResult build_scheduler_snapshot(const handoff::ExecutionPlan &p
     for (const auto &node_name : execution_order) {
         const auto found = session_nodes.find(node_name);
         if (found == session_nodes.end()) {
-            result.diagnostics.error("scheduler snapshot bootstrap execution plan node '" +
+            emit_bootstrap_error(result.diagnostics, "scheduler snapshot bootstrap execution plan node '" +
                                      node_name + "' does not exist in runtime session");
             return result;
         }
@@ -725,7 +692,7 @@ SchedulerSnapshotResult build_scheduler_snapshot(const handoff::ExecutionPlan &p
     for (const auto &plan_node : workflow->nodes) {
         const auto session_found = session_nodes.find(plan_node.name);
         if (session_found == session_nodes.end()) {
-            result.diagnostics.error("scheduler snapshot bootstrap execution plan node '" +
+            emit_bootstrap_error(result.diagnostics, "scheduler snapshot bootstrap execution plan node '" +
                                      plan_node.name + "' does not exist in runtime session");
             return result;
         }

@@ -1,4 +1,5 @@
 #include "ahfl/store_import/descriptor.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <unordered_set>
@@ -10,63 +11,23 @@ namespace {
 
 void validate_package_identity(const handoff::PackageIdentity &identity,
                                DiagnosticBag &diagnostics) {
-    if (identity.format_version != handoff::kFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_package_identity format_version must be '" +
-            std::string(handoff::kFormatVersion) + "'");
-    }
-
-    if (identity.name.empty()) {
-        diagnostics.error(
-            "store import descriptor source_package_identity name must not be empty");
-    }
-
-    if (identity.version.empty()) {
-        diagnostics.error(
-            "store import descriptor source_package_identity version must not be empty");
-    }
+    validation::validate_package_identity(identity, diagnostics, "store import descriptor");
 }
 
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error(
-            "store import descriptor workflow_failure_summary message must not be empty");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error(
-            "store import descriptor workflow_failure_summary node_name must not be empty");
-    }
+    validation::validate_failure_summary_field(summary, diagnostics, "store import descriptor");
 }
 
 [[nodiscard]] bool package_identity_equals(const std::optional<handoff::PackageIdentity> &lhs,
                                            const std::optional<handoff::PackageIdentity> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->format_version == rhs->format_version && lhs->name == rhs->name &&
-           lhs->version == rhs->version;
+    return validation::package_identity_equals(lhs, rhs);
 }
 
 [[nodiscard]] bool failure_summary_equals(
     const std::optional<runtime_session::RuntimeFailureSummary> &lhs,
     const std::optional<runtime_session::RuntimeFailureSummary> &rhs) {
-    if (lhs.has_value() != rhs.has_value()) {
-        return false;
-    }
-
-    if (!lhs.has_value()) {
-        return true;
-    }
-
-    return lhs->kind == rhs->kind && lhs->node_name == rhs->node_name &&
-           lhs->message == rhs->message;
+    return validation::failure_summary_equals(lhs, rhs);
 }
 
 [[nodiscard]] bool export_artifact_entry_equals(

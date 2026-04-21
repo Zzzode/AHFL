@@ -1,4 +1,5 @@
 #include "ahfl/execution_journal/journal.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <string_view>
@@ -52,15 +53,8 @@ enum class NodeEventPhase {
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("execution journal validation " + std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("execution journal validation " + std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "execution journal validation");
 }
 
 } // namespace

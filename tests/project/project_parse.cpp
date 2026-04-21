@@ -1,7 +1,9 @@
 #include "ahfl/frontend/frontend.hpp"
+#include "ahfl/support/source.hpp"
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -29,6 +31,56 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
 
 [[nodiscard]] bool contains_text(std::string_view text, std::string_view needle) {
     return text.find(needle) != std::string_view::npos;
+}
+
+int run_diagnostics_support_metadata_smoke() {
+    ahfl::DiagnosticBag diagnostics;
+    diagnostics.error_code(
+        ahfl::DiagnosticCategory::Validation, "AHFL.TEST.VALIDATION", "metadata smoke");
+
+    if (!diagnostics.has_error() || diagnostics.entries().size() != 1) {
+        std::cerr << "expected exactly one error diagnostic\n";
+        return 1;
+    }
+
+    const auto &entry = diagnostics.entries().front();
+    if (!entry.code.has_value() || entry.code->category != ahfl::DiagnosticCategory::Validation ||
+        entry.code->value != "AHFL.TEST.VALIDATION") {
+        std::cerr << "expected validation diagnostic code metadata\n";
+        return 1;
+    }
+
+    std::ostringstream rendered;
+    diagnostics.render(rendered, std::nullopt, true);
+    if (!contains_text(rendered.str(), "error [validation:AHFL.TEST.VALIDATION]")) {
+        std::cerr << "expected render(include_code=true) to include category/code\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_source_file_position_smoke() {
+    ahfl::SourceFile source;
+    source.display_name = "inline";
+    source.content = "alpha\nbeta\ngamma";
+
+    const auto at_start = source.locate(0);
+    const auto at_second_line_start = source.locate(6);
+    const auto at_second_line_end = source.locate(10);
+    const auto at_third_line_start = source.locate(11);
+    const auto at_second_line_col3 = source.offset_of(2, 3);
+    const auto at_third_line_col2 = source.offset_of(3, 2);
+
+    if (at_start.line != 1 || at_start.column != 1 || at_second_line_start.line != 2 ||
+        at_second_line_start.column != 1 || at_second_line_end.line != 2 ||
+        at_second_line_end.column != 5 || at_third_line_start.line != 3 ||
+        at_third_line_start.column != 1 || at_second_line_col3 != 8 || at_third_line_col2 != 12) {
+        std::cerr << "unexpected source locate/offset mapping\n";
+        return 1;
+    }
+
+    return 0;
 }
 
 int run_ok_basic(const std::filesystem::path &entry, const std::filesystem::path &root) {
@@ -317,6 +369,14 @@ int main(int argc, char **argv) {
 
     if (test_case == "fail-package-duplicate-binding-key") {
         return run_fail_package_duplicate_binding_key(entry);
+    }
+
+    if (test_case == "diagnostics-support-metadata-smoke") {
+        return run_diagnostics_support_metadata_smoke();
+    }
+
+    if (test_case == "source-file-position-smoke") {
+        return run_source_file_position_smoke();
     }
 
     std::cerr << "unknown test case: " << test_case << '\n';

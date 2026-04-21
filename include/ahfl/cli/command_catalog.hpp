@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ahfl/backends/driver.hpp"
+
 #include <optional>
 #include <ostream>
 #include <span>
@@ -82,7 +84,10 @@ enum class CommandListKind {
 
 [[nodiscard]] bool is_package_supported_command(CommandKind command);
 [[nodiscard]] bool is_capability_input_supported_command(CommandKind command);
+[[nodiscard]] bool supports_capability_inputs(std::optional<CommandKind> command);
 [[nodiscard]] bool is_command_requiring_package(CommandKind command);
+[[nodiscard]] std::optional<ahfl::BackendKind>
+selected_backend_for_command(std::optional<CommandKind> command);
 
 void set_command_option(CommandLineOptions &options, CommandKind command);
 void print_usage(std::ostream &out);

@@ -1,23 +1,14 @@
 #include "ahfl/durable_store_import/request.hpp"
 #include "ahfl/durable_store_import/review.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <iostream>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace {
-
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
-}
 
 [[nodiscard]] ahfl::store_import::StoreImportDescriptor make_ready_descriptor() {
     using namespace ahfl;
@@ -269,7 +260,7 @@ int validate_durable_store_import_request_rejects_missing_request_identity() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "durable_store_import_request_identity must not be empty")
                ? 0
                : 1;
@@ -290,7 +281,7 @@ int validate_durable_store_import_request_rejects_duplicate_artifact_name() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics, "contains duplicate logical_artifact_name")
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics, "contains duplicate logical_artifact_name")
                ? 0
                : 1;
 }
@@ -313,7 +304,7 @@ int validate_durable_store_import_request_rejects_ready_with_blocker() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "cannot contain adapter_blocker when adapter_ready is true")
                ? 0
                : 1;
@@ -333,7 +324,7 @@ int validate_durable_store_import_request_rejects_unsupported_source_descriptor_
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_store_import_descriptor_format_version must be")
                ? 0
                : 1;
@@ -356,7 +347,7 @@ int validate_durable_store_import_request_rejects_adapter_contract_blocked() {
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                validation.diagnostics,
                "adapter-contract-consumable boundary requires ready or completed request_status")
                ? 0
@@ -379,7 +370,7 @@ int validate_durable_store_import_request_rejects_terminal_failed_without_failur
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "TerminalFailed status requires workflow_failure_summary")
                ? 0
                : 1;
@@ -442,7 +433,7 @@ int build_durable_store_import_request_rejects_invalid_descriptor() {
         return 1;
     }
 
-    return diagnostics_contain(request.diagnostics,
+    return ahfl::test_support::diagnostics_contain(request.diagnostics,
                                "store import descriptor format_version must be")
                ? 0
                : 1;
@@ -479,7 +470,7 @@ int validate_durable_store_import_review_rejects_unsupported_source_request_form
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_durable_store_import_request_format_version must be")
                ? 0
                : 1;
@@ -560,7 +551,7 @@ int build_durable_store_import_review_rejects_invalid_request() {
         return 1;
     }
 
-    return diagnostics_contain(summary.diagnostics,
+    return ahfl::test_support::diagnostics_contain(summary.diagnostics,
                                "durable store import request format_version must be")
                ? 0
                : 1;

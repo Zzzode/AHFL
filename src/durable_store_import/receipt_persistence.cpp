@@ -1,4 +1,5 @@
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -7,36 +8,23 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_RECEIPT_PERSISTENCE";
+
+void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
+    validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
+}
+
+
 void validate_package_identity(const handoff::PackageIdentity &identity,
                                DiagnosticBag &diagnostics) {
-    if (identity.format_version != handoff::kFormatVersion) {
-        diagnostics.error(
-            "durable store import receipt persistence request source_package_identity format_version must be '" +
-            std::string(handoff::kFormatVersion) + "'");
-    }
-
-    if (identity.name.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
-                          "source_package_identity name must not be empty");
-    }
-
-    if (identity.version.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
-                          "source_package_identity version must not be empty");
-    }
+    validation::validate_package_identity(
+        identity, diagnostics, "durable store import receipt persistence request");
 }
 
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
-                          "workflow_failure_summary message must not be empty");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("durable store import receipt persistence request "
-                          "workflow_failure_summary node_name must not be empty");
-    }
+    validation::validate_failure_summary_field(
+        summary, diagnostics, "durable store import receipt persistence request");
 }
 
 void validate_receipt_persistence_blocker(
@@ -48,13 +36,13 @@ void validate_receipt_persistence_blocker(
 
     const auto &blocker = *request.receipt_persistence_blocker;
     if (blocker.message.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "receipt_persistence_blocker message must not be empty");
     }
 
     if (blocker.required_capability.has_value() &&
         request.next_required_adapter_capability != blocker.required_capability) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "receipt_persistence_blocker required_capability must match "
                           "next_required_adapter_capability");
     }
@@ -113,144 +101,144 @@ validate_durable_store_import_decision_receipt_persistence_request(
     auto &diagnostics = result.diagnostics;
 
     if (request.format_version != kDurableStoreImportDecisionReceiptPersistenceRequestFormatVersion) {
-        diagnostics.error("durable store import receipt persistence request format_version must be '" +
+        emit_validation_error(diagnostics, "durable store import receipt persistence request format_version must be '" +
                           std::string(kDurableStoreImportDecisionReceiptPersistenceRequestFormatVersion) + "'");
     }
 
     if (request.source_durable_store_import_decision_receipt_format_version !=
         kDurableStoreImportDecisionReceiptFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_durable_store_import_decision_receipt_format_version must be '" +
             std::string(kDurableStoreImportDecisionReceiptFormatVersion) + "'");
     }
 
     if (request.source_durable_store_import_decision_format_version !=
         kDurableStoreImportDecisionFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_durable_store_import_decision_format_version must be '" +
             std::string(kDurableStoreImportDecisionFormatVersion) + "'");
     }
 
     if (request.source_durable_store_import_request_format_version !=
         kDurableStoreImportRequestFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_durable_store_import_request_format_version must be '" +
             std::string(kDurableStoreImportRequestFormatVersion) + "'");
     }
 
     if (request.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_store_import_descriptor_format_version must be '" +
             std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
     }
 
     if (request.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_execution_plan_format_version must be '" +
             std::string(handoff::kExecutionPlanFormatVersion) + "'");
     }
 
     if (request.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_runtime_session_format_version must be '" +
             std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
     }
 
     if (request.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_execution_journal_format_version must be '" +
             std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
     }
 
     if (request.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_replay_view_format_version must be '" +
             std::string(replay_view::kReplayViewFormatVersion) + "'");
     }
 
     if (request.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_scheduler_snapshot_format_version must be '" +
             std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (request.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_checkpoint_record_format_version must be '" +
             std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
     }
 
     if (request.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_persistence_descriptor_format_version must be '" +
             std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
     }
 
     if (request.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request source_export_manifest_format_version must be '" +
             std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
     }
 
     if (request.workflow_canonical_name.empty()) {
-        diagnostics.error("durable store import receipt persistence request workflow_canonical_name "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request workflow_canonical_name "
                           "must not be empty");
     }
 
     if (request.session_id.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request session_id must not be empty");
     }
 
     if (request.run_id.has_value() && request.run_id->empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request run_id must not be empty when present");
     }
 
     if (request.input_fixture.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import receipt persistence request input_fixture must not be empty");
     }
 
     if (request.export_package_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request export_package_identity "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request export_package_identity "
                           "must not be empty");
     }
 
     if (request.store_import_candidate_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "store_import_candidate_identity must not be empty");
     }
 
     if (request.durable_store_import_request_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "durable_store_import_request_identity must not be empty");
     }
 
     if (request.durable_store_import_decision_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "durable_store_import_decision_identity must not be empty");
     }
 
     if (request.durable_store_import_receipt_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "durable_store_import_receipt_identity must not be empty");
     }
 
     if (request.durable_store_import_receipt_persistence_request_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "durable_store_import_receipt_persistence_request_identity must not be empty");
     }
 
     if (request.planned_durable_identity.empty()) {
-        diagnostics.error("durable store import receipt persistence request planned_durable_identity "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request planned_durable_identity "
                           "must not be empty");
     }
 
@@ -264,20 +252,20 @@ validate_durable_store_import_decision_receipt_persistence_request(
 
     if (request.accepted_for_receipt_persistence &&
         request.receipt_persistence_blocker.has_value()) {
-        diagnostics.error("durable store import receipt persistence request cannot contain "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request cannot contain "
                           "receipt_persistence_blocker when accepted_for_receipt_persistence is true");
     }
 
     if (request.accepted_for_receipt_persistence &&
         request.next_required_adapter_capability.has_value()) {
-        diagnostics.error("durable store import receipt persistence request cannot contain "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request cannot contain "
                           "next_required_adapter_capability when "
                           "accepted_for_receipt_persistence is true");
     }
 
     if (!request.accepted_for_receipt_persistence &&
         !request.receipt_persistence_blocker.has_value()) {
-        diagnostics.error("durable store import receipt persistence request must contain "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request must contain "
                           "receipt_persistence_blocker when accepted_for_receipt_persistence is false");
     }
 
@@ -286,7 +274,7 @@ validate_durable_store_import_decision_receipt_persistence_request(
     if (request.accepted_for_receipt_persistence &&
         request.receipt_persistence_boundary_kind !=
             ReceiptPersistenceBoundaryKind::AdapterReceiptPersistenceConsumable) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "accepted_for_receipt_persistence requires "
                           "AdapterReceiptPersistenceConsumable receipt_persistence_boundary_kind");
     }
@@ -294,14 +282,14 @@ validate_durable_store_import_decision_receipt_persistence_request(
     if (request.receipt_persistence_boundary_kind ==
             ReceiptPersistenceBoundaryKind::AdapterReceiptPersistenceConsumable &&
         !request.accepted_for_receipt_persistence) {
-        diagnostics.error("durable store import receipt persistence request "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request "
                           "adapter-receipt-persistence-consumable boundary requires "
                           "accepted_for_receipt_persistence");
     }
 
     if (request.accepted_for_receipt_persistence &&
         request.receipt_boundary_kind != ReceiptBoundaryKind::AdapterReceiptConsumable) {
-        diagnostics.error("durable store import receipt persistence request accepted persistence "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request accepted persistence "
                           "requires AdapterReceiptConsumable receipt_boundary_kind");
     }
 
@@ -309,122 +297,122 @@ validate_durable_store_import_decision_receipt_persistence_request(
     case DurableStoreImportDecisionReceiptPersistenceRequestStatus::ReadyToPersist:
         if (request.receipt_persistence_request_outcome !=
             DurableStoreImportDecisionReceiptPersistenceRequestOutcome::PersistReadyReceipt) {
-            diagnostics.error("durable store import receipt persistence request ReadyToPersist "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request ReadyToPersist "
                               "status requires PersistReadyReceipt outcome");
         }
         if (!request.accepted_for_receipt_persistence) {
-            diagnostics.error("durable store import receipt persistence request ReadyToPersist "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request ReadyToPersist "
                               "status requires accepted_for_receipt_persistence");
         }
         if (request.receipt_status !=
             DurableStoreImportDecisionReceiptStatus::ReadyForArchive) {
-            diagnostics.error("durable store import receipt persistence request ReadyToPersist "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request ReadyToPersist "
                               "status requires ReadyForArchive receipt_status");
         }
         if (request.decision_status != DurableStoreImportDecisionStatus::Accepted) {
-            diagnostics.error("durable store import receipt persistence request ReadyToPersist "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request ReadyToPersist "
                               "status requires Accepted decision_status");
         }
         if (request.request_status != DurableStoreImportRequestStatus::ReadyForAdapter &&
             request.request_status !=
                 DurableStoreImportRequestStatus::TerminalCompleted) {
-            diagnostics.error("durable store import receipt persistence request ReadyToPersist "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request ReadyToPersist "
                               "status requires ReadyForAdapter or TerminalCompleted request_status");
         }
         break;
     case DurableStoreImportDecisionReceiptPersistenceRequestStatus::Blocked:
         if (request.receipt_persistence_request_outcome !=
             DurableStoreImportDecisionReceiptPersistenceRequestOutcome::BlockBlockedReceipt) {
-            diagnostics.error("durable store import receipt persistence request Blocked status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Blocked status "
                               "requires BlockBlockedReceipt outcome");
         }
         if (request.accepted_for_receipt_persistence) {
-            diagnostics.error("durable store import receipt persistence request Blocked status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Blocked status "
                               "cannot be accepted_for_receipt_persistence");
         }
         if (request.receipt_status != DurableStoreImportDecisionReceiptStatus::Blocked) {
-            diagnostics.error("durable store import receipt persistence request Blocked status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Blocked status "
                               "requires Blocked receipt_status");
         }
         if (request.decision_status != DurableStoreImportDecisionStatus::Blocked) {
-            diagnostics.error("durable store import receipt persistence request Blocked status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Blocked status "
                               "requires Blocked decision_status");
         }
         if (request.request_status != DurableStoreImportRequestStatus::Blocked) {
-            diagnostics.error("durable store import receipt persistence request Blocked status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Blocked status "
                               "requires Blocked request_status");
         }
         if (!request.receipt_persistence_blocker.has_value()) {
-            diagnostics.error("durable store import receipt persistence request Blocked status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Blocked status "
                               "requires receipt_persistence_blocker");
         }
         break;
     case DurableStoreImportDecisionReceiptPersistenceRequestStatus::Deferred:
         if (request.receipt_persistence_request_outcome !=
             DurableStoreImportDecisionReceiptPersistenceRequestOutcome::DeferPartialReceipt) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "requires DeferPartialReceipt outcome");
         }
         if (request.accepted_for_receipt_persistence) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "cannot be accepted_for_receipt_persistence");
         }
         if (request.receipt_status != DurableStoreImportDecisionReceiptStatus::Deferred) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "requires Deferred receipt_status");
         }
         if (request.decision_status != DurableStoreImportDecisionStatus::Deferred) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "requires Deferred decision_status");
         }
         if (request.request_status != DurableStoreImportRequestStatus::TerminalPartial) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "requires TerminalPartial request_status");
         }
         if (!request.next_required_adapter_capability.has_value() ||
             *request.next_required_adapter_capability !=
                 AdapterCapabilityKind::PreservePartialWorkflowState) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "requires PreservePartialWorkflowState "
                               "next_required_adapter_capability");
         }
         if (!request.receipt_persistence_blocker.has_value() ||
             request.receipt_persistence_blocker->kind !=
                 ReceiptPersistenceBlockerKind::PartialWorkflowState) {
-            diagnostics.error("durable store import receipt persistence request Deferred status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Deferred status "
                               "requires PartialWorkflowState receipt_persistence_blocker");
         }
         break;
     case DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected:
         if (request.receipt_persistence_request_outcome !=
             DurableStoreImportDecisionReceiptPersistenceRequestOutcome::RejectFailedReceipt) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "requires RejectFailedReceipt outcome");
         }
         if (request.accepted_for_receipt_persistence) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "cannot be accepted_for_receipt_persistence");
         }
         if (request.receipt_status != DurableStoreImportDecisionReceiptStatus::Rejected) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "requires Rejected receipt_status");
         }
         if (request.decision_status != DurableStoreImportDecisionStatus::Rejected) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "requires Rejected decision_status");
         }
         if (request.request_status != DurableStoreImportRequestStatus::TerminalFailed) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "requires TerminalFailed request_status");
         }
         if (!request.workflow_failure_summary.has_value()) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "requires workflow_failure_summary");
         }
         if (!request.receipt_persistence_blocker.has_value() ||
             request.receipt_persistence_blocker->kind !=
                 ReceiptPersistenceBlockerKind::WorkflowFailure) {
-            diagnostics.error("durable store import receipt persistence request Rejected status "
+            emit_validation_error(diagnostics, "durable store import receipt persistence request Rejected status "
                               "requires WorkflowFailure receipt_persistence_blocker");
         }
         break;
@@ -433,7 +421,7 @@ validate_durable_store_import_decision_receipt_persistence_request(
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         request.receipt_persistence_request_status !=
             DurableStoreImportDecisionReceiptPersistenceRequestStatus::ReadyToPersist) {
-        diagnostics.error("durable store import receipt persistence request completed "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request completed "
                           "workflow_status requires ReadyToPersist "
                           "receipt_persistence_request_status");
     }
@@ -441,7 +429,7 @@ validate_durable_store_import_decision_receipt_persistence_request(
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         request.receipt_persistence_request_status !=
             DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected) {
-        diagnostics.error("durable store import receipt persistence request failed "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request failed "
                           "workflow_status requires Rejected "
                           "receipt_persistence_request_status");
     }
@@ -453,7 +441,7 @@ validate_durable_store_import_decision_receipt_persistence_request(
             DurableStoreImportDecisionReceiptPersistenceRequestStatus::Blocked &&
         request.receipt_persistence_request_status !=
             DurableStoreImportDecisionReceiptPersistenceRequestStatus::Deferred) {
-        diagnostics.error("durable store import receipt persistence request partial "
+        emit_validation_error(diagnostics, "durable store import receipt persistence request partial "
                           "workflow_status must map to ReadyToPersist, Blocked, or Deferred "
                           "receipt_persistence_request_status");
     }

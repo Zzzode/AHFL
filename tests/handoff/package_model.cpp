@@ -5,6 +5,8 @@
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -48,61 +50,6 @@ namespace {
     return false;
 }
 
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-[[nodiscard]] std::optional<ahfl::ir::Program>
-load_project_ir(const std::filesystem::path &project_descriptor) {
-    const ahfl::Frontend frontend;
-
-    const auto descriptor_result = frontend.load_project_descriptor(project_descriptor);
-    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-        descriptor_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const auto project_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = descriptor_result.descriptor->entry_files,
-        .search_roots = descriptor_result.descriptor->search_roots,
-    });
-    if (project_result.has_errors()) {
-        project_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(project_result.graph);
-    if (resolve_result.has_errors()) {
-        resolve_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(project_result.graph, resolve_result);
-    if (type_check_result.has_errors()) {
-        type_check_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Validator validator;
-    const auto validation_result =
-        validator.validate(project_result.graph, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        validation_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    return ahfl::lower_program_ir(project_result.graph, resolve_result, type_check_result);
-}
-
 [[nodiscard]] ahfl::handoff::PackageMetadata
 make_project_workflow_value_flow_metadata() {
     ahfl::handoff::PackageMetadata metadata;
@@ -128,7 +75,7 @@ make_project_workflow_value_flow_metadata() {
 
 [[nodiscard]] std::optional<ahfl::handoff::Package>
 load_project_package(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -313,7 +260,7 @@ int run_package_reader_summary_rejects_missing_export(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             summary.diagnostics,
             "package reader summary export target 'missing::Workflow' does not exist")) {
         summary.diagnostics.render(std::cout);
@@ -356,7 +303,7 @@ int run_execution_planner_bootstrap_project_workflow_value_flow(
 
 int run_execution_planner_bootstrap_rejects_agent_entry(
     const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -374,7 +321,7 @@ int run_execution_planner_bootstrap_rejects_agent_entry(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             bootstrap.diagnostics,
             "package entry target 'lib::agents::AliasAgent' is not a workflow target")) {
         bootstrap.diagnostics.render(std::cout);
@@ -411,7 +358,7 @@ int run_execution_planner_bootstrap_rejects_missing_dependency(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             bootstrap.diagnostics,
             "execution planner bootstrap dependency 'missing -> second' refers to unknown workflow node")) {
         bootstrap.diagnostics.render(std::cout);
@@ -471,7 +418,7 @@ int run_execution_plan_project_workflow_value_flow(const std::filesystem::path &
 }
 
 int run_execution_plan_rejects_agent_entry(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -489,7 +436,7 @@ int run_execution_plan_rejects_agent_entry(const std::filesystem::path &project_
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             plan.diagnostics,
             "package entry target 'lib::agents::AliasAgent' is not a workflow target")) {
         plan.diagnostics.render(std::cout);
@@ -550,7 +497,7 @@ int run_validate_execution_plan_rejects_missing_entry_workflow(
         return 1;
     }
 
-    if (!diagnostics_contain(validation.diagnostics,
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
                              "execution plan validation entry workflow 'app::main::MissingWorkflow' does not exist in workflows")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing entry workflow validation diagnostic\n";
@@ -582,7 +529,7 @@ int run_validate_execution_plan_rejects_unknown_value_read(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "execution plan validation workflow 'app::main::ValueFlowWorkflow' node 'second' input_summary reads unknown workflow node output 'missing'")) {
         validation.diagnostics.render(std::cout);
@@ -594,7 +541,7 @@ int run_validate_execution_plan_rejects_unknown_value_read(
 }
 
 int run_validate_package_normalizes_display_names(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -646,7 +593,7 @@ int run_validate_package_normalizes_display_names(const std::filesystem::path &p
 }
 
 int run_validate_package_rejects_wrong_kind(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -664,7 +611,7 @@ int run_validate_package_rejects_wrong_kind(const std::filesystem::path &project
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "field 'entry_target' refers to 'ValueFlowWorkflow' with wrong executable kind")) {
         validation.diagnostics.render(std::cout);
@@ -677,7 +624,7 @@ int run_validate_package_rejects_wrong_kind(const std::filesystem::path &project
 
 int run_validate_package_rejects_duplicate_normalized_targets(
     const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -703,10 +650,10 @@ int run_validate_package_rejects_duplicate_normalized_targets(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "export target 'app::main::ValueFlowWorkflow' is duplicated after semantic normalization") ||
-        !diagnostics_contain(
+        !ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "capability binding for 'lib::agents::Echo' is duplicated after semantic normalization")) {
         validation.diagnostics.render(std::cout);
@@ -718,7 +665,7 @@ int run_validate_package_rejects_duplicate_normalized_targets(
 }
 
 int run_validate_package_rejects_unknown_capability(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
     }
@@ -733,7 +680,7 @@ int run_validate_package_rejects_unknown_capability(const std::filesystem::path 
         return 1;
     }
 
-    if (!diagnostics_contain(validation.diagnostics,
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
                              "unknown package authoring capability 'MissingCapability'")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing unknown-capability diagnostic\n";

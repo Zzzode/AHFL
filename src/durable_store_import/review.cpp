@@ -1,4 +1,5 @@
 #include "ahfl/durable_store_import/review.hpp"
+#include "ahfl/validation/common.hpp"
 
 #include <string>
 #include <string_view>
@@ -8,28 +9,28 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_REVIEW";
+
+void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
+    validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
+}
+
+
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               std::string_view owner_name,
                               DiagnosticBag &diagnostics) {
-    if (summary.message.empty()) {
-        diagnostics.error("durable store import review summary " + std::string(owner_name) +
-                          " contains failure summary with empty message");
-    }
-
-    if (summary.node_name.has_value() && summary.node_name->empty()) {
-        diagnostics.error("durable store import review summary " + std::string(owner_name) +
-                          " contains failure summary with empty node_name");
-    }
+    validation::validate_failure_summary_owner(
+        summary, owner_name, diagnostics, "durable store import review summary");
 }
 
 void validate_adapter_blocker(const AdapterBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary adapter_blocker message must not be empty");
     }
 
     if (blocker.logical_artifact_name.has_value() && blocker.logical_artifact_name->empty()) {
-        diagnostics.error("durable store import review summary adapter_blocker "
+        emit_validation_error(diagnostics, "durable store import review summary adapter_blocker "
                           "logical_artifact_name must not be empty");
     }
 }
@@ -178,66 +179,66 @@ validate_durable_store_import_review_summary(
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kDurableStoreImportReviewSummaryFormatVersion) {
-        diagnostics.error("durable store import review summary format_version must be '" +
+        emit_validation_error(diagnostics, "durable store import review summary format_version must be '" +
                           std::string(kDurableStoreImportReviewSummaryFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_request_format_version !=
         kDurableStoreImportRequestFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary source_durable_store_import_request_format_version must be '" +
             std::string(kDurableStoreImportRequestFormatVersion) + "'");
     }
 
     if (summary.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary source_store_import_descriptor_format_version must be '" +
             std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
     }
 
     if (summary.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary source_export_manifest_format_version must be '" +
             std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary workflow_canonical_name must not be empty");
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error("durable store import review summary session_id must not be empty");
+        emit_validation_error(diagnostics, "durable store import review summary session_id must not be empty");
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary run_id must not be empty when present");
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error("durable store import review summary input_fixture must not be empty");
+        emit_validation_error(diagnostics, "durable store import review summary input_fixture must not be empty");
     }
 
     if (summary.export_package_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary export_package_identity must not be empty");
     }
 
     if (summary.store_import_candidate_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary store_import_candidate_identity must not be empty");
     }
 
     if (summary.durable_store_import_request_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary durable_store_import_request_identity must not be empty");
     }
 
     if (summary.planned_durable_identity.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary planned_durable_identity must not be empty");
     }
 
@@ -247,20 +248,20 @@ validate_durable_store_import_review_summary(
 
     if (summary.requested_artifact_entry_count !=
         summary.requested_artifact_preview.size()) {
-        diagnostics.error("durable store import review summary requested_artifact_entry_count must "
+        emit_validation_error(diagnostics, "durable store import review summary requested_artifact_entry_count must "
                           "match requested_artifact_preview length");
     }
 
     for (const auto &entry : summary.requested_artifact_preview) {
         if (entry.empty()) {
-            diagnostics.error("durable store import review summary requested_artifact_preview must "
+            emit_validation_error(diagnostics, "durable store import review summary requested_artifact_preview must "
                               "not contain empty entries");
             break;
         }
     }
 
     if (summary.next_required_adapter_artifact_kind.has_value() && summary.adapter_ready) {
-        diagnostics.error("durable store import review summary cannot contain "
+        emit_validation_error(diagnostics, "durable store import review summary cannot contain "
                           "next_required_adapter_artifact_kind when adapter_ready is true");
     }
 
@@ -269,21 +270,21 @@ validate_durable_store_import_review_summary(
     }
 
     if (summary.adapter_ready && summary.adapter_blocker.has_value()) {
-        diagnostics.error("durable store import review summary cannot contain adapter_blocker when "
+        emit_validation_error(diagnostics, "durable store import review summary cannot contain adapter_blocker when "
                           "adapter_ready is true");
     }
 
     if (summary.adapter_boundary_summary.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary adapter_boundary_summary must not be empty");
     }
 
     if (summary.request_preview.empty()) {
-        diagnostics.error("durable store import review summary request_preview must not be empty");
+        emit_validation_error(diagnostics, "durable store import review summary request_preview must not be empty");
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error(
+        emit_validation_error(diagnostics, 
             "durable store import review summary next_step_recommendation must not be empty");
     }
 
@@ -291,67 +292,67 @@ validate_durable_store_import_review_summary(
     case DurableStoreImportRequestStatus::ReadyForAdapter:
         if (summary.next_action !=
             DurableStoreImportReviewNextActionKind::HandoffDurableStoreImportRequest) {
-            diagnostics.error("durable store import review summary ReadyForAdapter request_status "
+            emit_validation_error(diagnostics, "durable store import review summary ReadyForAdapter request_status "
                               "requires next_action handoff_durable_store_import_request");
         }
         if (!summary.adapter_ready) {
-            diagnostics.error("durable store import review summary ReadyForAdapter request_status "
+            emit_validation_error(diagnostics, "durable store import review summary ReadyForAdapter request_status "
                               "requires adapter_ready");
         }
         break;
     case DurableStoreImportRequestStatus::Blocked:
         if (summary.next_action !=
             DurableStoreImportReviewNextActionKind::AwaitAdapterReadiness) {
-            diagnostics.error("durable store import review summary Blocked request_status requires "
+            emit_validation_error(diagnostics, "durable store import review summary Blocked request_status requires "
                               "next_action await_adapter_readiness");
         }
         if (summary.adapter_ready) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import review summary Blocked request_status cannot be adapter_ready");
         }
         if (!summary.adapter_blocker.has_value()) {
-            diagnostics.error("durable store import review summary Blocked request_status requires "
+            emit_validation_error(diagnostics, "durable store import review summary Blocked request_status requires "
                               "adapter_blocker");
         }
         break;
     case DurableStoreImportRequestStatus::TerminalCompleted:
         if (summary.next_action !=
             DurableStoreImportReviewNextActionKind::ArchiveCompletedDurableStoreImportState) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalCompleted request_status requires next_action archive_completed_durable_store_import_state");
         }
         if (!summary.adapter_ready) {
-            diagnostics.error("durable store import review summary TerminalCompleted "
+            emit_validation_error(diagnostics, "durable store import review summary TerminalCompleted "
                               "request_status requires adapter_ready");
         }
         if (summary.adapter_blocker.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalCompleted request_status cannot contain adapter_blocker");
         }
         if (summary.next_required_adapter_artifact_kind.has_value()) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalCompleted request_status cannot contain next_required_adapter_artifact_kind");
         }
         break;
     case DurableStoreImportRequestStatus::TerminalFailed:
         if (summary.next_action !=
             DurableStoreImportReviewNextActionKind::InvestigateDurableStoreImportFailure) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalFailed request_status requires next_action investigate_durable_store_import_failure");
         }
         if (!summary.adapter_blocker.has_value()) {
-            diagnostics.error("durable store import review summary TerminalFailed request_status "
+            emit_validation_error(diagnostics, "durable store import review summary TerminalFailed request_status "
                               "requires adapter_blocker");
         }
         break;
     case DurableStoreImportRequestStatus::TerminalPartial:
         if (summary.next_action !=
             DurableStoreImportReviewNextActionKind::PreservePartialDurableStoreImportState) {
-            diagnostics.error(
+            emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalPartial request_status requires next_action preserve_partial_durable_store_import_state");
         }
         if (!summary.adapter_blocker.has_value()) {
-            diagnostics.error("durable store import review summary TerminalPartial request_status "
+            emit_validation_error(diagnostics, "durable store import review summary TerminalPartial request_status "
                               "requires adapter_blocker");
         }
         break;

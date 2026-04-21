@@ -1,5 +1,7 @@
 #include "ahfl/execution_journal/journal.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <iostream>
 #include <optional>
 #include <string>
@@ -7,17 +9,6 @@
 #include <utility>
 
 namespace {
-
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
-}
 
 [[nodiscard]] ahfl::runtime_session::RuntimeFailureSummary
 make_failure_summary(ahfl::runtime_session::RuntimeFailureKind kind,
@@ -350,7 +341,7 @@ int run_validate_execution_journal_rejects_out_of_order_node_phase() {
         return 1;
     }
 
-    if (!diagnostics_contain(validation.diagnostics,
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
                              "execution journal validation node 'first' starts before 'node_became_ready'")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing out-of-order node phase diagnostic\n";
@@ -375,7 +366,7 @@ int run_validate_execution_journal_rejects_failed_before_node_started() {
         return 1;
     }
 
-    if (!diagnostics_contain(validation.diagnostics,
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
                              "execution journal validation node 'first' fails before 'node_started'")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing failed-before-node-started diagnostic\n";
@@ -395,7 +386,7 @@ int run_validate_execution_journal_rejects_failed_without_workflow_failed() {
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
             "execution journal validation contains failed node events but does not end with 'workflow_failed'")) {
         validation.diagnostics.render(std::cout);
@@ -421,7 +412,7 @@ int run_validate_execution_journal_rejects_non_monotonic_execution_index() {
         return 1;
     }
 
-    if (!diagnostics_contain(validation.diagnostics,
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
                              "execution journal validation event 'node_became_ready' decreases execution_index ordering")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing non-monotonic execution_index diagnostic\n";
@@ -449,7 +440,7 @@ int run_validate_execution_journal_rejects_events_after_workflow_completed() {
         return 1;
     }
 
-    if (!diagnostics_contain(validation.diagnostics,
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
                              "execution journal validation contains events after 'workflow_completed'")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing events-after-workflow-completed diagnostic\n";
@@ -554,7 +545,7 @@ int run_build_execution_journal_rejects_invalid_runtime_session() {
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             result.diagnostics,
             "runtime session validation node 'second' is not executable-complete while workflow status is terminal")) {
         result.diagnostics.render(std::cout);

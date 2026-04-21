@@ -106,6 +106,7 @@ struct ProgramImports {
     std::ostringstream buffer;
     buffer << input.rdbuf();
     source.content = buffer.str();
+    source.invalidate_line_starts_cache();
     return true;
 }
 

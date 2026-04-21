@@ -8,6 +8,8 @@
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
 
+#include "../common/test_support.hpp"
+
 #include <filesystem>
 #include <iostream>
 #include <optional>
@@ -31,61 +33,6 @@ enum class SessionScenario {
     Failed,
     Partial,
 };
-
-[[nodiscard]] bool diagnostics_contain(const ahfl::DiagnosticBag &diagnostics,
-                                       std::string_view needle) {
-    for (const auto &entry : diagnostics.entries()) {
-        if (entry.message.find(needle) != std::string::npos) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-[[nodiscard]] std::optional<ahfl::ir::Program>
-load_project_ir(const std::filesystem::path &project_descriptor) {
-    const ahfl::Frontend frontend;
-
-    const auto descriptor_result = frontend.load_project_descriptor(project_descriptor);
-    if (descriptor_result.has_errors() || !descriptor_result.descriptor.has_value()) {
-        descriptor_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const auto project_result = frontend.parse_project(ahfl::ProjectInput{
-        .entry_files = descriptor_result.descriptor->entry_files,
-        .search_roots = descriptor_result.descriptor->search_roots,
-    });
-    if (project_result.has_errors()) {
-        project_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Resolver resolver;
-    const auto resolve_result = resolver.resolve(project_result.graph);
-    if (resolve_result.has_errors()) {
-        resolve_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::TypeChecker type_checker;
-    const auto type_check_result = type_checker.check(project_result.graph, resolve_result);
-    if (type_check_result.has_errors()) {
-        type_check_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    const ahfl::Validator validator;
-    const auto validation_result =
-        validator.validate(project_result.graph, resolve_result, type_check_result);
-    if (validation_result.has_errors()) {
-        validation_result.diagnostics.render(std::cout);
-        return std::nullopt;
-    }
-
-    return ahfl::lower_program_ir(project_result.graph, resolve_result, type_check_result);
-}
 
 [[nodiscard]] ahfl::handoff::PackageMetadata
 make_project_workflow_value_flow_metadata() {
@@ -112,7 +59,7 @@ make_project_workflow_value_flow_metadata() {
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
 load_project_plan(const std::filesystem::path &project_descriptor) {
-    const auto ir_program = load_project_ir(project_descriptor);
+    const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return std::nullopt;
     }
@@ -414,7 +361,7 @@ int validate_persistence_export_manifest_rejects_missing_export_package_identity
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "export_package_identity must not be empty")
                ? 0
                : 1;
@@ -432,7 +379,7 @@ int validate_persistence_export_manifest_rejects_duplicate_artifact_name() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "contains duplicate logical_artifact_name")
                ? 0
                : 1;
@@ -453,7 +400,7 @@ int validate_persistence_export_manifest_rejects_ready_with_blocker() {
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "cannot contain store_import_blocker when manifest_ready is true")
                ? 0
                : 1;
@@ -471,7 +418,7 @@ int validate_persistence_export_manifest_rejects_ready_from_blocked_persistence(
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                    validation.diagnostics,
                    "ReadyToImport status requires ReadyToExport persistence_status")
                ? 0
@@ -490,7 +437,7 @@ int validate_persistence_export_manifest_rejects_unsupported_source_descriptor_f
         return 1;
     }
 
-    return diagnostics_contain(validation.diagnostics,
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
                                "source_persistence_descriptor_format_version must be")
                ? 0
                : 1;
@@ -518,7 +465,7 @@ int validate_persistence_export_manifest_rejects_store_import_adjacent_blocked()
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                    validation.diagnostics,
                    "store-import-adjacent boundary requires ready or completed manifest_status")
                ? 0
@@ -550,7 +497,7 @@ int validate_persistence_export_manifest_rejects_terminal_failed_without_failure
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                    validation.diagnostics,
                    "TerminalFailed status requires workflow_failure_summary")
                ? 0
@@ -703,7 +650,7 @@ int build_persistence_export_manifest_rejects_invalid_descriptor(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             manifest.diagnostics,
             "persistence descriptor source_checkpoint_record_format_version must be")) {
         manifest.diagnostics.render(std::cout);
@@ -735,7 +682,7 @@ int build_persistence_export_manifest_rejects_descriptor_workflow_mismatch(
         return 1;
     }
 
-    if (!diagnostics_contain(
+    if (!ahfl::test_support::diagnostics_contain(
             manifest.diagnostics,
             "persistence export manifest bootstrap persistence descriptor workflow_canonical_name does not match runtime session")) {
         manifest.diagnostics.render(std::cout);
@@ -782,7 +729,7 @@ int validate_persistence_export_review_rejects_unsupported_source_manifest_forma
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                    validation.diagnostics,
                    "source_export_manifest_format_version must be")
                ? 0
@@ -800,7 +747,7 @@ int build_persistence_export_review_rejects_invalid_manifest() {
         return 1;
     }
 
-    return diagnostics_contain(
+    return ahfl::test_support::diagnostics_contain(
                    summary.diagnostics,
                    "persistence export manifest export_package_identity must not be empty")
                ? 0

@@ -282,8 +282,38 @@ void print_usage_line(std::ostream &out, CommandKind command) {
     return command_in_list(command, CommandListKind::CapabilityInputSupported);
 }
 
+[[nodiscard]] bool supports_capability_inputs(std::optional<CommandKind> command) {
+    return command.has_value() && is_capability_input_supported_command(*command);
+}
+
 [[nodiscard]] bool is_command_requiring_package(CommandKind command) {
     return is_capability_input_supported_command(command);
+}
+
+[[nodiscard]] std::optional<ahfl::BackendKind>
+selected_backend_for_command(std::optional<CommandKind> command) {
+    if (!command.has_value()) {
+        return std::nullopt;
+    }
+
+    switch (*command) {
+    case CommandKind::EmitIr:
+        return ahfl::BackendKind::Ir;
+    case CommandKind::EmitIrJson:
+        return ahfl::BackendKind::IrJson;
+    case CommandKind::EmitNativeJson:
+        return ahfl::BackendKind::NativeJson;
+    case CommandKind::EmitExecutionPlan:
+        return ahfl::BackendKind::ExecutionPlan;
+    case CommandKind::EmitPackageReview:
+        return ahfl::BackendKind::PackageReview;
+    case CommandKind::EmitSummary:
+        return ahfl::BackendKind::Summary;
+    case CommandKind::EmitSmv:
+        return ahfl::BackendKind::Smv;
+    default:
+        return std::nullopt;
+    }
 }
 
 void set_command_option(CommandLineOptions &options, CommandKind command) {

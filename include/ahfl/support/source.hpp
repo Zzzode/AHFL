@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ahfl {
 
@@ -32,19 +33,23 @@ struct SourceRange {
 struct SourceFile {
     std::string display_name;
     std::string content;
+    // Cached line-start offsets for locate/offset_of hot paths.
+    // Source content is treated as immutable after loading.
+    mutable std::vector<std::size_t> line_starts_cache;
+    mutable const char *line_starts_content_data{nullptr};
+    mutable std::size_t line_starts_content_size{0};
 
     [[nodiscard]] SourcePosition locate(std::size_t offset) const {
+        refresh_line_starts_cache();
+
         SourcePosition position{.offset = std::min(offset, content.size())};
-
-        for (std::size_t index = 0; index < position.offset; ++index) {
-            if (content[index] == '\n') {
-                ++position.line;
-                position.column = 1;
-            } else {
-                ++position.column;
-            }
-        }
-
+        const auto it =
+            std::upper_bound(line_starts_cache.begin(), line_starts_cache.end(), position.offset);
+        const auto line_index = it == line_starts_cache.begin()
+                                    ? 0
+                                    : static_cast<std::size_t>((it - line_starts_cache.begin()) - 1);
+        position.line = line_index + 1;
+        position.column = position.offset - line_starts_cache[line_index] + 1;
         return position;
     }
 
@@ -53,20 +58,27 @@ struct SourceFile {
             return 0;
         }
 
-        std::size_t current_line = 1;
-        std::size_t current_column = 1;
+        refresh_line_starts_cache();
+        if (line == 0 || line > line_starts_cache.size()) {
+            return content.size();
+        }
 
-        for (std::size_t index = 0; index < content.size(); ++index) {
-            if (current_line == line && current_column == column) {
+        const std::size_t line_start = line_starts_cache[line - 1];
+        if (column <= 1) {
+            return line_start;
+        }
+
+        std::size_t current_column = 1;
+        for (std::size_t index = line_start; index < content.size(); ++index) {
+            if (current_column == column) {
                 return index;
             }
 
             if (content[index] == '\n') {
-                ++current_line;
-                current_column = 1;
-            } else {
-                ++current_column;
+                break;
             }
+
+            ++current_column;
         }
 
         return content.size();
@@ -79,6 +91,33 @@ struct SourceFile {
 
         const auto length = std::min(range.end_offset, content.size()) - range.begin_offset;
         return std::string_view{content}.substr(range.begin_offset, length);
+    }
+
+    void invalidate_line_starts_cache() const {
+        line_starts_cache.clear();
+        line_starts_content_data = nullptr;
+        line_starts_content_size = 0;
+    }
+
+    void refresh_line_starts_cache() const {
+        const auto *data = content.data();
+        const auto size = content.size();
+        if (line_starts_content_data == data && line_starts_content_size == size &&
+            !line_starts_cache.empty()) {
+            return;
+        }
+
+        line_starts_cache.clear();
+        line_starts_cache.reserve(1 + (content.size() / 32));
+        line_starts_cache.push_back(0);
+        for (std::size_t index = 0; index < content.size(); ++index) {
+            if (content[index] == '\n') {
+                line_starts_cache.push_back(index + 1);
+            }
+        }
+
+        line_starts_content_data = data;
+        line_starts_content_size = size;
     }
 };
 
