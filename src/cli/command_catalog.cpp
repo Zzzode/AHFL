@@ -1,4 +1,4 @@
-#include "command_catalog.hpp"
+#include "ahfl/cli/command_catalog.hpp"
 
 #include <algorithm>
 #include <cstddef>

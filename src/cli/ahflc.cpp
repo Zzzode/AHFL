@@ -1,11 +1,11 @@
 #include "ahfl/backends/driver.hpp"
 #include "ahfl/dry_run/runner.hpp"
 #include "ahfl/frontend/frontend.hpp"
+#include "ahfl/cli/command_catalog.hpp"
+#include "ahfl/cli/pipeline_runner.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
-#include "command_catalog.hpp"
-#include "pipeline_runner.hpp"
 
 #include <algorithm>
 #include <filesystem>

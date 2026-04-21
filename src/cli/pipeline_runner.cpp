@@ -1,4 +1,4 @@
-#include "pipeline_runner.hpp"
+#include "ahfl/cli/pipeline_runner.hpp"
 
 #include "ahfl/audit_report/report.hpp"
 #include "ahfl/backends/audit_report.hpp"
