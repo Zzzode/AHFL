@@ -123,20 +123,16 @@ resolve_executable_name(const ExecutableIndex &index,
             return found->second.front();
         }
 
-        diagnostics.error("package authoring field '" + std::string(field_name) +
-                          "' is ambiguous for " + executable_kind_name(kind) + " '" +
-                          std::string(raw_name) + "'");
+        diagnostics.error().message("package authoring field '" + std::string(field_name) + "' is ambiguous for " + executable_kind_name(kind) + " '" + std::string(raw_name) + "'").emit();
         return std::nullopt;
     }
 
     if (other_canonical.contains(std::string(raw_name)) || other_display.contains(std::string(raw_name))) {
-        diagnostics.error("package authoring field '" + std::string(field_name) + "' refers to '" +
-                          std::string(raw_name) + "' with wrong executable kind");
+        diagnostics.error().message("package authoring field '" + std::string(field_name) + "' refers to '" + std::string(raw_name) + "' with wrong executable kind").emit();
         return std::nullopt;
     }
 
-    diagnostics.error("unknown package authoring " + executable_kind_name(kind) + " target '" +
-                      std::string(raw_name) + "' in field '" + std::string(field_name) + "'");
+    diagnostics.error().message("unknown package authoring " + executable_kind_name(kind) + " target '" + std::string(raw_name) + "' in field '" + std::string(field_name) + "'").emit();
     return std::nullopt;
 }
 
@@ -153,12 +149,11 @@ resolve_capability_name(const CapabilityIndex &index,
             return found->second.front();
         }
 
-        diagnostics.error("package authoring capability binding is ambiguous for capability '" +
-                          std::string(raw_name) + "'");
+        diagnostics.error().message("package authoring capability binding is ambiguous for capability '" + std::string(raw_name) + "'").emit();
         return std::nullopt;
     }
 
-    diagnostics.error("unknown package authoring capability '" + std::string(raw_name) + "'");
+    diagnostics.error().message("unknown package authoring capability '" + std::string(raw_name) + "'").emit();
     return std::nullopt;
 }
 
@@ -512,8 +507,7 @@ PackageMetadataValidationResult validate_package_metadata(const ir::Program &pro
         const auto key =
             std::to_string(static_cast<int>(target.kind)) + ":" + target.canonical_name;
         if (!seen_export_targets.insert(key).second) {
-            result.diagnostics.error("package authoring export target '" + target.canonical_name +
-                                     "' is duplicated after semantic normalization");
+            result.diagnostics.error().message("package authoring export target '" + target.canonical_name + "' is duplicated after semantic normalization").emit();
         }
     }
 
@@ -527,8 +521,7 @@ PackageMetadataValidationResult validate_package_metadata(const ir::Program &pro
 
         if (const auto found = normalized_bindings.find(*canonical_name);
             found != normalized_bindings.end()) {
-            result.diagnostics.error("package authoring capability binding for '" + *canonical_name +
-                                     "' is duplicated after semantic normalization");
+            result.diagnostics.error().message("package authoring capability binding for '" + *canonical_name + "' is duplicated after semantic normalization").emit();
             continue;
         }
 
@@ -679,15 +672,12 @@ void validate_workflow_value_summary(const ir::WorkflowExprSummary &summary,
         switch (read.kind) {
         case ir::WorkflowValueSourceKind::WorkflowInput:
             if (read.root_name != "input") {
-                diagnostics.error("execution plan validation " + std::string(owner) +
-                                  " reads workflow input root '" + read.root_name +
-                                  "' instead of 'input'");
+                diagnostics.error().message("execution plan validation " + std::string(owner) + " reads workflow input root '" + read.root_name + "' instead of 'input'").emit();
             }
             break;
         case ir::WorkflowValueSourceKind::WorkflowNodeOutput:
             if (!node_names.contains(read.root_name)) {
-                diagnostics.error("execution plan validation " + std::string(owner) +
-                                  " reads unknown workflow node output '" + read.root_name + "'");
+                diagnostics.error().message("execution plan validation " + std::string(owner) + " reads unknown workflow node output '" + read.root_name + "'").emit();
             }
             break;
         }
@@ -696,7 +686,7 @@ void validate_workflow_value_summary(const ir::WorkflowExprSummary &summary,
 
 void validate_workflow_plan(const WorkflowPlan &workflow, DiagnosticBag &diagnostics) {
     if (workflow.workflow_canonical_name.empty()) {
-        diagnostics.error("execution plan validation contains workflow with empty canonical name");
+        diagnostics.error().message("execution plan validation contains workflow with empty canonical name").emit();
     }
 
     const auto workflow_name = workflow.workflow_canonical_name.empty()
@@ -707,14 +697,12 @@ void validate_workflow_plan(const WorkflowPlan &workflow, DiagnosticBag &diagnos
     std::unordered_map<std::string, const WorkflowNodePlan *> nodes_by_name;
     for (const auto &node : workflow.nodes) {
         if (node.name.empty()) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' contains node with empty name");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' contains node with empty name").emit();
             continue;
         }
 
         if (!node_names.insert(node.name).second) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' contains duplicate node '" + node.name + "'");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' contains duplicate node '" + node.name + "'").emit();
             continue;
         }
 
@@ -722,27 +710,23 @@ void validate_workflow_plan(const WorkflowPlan &workflow, DiagnosticBag &diagnos
     }
 
     if (workflow.nodes.empty()) {
-        diagnostics.error("execution plan validation workflow '" + workflow_name +
-                          "' contains no nodes");
+        diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' contains no nodes").emit();
     }
 
     std::unordered_set<std::string> entry_nodes;
     for (const auto &entry_node : workflow.entry_nodes) {
         if (!entry_nodes.insert(entry_node).second) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' contains duplicate entry node '" + entry_node + "'");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' contains duplicate entry node '" + entry_node + "'").emit();
         }
 
         const auto found = nodes_by_name.find(entry_node);
         if (found == nodes_by_name.end()) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' entry node '" + entry_node + "' does not exist");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' entry node '" + entry_node + "' does not exist").emit();
             continue;
         }
 
         if (!found->second->after.empty()) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' entry node '" + entry_node + "' has dependencies");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' entry node '" + entry_node + "' has dependencies").emit();
         }
     }
 
@@ -755,17 +739,13 @@ void validate_workflow_plan(const WorkflowPlan &workflow, DiagnosticBag &diagnos
 
     for (const auto &edge : workflow.dependency_edges) {
         if (!node_names.contains(edge.from_node) || !node_names.contains(edge.to_node)) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' dependency edge '" + edge.from_node + " -> " + edge.to_node +
-                              "' refers to unknown node");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' dependency edge '" + edge.from_node + " -> " + edge.to_node + "' refers to unknown node").emit();
             continue;
         }
 
         const auto key = edge_key(edge.from_node, edge.to_node);
         if (!edge_keys.insert(key).second) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' contains duplicate dependency edge '" + edge.from_node +
-                              " -> " + edge.to_node + "'");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' contains duplicate dependency edge '" + edge.from_node + " -> " + edge.to_node + "'").emit();
         }
 
         outgoing_edges[edge.from_node].push_back(edge.to_node);
@@ -774,81 +754,59 @@ void validate_workflow_plan(const WorkflowPlan &workflow, DiagnosticBag &diagnos
         const auto found_target = nodes_by_name.find(edge.to_node);
         if (found_target != nodes_by_name.end() &&
             !contains_string(found_target->second->after, edge.from_node)) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' dependency edge '" + edge.from_node + " -> " + edge.to_node +
-                              "' is not mirrored by node '" + edge.to_node + "' after list");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' dependency edge '" + edge.from_node + " -> " + edge.to_node + "' is not mirrored by node '" + edge.to_node + "' after list").emit();
         }
     }
 
     for (const auto &node : workflow.nodes) {
         if (node.target.empty()) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' node '" + node.name + "' has empty target");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' has empty target").emit();
         }
 
         const auto expected_start_condition =
             node.after.empty() ? WorkflowNodeStartConditionKind::Immediate
                                : WorkflowNodeStartConditionKind::AfterDependenciesCompleted;
         if (node.lifecycle.start_condition != expected_start_condition) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' node '" + node.name +
-                              "' start condition does not match dependencies");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' start condition does not match dependencies").emit();
         }
 
         if (node.lifecycle.target_final_states.empty()) {
-            diagnostics.error("execution plan validation workflow '" + workflow_name +
-                              "' node '" + node.name +
-                              "' lifecycle has no target final state");
+            diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' lifecycle has no target final state").emit();
         }
         for (const auto &state : node.lifecycle.target_final_states) {
             if (state.empty()) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name +
-                                  "' lifecycle contains empty target final state");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' lifecycle contains empty target final state").emit();
             }
         }
 
         std::unordered_set<std::string> seen_dependencies;
         for (const auto &dependency : node.after) {
             if (!seen_dependencies.insert(dependency).second) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name +
-                                  "' contains duplicate after dependency '" + dependency + "'");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' contains duplicate after dependency '" + dependency + "'").emit();
             }
 
             if (!node_names.contains(dependency)) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name + "' depends on unknown node '" +
-                                  dependency + "'");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' depends on unknown node '" + dependency + "'").emit();
                 continue;
             }
 
             if (!edge_keys.contains(edge_key(dependency, node.name))) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name + "' after dependency '" + dependency +
-                                  "' is missing dependency edge");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' after dependency '" + dependency + "' is missing dependency edge").emit();
             }
         }
 
         std::unordered_set<std::string> binding_refs;
         for (const auto &binding : node.capability_bindings) {
             if (binding.capability_name.empty()) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name +
-                                  "' has capability binding with empty capability name");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' has capability binding with empty capability name").emit();
             }
             if (binding.binding_key.empty()) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name +
-                                  "' has capability binding with empty binding key");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' has capability binding with empty binding key").emit();
             }
 
             const auto binding_key = edge_key(binding.capability_name, binding.binding_key);
             if (!binding_refs.insert(binding_key).second) {
-                diagnostics.error("execution plan validation workflow '" + workflow_name +
-                                  "' node '" + node.name +
-                                  "' contains duplicate capability binding '" +
-                                  binding.capability_name + "'");
+                diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' node '" + node.name + "' contains duplicate capability binding '" + binding.capability_name + "'").emit();
             }
         }
 
@@ -890,8 +848,7 @@ void validate_workflow_plan(const WorkflowPlan &workflow, DiagnosticBag &diagnos
     }
 
     if (visited_node_count != node_names.size()) {
-        diagnostics.error("execution plan validation workflow '" + workflow_name +
-                          "' dependency graph contains a cycle");
+        diagnostics.error().message("execution plan validation workflow '" + workflow_name + "' dependency graph contains a cycle").emit();
     }
 
     validate_workflow_value_summary(workflow.return_summary,
@@ -936,46 +893,36 @@ PackageReaderSummaryResult build_package_reader_summary(const Package &package) 
 
     if (result.summary.identity.has_value() &&
         result.summary.identity->format_version != kFormatVersion) {
-        result.diagnostics.error("package reader summary encountered unsupported format_version '" +
-                                 result.summary.identity->format_version + "'");
+        result.diagnostics.error().message("package reader summary encountered unsupported format_version '" + result.summary.identity->format_version + "'").emit();
     }
 
     if (result.summary.entry_target.has_value() &&
         !has_executable_target(*result.summary.entry_target)) {
-        result.diagnostics.error("package reader summary entry target '" +
-                                 result.summary.entry_target->canonical_name +
-                                 "' does not exist in executable targets");
+        result.diagnostics.error().message("package reader summary entry target '" + result.summary.entry_target->canonical_name + "' does not exist in executable targets").emit();
     }
 
     for (const auto &target : result.summary.export_targets) {
         if (!has_executable_target(target)) {
-            result.diagnostics.error("package reader summary export target '" +
-                                     target.canonical_name +
-                                     "' does not exist in executable targets");
+            result.diagnostics.error().message("package reader summary export target '" + target.canonical_name + "' does not exist in executable targets").emit();
         }
     }
 
     std::unordered_set<std::string> binding_keys;
     for (const auto &slot : result.summary.capability_binding_slots) {
         if (!binding_keys.insert(slot.binding_key).second) {
-            result.diagnostics.error("package reader summary contains duplicate capability binding key '" +
-                                     slot.binding_key + "'");
+            result.diagnostics.error().message("package reader summary contains duplicate capability binding key '" + slot.binding_key + "'").emit();
         }
 
         for (const auto &target : slot.required_by_targets) {
             if (!has_executable_target(target)) {
-                result.diagnostics.error("package reader summary capability binding target '" +
-                                         target.canonical_name +
-                                         "' does not exist in executable targets");
+                result.diagnostics.error().message("package reader summary capability binding target '" + target.canonical_name + "' does not exist in executable targets").emit();
             }
         }
     }
 
     for (const auto &obligation : result.summary.policy_obligations) {
         if (!has_executable_target(obligation.owner_target)) {
-            result.diagnostics.error("package reader summary policy obligation owner '" +
-                                     obligation.owner_target.canonical_name +
-                                     "' does not exist in executable targets");
+            result.diagnostics.error().message("package reader summary policy obligation owner '" + obligation.owner_target.canonical_name + "' does not exist in executable targets").emit();
         }
     }
 
@@ -1005,14 +952,11 @@ build_execution_planner_bootstrap(const Package &package, std::string_view workf
     const auto *workflow = find_workflow_executable(package, workflow_canonical_name);
     if (workflow == nullptr) {
         if (find_agent_executable(package, workflow_canonical_name) != nullptr) {
-            result.diagnostics.error("execution planner bootstrap target '" +
-                                     std::string(workflow_canonical_name) +
-                                     "' is not a workflow target");
+            result.diagnostics.error().message("execution planner bootstrap target '" + std::string(workflow_canonical_name) + "' is not a workflow target").emit();
             return result;
         }
 
-        result.diagnostics.error("unknown execution planner workflow target '" +
-                                 std::string(workflow_canonical_name) + "'");
+        result.diagnostics.error().message("unknown execution planner workflow target '" + std::string(workflow_canonical_name) + "'").emit();
         return result;
     }
 
@@ -1040,32 +984,26 @@ build_execution_planner_bootstrap(const Package &package, std::string_view workf
     for (const auto &node : bootstrap.nodes) {
         node_names.insert(node.name);
         if (find_agent_executable(package, node.target) == nullptr) {
-            result.diagnostics.error("execution planner bootstrap node '" + node.name +
-                                     "' targets unknown agent '" + node.target + "'");
+            result.diagnostics.error().message("execution planner bootstrap node '" + node.name + "' targets unknown agent '" + node.target + "'").emit();
         }
     }
 
     for (const auto &entry_node : bootstrap.entry_nodes) {
         if (!node_names.contains(entry_node)) {
-            result.diagnostics.error("execution planner bootstrap entry node '" + entry_node +
-                                     "' does not exist in workflow '" +
-                                     bootstrap.workflow_canonical_name + "'");
+            result.diagnostics.error().message("execution planner bootstrap entry node '" + entry_node + "' does not exist in workflow '" + bootstrap.workflow_canonical_name + "'").emit();
         }
     }
 
     for (const auto &edge : bootstrap.dependency_edges) {
         if (!node_names.contains(edge.from_node) || !node_names.contains(edge.to_node)) {
-            result.diagnostics.error("execution planner bootstrap dependency '" + edge.from_node +
-                                     " -> " + edge.to_node +
-                                     "' refers to unknown workflow node");
+            result.diagnostics.error().message("execution planner bootstrap dependency '" + edge.from_node + " -> " + edge.to_node + "' refers to unknown workflow node").emit();
         }
     }
 
     for (const auto &node : bootstrap.nodes) {
         for (const auto &dependency : node.after) {
             if (!node_names.contains(dependency)) {
-                result.diagnostics.error("execution planner bootstrap node '" + node.name +
-                                         "' depends on unknown node '" + dependency + "'");
+                result.diagnostics.error().message("execution planner bootstrap node '" + node.name + "' depends on unknown node '" + dependency + "'").emit();
             }
         }
     }
@@ -1081,8 +1019,7 @@ ExecutionPlannerBootstrapResult build_entry_execution_planner_bootstrap(const Pa
             .diagnostics =
                 [&]() {
                     DiagnosticBag diagnostics;
-                    diagnostics.error(
-                        "package does not define a workflow entry target for execution planner bootstrap");
+                    diagnostics.error().message("package does not define a workflow entry target for execution planner bootstrap").emit();
                     return diagnostics;
                 }(),
         };
@@ -1094,9 +1031,7 @@ ExecutionPlannerBootstrapResult build_entry_execution_planner_bootstrap(const Pa
             .diagnostics =
                 [&]() {
                     DiagnosticBag diagnostics;
-                    diagnostics.error("package entry target '" +
-                                      package.metadata.entry_target->canonical_name +
-                                      "' is not a workflow target for execution planner bootstrap");
+                    diagnostics.error().message("package entry target '" + package.metadata.entry_target->canonical_name + "' is not a workflow target for execution planner bootstrap").emit();
                     return diagnostics;
                 }(),
         };
@@ -1112,9 +1047,7 @@ ExecutionPlanValidationResult validate_execution_plan(const ExecutionPlan &plan)
     };
 
     if (plan.format_version != kExecutionPlanFormatVersion) {
-        result.diagnostics.error(
-            "execution plan validation encountered unsupported format_version '" +
-            plan.format_version + "'");
+        result.diagnostics.error().message("execution plan validation encountered unsupported format_version '" + plan.format_version + "'").emit();
     }
 
     std::unordered_set<std::string> workflow_names;
@@ -1124,20 +1057,17 @@ ExecutionPlanValidationResult validate_execution_plan(const ExecutionPlan &plan)
         }
 
         if (!workflow_names.insert(workflow.workflow_canonical_name).second) {
-            result.diagnostics.error("execution plan validation contains duplicate workflow '" +
-                                     workflow.workflow_canonical_name + "'");
+            result.diagnostics.error().message("execution plan validation contains duplicate workflow '" + workflow.workflow_canonical_name + "'").emit();
         }
     }
 
     if (plan.workflows.empty()) {
-        result.diagnostics.error("execution plan validation contains no workflows");
+        result.diagnostics.error().message("execution plan validation contains no workflows").emit();
     }
 
     if (plan.entry_workflow_canonical_name.has_value() &&
         !workflow_names.contains(*plan.entry_workflow_canonical_name)) {
-        result.diagnostics.error("execution plan validation entry workflow '" +
-                                 *plan.entry_workflow_canonical_name +
-                                 "' does not exist in workflows");
+        result.diagnostics.error().message("execution plan validation entry workflow '" + *plan.entry_workflow_canonical_name + "' does not exist in workflows").emit();
     }
 
     for (const auto &workflow : plan.workflows) {

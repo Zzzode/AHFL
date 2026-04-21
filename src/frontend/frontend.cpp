@@ -253,12 +253,18 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
                      const std::string &message,
                      std::exception_ptr) override {
         if (const auto offending = borrow(offending_symbol)) {
-            diagnostics_.error(message, token_range(offending->get(), offending, source_));
+            diagnostics_.error()
+                .message(message)
+                .range(token_range(offending->get(), offending, source_))
+                .emit();
             return;
         }
 
         const auto begin_offset = source_.offset_of(line, char_position_in_line + 1);
-        diagnostics_.error(message, clamp_range(begin_offset, begin_offset, source_));
+        diagnostics_.error()
+            .message(message)
+            .range(clamp_range(begin_offset, begin_offset, source_))
+            .emit();
     }
 
   private:
@@ -274,7 +280,9 @@ class DiagnosticErrorListener final : public antlr4::BaseErrorListener {
 
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        diagnostics.error("failed to open " + std::string(kind) + ": " + display_path(path));
+        diagnostics.error()
+            .message("failed to open " + std::string(kind) + ": " + display_path(path))
+            .emit();
         return false;
     }
 
@@ -2276,11 +2284,15 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
         result.program =
             builder.build(require(parser.program(), "parser.program() returned no parse tree"));
     } catch (const std::exception &exception) {
-        result.diagnostics.error("parser failed: " + std::string(exception.what()));
+        result.diagnostics.error()
+            .message("parser failed: " + std::string(exception.what()))
+            .emit();
     }
 
     if (result.program && options_.emit_parse_note && !result.has_errors()) {
-        result.diagnostics.note("parsed with the generated ANTLR4 C++ parser from grammar/AHFL.g4");
+        result.diagnostics.note()
+            .message("parsed with the generated ANTLR4 C++ parser from grammar/AHFL.g4")
+            .emit();
     }
 
     return result;

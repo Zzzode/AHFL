@@ -1,6 +1,7 @@
 #include "ahfl/semantics/resolver.hpp"
 
 #include "ahfl/frontend/frontend.hpp"
+#include "ahfl/support/diagnostics.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -132,7 +133,7 @@ class ResolverPass final {
             visit(static_cast<const ast::WorkflowDecl &>(node));
             return;
         case ast::NodeKind::Program:
-            error_here("unexpected program node in declarations list", node.range);
+            emit_error("unexpected program node in declarations list", current_source_, node.range);
             return;
         }
     }
@@ -144,7 +145,7 @@ class ResolverPass final {
 
         if (source_graph_mode_ && current_source_id_.has_value()) {
             if (module_name_.has_value() && node.name->spelling() != *module_name_) {
-                error_here("source unit module boundary does not match graph owner", node.range);
+                emit_error("source unit module boundary does not match graph owner", current_source_, node.range);
             }
             return;
         }
@@ -156,8 +157,8 @@ class ResolverPass final {
             return;
         }
 
-        error_here("multiple module declarations are not supported in one source file", node.range);
-        note_here("first module declaration is here", module_range_);
+        emit_error("multiple module declarations are not supported in one source file", current_source_, node.range);
+        emit_note("first module declaration is here", current_source_, module_range_);
     }
 
     void visit(const ast::ImportDecl &node) {
@@ -177,10 +178,11 @@ class ResolverPass final {
 
         if (const auto existing = import_alias_index_.find(node.alias);
             existing != import_alias_index_.end()) {
-            error_here("duplicate import alias '" + node.alias + "'", node.range);
-            note_for_source("previous import alias is here",
-                            result_.imports()[existing->second].source_id,
-                            result_.imports()[existing->second].declaration_range);
+            emit_error("duplicate import alias '" + node.alias + "'", current_source_, node.range);
+            const auto &prev_import = result_.imports()[existing->second];
+            if (auto src = source_unit_for(*prev_import.source_id); src.has_value()) {
+                emit_note("previous import alias is here", &src->get(), prev_import.declaration_range);
+            }
             return;
         }
 
@@ -451,49 +453,36 @@ class ResolverPass final {
         return std::nullopt;
     }
 
-    void error_here(std::string message, std::optional<SourceRange> range = std::nullopt) {
-        if (current_source_ != nullptr) {
-            result_.diagnostics.error_in_source(std::move(message), current_source_->source, range);
-            return;
+    void emit_error(std::string message, const SourceUnit *source,
+                    std::optional<SourceRange> range = std::nullopt) {
+        if (source != nullptr) {
+            result_.diagnostics.error()
+                .message(std::move(message))
+                .range(range)
+                .source(source->source)
+                .emit();
+        } else {
+            result_.diagnostics.error()
+                .message(std::move(message))
+                .range(range)
+                .emit();
         }
-
-        result_.diagnostics.error(std::move(message), range);
     }
 
-    void note_here(std::string message, std::optional<SourceRange> range = std::nullopt) {
-        if (current_source_ != nullptr) {
-            result_.diagnostics.note_in_source(std::move(message), current_source_->source, range);
-            return;
+    void emit_note(std::string message, const SourceUnit *source,
+                   std::optional<SourceRange> range = std::nullopt) {
+        if (source != nullptr) {
+            result_.diagnostics.note()
+                .message(std::move(message))
+                .range(range)
+                .source(source->source)
+                .emit();
+        } else {
+            result_.diagnostics.note()
+                .message(std::move(message))
+                .range(range)
+                .emit();
         }
-
-        result_.diagnostics.note(std::move(message), range);
-    }
-
-    void note_for_source(std::string message,
-                         std::optional<SourceId> source_id,
-                         std::optional<SourceRange> range = std::nullopt) {
-        if (source_id.has_value()) {
-            if (const auto source = source_unit_for(*source_id); source.has_value()) {
-                result_.diagnostics.note_in_source(std::move(message), source->get().source, range);
-                return;
-            }
-        }
-
-        note_here(std::move(message), range);
-    }
-
-    void error_for_source(std::string message,
-                          std::optional<SourceId> source_id,
-                          std::optional<SourceRange> range = std::nullopt) {
-        if (source_id.has_value()) {
-            if (const auto source = source_unit_for(*source_id); source.has_value()) {
-                result_.diagnostics.error_in_source(
-                    std::move(message), source->get().source, range);
-                return;
-            }
-        }
-
-        error_here(std::move(message), range);
     }
 
     [[nodiscard]] std::optional<SymbolId> register_symbol(SymbolNamespace name_space,
@@ -506,14 +495,14 @@ class ResolverPass final {
         if (const auto existing = module_index.find(std::string(local_name));
             existing != module_index.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            error_here("duplicate " + namespace_name(name_space) + " '" + std::string(local_name) +
+            emit_error("duplicate " + namespace_name(name_space) + " '" + std::string(local_name) +
                            "'",
-                       range);
+                       current_source_, range);
 
             if (previous_symbol.has_value()) {
-                note_for_source("previous declaration is here",
-                                previous_symbol->get().source_id,
-                                previous_symbol->get().declaration_range);
+                if (auto src = source_unit_for(*previous_symbol->get().source_id); src.has_value()) {
+                    emit_note("previous declaration is here", &src->get(), previous_symbol->get().declaration_range);
+                }
             }
 
             return std::nullopt;
@@ -534,14 +523,14 @@ class ResolverPass final {
         if (const auto existing = index.canonical_names.find(symbol.canonical_name);
             existing != index.canonical_names.end()) {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
-            error_here("duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name +
+            emit_error("duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name +
                            "'",
-                       range);
+                       current_source_, range);
 
             if (previous_symbol.has_value()) {
-                note_for_source("previous declaration is here",
-                                previous_symbol->get().source_id,
-                                previous_symbol->get().declaration_range);
+                if (auto src = source_unit_for(*previous_symbol->get().source_id); src.has_value()) {
+                    emit_note("previous declaration is here", &src->get(), previous_symbol->get().declaration_range);
+                }
             }
 
             return std::nullopt;
@@ -638,8 +627,8 @@ class ResolverPass final {
                                                             std::string_view expected_name) {
         const auto resolved = lookup(name_space, name);
         if (!resolved.has_value()) {
-            error_here("unknown " + std::string(expected_name) + " '" + name.spelling() + "'",
-                       name.range);
+            emit_error("unknown " + std::string(expected_name) + " '" + name.spelling() + "'",
+                       current_source_, name.range);
             return std::nullopt;
         }
 
@@ -659,20 +648,20 @@ class ResolverPass final {
         const auto predicate = lookup(SymbolNamespace::Predicates, name);
 
         if (capability.has_value() && predicate.has_value()) {
-            error_here("ambiguous callable '" + name.spelling() +
+            emit_error("ambiguous callable '" + name.spelling() +
                            "' matches both a capability and a predicate",
-                       name.range);
+                       current_source_, name.range);
 
             if (const auto symbol = result_.symbol_table.get(*capability); symbol.has_value()) {
-                note_for_source("capability declaration is here",
-                                symbol->get().source_id,
-                                symbol->get().declaration_range);
+                if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
+                    emit_note("capability declaration is here", &src->get(), symbol->get().declaration_range);
+                }
             }
 
             if (const auto symbol = result_.symbol_table.get(*predicate); symbol.has_value()) {
-                note_for_source("predicate declaration is here",
-                                symbol->get().source_id,
-                                symbol->get().declaration_range);
+                if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
+                    emit_note("predicate declaration is here", &src->get(), symbol->get().declaration_range);
+                }
             }
 
             return std::nullopt;
@@ -700,7 +689,7 @@ class ResolverPass final {
             return predicate;
         }
 
-        error_here("unknown callable '" + name.spelling() + "'", name.range);
+        emit_error("unknown callable '" + name.spelling() + "'", current_source_, name.range);
         return std::nullopt;
     }
 
@@ -974,7 +963,14 @@ class ResolverPass final {
 
         for (std::size_t index = 0; index + 1 < cycle.size(); ++index) {
             if (const auto symbol = result_.symbol_table.get(cycle[index]); symbol.has_value()) {
-                error_for_source(message, symbol->get().source_id, symbol->get().declaration_range);
+                if (source_graph_ != nullptr) {
+                    if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
+                        emit_error(message, &src->get(), symbol->get().declaration_range);
+                    }
+                } else {
+                    // Single-file mode - emit without source
+                    emit_error(message, nullptr, symbol->get().declaration_range);
+                }
             }
         }
     }

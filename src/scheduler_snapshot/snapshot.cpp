@@ -1,4 +1,5 @@
 #include "ahfl/scheduler_snapshot/snapshot.hpp"
+#include "ahfl/support/diagnostics.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <optional>
@@ -20,7 +21,10 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 void emit_bootstrap_error(DiagnosticBag &diagnostics, std::string message) {
-    diagnostics.error_code(DiagnosticCategory::Backend, kBootstrapDiagnosticCode, message);
+    diagnostics.error()
+        .legacy_code(DiagnosticCategory::Backend, kBootstrapDiagnosticCode)
+        .message(std::move(message))
+        .emit();
 }
 
 

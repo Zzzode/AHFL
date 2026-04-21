@@ -19,14 +19,12 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
 void validate_store_import_blocker(const StoreImportBlocker &blocker,
                                    DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        diagnostics.error(
-            "persistence export review summary store_import_blocker message must not be empty");
+        diagnostics.error().message("persistence export review summary store_import_blocker message must not be empty").emit();
     }
 
     if (blocker.logical_artifact_name.has_value() &&
         blocker.logical_artifact_name->empty()) {
-        diagnostics.error(
-            "persistence export review summary store_import_blocker logical_artifact_name must not be empty");
+        diagnostics.error().message("persistence export review summary store_import_blocker logical_artifact_name must not be empty").emit();
     }
 }
 
@@ -150,56 +148,46 @@ validate_persistence_export_review_summary(const PersistenceExportReviewSummary 
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kPersistenceExportReviewSummaryFormatVersion) {
-        diagnostics.error("persistence export review summary format_version must be '" +
-                          std::string(kPersistenceExportReviewSummaryFormatVersion) + "'");
+        diagnostics.error().message("persistence export review summary format_version must be '" + std::string(kPersistenceExportReviewSummaryFormatVersion) + "'").emit();
     }
 
     if (summary.source_export_manifest_format_version !=
         kPersistenceExportManifestFormatVersion) {
-        diagnostics.error(
-            "persistence export review summary source_export_manifest_format_version must be '" +
-            std::string(kPersistenceExportManifestFormatVersion) + "'");
+        diagnostics.error().message("persistence export review summary source_export_manifest_format_version must be '" + std::string(kPersistenceExportManifestFormatVersion) + "'").emit();
     }
 
     if (summary.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        diagnostics.error(
-            "persistence export review summary source_persistence_descriptor_format_version must be '" +
-            std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
+        diagnostics.error().message("persistence export review summary source_persistence_descriptor_format_version must be '" + std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'").emit();
     }
 
     if (summary.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        diagnostics.error(
-            "persistence export review summary source_checkpoint_record_format_version must be '" +
-            std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
+        diagnostics.error().message("persistence export review summary source_checkpoint_record_format_version must be '" + std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'").emit();
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error(
-            "persistence export review summary workflow_canonical_name must not be empty");
+        diagnostics.error().message("persistence export review summary workflow_canonical_name must not be empty").emit();
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error("persistence export review summary session_id must not be empty");
+        diagnostics.error().message("persistence export review summary session_id must not be empty").emit();
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error("persistence export review summary run_id must not be empty when present");
+        diagnostics.error().message("persistence export review summary run_id must not be empty when present").emit();
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error("persistence export review summary input_fixture must not be empty");
+        diagnostics.error().message("persistence export review summary input_fixture must not be empty").emit();
     }
 
     if (summary.export_package_identity.empty()) {
-        diagnostics.error(
-            "persistence export review summary export_package_identity must not be empty");
+        diagnostics.error().message("persistence export review summary export_package_identity must not be empty").emit();
     }
 
     if (summary.planned_durable_identity.empty()) {
-        diagnostics.error(
-            "persistence export review summary planned_durable_identity must not be empty");
+        diagnostics.error().message("persistence export review summary planned_durable_identity must not be empty").emit();
     }
 
     if (summary.workflow_failure_summary.has_value()) {
@@ -207,21 +195,18 @@ validate_persistence_export_review_summary(const PersistenceExportReviewSummary 
     }
 
     if (summary.artifact_bundle_entry_count != summary.artifact_bundle_preview.size()) {
-        diagnostics.error(
-            "persistence export review summary artifact_bundle_entry_count must match artifact_bundle_preview length");
+        diagnostics.error().message("persistence export review summary artifact_bundle_entry_count must match artifact_bundle_preview length").emit();
     }
 
     for (const auto &entry : summary.artifact_bundle_preview) {
         if (entry.empty()) {
-            diagnostics.error(
-                "persistence export review summary artifact_bundle_preview must not contain empty entries");
+            diagnostics.error().message("persistence export review summary artifact_bundle_preview must not contain empty entries").emit();
             break;
         }
     }
 
     if (summary.next_required_artifact_kind.has_value() && summary.manifest_ready) {
-        diagnostics.error(
-            "persistence export review summary cannot contain next_required_artifact_kind when manifest_ready is true");
+        diagnostics.error().message("persistence export review summary cannot contain next_required_artifact_kind when manifest_ready is true").emit();
     }
 
     if (summary.store_import_blocker.has_value()) {
@@ -229,154 +214,129 @@ validate_persistence_export_review_summary(const PersistenceExportReviewSummary 
     }
 
     if (summary.manifest_ready && summary.store_import_blocker.has_value()) {
-        diagnostics.error(
-            "persistence export review summary cannot contain store_import_blocker when manifest_ready is true");
+        diagnostics.error().message("persistence export review summary cannot contain store_import_blocker when manifest_ready is true").emit();
     }
 
     if (summary.store_boundary_summary.empty()) {
-        diagnostics.error(
-            "persistence export review summary store_boundary_summary must not be empty");
+        diagnostics.error().message("persistence export review summary store_boundary_summary must not be empty").emit();
     }
 
     if (summary.import_preview.empty()) {
-        diagnostics.error("persistence export review summary import_preview must not be empty");
+        diagnostics.error().message("persistence export review summary import_preview must not be empty").emit();
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error(
-            "persistence export review summary next_step_recommendation must not be empty");
+        diagnostics.error().message("persistence export review summary next_step_recommendation must not be empty").emit();
     }
 
     switch (summary.manifest_status) {
     case PersistenceExportManifestStatus::ReadyToImport:
         if (summary.next_action !=
             PersistenceExportReviewNextActionKind::HandoffExportPackage) {
-            diagnostics.error(
-                "persistence export review summary ReadyToImport manifest_status requires next_action handoff_export_package");
+            diagnostics.error().message("persistence export review summary ReadyToImport manifest_status requires next_action handoff_export_package").emit();
         }
         if (!summary.manifest_ready) {
-            diagnostics.error(
-                "persistence export review summary ReadyToImport manifest_status requires manifest_ready");
+            diagnostics.error().message("persistence export review summary ReadyToImport manifest_status requires manifest_ready").emit();
         }
         break;
     case PersistenceExportManifestStatus::Blocked:
         if (summary.next_action !=
             PersistenceExportReviewNextActionKind::AwaitManifestReadiness) {
-            diagnostics.error(
-                "persistence export review summary Blocked manifest_status requires next_action await_manifest_readiness");
+            diagnostics.error().message("persistence export review summary Blocked manifest_status requires next_action await_manifest_readiness").emit();
         }
         if (summary.manifest_ready) {
-            diagnostics.error(
-                "persistence export review summary Blocked manifest_status cannot be manifest_ready");
+            diagnostics.error().message("persistence export review summary Blocked manifest_status cannot be manifest_ready").emit();
         }
         if (!summary.store_import_blocker.has_value()) {
-            diagnostics.error(
-                "persistence export review summary Blocked manifest_status requires store_import_blocker");
+            diagnostics.error().message("persistence export review summary Blocked manifest_status requires store_import_blocker").emit();
         }
         break;
     case PersistenceExportManifestStatus::TerminalCompleted:
         if (summary.next_action !=
             PersistenceExportReviewNextActionKind::ArchiveCompletedExportPackage) {
-            diagnostics.error(
-                "persistence export review summary TerminalCompleted manifest_status requires next_action archive_completed_export_package");
+            diagnostics.error().message("persistence export review summary TerminalCompleted manifest_status requires next_action archive_completed_export_package").emit();
         }
         if (!summary.manifest_ready) {
-            diagnostics.error(
-                "persistence export review summary TerminalCompleted manifest_status requires manifest_ready");
+            diagnostics.error().message("persistence export review summary TerminalCompleted manifest_status requires manifest_ready").emit();
         }
         if (summary.store_import_blocker.has_value()) {
-            diagnostics.error(
-                "persistence export review summary TerminalCompleted manifest_status cannot contain store_import_blocker");
+            diagnostics.error().message("persistence export review summary TerminalCompleted manifest_status cannot contain store_import_blocker").emit();
         }
         if (summary.next_required_artifact_kind.has_value()) {
-            diagnostics.error(
-                "persistence export review summary TerminalCompleted manifest_status cannot contain next_required_artifact_kind");
+            diagnostics.error().message("persistence export review summary TerminalCompleted manifest_status cannot contain next_required_artifact_kind").emit();
         }
         break;
     case PersistenceExportManifestStatus::TerminalFailed:
         if (summary.next_action !=
             PersistenceExportReviewNextActionKind::InvestigateExportFailure) {
-            diagnostics.error(
-                "persistence export review summary TerminalFailed manifest_status requires next_action investigate_export_failure");
+            diagnostics.error().message("persistence export review summary TerminalFailed manifest_status requires next_action investigate_export_failure").emit();
         }
         if (!summary.store_import_blocker.has_value()) {
-            diagnostics.error(
-                "persistence export review summary TerminalFailed manifest_status requires store_import_blocker");
+            diagnostics.error().message("persistence export review summary TerminalFailed manifest_status requires store_import_blocker").emit();
         }
         break;
     case PersistenceExportManifestStatus::TerminalPartial:
         if (summary.next_action !=
             PersistenceExportReviewNextActionKind::PreservePartialExportState) {
-            diagnostics.error(
-                "persistence export review summary TerminalPartial manifest_status requires next_action preserve_partial_export_state");
+            diagnostics.error().message("persistence export review summary TerminalPartial manifest_status requires next_action preserve_partial_export_state").emit();
         }
         if (!summary.store_import_blocker.has_value()) {
-            diagnostics.error(
-                "persistence export review summary TerminalPartial manifest_status requires store_import_blocker");
+            diagnostics.error().message("persistence export review summary TerminalPartial manifest_status requires store_import_blocker").emit();
         }
         break;
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence export review summary completed workflow_status requires TerminalCompleted manifest_status");
+        diagnostics.error().message("persistence export review summary completed workflow_status requires TerminalCompleted manifest_status").emit();
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence export review summary failed workflow_status requires TerminalFailed manifest_status");
+        diagnostics.error().message("persistence export review summary failed workflow_status requires TerminalFailed manifest_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence export review summary TerminalCompleted checkpoint_status requires TerminalCompleted manifest_status");
+        diagnostics.error().message("persistence export review summary TerminalCompleted checkpoint_status requires TerminalCompleted manifest_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalFailed &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence export review summary TerminalFailed checkpoint_status requires TerminalFailed manifest_status");
+        diagnostics.error().message("persistence export review summary TerminalFailed checkpoint_status requires TerminalFailed manifest_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalPartial &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence export review summary TerminalPartial checkpoint_status requires TerminalPartial manifest_status");
+        diagnostics.error().message("persistence export review summary TerminalPartial checkpoint_status requires TerminalPartial manifest_status").emit();
     }
 
     if (summary.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence export review summary TerminalCompleted persistence_status requires TerminalCompleted manifest_status");
+        diagnostics.error().message("persistence export review summary TerminalCompleted persistence_status requires TerminalCompleted manifest_status").emit();
     }
 
     if (summary.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence export review summary TerminalFailed persistence_status requires TerminalFailed manifest_status");
+        diagnostics.error().message("persistence export review summary TerminalFailed persistence_status requires TerminalFailed manifest_status").emit();
     }
 
     if (summary.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence export review summary TerminalPartial persistence_status requires TerminalPartial manifest_status");
+        diagnostics.error().message("persistence export review summary TerminalPartial persistence_status requires TerminalPartial manifest_status").emit();
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
         summary.manifest_status != PersistenceExportManifestStatus::ReadyToImport &&
         summary.manifest_status != PersistenceExportManifestStatus::Blocked &&
         summary.manifest_status != PersistenceExportManifestStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence export review summary partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial manifest_status");
+        diagnostics.error().message("persistence export review summary partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial manifest_status").emit();
     }
 
     return result;

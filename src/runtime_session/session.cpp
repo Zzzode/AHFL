@@ -75,30 +75,26 @@ void validate_capability_mock_set(const dry_run::CapabilityMockSet &mock_set,
                                   const handoff::WorkflowPlan &workflow,
                                   DiagnosticBag &diagnostics) {
     if (mock_set.format_version != dry_run::kCapabilityMockSetFormatVersion) {
-        diagnostics.error("runtime session encountered unsupported capability mock set format_version '" +
-                          mock_set.format_version + "'");
+        diagnostics.error().message("runtime session encountered unsupported capability mock set format_version '" + mock_set.format_version + "'").emit();
     }
 
     std::unordered_set<std::string> seen_mock_selectors;
     for (const auto &mock : mock_set.mocks) {
         if (mock.capability_name.has_value() == mock.binding_key.has_value()) {
-            diagnostics.error(
-                "runtime session capability mock must specify exactly one of 'capability_name' or 'binding_key'");
+            diagnostics.error().message("runtime session capability mock must specify exactly one of 'capability_name' or 'binding_key'").emit();
             continue;
         }
 
         if (mock.result_fixture.empty()) {
-            diagnostics.error("runtime session capability mock result_fixture must not be empty");
+            diagnostics.error().message("runtime session capability mock result_fixture must not be empty").emit();
         }
 
         const auto selector = mock_selector_key(mock);
         if (!selector.empty() && !seen_mock_selectors.insert(selector).second) {
-            diagnostics.error("runtime session capability mock set contains duplicate mock selector '" +
-                              selector + "'");
+            diagnostics.error().message("runtime session capability mock set contains duplicate mock selector '" + selector + "'").emit();
         }
         if (!workflow_references_mock_selector(workflow, mock)) {
-            diagnostics.error("runtime session capability mock set contains unused mock selector '" +
-                              selector + "'");
+            diagnostics.error().message("runtime session capability mock set contains unused mock selector '" + selector + "'").emit();
         }
     }
 }
@@ -175,28 +171,23 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
     };
 
     if (session.format_version != kRuntimeSessionFormatVersion) {
-        result.diagnostics.error(
-            "runtime session validation encountered unsupported format_version '" +
-            session.format_version + "'");
+        result.diagnostics.error().message("runtime session validation encountered unsupported format_version '" + session.format_version + "'").emit();
     }
 
     if (session.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        result.diagnostics.error(
-            "runtime session validation encountered unsupported source_execution_plan_format_version '" +
-            session.source_execution_plan_format_version + "'");
+        result.diagnostics.error().message("runtime session validation encountered unsupported source_execution_plan_format_version '" + session.source_execution_plan_format_version + "'").emit();
     }
 
     if (session.workflow_canonical_name.empty()) {
-        result.diagnostics.error(
-            "runtime session validation contains empty workflow_canonical_name");
+        result.diagnostics.error().message("runtime session validation contains empty workflow_canonical_name").emit();
     }
 
     if (session.session_id.empty()) {
-        result.diagnostics.error("runtime session validation contains empty session_id");
+        result.diagnostics.error().message("runtime session validation contains empty session_id").emit();
     }
 
     if (session.input_fixture.empty()) {
-        result.diagnostics.error("runtime session validation contains empty input_fixture");
+        result.diagnostics.error().message("runtime session validation contains empty input_fixture").emit();
     }
 
     if (session.failure_summary.has_value()) {
@@ -204,8 +195,7 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
     }
 
     if (!session.options.sequential_mode) {
-        result.diagnostics.error(
-            "runtime session validation currently requires sequential_mode=true");
+        result.diagnostics.error().message("runtime session validation currently requires sequential_mode=true").emit();
     }
 
     std::unordered_map<std::string, const RuntimeSessionNode *> nodes_by_name;
@@ -217,34 +207,29 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
 
     for (const auto &node_name : session.execution_order) {
         if (node_name.empty()) {
-            result.diagnostics.error(
-                "runtime session validation execution_order contains empty node name");
+            result.diagnostics.error().message("runtime session validation execution_order contains empty node name").emit();
             continue;
         }
 
         if (!execution_order_names.insert(node_name).second) {
-            result.diagnostics.error(
-                "runtime session validation execution_order contains duplicate node '" +
-                node_name + "'");
+            result.diagnostics.error().message("runtime session validation execution_order contains duplicate node '" +
+                node_name + "'").emit();
         }
     }
 
     for (const auto &node : session.nodes) {
         if (node.node_name.empty()) {
-            result.diagnostics.error(
-                "runtime session validation contains node with empty node_name");
+            result.diagnostics.error().message("runtime session validation contains node with empty node_name").emit();
             continue;
         }
 
         if (!nodes_by_name.emplace(node.node_name, &node).second) {
-            result.diagnostics.error("runtime session validation contains duplicate node '" +
-                                     node.node_name + "'");
+            result.diagnostics.error().message("runtime session validation contains duplicate node '" + node.node_name + "'").emit();
             continue;
         }
 
         if (node.target.empty()) {
-            result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                     "' has empty target");
+            result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' has empty target").emit();
         }
 
         if (node.failure_summary.has_value()) {
@@ -252,73 +237,57 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
                 *node.failure_summary, "node '" + node.node_name + "'", result.diagnostics);
             if (node.failure_summary->node_name.has_value() &&
                 *node.failure_summary->node_name != node.node_name) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' failure summary node_name does not match node");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' failure summary node_name does not match node").emit();
             }
         }
 
         std::unordered_set<std::string> satisfied_dependencies;
         for (const auto &dependency : node.satisfied_dependencies) {
             if (dependency.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains empty satisfied dependency");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains empty satisfied dependency").emit();
                 continue;
             }
 
             if (!satisfied_dependencies.insert(dependency).second) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains duplicate satisfied dependency '" +
-                                         dependency + "'");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains duplicate satisfied dependency '" + dependency + "'").emit();
             }
         }
 
         std::unordered_set<std::string> binding_keys;
         for (const auto &binding : node.capability_bindings) {
             if (binding.capability_name.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' has capability binding with empty capability name");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' has capability binding with empty capability name").emit();
             }
 
             if (binding.binding_key.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' has capability binding with empty binding key");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' has capability binding with empty binding key").emit();
             }
 
             const auto binding_ref = binding.capability_name + "#" + binding.binding_key;
             if (!binding_keys.insert(binding_ref).second) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains duplicate capability binding '" +
-                                         binding_ref + "'");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains duplicate capability binding '" + binding_ref + "'").emit();
             }
         }
 
         std::unordered_set<std::string> mock_selectors;
         for (const auto &usage : node.used_mocks) {
             if (usage.selector.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains mock usage with empty selector");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains mock usage with empty selector").emit();
             } else if (!mock_selectors.insert(usage.selector).second) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains duplicate mock selector '" +
-                                         usage.selector + "'");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains duplicate mock selector '" + usage.selector + "'").emit();
             }
 
             if (usage.result_fixture.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains mock usage with empty result_fixture");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains mock usage with empty result_fixture").emit();
             }
 
             if (usage.capability_name.has_value() == usage.binding_key.has_value()) {
-                result.diagnostics.error(
-                    "runtime session validation node '" + node.node_name +
-                    "' mock usage must specify exactly one of 'capability_name' or 'binding_key'");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' mock usage must specify exactly one of 'capability_name' or 'binding_key'").emit();
                 continue;
             }
 
             if (!is_binding_selector(usage) && !is_capability_selector(usage)) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains mock usage selector '" + usage.selector +
-                                         "' inconsistent with binding reference fields");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains mock usage selector '" + usage.selector + "' inconsistent with binding reference fields").emit();
                 continue;
             }
 
@@ -331,9 +300,7 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
             }
 
             if (!matched_binding) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' contains mock usage selector '" + usage.selector +
-                                         "' not referenced by capability_bindings");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' contains mock usage selector '" + usage.selector + "' not referenced by capability_bindings").emit();
             }
         }
 
@@ -347,105 +314,80 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
             }
 
             if (node.status == NodeSessionStatus::Completed && !matched_mock) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' missing used mock for binding key '" +
-                                         binding.binding_key + "'");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' missing used mock for binding key '" + binding.binding_key + "'").emit();
             }
         }
 
         switch (node.status) {
         case NodeSessionStatus::Completed:
             if (node.failure_summary.has_value()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' must not carry failure summary while status is Completed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' must not carry failure summary while status is Completed").emit();
             }
             if (!execution_indices.insert(node.execution_index).second) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' reuses execution_index " +
-                                         std::to_string(node.execution_index));
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' reuses execution_index " + std::to_string(node.execution_index)).emit();
             }
 
             if (node.execution_index >= session.execution_order.size()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' execution_index " +
-                                         std::to_string(node.execution_index) +
-                                         " is outside execution_order");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' execution_index " + std::to_string(node.execution_index) + " is outside execution_order").emit();
                 break;
             }
 
             if (session.execution_order[node.execution_index] != node.node_name) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' execution_index does not match execution_order");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' execution_index does not match execution_order").emit();
             }
             break;
         case NodeSessionStatus::Failed:
             ++failed_node_count;
             ++non_completed_node_count;
             if (!node.failure_summary.has_value()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' is Failed but has no failure summary");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' is Failed but has no failure summary").emit();
             } else if (node.failure_summary->kind == RuntimeFailureKind::WorkflowFailed) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' failure summary must not use WorkflowFailed kind");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' failure summary must not use WorkflowFailed kind").emit();
             }
 
             if (!execution_indices.insert(node.execution_index).second) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' reuses execution_index " +
-                                         std::to_string(node.execution_index));
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' reuses execution_index " + std::to_string(node.execution_index)).emit();
             }
 
             if (node.execution_index >= session.execution_order.size()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' execution_index " +
-                                         std::to_string(node.execution_index) +
-                                         " is outside execution_order");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' execution_index " + std::to_string(node.execution_index) + " is outside execution_order").emit();
                 break;
             }
 
             if (session.execution_order[node.execution_index] != node.node_name) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' execution_index does not match execution_order");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' execution_index does not match execution_order").emit();
             }
             break;
         case NodeSessionStatus::Blocked:
         case NodeSessionStatus::Ready:
             ++non_completed_node_count;
             if (node.failure_summary.has_value()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' must not carry failure summary unless status is Failed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' must not carry failure summary unless status is Failed").emit();
             }
             if (!node.used_mocks.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' must not carry used_mocks unless node was executed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' must not carry used_mocks unless node was executed").emit();
             }
             if (workflow_status_is_terminal(session.workflow_status)) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' is not executable-complete while workflow status is terminal");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' is not executable-complete while workflow status is terminal").emit();
             }
             if (execution_order_names.contains(node.node_name)) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' appears in execution_order but is not executed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' appears in execution_order but is not executed").emit();
             }
             break;
         case NodeSessionStatus::Skipped:
             ++non_completed_node_count;
             ++skipped_node_count;
             if (node.failure_summary.has_value()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' must not carry failure summary unless status is Failed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' must not carry failure summary unless status is Failed").emit();
             }
             if (!node.used_mocks.empty()) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' must not carry used_mocks unless node was executed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' must not carry used_mocks unless node was executed").emit();
             }
             if (session.workflow_status != WorkflowSessionStatus::Failed) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' is Skipped but workflow status is not Failed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' is Skipped but workflow status is not Failed").emit();
             }
             if (execution_order_names.contains(node.node_name)) {
-                result.diagnostics.error("runtime session validation node '" + node.node_name +
-                                         "' appears in execution_order but is not executed");
+                result.diagnostics.error().message("runtime session validation node '" + node.node_name + "' appears in execution_order but is not executed").emit();
             }
             break;
         }
@@ -455,58 +397,47 @@ RuntimeSessionValidationResult validate_runtime_session(const RuntimeSession &se
         const auto &node_name = session.execution_order[index];
         const auto found = nodes_by_name.find(node_name);
         if (found == nodes_by_name.end()) {
-            result.diagnostics.error("runtime session validation execution_order references unknown node '" +
-                                     node_name + "'");
+            result.diagnostics.error().message("runtime session validation execution_order references unknown node '" + node_name + "'").emit();
             continue;
         }
 
         if (!node_status_is_executed(found->second->status)) {
-            result.diagnostics.error("runtime session validation execution_order node '" +
-                                     node_name + "' is not executed");
+            result.diagnostics.error().message("runtime session validation execution_order node '" + node_name + "' is not executed").emit();
         }
         if (found->second->execution_index != index) {
-            result.diagnostics.error("runtime session validation execution_order node '" +
-                                     node_name + "' index does not match node execution_index");
+            result.diagnostics.error().message("runtime session validation execution_order node '" + node_name + "' index does not match node execution_index").emit();
         }
     }
 
     switch (session.workflow_status) {
     case WorkflowSessionStatus::Completed:
         if (session.failure_summary.has_value()) {
-            result.diagnostics.error(
-                "runtime session validation completed workflow must not carry failure summary");
+            result.diagnostics.error().message("runtime session validation completed workflow must not carry failure summary").emit();
         }
         if (session.execution_order.size() != session.nodes.size()) {
-            result.diagnostics.error(
-                "runtime session validation completed workflow must include every node in execution_order");
+            result.diagnostics.error().message("runtime session validation completed workflow must include every node in execution_order").emit();
         }
         if (non_completed_node_count != 0) {
-            result.diagnostics.error(
-                "runtime session validation completed workflow must not contain non-completed nodes");
+            result.diagnostics.error().message("runtime session validation completed workflow must not contain non-completed nodes").emit();
         }
         break;
     case WorkflowSessionStatus::Failed:
         if (!session.failure_summary.has_value()) {
-            result.diagnostics.error(
-                "runtime session validation failed workflow must carry failure summary");
+            result.diagnostics.error().message("runtime session validation failed workflow must carry failure summary").emit();
         }
         if (failed_node_count == 0) {
-            result.diagnostics.error(
-                "runtime session validation failed workflow must contain at least one Failed node");
+            result.diagnostics.error().message("runtime session validation failed workflow must contain at least one Failed node").emit();
         }
         break;
     case WorkflowSessionStatus::Partial:
         if (failed_node_count != 0) {
-            result.diagnostics.error(
-                "runtime session validation partial workflow must not contain Failed nodes");
+            result.diagnostics.error().message("runtime session validation partial workflow must not contain Failed nodes").emit();
         }
         if (skipped_node_count != 0) {
-            result.diagnostics.error(
-                "runtime session validation partial workflow must not contain Skipped nodes");
+            result.diagnostics.error().message("runtime session validation partial workflow must not contain Skipped nodes").emit();
         }
         if (non_completed_node_count == 0) {
-            result.diagnostics.error(
-                "runtime session validation partial workflow must contain at least one non-completed node");
+            result.diagnostics.error().message("runtime session validation partial workflow must contain at least one non-completed node").emit();
         }
         break;
     }
@@ -524,8 +455,7 @@ RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
     };
 
     if (!options.sequential_mode) {
-        result.diagnostics.error(
-            "runtime session bootstrap currently requires sequential_mode=true");
+        result.diagnostics.error().message("runtime session bootstrap currently requires sequential_mode=true").emit();
         return result;
     }
 
@@ -537,9 +467,7 @@ RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
 
     const auto *workflow = find_workflow_plan(plan, request.workflow_canonical_name);
     if (workflow == nullptr) {
-        result.diagnostics.error("runtime session request workflow '" +
-                                 request.workflow_canonical_name +
-                                 "' does not exist in execution plan");
+        result.diagnostics.error().message("runtime session request workflow '" + request.workflow_canonical_name + "' does not exist in execution plan").emit();
         return result;
     }
 
@@ -728,8 +656,7 @@ RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
             });
         }
     } else if (executed_nodes.size() != workflow->nodes.size()) {
-        result.diagnostics.error("runtime session could not schedule all workflow nodes for '" +
-                                 workflow->workflow_canonical_name + "'");
+        result.diagnostics.error().message("runtime session could not schedule all workflow nodes for '" + workflow->workflow_canonical_name + "'").emit();
         return result;
     }
 

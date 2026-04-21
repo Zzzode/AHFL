@@ -18,12 +18,11 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
 
 void validate_persistence_blocker(const PersistenceBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        diagnostics.error("persistence review summary persistence_blocker message must not be empty");
+        diagnostics.error().message("persistence review summary persistence_blocker message must not be empty").emit();
     }
 
     if (blocker.node_name.has_value() && blocker.node_name->empty()) {
-        diagnostics.error(
-            "persistence review summary persistence_blocker node_name must not be empty");
+        diagnostics.error().message("persistence review summary persistence_blocker node_name must not be empty").emit();
     }
 }
 
@@ -134,42 +133,37 @@ validate_persistence_review_summary(const PersistenceReviewSummary &summary) {
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kPersistenceReviewSummaryFormatVersion) {
-        diagnostics.error("persistence review summary format_version must be '" +
-                          std::string(kPersistenceReviewSummaryFormatVersion) + "'");
+        diagnostics.error().message("persistence review summary format_version must be '" + std::string(kPersistenceReviewSummaryFormatVersion) + "'").emit();
     }
 
     if (summary.source_persistence_descriptor_format_version !=
         kPersistenceDescriptorFormatVersion) {
-        diagnostics.error(
-            "persistence review summary source_persistence_descriptor_format_version must be '" +
-            std::string(kPersistenceDescriptorFormatVersion) + "'");
+        diagnostics.error().message("persistence review summary source_persistence_descriptor_format_version must be '" + std::string(kPersistenceDescriptorFormatVersion) + "'").emit();
     }
 
     if (summary.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        diagnostics.error(
-            "persistence review summary source_checkpoint_record_format_version must be '" +
-            std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
+        diagnostics.error().message("persistence review summary source_checkpoint_record_format_version must be '" + std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'").emit();
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error("persistence review summary workflow_canonical_name must not be empty");
+        diagnostics.error().message("persistence review summary workflow_canonical_name must not be empty").emit();
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error("persistence review summary session_id must not be empty");
+        diagnostics.error().message("persistence review summary session_id must not be empty").emit();
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error("persistence review summary run_id must not be empty when present");
+        diagnostics.error().message("persistence review summary run_id must not be empty when present").emit();
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error("persistence review summary input_fixture must not be empty");
+        diagnostics.error().message("persistence review summary input_fixture must not be empty").emit();
     }
 
     if (summary.planned_durable_identity.empty()) {
-        diagnostics.error("persistence review summary planned_durable_identity must not be empty");
+        diagnostics.error().message("persistence review summary planned_durable_identity must not be empty").emit();
     }
 
     if (summary.workflow_failure_summary.has_value()) {
@@ -177,14 +171,12 @@ validate_persistence_review_summary(const PersistenceReviewSummary &summary) {
     }
 
     if (summary.exportable_prefix_size != summary.exportable_prefix.size()) {
-        diagnostics.error(
-            "persistence review summary exportable_prefix_size must match exportable_prefix length");
+        diagnostics.error().message("persistence review summary exportable_prefix_size must match exportable_prefix length").emit();
     }
 
     if (summary.next_export_candidate_node_name.has_value() &&
         summary.next_export_candidate_node_name->empty()) {
-        diagnostics.error(
-            "persistence review summary next_export_candidate_node_name must not be empty");
+        diagnostics.error().message("persistence review summary next_export_candidate_node_name must not be empty").emit();
     }
 
     if (summary.persistence_blocker.has_value()) {
@@ -192,129 +184,108 @@ validate_persistence_review_summary(const PersistenceReviewSummary &summary) {
     }
 
     if (summary.export_ready && summary.persistence_blocker.has_value()) {
-        diagnostics.error(
-            "persistence review summary cannot contain persistence_blocker when export_ready is true");
+        diagnostics.error().message("persistence review summary cannot contain persistence_blocker when export_ready is true").emit();
     }
 
     if (summary.store_boundary_summary.empty()) {
-        diagnostics.error("persistence review summary store_boundary_summary must not be empty");
+        diagnostics.error().message("persistence review summary store_boundary_summary must not be empty").emit();
     }
 
     if (summary.export_preview.empty()) {
-        diagnostics.error("persistence review summary export_preview must not be empty");
+        diagnostics.error().message("persistence review summary export_preview must not be empty").emit();
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error(
-            "persistence review summary next_step_recommendation must not be empty");
+        diagnostics.error().message("persistence review summary next_step_recommendation must not be empty").emit();
     }
 
     switch (summary.persistence_status) {
     case PersistenceDescriptorStatus::ReadyToExport:
         if (summary.next_action !=
             PersistenceReviewNextActionKind::ExportPersistenceHandoff) {
-            diagnostics.error(
-                "persistence review summary ReadyToExport persistence_status requires next_action export_persistence_handoff");
+            diagnostics.error().message("persistence review summary ReadyToExport persistence_status requires next_action export_persistence_handoff").emit();
         }
         if (!summary.export_ready) {
-            diagnostics.error(
-                "persistence review summary ReadyToExport persistence_status requires export_ready");
+            diagnostics.error().message("persistence review summary ReadyToExport persistence_status requires export_ready").emit();
         }
         if (!summary.next_export_candidate_node_name.has_value()) {
-            diagnostics.error(
-                "persistence review summary ReadyToExport persistence_status requires next_export_candidate_node_name");
+            diagnostics.error().message("persistence review summary ReadyToExport persistence_status requires next_export_candidate_node_name").emit();
         }
         break;
     case PersistenceDescriptorStatus::Blocked:
         if (summary.next_action !=
             PersistenceReviewNextActionKind::AwaitPersistenceReadiness) {
-            diagnostics.error(
-                "persistence review summary Blocked persistence_status requires next_action await_persistence_readiness");
+            diagnostics.error().message("persistence review summary Blocked persistence_status requires next_action await_persistence_readiness").emit();
         }
         if (summary.export_ready) {
-            diagnostics.error(
-                "persistence review summary Blocked persistence_status cannot be export_ready");
+            diagnostics.error().message("persistence review summary Blocked persistence_status cannot be export_ready").emit();
         }
         if (!summary.persistence_blocker.has_value()) {
-            diagnostics.error(
-                "persistence review summary Blocked persistence_status requires persistence_blocker");
+            diagnostics.error().message("persistence review summary Blocked persistence_status requires persistence_blocker").emit();
         }
         break;
     case PersistenceDescriptorStatus::TerminalCompleted:
         if (summary.next_action != PersistenceReviewNextActionKind::WorkflowCompleted) {
-            diagnostics.error(
-                "persistence review summary TerminalCompleted persistence_status requires next_action workflow_completed");
+            diagnostics.error().message("persistence review summary TerminalCompleted persistence_status requires next_action workflow_completed").emit();
         }
         if (summary.persistence_blocker.has_value()) {
-            diagnostics.error(
-                "persistence review summary TerminalCompleted persistence_status cannot contain persistence_blocker");
+            diagnostics.error().message("persistence review summary TerminalCompleted persistence_status cannot contain persistence_blocker").emit();
         }
         if (summary.next_export_candidate_node_name.has_value()) {
-            diagnostics.error(
-                "persistence review summary TerminalCompleted persistence_status cannot contain next_export_candidate_node_name");
+            diagnostics.error().message("persistence review summary TerminalCompleted persistence_status cannot contain next_export_candidate_node_name").emit();
         }
         break;
     case PersistenceDescriptorStatus::TerminalFailed:
         if (summary.next_action != PersistenceReviewNextActionKind::InvestigateFailure) {
-            diagnostics.error(
-                "persistence review summary TerminalFailed persistence_status requires next_action investigate_failure");
+            diagnostics.error().message("persistence review summary TerminalFailed persistence_status requires next_action investigate_failure").emit();
         }
         if (!summary.persistence_blocker.has_value()) {
-            diagnostics.error(
-                "persistence review summary TerminalFailed persistence_status requires persistence_blocker");
+            diagnostics.error().message("persistence review summary TerminalFailed persistence_status requires persistence_blocker").emit();
         }
         break;
     case PersistenceDescriptorStatus::TerminalPartial:
         if (summary.next_action != PersistenceReviewNextActionKind::PreservePartialState) {
-            diagnostics.error(
-                "persistence review summary TerminalPartial persistence_status requires next_action preserve_partial_state");
+            diagnostics.error().message("persistence review summary TerminalPartial persistence_status requires next_action preserve_partial_state").emit();
         }
         if (!summary.persistence_blocker.has_value()) {
-            diagnostics.error(
-                "persistence review summary TerminalPartial persistence_status requires persistence_blocker");
+            diagnostics.error().message("persistence review summary TerminalPartial persistence_status requires persistence_blocker").emit();
         }
         break;
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         summary.persistence_status != PersistenceDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence review summary completed workflow_status requires TerminalCompleted persistence_status");
+        diagnostics.error().message("persistence review summary completed workflow_status requires TerminalCompleted persistence_status").emit();
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         summary.persistence_status != PersistenceDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence review summary failed workflow_status requires TerminalFailed persistence_status");
+        diagnostics.error().message("persistence review summary failed workflow_status requires TerminalFailed persistence_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
         summary.persistence_status != PersistenceDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence review summary TerminalCompleted checkpoint_status requires TerminalCompleted persistence_status");
+        diagnostics.error().message("persistence review summary TerminalCompleted checkpoint_status requires TerminalCompleted persistence_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalFailed &&
         summary.persistence_status != PersistenceDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence review summary TerminalFailed checkpoint_status requires TerminalFailed persistence_status");
+        diagnostics.error().message("persistence review summary TerminalFailed checkpoint_status requires TerminalFailed persistence_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalPartial &&
         summary.persistence_status != PersistenceDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence review summary TerminalPartial checkpoint_status requires TerminalPartial persistence_status");
+        diagnostics.error().message("persistence review summary TerminalPartial checkpoint_status requires TerminalPartial persistence_status").emit();
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
         summary.persistence_status != PersistenceDescriptorStatus::ReadyToExport &&
         summary.persistence_status != PersistenceDescriptorStatus::Blocked &&
         summary.persistence_status != PersistenceDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence review summary partial workflow_status must map to ReadyToExport, Blocked, or TerminalPartial persistence_status");
+        diagnostics.error().message("persistence review summary partial workflow_status must map to ReadyToExport, Blocked, or TerminalPartial persistence_status").emit();
     }
 
     return result;

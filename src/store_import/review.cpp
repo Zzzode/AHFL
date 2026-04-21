@@ -18,12 +18,11 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
 
 void validate_staging_blocker(const StagingBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        diagnostics.error("store import review summary staging_blocker message must not be empty");
+        diagnostics.error().message("store import review summary staging_blocker message must not be empty").emit();
     }
 
     if (blocker.logical_artifact_name.has_value() && blocker.logical_artifact_name->empty()) {
-        diagnostics.error(
-            "store import review summary staging_blocker logical_artifact_name must not be empty");
+        diagnostics.error().message("store import review summary staging_blocker logical_artifact_name must not be empty").emit();
     }
 }
 
@@ -152,54 +151,45 @@ validate_store_import_review_summary(const StoreImportReviewSummary &summary) {
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kStoreImportReviewSummaryFormatVersion) {
-        diagnostics.error("store import review summary format_version must be '" +
-                          std::string(kStoreImportReviewSummaryFormatVersion) + "'");
+        diagnostics.error().message("store import review summary format_version must be '" + std::string(kStoreImportReviewSummaryFormatVersion) + "'").emit();
     }
 
     if (summary.source_store_import_descriptor_format_version !=
         kStoreImportDescriptorFormatVersion) {
-        diagnostics.error(
-            "store import review summary source_store_import_descriptor_format_version must be '" +
-            std::string(kStoreImportDescriptorFormatVersion) + "'");
+        diagnostics.error().message("store import review summary source_store_import_descriptor_format_version must be '" + std::string(kStoreImportDescriptorFormatVersion) + "'").emit();
     }
 
     if (summary.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        diagnostics.error(
-            "store import review summary source_export_manifest_format_version must be '" +
-            std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
+        diagnostics.error().message("store import review summary source_export_manifest_format_version must be '" + std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'").emit();
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error(
-            "store import review summary workflow_canonical_name must not be empty");
+        diagnostics.error().message("store import review summary workflow_canonical_name must not be empty").emit();
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error("store import review summary session_id must not be empty");
+        diagnostics.error().message("store import review summary session_id must not be empty").emit();
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error("store import review summary run_id must not be empty when present");
+        diagnostics.error().message("store import review summary run_id must not be empty when present").emit();
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error("store import review summary input_fixture must not be empty");
+        diagnostics.error().message("store import review summary input_fixture must not be empty").emit();
     }
 
     if (summary.export_package_identity.empty()) {
-        diagnostics.error(
-            "store import review summary export_package_identity must not be empty");
+        diagnostics.error().message("store import review summary export_package_identity must not be empty").emit();
     }
 
     if (summary.store_import_candidate_identity.empty()) {
-        diagnostics.error(
-            "store import review summary store_import_candidate_identity must not be empty");
+        diagnostics.error().message("store import review summary store_import_candidate_identity must not be empty").emit();
     }
 
     if (summary.planned_durable_identity.empty()) {
-        diagnostics.error(
-            "store import review summary planned_durable_identity must not be empty");
+        diagnostics.error().message("store import review summary planned_durable_identity must not be empty").emit();
     }
 
     if (summary.workflow_failure_summary.has_value()) {
@@ -207,21 +197,18 @@ validate_store_import_review_summary(const StoreImportReviewSummary &summary) {
     }
 
     if (summary.staging_artifact_entry_count != summary.staging_artifact_preview.size()) {
-        diagnostics.error(
-            "store import review summary staging_artifact_entry_count must match staging_artifact_preview length");
+        diagnostics.error().message("store import review summary staging_artifact_entry_count must match staging_artifact_preview length").emit();
     }
 
     for (const auto &entry : summary.staging_artifact_preview) {
         if (entry.empty()) {
-            diagnostics.error(
-                "store import review summary staging_artifact_preview must not contain empty entries");
+            diagnostics.error().message("store import review summary staging_artifact_preview must not contain empty entries").emit();
             break;
         }
     }
 
     if (summary.next_required_staging_artifact_kind.has_value() && summary.import_ready) {
-        diagnostics.error(
-            "store import review summary cannot contain next_required_staging_artifact_kind when import_ready is true");
+        diagnostics.error().message("store import review summary cannot contain next_required_staging_artifact_kind when import_ready is true").emit();
     }
 
     if (summary.staging_blocker.has_value()) {
@@ -229,153 +216,128 @@ validate_store_import_review_summary(const StoreImportReviewSummary &summary) {
     }
 
     if (summary.import_ready && summary.staging_blocker.has_value()) {
-        diagnostics.error(
-            "store import review summary cannot contain staging_blocker when import_ready is true");
+        diagnostics.error().message("store import review summary cannot contain staging_blocker when import_ready is true").emit();
     }
 
     if (summary.store_boundary_summary.empty()) {
-        diagnostics.error(
-            "store import review summary store_boundary_summary must not be empty");
+        diagnostics.error().message("store import review summary store_boundary_summary must not be empty").emit();
     }
 
     if (summary.staging_preview.empty()) {
-        diagnostics.error("store import review summary staging_preview must not be empty");
+        diagnostics.error().message("store import review summary staging_preview must not be empty").emit();
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error(
-            "store import review summary next_step_recommendation must not be empty");
+        diagnostics.error().message("store import review summary next_step_recommendation must not be empty").emit();
     }
 
     switch (summary.descriptor_status) {
     case StoreImportDescriptorStatus::ReadyToImport:
         if (summary.next_action !=
             StoreImportReviewNextActionKind::HandoffStoreImportDescriptor) {
-            diagnostics.error(
-                "store import review summary ReadyToImport descriptor_status requires next_action handoff_store_import_descriptor");
+            diagnostics.error().message("store import review summary ReadyToImport descriptor_status requires next_action handoff_store_import_descriptor").emit();
         }
         if (!summary.import_ready) {
-            diagnostics.error(
-                "store import review summary ReadyToImport descriptor_status requires import_ready");
+            diagnostics.error().message("store import review summary ReadyToImport descriptor_status requires import_ready").emit();
         }
         break;
     case StoreImportDescriptorStatus::Blocked:
         if (summary.next_action != StoreImportReviewNextActionKind::AwaitStagingReadiness) {
-            diagnostics.error(
-                "store import review summary Blocked descriptor_status requires next_action await_staging_readiness");
+            diagnostics.error().message("store import review summary Blocked descriptor_status requires next_action await_staging_readiness").emit();
         }
         if (summary.import_ready) {
-            diagnostics.error(
-                "store import review summary Blocked descriptor_status cannot be import_ready");
+            diagnostics.error().message("store import review summary Blocked descriptor_status cannot be import_ready").emit();
         }
         if (!summary.staging_blocker.has_value()) {
-            diagnostics.error(
-                "store import review summary Blocked descriptor_status requires staging_blocker");
+            diagnostics.error().message("store import review summary Blocked descriptor_status requires staging_blocker").emit();
         }
         break;
     case StoreImportDescriptorStatus::TerminalCompleted:
         if (summary.next_action !=
             StoreImportReviewNextActionKind::ArchiveCompletedStoreImportState) {
-            diagnostics.error(
-                "store import review summary TerminalCompleted descriptor_status requires next_action archive_completed_store_import_state");
+            diagnostics.error().message("store import review summary TerminalCompleted descriptor_status requires next_action archive_completed_store_import_state").emit();
         }
         if (!summary.import_ready) {
-            diagnostics.error(
-                "store import review summary TerminalCompleted descriptor_status requires import_ready");
+            diagnostics.error().message("store import review summary TerminalCompleted descriptor_status requires import_ready").emit();
         }
         if (summary.staging_blocker.has_value()) {
-            diagnostics.error(
-                "store import review summary TerminalCompleted descriptor_status cannot contain staging_blocker");
+            diagnostics.error().message("store import review summary TerminalCompleted descriptor_status cannot contain staging_blocker").emit();
         }
         if (summary.next_required_staging_artifact_kind.has_value()) {
-            diagnostics.error(
-                "store import review summary TerminalCompleted descriptor_status cannot contain next_required_staging_artifact_kind");
+            diagnostics.error().message("store import review summary TerminalCompleted descriptor_status cannot contain next_required_staging_artifact_kind").emit();
         }
         break;
     case StoreImportDescriptorStatus::TerminalFailed:
         if (summary.next_action !=
             StoreImportReviewNextActionKind::InvestigateStoreImportFailure) {
-            diagnostics.error(
-                "store import review summary TerminalFailed descriptor_status requires next_action investigate_store_import_failure");
+            diagnostics.error().message("store import review summary TerminalFailed descriptor_status requires next_action investigate_store_import_failure").emit();
         }
         if (!summary.staging_blocker.has_value()) {
-            diagnostics.error(
-                "store import review summary TerminalFailed descriptor_status requires staging_blocker");
+            diagnostics.error().message("store import review summary TerminalFailed descriptor_status requires staging_blocker").emit();
         }
         break;
     case StoreImportDescriptorStatus::TerminalPartial:
         if (summary.next_action !=
             StoreImportReviewNextActionKind::PreservePartialStoreImportState) {
-            diagnostics.error(
-                "store import review summary TerminalPartial descriptor_status requires next_action preserve_partial_store_import_state");
+            diagnostics.error().message("store import review summary TerminalPartial descriptor_status requires next_action preserve_partial_store_import_state").emit();
         }
         if (!summary.staging_blocker.has_value()) {
-            diagnostics.error(
-                "store import review summary TerminalPartial descriptor_status requires staging_blocker");
+            diagnostics.error().message("store import review summary TerminalPartial descriptor_status requires staging_blocker").emit();
         }
         break;
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import review summary completed workflow_status requires TerminalCompleted descriptor_status");
+        diagnostics.error().message("store import review summary completed workflow_status requires TerminalCompleted descriptor_status").emit();
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import review summary failed workflow_status requires TerminalFailed descriptor_status");
+        diagnostics.error().message("store import review summary failed workflow_status requires TerminalFailed descriptor_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import review summary TerminalCompleted checkpoint_status requires TerminalCompleted descriptor_status");
+        diagnostics.error().message("store import review summary TerminalCompleted checkpoint_status requires TerminalCompleted descriptor_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalFailed &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import review summary TerminalFailed checkpoint_status requires TerminalFailed descriptor_status");
+        diagnostics.error().message("store import review summary TerminalFailed checkpoint_status requires TerminalFailed descriptor_status").emit();
     }
 
     if (summary.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalPartial &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import review summary TerminalPartial checkpoint_status requires TerminalPartial descriptor_status");
+        diagnostics.error().message("store import review summary TerminalPartial checkpoint_status requires TerminalPartial descriptor_status").emit();
     }
 
     if (summary.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import review summary TerminalCompleted persistence_status requires TerminalCompleted descriptor_status");
+        diagnostics.error().message("store import review summary TerminalCompleted persistence_status requires TerminalCompleted descriptor_status").emit();
     }
 
     if (summary.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import review summary TerminalFailed persistence_status requires TerminalFailed descriptor_status");
+        diagnostics.error().message("store import review summary TerminalFailed persistence_status requires TerminalFailed descriptor_status").emit();
     }
 
     if (summary.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import review summary TerminalPartial persistence_status requires TerminalPartial descriptor_status");
+        diagnostics.error().message("store import review summary TerminalPartial persistence_status requires TerminalPartial descriptor_status").emit();
     }
 
     if (summary.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
         summary.descriptor_status != StoreImportDescriptorStatus::ReadyToImport &&
         summary.descriptor_status != StoreImportDescriptorStatus::Blocked &&
         summary.descriptor_status != StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import review summary partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial descriptor_status");
+        diagnostics.error().message("store import review summary partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial descriptor_status").emit();
     }
 
     return result;

@@ -90,107 +90,85 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
     };
 
     if (report.format_version != kAuditReportFormatVersion) {
-        result.diagnostics.error(
-            "audit report validation encountered unsupported format_version '" +
-            report.format_version + "'");
+        result.diagnostics.error().message("audit report validation encountered unsupported format_version '" + report.format_version + "'").emit();
     }
 
     if (report.workflow_canonical_name.empty()) {
-        result.diagnostics.error(
-            "audit report validation contains empty workflow_canonical_name");
+        result.diagnostics.error().message("audit report validation contains empty workflow_canonical_name").emit();
     }
 
     if (report.session_id.empty()) {
-        result.diagnostics.error("audit report validation contains empty session_id");
+        result.diagnostics.error().message("audit report validation contains empty session_id").emit();
     }
 
     if (report.input_fixture.empty()) {
-        result.diagnostics.error("audit report validation contains empty input_fixture");
+        result.diagnostics.error().message("audit report validation contains empty input_fixture").emit();
     }
 
     if (report.plan_summary.source_execution_plan_format_version !=
         handoff::kExecutionPlanFormatVersion) {
-        result.diagnostics.error(
-            "audit report validation encountered unsupported plan_summary source_execution_plan_format_version '" +
-            report.plan_summary.source_execution_plan_format_version + "'");
+        result.diagnostics.error().message("audit report validation encountered unsupported plan_summary source_execution_plan_format_version '" + report.plan_summary.source_execution_plan_format_version + "'").emit();
     }
 
     if (report.session_summary.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        result.diagnostics.error(
-            "audit report validation encountered unsupported session_summary source_runtime_session_format_version '" +
-            report.session_summary.source_runtime_session_format_version + "'");
+        result.diagnostics.error().message("audit report validation encountered unsupported session_summary source_runtime_session_format_version '" + report.session_summary.source_runtime_session_format_version + "'").emit();
     }
 
     if (report.journal_summary.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        result.diagnostics.error(
-            "audit report validation encountered unsupported journal_summary source_execution_journal_format_version '" +
-            report.journal_summary.source_execution_journal_format_version + "'");
+        result.diagnostics.error().message("audit report validation encountered unsupported journal_summary source_execution_journal_format_version '" + report.journal_summary.source_execution_journal_format_version + "'").emit();
     }
 
     if (report.trace_summary.source_dry_run_trace_format_version != dry_run::kTraceFormatVersion) {
-        result.diagnostics.error(
-            "audit report validation encountered unsupported trace_summary source_dry_run_trace_format_version '" +
-            report.trace_summary.source_dry_run_trace_format_version + "'");
+        result.diagnostics.error().message("audit report validation encountered unsupported trace_summary source_dry_run_trace_format_version '" + report.trace_summary.source_dry_run_trace_format_version + "'").emit();
     }
 
     std::unordered_map<std::string, const AuditPlanNodeSummary *> plan_nodes_by_name;
     std::unordered_set<std::string> plan_execution_order_names;
     for (const auto &node_name : report.plan_summary.execution_order) {
         if (node_name.empty()) {
-            result.diagnostics.error(
-                "audit report validation plan_summary execution_order contains empty node name");
+            result.diagnostics.error().message("audit report validation plan_summary execution_order contains empty node name").emit();
             continue;
         }
 
         if (!plan_execution_order_names.insert(node_name).second) {
-            result.diagnostics.error(
-                "audit report validation plan_summary execution_order contains duplicate node '" +
-                node_name + "'");
+            result.diagnostics.error().message("audit report validation plan_summary execution_order contains duplicate node '" +
+                node_name + "'").emit();
         }
     }
 
     for (const auto &node : report.plan_summary.nodes) {
         if (node.node_name.empty()) {
-            result.diagnostics.error(
-                "audit report validation plan_summary contains node with empty node_name");
+            result.diagnostics.error().message("audit report validation plan_summary contains node with empty node_name").emit();
             continue;
         }
 
         if (!plan_nodes_by_name.emplace(node.node_name, &node).second) {
-            result.diagnostics.error("audit report validation plan_summary contains duplicate node '" +
-                                     node.node_name + "'");
+            result.diagnostics.error().message("audit report validation plan_summary contains duplicate node '" + node.node_name + "'").emit();
             continue;
         }
 
         if (node.target.empty()) {
-            result.diagnostics.error("audit report validation plan_summary node '" + node.node_name +
-                                     "' has empty target");
+            result.diagnostics.error().message("audit report validation plan_summary node '" + node.node_name + "' has empty target").emit();
         }
 
         std::unordered_set<std::string> planned_dependencies;
         for (const auto &dependency : node.planned_dependencies) {
             if (dependency.empty()) {
-                result.diagnostics.error("audit report validation plan_summary node '" +
-                                         node.node_name +
-                                         "' contains empty planned dependency");
+                result.diagnostics.error().message("audit report validation plan_summary node '" + node.node_name + "' contains empty planned dependency").emit();
                 continue;
             }
 
             if (!planned_dependencies.insert(dependency).second) {
-                result.diagnostics.error("audit report validation plan_summary node '" +
-                                         node.node_name +
-                                         "' contains duplicate planned dependency '" +
-                                         dependency + "'");
+                result.diagnostics.error().message("audit report validation plan_summary node '" + node.node_name + "' contains duplicate planned dependency '" + dependency + "'").emit();
             }
         }
     }
 
     for (const auto &node_name : report.plan_summary.execution_order) {
         if (!plan_nodes_by_name.contains(node_name)) {
-            result.diagnostics.error("audit report validation plan_summary execution_order references unknown node '" +
-                                     node_name + "'");
+            result.diagnostics.error().message("audit report validation plan_summary execution_order references unknown node '" + node_name + "'").emit();
         }
     }
 
@@ -198,31 +176,24 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
     std::unordered_set<std::size_t> session_execution_indices;
     for (const auto &node : report.session_summary.nodes) {
         if (node.node_name.empty()) {
-            result.diagnostics.error(
-                "audit report validation session_summary contains node with empty node_name");
+            result.diagnostics.error().message("audit report validation session_summary contains node with empty node_name").emit();
             continue;
         }
 
         if (!session_nodes_by_name.emplace(node.node_name, &node).second) {
-            result.diagnostics.error(
-                "audit report validation session_summary contains duplicate node '" +
-                node.node_name + "'");
+            result.diagnostics.error().message("audit report validation session_summary contains duplicate node '" + node.node_name + "'").emit();
             continue;
         }
 
         if (node_status_is_executed(node.final_status)) {
             if (!session_execution_indices.insert(node.execution_index).second) {
-                result.diagnostics.error("audit report validation session_summary node '" +
-                                         node.node_name + "' reuses execution_index " +
-                                         std::to_string(node.execution_index));
+                result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' reuses execution_index " + std::to_string(node.execution_index)).emit();
             }
         }
 
         const auto plan_found = plan_nodes_by_name.find(node.node_name);
         if (plan_found == plan_nodes_by_name.end()) {
-            result.diagnostics.error("audit report validation session_summary node '" +
-                                     node.node_name +
-                                     "' does not exist in plan_summary");
+            result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' does not exist in plan_summary").emit();
             continue;
         }
 
@@ -232,50 +203,35 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
         std::unordered_set<std::string> satisfied_dependencies;
         for (const auto &dependency : node.satisfied_dependencies) {
             if (dependency.empty()) {
-                result.diagnostics.error("audit report validation session_summary node '" +
-                                         node.node_name +
-                                         "' contains empty satisfied dependency");
+                result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' contains empty satisfied dependency").emit();
                 continue;
             }
 
             if (!satisfied_dependencies.insert(dependency).second) {
-                result.diagnostics.error("audit report validation session_summary node '" +
-                                         node.node_name +
-                                         "' contains duplicate satisfied dependency '" +
-                                         dependency + "'");
+                result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' contains duplicate satisfied dependency '" + dependency + "'").emit();
             }
 
             if (!planned_dependencies.contains(dependency)) {
-                result.diagnostics.error("audit report validation session_summary node '" +
-                                         node.node_name + "' contains satisfied dependency '" +
-                                         dependency +
-                                         "' not declared in plan_summary");
+                result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' contains satisfied dependency '" + dependency + "' not declared in plan_summary").emit();
             }
         }
 
         std::unordered_set<std::string> used_mock_selectors;
         for (const auto &selector : node.used_mock_selectors) {
             if (selector.empty()) {
-                result.diagnostics.error("audit report validation session_summary node '" +
-                                         node.node_name +
-                                         "' contains empty used mock selector");
+                result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' contains empty used mock selector").emit();
                 continue;
             }
 
             if (!used_mock_selectors.insert(selector).second) {
-                result.diagnostics.error("audit report validation session_summary node '" +
-                                         node.node_name +
-                                         "' contains duplicate used mock selector '" +
-                                         selector + "'");
+                result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' contains duplicate used mock selector '" + selector + "'").emit();
             }
         }
 
         if (report.session_summary.workflow_status ==
                 runtime_session::WorkflowSessionStatus::Completed &&
             node.final_status != runtime_session::NodeSessionStatus::Completed) {
-            result.diagnostics.error("audit report validation session_summary node '" +
-                                     node.node_name +
-                                     "' is not Completed while workflow_status is Completed");
+            result.diagnostics.error().message("audit report validation session_summary node '" + node.node_name + "' is not Completed while workflow_status is Completed").emit();
         }
     }
 
@@ -283,22 +239,17 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
         const auto &node_name = report.plan_summary.execution_order[index];
         const auto session_found = session_nodes_by_name.find(node_name);
         if (session_found == session_nodes_by_name.end()) {
-            result.diagnostics.error("audit report validation plan_summary execution_order node '" +
-                                     node_name +
-                                     "' does not exist in session_summary");
+            result.diagnostics.error().message("audit report validation plan_summary execution_order node '" + node_name + "' does not exist in session_summary").emit();
             continue;
         }
 
         if (session_found->second->execution_index != index) {
-            result.diagnostics.error("audit report validation session_summary node '" +
-                                     node_name +
-                                     "' execution_index does not match plan_summary execution_order");
+            result.diagnostics.error().message("audit report validation session_summary node '" + node_name + "' execution_index does not match plan_summary execution_order").emit();
         }
     }
 
     if (report.journal_summary.total_events == 0) {
-        result.diagnostics.error(
-            "audit report validation journal_summary total_events must be greater than zero");
+        result.diagnostics.error().message("audit report validation journal_summary total_events must be greater than zero").emit();
     }
 
     const auto completed_node_count = count_session_nodes_with_status(
@@ -309,65 +260,52 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
         completed_node_prefix(report.session_summary.nodes, report.plan_summary.execution_order);
 
     if (report.journal_summary.node_completed_events != completed_node_count) {
-        result.diagnostics.error(
-            "audit report validation journal_summary node_completed_events must match completed session node count");
+        result.diagnostics.error().message("audit report validation journal_summary node_completed_events must match completed session node count").emit();
     }
 
     if (report.journal_summary.completed_node_order != completed_execution_order) {
-        result.diagnostics.error(
-            "audit report validation journal_summary completed_node_order does not match completed execution_order prefix");
+        result.diagnostics.error().message("audit report validation journal_summary completed_node_order does not match completed execution_order prefix").emit();
     }
 
     switch (report.session_summary.workflow_status) {
     case runtime_session::WorkflowSessionStatus::Completed:
         if (report.conclusion != AuditConclusion::Passed) {
-            result.diagnostics.error(
-                "audit report validation completed workflow must use conclusion Passed");
+            result.diagnostics.error().message("audit report validation completed workflow must use conclusion Passed").emit();
         }
         if (report.journal_summary.workflow_completed_events != 1) {
-            result.diagnostics.error(
-                "audit report validation journal_summary workflow_completed_events must equal 1 for completed workflow");
+            result.diagnostics.error().message("audit report validation journal_summary workflow_completed_events must equal 1 for completed workflow").emit();
         }
         if (report.journal_summary.workflow_failed_events != 0) {
-            result.diagnostics.error(
-                "audit report validation completed workflow must not contain workflow_failed events");
+            result.diagnostics.error().message("audit report validation completed workflow must not contain workflow_failed events").emit();
         }
         if (report.journal_summary.node_failed_events != 0) {
-            result.diagnostics.error(
-                "audit report validation completed workflow must not contain failed node events");
+            result.diagnostics.error().message("audit report validation completed workflow must not contain failed node events").emit();
         }
         break;
     case runtime_session::WorkflowSessionStatus::Failed:
         if (report.conclusion != AuditConclusion::RuntimeFailed) {
-            result.diagnostics.error(
-                "audit report validation failed workflow must use conclusion RuntimeFailed");
+            result.diagnostics.error().message("audit report validation failed workflow must use conclusion RuntimeFailed").emit();
         }
         if (report.journal_summary.workflow_completed_events != 0) {
-            result.diagnostics.error(
-                "audit report validation failed workflow must not contain workflow_completed events");
+            result.diagnostics.error().message("audit report validation failed workflow must not contain workflow_completed events").emit();
         }
         if (report.journal_summary.workflow_failed_events != 1) {
-            result.diagnostics.error(
-                "audit report validation failed workflow must contain exactly one workflow_failed event");
+            result.diagnostics.error().message("audit report validation failed workflow must contain exactly one workflow_failed event").emit();
         }
         if (failed_node_count == 0 || report.journal_summary.node_failed_events == 0) {
-            result.diagnostics.error(
-                "audit report validation failed workflow must contain failed session nodes and failed journal events");
+            result.diagnostics.error().message("audit report validation failed workflow must contain failed session nodes and failed journal events").emit();
         }
         break;
     case runtime_session::WorkflowSessionStatus::Partial:
         if (report.conclusion != AuditConclusion::Partial) {
-            result.diagnostics.error(
-                "audit report validation partial workflow must use conclusion Partial");
+            result.diagnostics.error().message("audit report validation partial workflow must use conclusion Partial").emit();
         }
         if (report.journal_summary.workflow_completed_events != 0 ||
             report.journal_summary.workflow_failed_events != 0) {
-            result.diagnostics.error(
-                "audit report validation partial workflow must not contain terminal workflow events");
+            result.diagnostics.error().message("audit report validation partial workflow must not contain terminal workflow events").emit();
         }
         if (report.journal_summary.node_failed_events != 0) {
-            result.diagnostics.error(
-                "audit report validation partial workflow must not contain failed node events");
+            result.diagnostics.error().message("audit report validation partial workflow must not contain failed node events").emit();
         }
         break;
     }
@@ -375,85 +313,67 @@ AuditReportValidationResult validate_audit_report(const AuditReport &report) {
     std::unordered_set<std::string> trace_execution_order_names;
     for (const auto &node_name : report.trace_summary.execution_order) {
         if (node_name.empty()) {
-            result.diagnostics.error(
-                "audit report validation trace_summary execution_order contains empty node name");
+            result.diagnostics.error().message("audit report validation trace_summary execution_order contains empty node name").emit();
             continue;
         }
         if (!trace_execution_order_names.insert(node_name).second) {
-            result.diagnostics.error(
-                "audit report validation trace_summary execution_order contains duplicate node '" +
-                node_name + "'");
+            result.diagnostics.error().message("audit report validation trace_summary execution_order contains duplicate node '" +
+                node_name + "'").emit();
         }
     }
 
     if (!is_prefix(report.plan_summary.execution_order, report.trace_summary.execution_order)) {
-        result.diagnostics.error(
-            "audit report validation trace_summary execution_order must contain plan_summary execution_order as prefix");
+        result.diagnostics.error().message("audit report validation trace_summary execution_order must contain plan_summary execution_order as prefix").emit();
     }
 
     std::unordered_set<std::string> trace_nodes_by_name;
     for (const auto &node : report.trace_summary.nodes) {
         if (node.node_name.empty()) {
-            result.diagnostics.error(
-                "audit report validation trace_summary contains node with empty node_name");
+            result.diagnostics.error().message("audit report validation trace_summary contains node with empty node_name").emit();
             continue;
         }
 
         if (!trace_nodes_by_name.insert(node.node_name).second) {
-            result.diagnostics.error("audit report validation trace_summary contains duplicate node '" +
-                                     node.node_name + "'");
+            result.diagnostics.error().message("audit report validation trace_summary contains duplicate node '" + node.node_name + "'").emit();
         }
 
         std::unordered_set<std::string> selectors;
         for (const auto &selector : node.mock_result_selectors) {
             if (selector.empty()) {
-                result.diagnostics.error("audit report validation trace_summary node '" +
-                                         node.node_name +
-                                         "' contains empty mock result selector");
+                result.diagnostics.error().message("audit report validation trace_summary node '" + node.node_name + "' contains empty mock result selector").emit();
                 continue;
             }
             if (!selectors.insert(selector).second) {
-                result.diagnostics.error("audit report validation trace_summary node '" +
-                                         node.node_name +
-                                         "' contains duplicate mock result selector '" +
-                                         selector + "'");
+                result.diagnostics.error().message("audit report validation trace_summary node '" + node.node_name + "' contains duplicate mock result selector '" + selector + "'").emit();
             }
         }
     }
 
     if (trace_nodes_by_name.size() < report.plan_summary.execution_order.size()) {
-        result.diagnostics.error(
-            "audit report validation trace_summary node count must cover plan_summary execution_order size");
+        result.diagnostics.error().message("audit report validation trace_summary node count must cover plan_summary execution_order size").emit();
     }
 
     if (!report.replay_consistency.plan_matches_session) {
-        result.diagnostics.error(
-            "audit report validation replay_consistency.plan_matches_session must be true");
+        result.diagnostics.error().message("audit report validation replay_consistency.plan_matches_session must be true").emit();
     }
     if (!report.replay_consistency.session_matches_journal) {
-        result.diagnostics.error(
-            "audit report validation replay_consistency.session_matches_journal must be true");
+        result.diagnostics.error().message("audit report validation replay_consistency.session_matches_journal must be true").emit();
     }
     if (!report.replay_consistency.journal_matches_execution_order) {
-        result.diagnostics.error(
-            "audit report validation replay_consistency.journal_matches_execution_order must be true");
+        result.diagnostics.error().message("audit report validation replay_consistency.journal_matches_execution_order must be true").emit();
     }
 
     if (!report.audit_consistency.plan_matches_session) {
-        result.diagnostics.error(
-            "audit report validation audit_consistency.plan_matches_session must be true");
+        result.diagnostics.error().message("audit report validation audit_consistency.plan_matches_session must be true").emit();
     }
     if (!report.audit_consistency.session_matches_journal) {
-        result.diagnostics.error(
-            "audit report validation audit_consistency.session_matches_journal must be true");
+        result.diagnostics.error().message("audit report validation audit_consistency.session_matches_journal must be true").emit();
     }
     if (!report.audit_consistency.journal_matches_trace) {
-        result.diagnostics.error(
-            "audit report validation audit_consistency.journal_matches_trace must be true");
+        result.diagnostics.error().message("audit report validation audit_consistency.journal_matches_trace must be true").emit();
     }
     if (!report.audit_consistency.trace_matches_replay) {
-        result.diagnostics.error(
-            "audit report validation audit_consistency.trace_matches_replay must be true");
+        result.diagnostics.error().message("audit report validation audit_consistency.trace_matches_replay must be true").emit();
     }
 
     return result;
@@ -482,49 +402,39 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
     }
 
     if (trace.format_version != dry_run::kTraceFormatVersion) {
-        result.diagnostics.error(
-            "audit report bootstrap encountered unsupported dry-run trace format_version '" +
-            trace.format_version + "'");
+        result.diagnostics.error().message("audit report bootstrap encountered unsupported dry-run trace format_version '" + trace.format_version + "'").emit();
     }
 
     if (trace.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "audit report bootstrap dry-run trace source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("audit report bootstrap dry-run trace source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, session.source_package_identity)) {
-        result.diagnostics.error(
-            "audit report bootstrap runtime session source_package_identity does not match execution plan");
+        result.diagnostics.error().message("audit report bootstrap runtime session source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, journal.source_package_identity)) {
-        result.diagnostics.error(
-            "audit report bootstrap execution journal source_package_identity does not match execution plan");
+        result.diagnostics.error().message("audit report bootstrap execution journal source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, trace.source_package_identity)) {
-        result.diagnostics.error(
-            "audit report bootstrap dry-run trace source_package_identity does not match execution plan");
+        result.diagnostics.error().message("audit report bootstrap dry-run trace source_package_identity does not match execution plan").emit();
     }
 
     if (trace.workflow_canonical_name != session.workflow_canonical_name) {
-        result.diagnostics.error(
-            "audit report bootstrap dry-run trace workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("audit report bootstrap dry-run trace workflow_canonical_name does not match runtime session").emit();
     }
 
     if (trace.input_fixture != session.input_fixture) {
-        result.diagnostics.error(
-            "audit report bootstrap dry-run trace input_fixture does not match runtime session");
+        result.diagnostics.error().message("audit report bootstrap dry-run trace input_fixture does not match runtime session").emit();
     }
 
     if (trace.run_id != session.run_id) {
-        result.diagnostics.error(
-            "audit report bootstrap dry-run trace run_id does not match runtime session");
+        result.diagnostics.error().message("audit report bootstrap dry-run trace run_id does not match runtime session").emit();
     }
 
     if (trace.status != dry_run::DryRunStatus::Completed) {
-        result.diagnostics.error(
-            "audit report bootstrap currently requires dry-run trace status Completed");
+        result.diagnostics.error().message("audit report bootstrap currently requires dry-run trace status Completed").emit();
     }
 
     const auto replay = replay_view::build_replay_view(plan, session, journal);
@@ -535,9 +445,7 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
 
     const auto *workflow = find_workflow_plan(plan, session.workflow_canonical_name);
     if (workflow == nullptr) {
-        result.diagnostics.error("audit report bootstrap workflow '" +
-                                 session.workflow_canonical_name +
-                                 "' does not exist in execution plan");
+        result.diagnostics.error().message("audit report bootstrap workflow '" + session.workflow_canonical_name + "' does not exist in execution plan").emit();
         return result;
     }
 
@@ -671,8 +579,7 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
     if (!is_prefix(replay.replay->execution_order, trace.execution_order)) {
         report.audit_consistency.journal_matches_trace = false;
         report.audit_consistency.trace_matches_replay = false;
-        result.diagnostics.error(
-            "audit report bootstrap dry-run trace execution_order does not contain replay view execution_order as prefix");
+        result.diagnostics.error().message("audit report bootstrap dry-run trace execution_order does not contain replay view execution_order as prefix").emit();
     }
 
     std::unordered_map<std::string, const AuditTraceNodeSummary *> trace_nodes_by_name;
@@ -684,23 +591,18 @@ AuditReportResult build_audit_report(const handoff::ExecutionPlan &plan,
         const auto found = trace_nodes_by_name.find(node.node_name);
         if (found == trace_nodes_by_name.end()) {
             report.audit_consistency.trace_matches_replay = false;
-            result.diagnostics.error("audit report bootstrap dry-run trace node '" +
-                                     node.node_name + "' does not exist in replay view");
+            result.diagnostics.error().message("audit report bootstrap dry-run trace node '" + node.node_name + "' does not exist in replay view").emit();
             continue;
         }
 
         if (found->second->execution_index != node.execution_index) {
             report.audit_consistency.trace_matches_replay = false;
-            result.diagnostics.error("audit report bootstrap dry-run trace node '" +
-                                     node.node_name +
-                                     "' execution_index does not match replay view");
+            result.diagnostics.error().message("audit report bootstrap dry-run trace node '" + node.node_name + "' execution_index does not match replay view").emit();
         }
 
         if (found->second->mock_result_selectors != node.used_mock_selectors) {
             report.audit_consistency.trace_matches_replay = false;
-            result.diagnostics.error("audit report bootstrap dry-run trace node '" +
-                                     node.node_name +
-                                     "' mock result selectors do not match replay view");
+            result.diagnostics.error().message("audit report bootstrap dry-run trace node '" + node.node_name + "' mock result selectors do not match replay view").emit();
         }
     }
 

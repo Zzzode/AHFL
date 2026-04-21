@@ -55,26 +55,23 @@ void validate_capability_mock_set(const CapabilityMockSet &mock_set,
                                   const handoff::WorkflowPlan &workflow,
                                   DiagnosticBag &diagnostics) {
     if (mock_set.format_version != kCapabilityMockSetFormatVersion) {
-        diagnostics.error("capability mock set encountered unsupported format_version '" +
-                          mock_set.format_version + "'");
+        diagnostics.error().message("capability mock set encountered unsupported format_version '" + mock_set.format_version + "'").emit();
     }
 
     std::unordered_set<std::string> seen_mock_selectors;
     for (const auto &mock : mock_set.mocks) {
         if (mock.capability_name.has_value() == mock.binding_key.has_value()) {
-            diagnostics.error(
-                "capability mock must specify exactly one of 'capability_name' or 'binding_key'");
+            diagnostics.error().message("capability mock must specify exactly one of 'capability_name' or 'binding_key'").emit();
             continue;
         }
 
         if (mock.result_fixture.empty()) {
-            diagnostics.error("capability mock result_fixture must not be empty");
+            diagnostics.error().message("capability mock result_fixture must not be empty").emit();
         }
 
         const auto selector = mock_selector_key(mock);
         if (!selector.empty() && !seen_mock_selectors.insert(selector).second) {
-            diagnostics.error("capability mock set contains duplicate mock selector '" +
-                              selector + "'");
+            diagnostics.error().message("capability mock set contains duplicate mock selector '" + selector + "'").emit();
         }
     }
 
@@ -83,9 +80,7 @@ void validate_capability_mock_set(const CapabilityMockSet &mock_set,
         for (const auto &binding : node.capability_bindings) {
             const auto *mock = find_mock_for_binding(mock_set, binding);
             if (mock == nullptr) {
-                diagnostics.error("local dry-run missing capability mock for binding key '" +
-                                  binding.binding_key + "' capability '" +
-                                  binding.capability_name + "'");
+                diagnostics.error().message("local dry-run missing capability mock for binding key '" + binding.binding_key + "' capability '" + binding.capability_name + "'").emit();
                 continue;
             }
 
@@ -96,8 +91,7 @@ void validate_capability_mock_set(const CapabilityMockSet &mock_set,
     for (const auto &mock : mock_set.mocks) {
         const auto selector = mock_selector_key(mock);
         if (!selector.empty() && !used_mock_selectors.contains(selector)) {
-            diagnostics.error("capability mock set contains unused mock selector '" +
-                              selector + "'");
+            diagnostics.error().message("capability mock set contains unused mock selector '" + selector + "'").emit();
         }
     }
 }
@@ -120,9 +114,7 @@ DryRunResult run_local_dry_run(const handoff::ExecutionPlan &plan,
 
     const auto *workflow = find_workflow_plan(plan, request.workflow_canonical_name);
     if (workflow == nullptr) {
-        result.diagnostics.error("local dry-run request workflow '" +
-                                 request.workflow_canonical_name +
-                                 "' does not exist in execution plan");
+        result.diagnostics.error().message("local dry-run request workflow '" + request.workflow_canonical_name + "' does not exist in execution plan").emit();
         return result;
     }
 
@@ -213,8 +205,7 @@ DryRunResult run_local_dry_run(const handoff::ExecutionPlan &plan,
     }
 
     if (executed_nodes.size() != workflow->nodes.size()) {
-        result.diagnostics.error("local dry-run could not schedule all workflow nodes for '" +
-                                 workflow->workflow_canonical_name + "'");
+        result.diagnostics.error().message("local dry-run could not schedule all workflow nodes for '" + workflow->workflow_canonical_name + "'").emit();
         return result;
     }
 

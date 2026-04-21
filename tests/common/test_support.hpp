@@ -28,6 +28,19 @@ namespace ahfl::test_support {
     return false;
 }
 
+[[nodiscard]] inline bool diagnostics_contain_code(const DiagnosticBag &diagnostics,
+                                                   DiagnosticCategory category,
+                                                   std::string_view code) {
+    const std::string full_code = std::string(to_string(category)) + "." + std::string(code);
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == full_code) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 using TestCaseRunner = std::function<int(const std::span<const std::string>)>;
 
 struct TestDispatchEntry {

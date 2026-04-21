@@ -142,137 +142,112 @@ void compare_manifest_against_expected(
     const persistence_export::PersistenceExportManifest &expected,
     DiagnosticBag &diagnostics) {
     if (manifest.format_version != expected.format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_execution_plan_format_version !=
         expected.source_execution_plan_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_execution_plan_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_execution_plan_format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_runtime_session_format_version !=
         expected.source_runtime_session_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_runtime_session_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_runtime_session_format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_execution_journal_format_version !=
         expected.source_execution_journal_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_execution_journal_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_execution_journal_format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_replay_view_format_version !=
         expected.source_replay_view_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_replay_view_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_replay_view_format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_scheduler_snapshot_format_version !=
         expected.source_scheduler_snapshot_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_scheduler_snapshot_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_scheduler_snapshot_format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_checkpoint_record_format_version !=
         expected.source_checkpoint_record_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_checkpoint_record_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_checkpoint_record_format_version does not match derived export manifest").emit();
     }
 
     if (manifest.source_persistence_descriptor_format_version !=
         expected.source_persistence_descriptor_format_version) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_persistence_descriptor_format_version does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_persistence_descriptor_format_version does not match derived export manifest").emit();
     }
 
     if (!package_identity_equals(manifest.source_package_identity,
                                  expected.source_package_identity)) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest source_package_identity does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest source_package_identity does not match derived export manifest").emit();
     }
 
     if (manifest.workflow_canonical_name != expected.workflow_canonical_name) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest workflow_canonical_name does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest workflow_canonical_name does not match derived export manifest").emit();
     }
 
     if (manifest.session_id != expected.session_id) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest session_id does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest session_id does not match derived export manifest").emit();
     }
 
     if (manifest.run_id != expected.run_id) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest run_id does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest run_id does not match derived export manifest").emit();
     }
 
     if (manifest.input_fixture != expected.input_fixture) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest input_fixture does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest input_fixture does not match derived export manifest").emit();
     }
 
     if (manifest.workflow_status != expected.workflow_status) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest workflow_status does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest workflow_status does not match derived export manifest").emit();
     }
 
     if (manifest.checkpoint_status != expected.checkpoint_status) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest checkpoint_status does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest checkpoint_status does not match derived export manifest").emit();
     }
 
     if (manifest.persistence_status != expected.persistence_status) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest persistence_status does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest persistence_status does not match derived export manifest").emit();
     }
 
     if (manifest.manifest_status != expected.manifest_status) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest manifest_status does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest manifest_status does not match derived export manifest").emit();
     }
 
     if (!failure_summary_equals(manifest.workflow_failure_summary,
                                 expected.workflow_failure_summary)) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest workflow_failure_summary does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest workflow_failure_summary does not match derived export manifest").emit();
     }
 
     if (manifest.export_package_identity != expected.export_package_identity) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest export_package_identity does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest export_package_identity does not match derived export manifest").emit();
     }
 
     if (manifest.planned_durable_identity != expected.planned_durable_identity) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest planned_durable_identity does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest planned_durable_identity does not match derived export manifest").emit();
     }
 
     if (manifest.manifest_boundary_kind != expected.manifest_boundary_kind) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest manifest_boundary_kind does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest manifest_boundary_kind does not match derived export manifest").emit();
     }
 
     if (!export_artifact_bundle_equals(manifest.artifact_bundle, expected.artifact_bundle)) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest artifact_bundle does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest artifact_bundle does not match derived export manifest").emit();
     }
 
     if (manifest.manifest_ready != expected.manifest_ready) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest manifest_ready does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest manifest_ready does not match derived export manifest").emit();
     }
 
     if (manifest.next_required_artifact_kind != expected.next_required_artifact_kind) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest next_required_artifact_kind does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest next_required_artifact_kind does not match derived export manifest").emit();
     }
 
     if (!export_blocker_equals(manifest.store_import_blocker, expected.store_import_blocker)) {
-        diagnostics.error(
-            "store import descriptor bootstrap export manifest store_import_blocker does not match derived export manifest");
+        diagnostics.error().message("store import descriptor bootstrap export manifest store_import_blocker does not match derived export manifest").emit();
     }
 }
 
@@ -284,88 +259,69 @@ validate_store_import_descriptor(const StoreImportDescriptor &descriptor) {
     auto &diagnostics = result.diagnostics;
 
     if (descriptor.format_version != kStoreImportDescriptorFormatVersion) {
-        diagnostics.error("store import descriptor format_version must be '" +
-                          std::string(kStoreImportDescriptorFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor format_version must be '" + std::string(kStoreImportDescriptorFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_execution_plan_format_version must be '" +
-            std::string(handoff::kExecutionPlanFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_execution_plan_format_version must be '" + std::string(handoff::kExecutionPlanFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_runtime_session_format_version must be '" +
-            std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_runtime_session_format_version must be '" + std::string(runtime_session::kRuntimeSessionFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_execution_journal_format_version must be '" +
-            std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_execution_journal_format_version must be '" + std::string(execution_journal::kExecutionJournalFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_replay_view_format_version must be '" +
-            std::string(replay_view::kReplayViewFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_replay_view_format_version must be '" + std::string(replay_view::kReplayViewFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_scheduler_snapshot_format_version must be '" +
-            std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_scheduler_snapshot_format_version must be '" + std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_checkpoint_record_format_version must be '" +
-            std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_checkpoint_record_format_version must be '" + std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_persistence_descriptor_format_version must be '" +
-            std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_persistence_descriptor_format_version must be '" + std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        diagnostics.error(
-            "store import descriptor source_export_manifest_format_version must be '" +
-            std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
+        diagnostics.error().message("store import descriptor source_export_manifest_format_version must be '" + std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'").emit();
     }
 
     if (descriptor.workflow_canonical_name.empty()) {
-        diagnostics.error("store import descriptor workflow_canonical_name must not be empty");
+        diagnostics.error().message("store import descriptor workflow_canonical_name must not be empty").emit();
     }
 
     if (descriptor.session_id.empty()) {
-        diagnostics.error("store import descriptor session_id must not be empty");
+        diagnostics.error().message("store import descriptor session_id must not be empty").emit();
     }
 
     if (descriptor.input_fixture.empty()) {
-        diagnostics.error("store import descriptor input_fixture must not be empty");
+        diagnostics.error().message("store import descriptor input_fixture must not be empty").emit();
     }
 
     if (descriptor.export_package_identity.empty()) {
-        diagnostics.error("store import descriptor export_package_identity must not be empty");
+        diagnostics.error().message("store import descriptor export_package_identity must not be empty").emit();
     }
 
     if (descriptor.store_import_candidate_identity.empty()) {
-        diagnostics.error(
-            "store import descriptor store_import_candidate_identity must not be empty");
+        diagnostics.error().message("store import descriptor store_import_candidate_identity must not be empty").emit();
     }
 
     if (descriptor.planned_durable_identity.empty()) {
-        diagnostics.error(
-            "store import descriptor planned_durable_identity must not be empty");
+        diagnostics.error().message("store import descriptor planned_durable_identity must not be empty").emit();
     }
 
     if (descriptor.source_package_identity.has_value()) {
@@ -378,225 +334,190 @@ validate_store_import_descriptor(const StoreImportDescriptor &descriptor) {
 
     if (descriptor.staging_artifact_set.entry_count !=
         descriptor.staging_artifact_set.entries.size()) {
-        diagnostics.error(
-            "store import descriptor staging_artifact_set entry_count must match entries length");
+        diagnostics.error().message("store import descriptor staging_artifact_set entry_count must match entries length").emit();
     }
 
     if (descriptor.import_ready && descriptor.staging_artifact_set.entries.empty()) {
-        diagnostics.error(
-            "store import descriptor import_ready requires non-empty staging_artifact_set");
+        diagnostics.error().message("store import descriptor import_ready requires non-empty staging_artifact_set").emit();
     }
 
     std::unordered_set<std::string> logical_names;
     for (const auto &entry : descriptor.staging_artifact_set.entries) {
         if (entry.logical_artifact_name.empty()) {
-            diagnostics.error(
-                "store import descriptor staging_artifact_set entry logical_artifact_name must not be empty");
+            diagnostics.error().message("store import descriptor staging_artifact_set entry logical_artifact_name must not be empty").emit();
         } else if (!logical_names.insert(entry.logical_artifact_name).second) {
-            diagnostics.error(
-                "store import descriptor staging_artifact_set contains duplicate logical_artifact_name '" +
-                entry.logical_artifact_name + "'");
+            diagnostics.error().message("store import descriptor staging_artifact_set contains duplicate logical_artifact_name '" + entry.logical_artifact_name + "'").emit();
         }
 
         if (entry.source_format_version.empty()) {
-            diagnostics.error(
-                "store import descriptor staging_artifact_set entry source_format_version must not be empty");
+            diagnostics.error().message("store import descriptor staging_artifact_set entry source_format_version must not be empty").emit();
         }
     }
 
     if (descriptor.import_ready && descriptor.staging_blocker.has_value()) {
-        diagnostics.error(
-            "store import descriptor cannot contain staging_blocker when import_ready is true");
+        diagnostics.error().message("store import descriptor cannot contain staging_blocker when import_ready is true").emit();
     }
 
     if (descriptor.import_ready && descriptor.next_required_staging_artifact_kind.has_value()) {
-        diagnostics.error(
-            "store import descriptor cannot contain next_required_staging_artifact_kind when import_ready is true");
+        diagnostics.error().message("store import descriptor cannot contain next_required_staging_artifact_kind when import_ready is true").emit();
     }
 
     if (!descriptor.import_ready &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted &&
         !descriptor.staging_blocker.has_value()) {
-        diagnostics.error(
-            "store import descriptor must contain staging_blocker when import_ready is false");
+        diagnostics.error().message("store import descriptor must contain staging_blocker when import_ready is false").emit();
     }
 
     if (descriptor.staging_blocker.has_value()) {
         if (descriptor.staging_blocker->message.empty()) {
-            diagnostics.error(
-                "store import descriptor staging_blocker message must not be empty");
+            diagnostics.error().message("store import descriptor staging_blocker message must not be empty").emit();
         }
 
         if (descriptor.staging_blocker->logical_artifact_name.has_value() &&
             descriptor.staging_blocker->logical_artifact_name->empty()) {
-            diagnostics.error(
-                "store import descriptor staging_blocker logical_artifact_name must not be empty");
+            diagnostics.error().message("store import descriptor staging_blocker logical_artifact_name must not be empty").emit();
         }
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::ReadyToImport &&
         !descriptor.import_ready) {
-        diagnostics.error(
-            "store import descriptor ReadyToImport status requires import_ready");
+        diagnostics.error().message("store import descriptor ReadyToImport status requires import_ready").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::ReadyToImport &&
         descriptor.manifest_status !=
             persistence_export::PersistenceExportManifestStatus::ReadyToImport) {
-        diagnostics.error(
-            "store import descriptor ReadyToImport status requires ReadyToImport manifest_status");
+        diagnostics.error().message("store import descriptor ReadyToImport status requires ReadyToImport manifest_status").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::ReadyToImport &&
         descriptor.staging_blocker.has_value()) {
-        diagnostics.error(
-            "store import descriptor ReadyToImport status cannot have staging_blocker");
+        diagnostics.error().message("store import descriptor ReadyToImport status cannot have staging_blocker").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::Blocked &&
         descriptor.import_ready) {
-        diagnostics.error("store import descriptor Blocked status cannot be import_ready");
+        diagnostics.error().message("store import descriptor Blocked status cannot be import_ready").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::Blocked &&
         descriptor.manifest_status != persistence_export::PersistenceExportManifestStatus::Blocked) {
-        diagnostics.error(
-            "store import descriptor Blocked status requires Blocked manifest_status");
+        diagnostics.error().message("store import descriptor Blocked status requires Blocked manifest_status").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalCompleted &&
         !descriptor.import_ready) {
-        diagnostics.error(
-            "store import descriptor TerminalCompleted status requires import_ready");
+        diagnostics.error().message("store import descriptor TerminalCompleted status requires import_ready").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalCompleted &&
         descriptor.manifest_status !=
             persistence_export::PersistenceExportManifestStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import descriptor TerminalCompleted status requires TerminalCompleted manifest_status");
+        diagnostics.error().message("store import descriptor TerminalCompleted status requires TerminalCompleted manifest_status").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalCompleted &&
         descriptor.staging_blocker.has_value()) {
-        diagnostics.error(
-            "store import descriptor TerminalCompleted status cannot have staging_blocker");
+        diagnostics.error().message("store import descriptor TerminalCompleted status cannot have staging_blocker").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalCompleted &&
         descriptor.next_required_staging_artifact_kind.has_value()) {
-        diagnostics.error(
-            "store import descriptor TerminalCompleted status cannot have next_required_staging_artifact_kind");
+        diagnostics.error().message("store import descriptor TerminalCompleted status cannot have next_required_staging_artifact_kind").emit();
     }
 
     if ((descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalFailed ||
          descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalPartial) &&
         !descriptor.staging_blocker.has_value()) {
-        diagnostics.error(
-            "store import descriptor terminal blocked status requires staging_blocker");
+        diagnostics.error().message("store import descriptor terminal blocked status requires staging_blocker").emit();
     }
 
     if ((descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalFailed ||
          descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalPartial) &&
         descriptor.import_ready) {
-        diagnostics.error(
-            "store import descriptor terminal blocked status cannot be import_ready");
+        diagnostics.error().message("store import descriptor terminal blocked status cannot be import_ready").emit();
     }
 
     if ((descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalFailed ||
          descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalPartial) &&
         descriptor.next_required_staging_artifact_kind.has_value()) {
-        diagnostics.error(
-            "store import descriptor terminal blocked status cannot have next_required_staging_artifact_kind");
+        diagnostics.error().message("store import descriptor terminal blocked status cannot have next_required_staging_artifact_kind").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalFailed &&
         descriptor.manifest_status !=
             persistence_export::PersistenceExportManifestStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import descriptor TerminalFailed status requires TerminalFailed manifest_status");
+        diagnostics.error().message("store import descriptor TerminalFailed status requires TerminalFailed manifest_status").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalPartial &&
         descriptor.manifest_status !=
             persistence_export::PersistenceExportManifestStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import descriptor TerminalPartial status requires TerminalPartial manifest_status");
+        diagnostics.error().message("store import descriptor TerminalPartial status requires TerminalPartial manifest_status").emit();
     }
 
     if (descriptor.descriptor_status == StoreImportDescriptorStatus::TerminalFailed &&
         !descriptor.workflow_failure_summary.has_value()) {
-        diagnostics.error(
-            "store import descriptor TerminalFailed status requires workflow_failure_summary");
+        diagnostics.error().message("store import descriptor TerminalFailed status requires workflow_failure_summary").emit();
     }
 
     if (descriptor.descriptor_boundary_kind == StoreImportBoundaryKind::AdapterConsumable &&
         !descriptor.import_ready &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import descriptor adapter-consumable boundary requires ready or completed descriptor_status");
+        diagnostics.error().message("store import descriptor adapter-consumable boundary requires ready or completed descriptor_status").emit();
     }
 
     if (descriptor.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import descriptor completed workflow_status requires TerminalCompleted descriptor_status");
+        diagnostics.error().message("store import descriptor completed workflow_status requires TerminalCompleted descriptor_status").emit();
     }
 
     if (descriptor.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import descriptor failed workflow_status requires TerminalFailed descriptor_status");
+        diagnostics.error().message("store import descriptor failed workflow_status requires TerminalFailed descriptor_status").emit();
     }
 
     if (descriptor.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import descriptor TerminalCompleted checkpoint_status requires TerminalCompleted descriptor_status");
+        diagnostics.error().message("store import descriptor TerminalCompleted checkpoint_status requires TerminalCompleted descriptor_status").emit();
     }
 
     if (descriptor.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalFailed &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import descriptor TerminalFailed checkpoint_status requires TerminalFailed descriptor_status");
+        diagnostics.error().message("store import descriptor TerminalFailed checkpoint_status requires TerminalFailed descriptor_status").emit();
     }
 
     if (descriptor.checkpoint_status ==
             checkpoint_record::CheckpointRecordStatus::TerminalPartial &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import descriptor TerminalPartial checkpoint_status requires TerminalPartial descriptor_status");
+        diagnostics.error().message("store import descriptor TerminalPartial checkpoint_status requires TerminalPartial descriptor_status").emit();
     }
 
     if (descriptor.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "store import descriptor TerminalCompleted persistence_status requires TerminalCompleted descriptor_status");
+        diagnostics.error().message("store import descriptor TerminalCompleted persistence_status requires TerminalCompleted descriptor_status").emit();
     }
 
     if (descriptor.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "store import descriptor TerminalFailed persistence_status requires TerminalFailed descriptor_status");
+        diagnostics.error().message("store import descriptor TerminalFailed persistence_status requires TerminalFailed descriptor_status").emit();
     }
 
     if (descriptor.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import descriptor TerminalPartial persistence_status requires TerminalPartial descriptor_status");
+        diagnostics.error().message("store import descriptor TerminalPartial persistence_status requires TerminalPartial descriptor_status").emit();
     }
 
     if (descriptor.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::ReadyToImport &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::Blocked &&
         descriptor.descriptor_status != StoreImportDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "store import descriptor partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial descriptor_status");
+        diagnostics.error().message("store import descriptor partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial descriptor_status").emit();
     }
 
     return result;

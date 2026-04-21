@@ -41,7 +41,10 @@ inline constexpr std::string_view kFailureSummaryEmptyNodeName =
 inline void emit_validation_error(DiagnosticBag &diagnostics,
                                   std::string_view code,
                                   std::string message) {
-    diagnostics.error_code(DiagnosticCategory::Validation, code, std::move(message));
+    diagnostics.error()
+        .legacy_code(DiagnosticCategory::Validation, code)
+        .message(std::move(message))
+        .emit();
 }
 
 inline void require_version(DiagnosticBag &diagnostics,

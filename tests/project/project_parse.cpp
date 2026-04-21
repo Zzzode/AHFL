@@ -35,8 +35,10 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
 
 int run_diagnostics_support_metadata_smoke() {
     ahfl::DiagnosticBag diagnostics;
-    diagnostics.error_code(
-        ahfl::DiagnosticCategory::Validation, "AHFL.TEST.VALIDATION", "metadata smoke");
+    diagnostics.error()
+        .legacy_code(ahfl::DiagnosticCategory::Validation, "AHFL.TEST.VALIDATION")
+        .message("metadata smoke")
+        .emit();
 
     if (!diagnostics.has_error() || diagnostics.entries().size() != 1) {
         std::cerr << "expected exactly one error diagnostic\n";
@@ -44,16 +46,16 @@ int run_diagnostics_support_metadata_smoke() {
     }
 
     const auto &entry = diagnostics.entries().front();
-    if (!entry.code.has_value() || entry.code->category != ahfl::DiagnosticCategory::Validation ||
-        entry.code->value != "AHFL.TEST.VALIDATION") {
-        std::cerr << "expected validation diagnostic code metadata\n";
+    if (!entry.code.has_value() || *entry.code != "validation.AHFL.TEST.VALIDATION") {
+        std::cerr << "expected validation diagnostic code 'validation.AHFL.TEST.VALIDATION', got '"
+                  << (entry.code.has_value() ? *entry.code : "<none>") << "'\n";
         return 1;
     }
 
     std::ostringstream rendered;
     diagnostics.render(rendered, std::nullopt, true);
-    if (!contains_text(rendered.str(), "error [validation:AHFL.TEST.VALIDATION]")) {
-        std::cerr << "expected render(include_code=true) to include category/code\n";
+    if (!contains_text(rendered.str(), "error [validation.AHFL.TEST.VALIDATION]")) {
+        std::cerr << "expected render(include_code=true) to include category.code\n";
         return 1;
     }
 

@@ -79,42 +79,39 @@ class CapabilityMockSetJsonParser final {
         }
 
         if (!format_version.has_value()) {
-            diagnostics_.error("capability mock set is missing required field 'format_version'");
+            diagnostics_.error().message("capability mock set is missing required field 'format_version'").emit();
         }
         if (diagnostics_.has_error()) {
             return std::nullopt;
         }
 
         if (*format_version != kCapabilityMockSetFormatVersion) {
-            diagnostics_.error("unsupported capability mock set format_version '" +
-                               *format_version + "'");
+            diagnostics_.error().message("unsupported capability mock set format_version '" + *format_version + "'").emit();
             return std::nullopt;
         }
 
         std::unordered_set<std::string> selectors;
         for (const auto &mock : mocks) {
             if (mock.capability_name.has_value() == mock.binding_key.has_value()) {
-                diagnostics_.error(
-                    "capability mock must specify exactly one of 'capability_name' or 'binding_key'");
+                diagnostics_.error().message("capability mock must specify exactly one of 'capability_name' or 'binding_key'").emit();
                 continue;
             }
 
             if (mock.capability_name.has_value() && mock.capability_name->empty()) {
-                diagnostics_.error("capability mock field 'capability_name' must not be empty");
+                diagnostics_.error().message("capability mock field 'capability_name' must not be empty").emit();
             }
             if (mock.binding_key.has_value() && mock.binding_key->empty()) {
-                diagnostics_.error("capability mock field 'binding_key' must not be empty");
+                diagnostics_.error().message("capability mock field 'binding_key' must not be empty").emit();
             }
             if (mock.result_fixture.empty()) {
-                diagnostics_.error("capability mock field 'result_fixture' must not be empty");
+                diagnostics_.error().message("capability mock field 'result_fixture' must not be empty").emit();
             }
 
             const auto selector = mock.binding_key.has_value()
                                       ? "binding:" + *mock.binding_key
                                       : "capability:" + *mock.capability_name;
             if (!selectors.insert(selector).second) {
-                diagnostics_.error("capability mock set contains duplicate mock selector '" +
-                                   selector + "'");
+                diagnostics_.error().message("capability mock set contains duplicate mock selector '" + selector + "'").emit();
             }
         }
 
@@ -162,7 +159,7 @@ class CapabilityMockSetJsonParser final {
     }
 
     void error_here(std::string message) {
-        diagnostics_.error(std::move(message));
+        diagnostics_.error().message(std::move(message)).emit();
     }
 
     [[nodiscard]] std::optional<std::string> parse_string(std::string_view missing_message) {
@@ -285,7 +282,7 @@ class CapabilityMockSetJsonParser final {
         }
 
         if (!result_fixture.has_value()) {
-            diagnostics_.error("capability mock is missing required field 'result_fixture'");
+            diagnostics_.error().message("capability mock is missing required field 'result_fixture'").emit();
             return false;
         }
 

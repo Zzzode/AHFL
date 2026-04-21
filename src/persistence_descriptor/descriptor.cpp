@@ -87,64 +87,51 @@ validate_persistence_descriptor(const CheckpointPersistenceDescriptor &descripto
     auto &diagnostics = result.diagnostics;
 
     if (descriptor.format_version != kPersistenceDescriptorFormatVersion) {
-        diagnostics.error("persistence descriptor format_version must be '" +
-                          std::string(kPersistenceDescriptorFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor format_version must be '" + std::string(kPersistenceDescriptorFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        diagnostics.error(
-            "persistence descriptor source_execution_plan_format_version must be '" +
-            std::string(handoff::kExecutionPlanFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor source_execution_plan_format_version must be '" + std::string(handoff::kExecutionPlanFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        diagnostics.error(
-            "persistence descriptor source_runtime_session_format_version must be '" +
-            std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor source_runtime_session_format_version must be '" + std::string(runtime_session::kRuntimeSessionFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        diagnostics.error(
-            "persistence descriptor source_execution_journal_format_version must be '" +
-            std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor source_execution_journal_format_version must be '" + std::string(execution_journal::kExecutionJournalFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        diagnostics.error(
-            "persistence descriptor source_replay_view_format_version must be '" +
-            std::string(replay_view::kReplayViewFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor source_replay_view_format_version must be '" + std::string(replay_view::kReplayViewFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        diagnostics.error(
-            "persistence descriptor source_scheduler_snapshot_format_version must be '" +
-            std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor source_scheduler_snapshot_format_version must be '" + std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'").emit();
     }
 
     if (descriptor.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        diagnostics.error(
-            "persistence descriptor source_checkpoint_record_format_version must be '" +
-            std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
+        diagnostics.error().message("persistence descriptor source_checkpoint_record_format_version must be '" + std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'").emit();
     }
 
     if (descriptor.workflow_canonical_name.empty()) {
-        diagnostics.error("persistence descriptor workflow_canonical_name must not be empty");
+        diagnostics.error().message("persistence descriptor workflow_canonical_name must not be empty").emit();
     }
 
     if (descriptor.session_id.empty()) {
-        diagnostics.error("persistence descriptor session_id must not be empty");
+        diagnostics.error().message("persistence descriptor session_id must not be empty").emit();
     }
 
     if (descriptor.input_fixture.empty()) {
-        diagnostics.error("persistence descriptor input_fixture must not be empty");
+        diagnostics.error().message("persistence descriptor input_fixture must not be empty").emit();
     }
 
     if (descriptor.planned_durable_identity.empty()) {
-        diagnostics.error("persistence descriptor planned_durable_identity must not be empty");
+        diagnostics.error().message("persistence descriptor planned_durable_identity must not be empty").emit();
     }
 
     if (descriptor.source_package_identity.has_value()) {
@@ -158,189 +145,158 @@ validate_persistence_descriptor(const CheckpointPersistenceDescriptor &descripto
     std::unordered_set<std::string> execution_nodes;
     for (const auto &node_name : descriptor.execution_order) {
         if (node_name.empty()) {
-            diagnostics.error("persistence descriptor execution_order contains empty node name");
+            diagnostics.error().message("persistence descriptor execution_order contains empty node name").emit();
             continue;
         }
 
         if (!execution_nodes.insert(node_name).second) {
-            diagnostics.error("persistence descriptor execution_order contains duplicate node '" +
-                              node_name + "'");
+            diagnostics.error().message("persistence descriptor execution_order contains duplicate node '" + node_name + "'").emit();
         }
     }
 
     if (descriptor.cursor.exportable_prefix_size != descriptor.cursor.exportable_prefix.size()) {
-        diagnostics.error(
-            "persistence descriptor cursor exportable_prefix_size must match exportable_prefix length");
+        diagnostics.error().message("persistence descriptor cursor exportable_prefix_size must match exportable_prefix length").emit();
     }
 
     if (descriptor.cursor.exportable_prefix.size() > descriptor.execution_order.size()) {
-        diagnostics.error(
-            "persistence descriptor cursor exportable_prefix cannot be longer than execution_order");
+        diagnostics.error().message("persistence descriptor cursor exportable_prefix cannot be longer than execution_order").emit();
     }
 
     for (std::size_t index = 0; index < descriptor.cursor.exportable_prefix.size(); ++index) {
         if (descriptor.cursor.exportable_prefix[index] != descriptor.execution_order[index]) {
-            diagnostics.error(
-                "persistence descriptor cursor exportable_prefix must be a prefix of execution_order");
+            diagnostics.error().message("persistence descriptor cursor exportable_prefix must be a prefix of execution_order").emit();
             break;
         }
     }
 
     if (descriptor.cursor.next_export_candidate_node_name.has_value()) {
         if (descriptor.cursor.next_export_candidate_node_name->empty()) {
-            diagnostics.error(
-                "persistence descriptor cursor next_export_candidate_node_name must not be empty");
+            diagnostics.error().message("persistence descriptor cursor next_export_candidate_node_name must not be empty").emit();
         } else if (!execution_nodes.contains(
                        *descriptor.cursor.next_export_candidate_node_name)) {
-            diagnostics.error(
-                "persistence descriptor cursor next_export_candidate_node_name '" +
-                *descriptor.cursor.next_export_candidate_node_name +
-                "' does not exist in execution_order");
+            diagnostics.error().message("persistence descriptor cursor next_export_candidate_node_name '" + *descriptor.cursor.next_export_candidate_node_name + "' does not exist in execution_order").emit();
         }
     }
 
     if (descriptor.cursor.next_export_candidate_node_name.has_value()) {
         for (const auto &exported_node : descriptor.cursor.exportable_prefix) {
             if (exported_node == *descriptor.cursor.next_export_candidate_node_name) {
-                diagnostics.error(
-                    "persistence descriptor cursor next_export_candidate_node_name '" +
-                    *descriptor.cursor.next_export_candidate_node_name +
-                    "' cannot already be in exportable_prefix");
+                diagnostics.error().message("persistence descriptor cursor next_export_candidate_node_name '" + *descriptor.cursor.next_export_candidate_node_name + "' cannot already be in exportable_prefix").emit();
                 break;
             }
         }
     }
 
     if (descriptor.cursor.export_ready && descriptor.persistence_blocker.has_value()) {
-        diagnostics.error(
-            "persistence descriptor cannot contain persistence_blocker when cursor export_ready is true");
+        diagnostics.error().message("persistence descriptor cannot contain persistence_blocker when cursor export_ready is true").emit();
     }
 
     if (!descriptor.cursor.export_ready &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalCompleted &&
         !descriptor.persistence_blocker.has_value()) {
-        diagnostics.error(
-            "persistence descriptor must contain persistence_blocker when cursor export_ready is false");
+        diagnostics.error().message("persistence descriptor must contain persistence_blocker when cursor export_ready is false").emit();
     }
 
     if (descriptor.persistence_blocker.has_value()) {
         if (descriptor.persistence_blocker->message.empty()) {
-            diagnostics.error("persistence descriptor persistence_blocker message must not be empty");
+            diagnostics.error().message("persistence descriptor persistence_blocker message must not be empty").emit();
         }
 
         if (descriptor.persistence_blocker->node_name.has_value() &&
             descriptor.persistence_blocker->node_name->empty()) {
-            diagnostics.error(
-                "persistence descriptor persistence_blocker node_name must not be empty");
+            diagnostics.error().message("persistence descriptor persistence_blocker node_name must not be empty").emit();
         }
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::ReadyToExport &&
         !descriptor.cursor.export_ready) {
-        diagnostics.error(
-            "persistence descriptor ReadyToExport status requires cursor export_ready");
+        diagnostics.error().message("persistence descriptor ReadyToExport status requires cursor export_ready").emit();
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::ReadyToExport &&
         !descriptor.cursor.next_export_candidate_node_name.has_value()) {
-        diagnostics.error(
-            "persistence descriptor ReadyToExport status requires next_export_candidate_node_name");
+        diagnostics.error().message("persistence descriptor ReadyToExport status requires next_export_candidate_node_name").emit();
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::ReadyToExport &&
         descriptor.checkpoint_status != checkpoint_record::CheckpointRecordStatus::ReadyToPersist) {
-        diagnostics.error(
-            "persistence descriptor ReadyToExport status requires ReadyToPersist checkpoint_status");
+        diagnostics.error().message("persistence descriptor ReadyToExport status requires ReadyToPersist checkpoint_status").emit();
     }
 
     if (descriptor.export_basis_kind == PersistenceBasisKind::StoreAdjacent &&
         descriptor.persistence_status != PersistenceDescriptorStatus::ReadyToExport &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence descriptor store-adjacent basis requires ready or completed persistence_status");
+        diagnostics.error().message("persistence descriptor store-adjacent basis requires ready or completed persistence_status").emit();
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::TerminalCompleted &&
         descriptor.cursor.exportable_prefix.size() != descriptor.execution_order.size()) {
-        diagnostics.error(
-            "persistence descriptor TerminalCompleted status requires full exportable_prefix");
+        diagnostics.error().message("persistence descriptor TerminalCompleted status requires full exportable_prefix").emit();
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::TerminalCompleted &&
         descriptor.persistence_blocker.has_value()) {
-        diagnostics.error(
-            "persistence descriptor TerminalCompleted status cannot have persistence_blocker");
+        diagnostics.error().message("persistence descriptor TerminalCompleted status cannot have persistence_blocker").emit();
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::TerminalCompleted &&
         descriptor.cursor.next_export_candidate_node_name.has_value()) {
-        diagnostics.error(
-            "persistence descriptor TerminalCompleted status cannot have next_export_candidate_node_name");
+        diagnostics.error().message("persistence descriptor TerminalCompleted status cannot have next_export_candidate_node_name").emit();
     }
 
     if ((descriptor.persistence_status == PersistenceDescriptorStatus::TerminalFailed ||
          descriptor.persistence_status == PersistenceDescriptorStatus::TerminalPartial) &&
         !descriptor.persistence_blocker.has_value()) {
-        diagnostics.error(
-            "persistence descriptor terminal blocked status requires persistence_blocker");
+        diagnostics.error().message("persistence descriptor terminal blocked status requires persistence_blocker").emit();
     }
 
     if (descriptor.persistence_status == PersistenceDescriptorStatus::TerminalFailed &&
         !descriptor.workflow_failure_summary.has_value()) {
-        diagnostics.error(
-            "persistence descriptor TerminalFailed status requires workflow_failure_summary");
+        diagnostics.error().message("persistence descriptor TerminalFailed status requires workflow_failure_summary").emit();
     }
 
     if ((descriptor.persistence_status == PersistenceDescriptorStatus::TerminalFailed ||
          descriptor.persistence_status == PersistenceDescriptorStatus::TerminalPartial) &&
         descriptor.cursor.export_ready) {
-        diagnostics.error(
-            "persistence descriptor terminal blocked status cannot be export_ready");
+        diagnostics.error().message("persistence descriptor terminal blocked status cannot be export_ready").emit();
     }
 
     if ((descriptor.persistence_status == PersistenceDescriptorStatus::TerminalFailed ||
          descriptor.persistence_status == PersistenceDescriptorStatus::TerminalPartial) &&
         descriptor.cursor.next_export_candidate_node_name.has_value()) {
-        diagnostics.error(
-            "persistence descriptor terminal blocked status cannot have next_export_candidate_node_name");
+        diagnostics.error().message("persistence descriptor terminal blocked status cannot have next_export_candidate_node_name").emit();
     }
 
     if (descriptor.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence descriptor completed workflow_status requires TerminalCompleted persistence_status");
+        diagnostics.error().message("persistence descriptor completed workflow_status requires TerminalCompleted persistence_status").emit();
     }
 
     if (descriptor.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence descriptor failed workflow_status requires TerminalFailed persistence_status");
+        diagnostics.error().message("persistence descriptor failed workflow_status requires TerminalFailed persistence_status").emit();
     }
 
     if (descriptor.checkpoint_status == checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalCompleted) {
-        diagnostics.error(
-            "persistence descriptor TerminalCompleted checkpoint_status requires TerminalCompleted persistence_status");
+        diagnostics.error().message("persistence descriptor TerminalCompleted checkpoint_status requires TerminalCompleted persistence_status").emit();
     }
 
     if (descriptor.checkpoint_status == checkpoint_record::CheckpointRecordStatus::TerminalFailed &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalFailed) {
-        diagnostics.error(
-            "persistence descriptor TerminalFailed checkpoint_status requires TerminalFailed persistence_status");
+        diagnostics.error().message("persistence descriptor TerminalFailed checkpoint_status requires TerminalFailed persistence_status").emit();
     }
 
     if (descriptor.checkpoint_status == checkpoint_record::CheckpointRecordStatus::TerminalPartial &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence descriptor TerminalPartial checkpoint_status requires TerminalPartial persistence_status");
+        diagnostics.error().message("persistence descriptor TerminalPartial checkpoint_status requires TerminalPartial persistence_status").emit();
     }
 
     if (descriptor.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
         descriptor.persistence_status != PersistenceDescriptorStatus::ReadyToExport &&
         descriptor.persistence_status != PersistenceDescriptorStatus::Blocked &&
         descriptor.persistence_status != PersistenceDescriptorStatus::TerminalPartial) {
-        diagnostics.error(
-            "persistence descriptor partial workflow_status must map to ReadyToExport, Blocked, or TerminalPartial persistence_status");
+        diagnostics.error().message("persistence descriptor partial workflow_status must map to ReadyToExport, Blocked, or TerminalPartial persistence_status").emit();
     }
 
     return result;
@@ -381,221 +337,177 @@ build_persistence_descriptor(const handoff::ExecutionPlan &plan,
     }
 
     if (session.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap runtime session source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap runtime session source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (journal.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap execution journal source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap execution journal source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (journal.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap execution journal source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap execution journal source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (replay.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (replay.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (replay.source_execution_journal_format_version != journal.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view source_execution_journal_format_version does not match execution journal");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view source_execution_journal_format_version does not match execution journal").emit();
     }
 
     if (snapshot.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (snapshot.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (snapshot.source_execution_journal_format_version != journal.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot source_execution_journal_format_version does not match execution journal");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot source_execution_journal_format_version does not match execution journal").emit();
     }
 
     if (snapshot.source_replay_view_format_version != replay.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot source_replay_view_format_version does not match replay view");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot source_replay_view_format_version does not match replay view").emit();
     }
 
     if (record.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (record.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (record.source_execution_journal_format_version != journal.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record source_execution_journal_format_version does not match execution journal");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record source_execution_journal_format_version does not match execution journal").emit();
     }
 
     if (record.source_replay_view_format_version != replay.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record source_replay_view_format_version does not match replay view");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record source_replay_view_format_version does not match replay view").emit();
     }
 
     if (record.source_scheduler_snapshot_format_version != snapshot.format_version) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record source_scheduler_snapshot_format_version does not match scheduler snapshot");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record source_scheduler_snapshot_format_version does not match scheduler snapshot").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, session.source_package_identity)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap runtime session source_package_identity does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap runtime session source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, journal.source_package_identity)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap execution journal source_package_identity does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap execution journal source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, replay.source_package_identity)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view source_package_identity does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, snapshot.source_package_identity)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot source_package_identity does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, record.source_package_identity)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record source_package_identity does not match execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record source_package_identity does not match execution plan").emit();
     }
 
     if (session.workflow_canonical_name != journal.workflow_canonical_name) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap execution journal workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap execution journal workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.workflow_canonical_name != replay.workflow_canonical_name) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.workflow_canonical_name != snapshot.workflow_canonical_name) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.workflow_canonical_name != record.workflow_canonical_name) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.session_id != journal.session_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap execution journal session_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap execution journal session_id does not match runtime session").emit();
     }
 
     if (session.session_id != replay.session_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view session_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view session_id does not match runtime session").emit();
     }
 
     if (session.session_id != snapshot.session_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot session_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot session_id does not match runtime session").emit();
     }
 
     if (session.session_id != record.session_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record session_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record session_id does not match runtime session").emit();
     }
 
     if (session.run_id != journal.run_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap execution journal run_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap execution journal run_id does not match runtime session").emit();
     }
 
     if (session.run_id != replay.run_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view run_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view run_id does not match runtime session").emit();
     }
 
     if (session.run_id != snapshot.run_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot run_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot run_id does not match runtime session").emit();
     }
 
     if (session.run_id != record.run_id) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record run_id does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record run_id does not match runtime session").emit();
     }
 
     if (session.input_fixture != replay.input_fixture) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view input_fixture does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view input_fixture does not match runtime session").emit();
     }
 
     if (session.input_fixture != snapshot.input_fixture) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot input_fixture does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot input_fixture does not match runtime session").emit();
     }
 
     if (session.input_fixture != record.input_fixture) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record input_fixture does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record input_fixture does not match runtime session").emit();
     }
 
     if (session.workflow_status != replay.workflow_status) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view workflow_status does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view workflow_status does not match runtime session").emit();
     }
 
     if (session.workflow_status != snapshot.workflow_status) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot workflow_status does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot workflow_status does not match runtime session").emit();
     }
 
     if (session.workflow_status != record.workflow_status) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record workflow_status does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record workflow_status does not match runtime session").emit();
     }
 
     if (!failure_summary_equals(session.failure_summary, replay.workflow_failure_summary)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view workflow_failure_summary does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view workflow_failure_summary does not match runtime session").emit();
     }
 
     if (!failure_summary_equals(session.failure_summary, snapshot.workflow_failure_summary)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot workflow_failure_summary does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot workflow_failure_summary does not match runtime session").emit();
     }
 
     if (!failure_summary_equals(session.failure_summary, record.workflow_failure_summary)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record workflow_failure_summary does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record workflow_failure_summary does not match runtime session").emit();
     }
 
     if (!replay.consistency.plan_matches_session || !replay.consistency.session_matches_journal ||
         !replay.consistency.journal_matches_execution_order) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view consistency must hold before building persistence descriptor");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view consistency must hold before building persistence descriptor").emit();
     }
 
     const auto *workflow = find_workflow_plan(plan, session.workflow_canonical_name);
     if (workflow == nullptr) {
-        result.diagnostics.error("persistence descriptor bootstrap workflow '" +
-                                 session.workflow_canonical_name +
-                                 "' does not exist in execution plan");
+        result.diagnostics.error().message("persistence descriptor bootstrap workflow '" + session.workflow_canonical_name + "' does not exist in execution plan").emit();
     }
 
     if (result.has_errors()) {
@@ -609,48 +521,39 @@ build_persistence_descriptor(const handoff::ExecutionPlan &plan,
     }
 
     if (!vector_equals(snapshot.execution_order, plan_execution_order)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot execution_order does not match execution plan workflow order");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot execution_order does not match execution plan workflow order").emit();
     }
 
     if (!vector_equals(replay.execution_order, session.execution_order)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view execution_order does not match runtime session");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view execution_order does not match runtime session").emit();
     }
 
     if (!is_prefix(replay.execution_order, snapshot.execution_order)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap replay view execution_order must be a prefix of scheduler snapshot execution_order");
+        result.diagnostics.error().message("persistence descriptor bootstrap replay view execution_order must be a prefix of scheduler snapshot execution_order").emit();
     }
 
     if (!is_prefix(snapshot.cursor.completed_prefix, replay.execution_order)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap scheduler snapshot completed_prefix must be a prefix of replay view execution_order");
+        result.diagnostics.error().message("persistence descriptor bootstrap scheduler snapshot completed_prefix must be a prefix of replay view execution_order").emit();
     }
 
     if (record.snapshot_status != snapshot.snapshot_status) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record snapshot_status does not match scheduler snapshot");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record snapshot_status does not match scheduler snapshot").emit();
     }
 
     if (!vector_equals(record.execution_order, snapshot.execution_order)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record execution_order does not match scheduler snapshot");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record execution_order does not match scheduler snapshot").emit();
     }
 
     if (!vector_equals(record.cursor.persistable_prefix, snapshot.cursor.completed_prefix)) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record persistable_prefix does not match scheduler snapshot completed_prefix");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record persistable_prefix does not match scheduler snapshot completed_prefix").emit();
     }
 
     if (record.cursor.resume_candidate_node_name != snapshot.cursor.next_candidate_node_name) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record resume_candidate_node_name does not match scheduler snapshot");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record resume_candidate_node_name does not match scheduler snapshot").emit();
     }
 
     if (record.checkpoint_friendly_source != snapshot.cursor.checkpoint_friendly) {
-        result.diagnostics.error(
-            "persistence descriptor bootstrap checkpoint record checkpoint_friendly_source does not match scheduler snapshot");
+        result.diagnostics.error().message("persistence descriptor bootstrap checkpoint record checkpoint_friendly_source does not match scheduler snapshot").emit();
     }
 
     if (result.has_errors()) {

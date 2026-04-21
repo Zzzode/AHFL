@@ -61,51 +61,42 @@ validate_checkpoint_record(const CheckpointRecord &record) {
     auto &diagnostics = result.diagnostics;
 
     if (record.format_version != kCheckpointRecordFormatVersion) {
-        diagnostics.error("checkpoint record format_version must be '" +
-                          std::string(kCheckpointRecordFormatVersion) + "'");
+        diagnostics.error().message("checkpoint record format_version must be '" + std::string(kCheckpointRecordFormatVersion) + "'").emit();
     }
 
     if (record.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        diagnostics.error("checkpoint record source_execution_plan_format_version must be '" +
-                          std::string(handoff::kExecutionPlanFormatVersion) + "'");
+        diagnostics.error().message("checkpoint record source_execution_plan_format_version must be '" + std::string(handoff::kExecutionPlanFormatVersion) + "'").emit();
     }
 
     if (record.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        diagnostics.error(
-            "checkpoint record source_runtime_session_format_version must be '" +
-            std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
+        diagnostics.error().message("checkpoint record source_runtime_session_format_version must be '" + std::string(runtime_session::kRuntimeSessionFormatVersion) + "'").emit();
     }
 
     if (record.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        diagnostics.error(
-            "checkpoint record source_execution_journal_format_version must be '" +
-            std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
+        diagnostics.error().message("checkpoint record source_execution_journal_format_version must be '" + std::string(execution_journal::kExecutionJournalFormatVersion) + "'").emit();
     }
 
     if (record.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        diagnostics.error("checkpoint record source_replay_view_format_version must be '" +
-                          std::string(replay_view::kReplayViewFormatVersion) + "'");
+        diagnostics.error().message("checkpoint record source_replay_view_format_version must be '" + std::string(replay_view::kReplayViewFormatVersion) + "'").emit();
     }
 
     if (record.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        diagnostics.error(
-            "checkpoint record source_scheduler_snapshot_format_version must be '" +
-            std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
+        diagnostics.error().message("checkpoint record source_scheduler_snapshot_format_version must be '" + std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'").emit();
     }
 
     if (record.workflow_canonical_name.empty()) {
-        diagnostics.error("checkpoint record workflow_canonical_name must not be empty");
+        diagnostics.error().message("checkpoint record workflow_canonical_name must not be empty").emit();
     }
 
     if (record.session_id.empty()) {
-        diagnostics.error("checkpoint record session_id must not be empty");
+        diagnostics.error().message("checkpoint record session_id must not be empty").emit();
     }
 
     if (record.input_fixture.empty()) {
-        diagnostics.error("checkpoint record input_fixture must not be empty");
+        diagnostics.error().message("checkpoint record input_fixture must not be empty").emit();
     }
 
     if (record.source_package_identity.has_value()) {
@@ -119,172 +110,148 @@ validate_checkpoint_record(const CheckpointRecord &record) {
     std::unordered_set<std::string> execution_nodes;
     for (const auto &node_name : record.execution_order) {
         if (node_name.empty()) {
-            diagnostics.error("checkpoint record execution_order contains empty node name");
+            diagnostics.error().message("checkpoint record execution_order contains empty node name").emit();
             continue;
         }
 
         if (!execution_nodes.insert(node_name).second) {
-            diagnostics.error("checkpoint record execution_order contains duplicate node '" +
-                              node_name + "'");
+            diagnostics.error().message("checkpoint record execution_order contains duplicate node '" + node_name + "'").emit();
         }
     }
 
     if (record.cursor.persistable_prefix_size != record.cursor.persistable_prefix.size()) {
-        diagnostics.error(
-            "checkpoint record cursor persistable_prefix_size must match persistable_prefix length");
+        diagnostics.error().message("checkpoint record cursor persistable_prefix_size must match persistable_prefix length").emit();
     }
 
     if (record.cursor.persistable_prefix.size() > record.execution_order.size()) {
-        diagnostics.error(
-            "checkpoint record cursor persistable_prefix cannot be longer than execution_order");
+        diagnostics.error().message("checkpoint record cursor persistable_prefix cannot be longer than execution_order").emit();
     }
 
     for (std::size_t index = 0; index < record.cursor.persistable_prefix.size(); ++index) {
         if (record.cursor.persistable_prefix[index] != record.execution_order[index]) {
-            diagnostics.error(
-                "checkpoint record cursor persistable_prefix must be a prefix of execution_order");
+            diagnostics.error().message("checkpoint record cursor persistable_prefix must be a prefix of execution_order").emit();
             break;
         }
     }
 
     if (record.cursor.resume_candidate_node_name.has_value()) {
         if (record.cursor.resume_candidate_node_name->empty()) {
-            diagnostics.error(
-                "checkpoint record cursor resume_candidate_node_name must not be empty");
+            diagnostics.error().message("checkpoint record cursor resume_candidate_node_name must not be empty").emit();
         } else if (!execution_nodes.contains(*record.cursor.resume_candidate_node_name)) {
-            diagnostics.error("checkpoint record cursor resume_candidate_node_name '" +
-                              *record.cursor.resume_candidate_node_name +
-                              "' does not exist in execution_order");
+            diagnostics.error().message("checkpoint record cursor resume_candidate_node_name '" + *record.cursor.resume_candidate_node_name + "' does not exist in execution_order").emit();
         }
     }
 
     if (record.cursor.resume_candidate_node_name.has_value()) {
         for (const auto &persisted_node : record.cursor.persistable_prefix) {
             if (persisted_node == *record.cursor.resume_candidate_node_name) {
-                diagnostics.error("checkpoint record cursor resume_candidate_node_name '" +
-                                  *record.cursor.resume_candidate_node_name +
-                                  "' cannot already be in persistable_prefix");
+                diagnostics.error().message("checkpoint record cursor resume_candidate_node_name '" + *record.cursor.resume_candidate_node_name + "' cannot already be in persistable_prefix").emit();
                 break;
             }
         }
     }
 
     if (record.cursor.resume_ready && record.resume_blocker.has_value()) {
-        diagnostics.error(
-            "checkpoint record cannot contain resume_blocker when cursor resume_ready is true");
+        diagnostics.error().message("checkpoint record cannot contain resume_blocker when cursor resume_ready is true").emit();
     }
 
     if (!record.cursor.resume_ready &&
         record.checkpoint_status != CheckpointRecordStatus::TerminalCompleted &&
         !record.resume_blocker.has_value()) {
-        diagnostics.error(
-            "checkpoint record must contain resume_blocker when cursor resume_ready is false");
+        diagnostics.error().message("checkpoint record must contain resume_blocker when cursor resume_ready is false").emit();
     }
 
     if (record.resume_blocker.has_value()) {
         if (record.resume_blocker->message.empty()) {
-            diagnostics.error("checkpoint record resume_blocker message must not be empty");
+            diagnostics.error().message("checkpoint record resume_blocker message must not be empty").emit();
         }
 
         if (record.resume_blocker->node_name.has_value() &&
             record.resume_blocker->node_name->empty()) {
-            diagnostics.error("checkpoint record resume_blocker node_name must not be empty");
+            diagnostics.error().message("checkpoint record resume_blocker node_name must not be empty").emit();
         }
     }
 
     if (!record.checkpoint_friendly_source &&
         record.basis_kind == CheckpointBasisKind::DurableAdjacent) {
-        diagnostics.error(
-            "checkpoint record durable-adjacent basis requires checkpoint_friendly_source");
+        diagnostics.error().message("checkpoint record durable-adjacent basis requires checkpoint_friendly_source").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::ReadyToPersist &&
         !record.cursor.resume_ready) {
-        diagnostics.error(
-            "checkpoint record ReadyToPersist status requires cursor resume_ready");
+        diagnostics.error().message("checkpoint record ReadyToPersist status requires cursor resume_ready").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::ReadyToPersist &&
         !record.cursor.resume_candidate_node_name.has_value()) {
-        diagnostics.error(
-            "checkpoint record ReadyToPersist status requires resume_candidate_node_name");
+        diagnostics.error().message("checkpoint record ReadyToPersist status requires resume_candidate_node_name").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::TerminalCompleted &&
         record.cursor.persistable_prefix.size() != record.execution_order.size()) {
-        diagnostics.error(
-            "checkpoint record TerminalCompleted status requires full persistable_prefix");
+        diagnostics.error().message("checkpoint record TerminalCompleted status requires full persistable_prefix").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::TerminalCompleted &&
         record.cursor.resume_candidate_node_name.has_value()) {
-        diagnostics.error(
-            "checkpoint record TerminalCompleted status cannot have resume_candidate_node_name");
+        diagnostics.error().message("checkpoint record TerminalCompleted status cannot have resume_candidate_node_name").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::TerminalCompleted &&
         record.resume_blocker.has_value()) {
-        diagnostics.error("checkpoint record TerminalCompleted status cannot have resume_blocker");
+        diagnostics.error().message("checkpoint record TerminalCompleted status cannot have resume_blocker").emit();
     }
 
     if ((record.checkpoint_status == CheckpointRecordStatus::TerminalFailed ||
          record.checkpoint_status == CheckpointRecordStatus::TerminalPartial) &&
         !record.resume_blocker.has_value()) {
-        diagnostics.error(
-            "checkpoint record terminal blocked status requires resume_blocker");
+        diagnostics.error().message("checkpoint record terminal blocked status requires resume_blocker").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::TerminalFailed &&
         !record.workflow_failure_summary.has_value()) {
-        diagnostics.error(
-            "checkpoint record TerminalFailed status requires workflow_failure_summary");
+        diagnostics.error().message("checkpoint record TerminalFailed status requires workflow_failure_summary").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::TerminalFailed &&
         record.cursor.resume_ready) {
-        diagnostics.error("checkpoint record TerminalFailed status cannot be resume_ready");
+        diagnostics.error().message("checkpoint record TerminalFailed status cannot be resume_ready").emit();
     }
 
     if (record.checkpoint_status == CheckpointRecordStatus::TerminalPartial &&
         record.cursor.resume_ready) {
-        diagnostics.error("checkpoint record TerminalPartial status cannot be resume_ready");
+        diagnostics.error().message("checkpoint record TerminalPartial status cannot be resume_ready").emit();
     }
 
     if ((record.checkpoint_status == CheckpointRecordStatus::TerminalFailed ||
          record.checkpoint_status == CheckpointRecordStatus::TerminalPartial) &&
         record.cursor.resume_candidate_node_name.has_value()) {
-        diagnostics.error(
-            "checkpoint record terminal blocked status cannot have resume_candidate_node_name");
+        diagnostics.error().message("checkpoint record terminal blocked status cannot have resume_candidate_node_name").emit();
     }
 
     if (record.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         record.checkpoint_status != CheckpointRecordStatus::TerminalCompleted) {
-        diagnostics.error(
-            "checkpoint record completed workflow_status requires TerminalCompleted checkpoint_status");
+        diagnostics.error().message("checkpoint record completed workflow_status requires TerminalCompleted checkpoint_status").emit();
     }
 
     if (record.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         record.checkpoint_status != CheckpointRecordStatus::TerminalFailed) {
-        diagnostics.error(
-            "checkpoint record failed workflow_status requires TerminalFailed checkpoint_status");
+        diagnostics.error().message("checkpoint record failed workflow_status requires TerminalFailed checkpoint_status").emit();
     }
 
     if (record.snapshot_status == scheduler_snapshot::SchedulerSnapshotStatus::TerminalCompleted &&
         record.checkpoint_status != CheckpointRecordStatus::TerminalCompleted) {
-        diagnostics.error(
-            "checkpoint record terminal-completed snapshot_status requires TerminalCompleted checkpoint_status");
+        diagnostics.error().message("checkpoint record terminal-completed snapshot_status requires TerminalCompleted checkpoint_status").emit();
     }
 
     if (record.snapshot_status == scheduler_snapshot::SchedulerSnapshotStatus::TerminalFailed &&
         record.checkpoint_status != CheckpointRecordStatus::TerminalFailed) {
-        diagnostics.error(
-            "checkpoint record terminal-failed snapshot_status requires TerminalFailed checkpoint_status");
+        diagnostics.error().message("checkpoint record terminal-failed snapshot_status requires TerminalFailed checkpoint_status").emit();
     }
 
     if (record.snapshot_status == scheduler_snapshot::SchedulerSnapshotStatus::TerminalPartial &&
         record.checkpoint_status != CheckpointRecordStatus::TerminalPartial) {
-        diagnostics.error(
-            "checkpoint record terminal-partial snapshot_status requires TerminalPartial checkpoint_status");
+        diagnostics.error().message("checkpoint record terminal-partial snapshot_status requires TerminalPartial checkpoint_status").emit();
     }
 
     return result;
@@ -321,161 +288,129 @@ build_checkpoint_record(const handoff::ExecutionPlan &plan,
     }
 
     if (session.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap runtime session source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap runtime session source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (journal.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap execution journal source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap execution journal source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (journal.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap execution journal source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap execution journal source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (replay.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (replay.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (replay.source_execution_journal_format_version != journal.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view source_execution_journal_format_version does not match execution journal");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view source_execution_journal_format_version does not match execution journal").emit();
     }
 
     if (snapshot.source_execution_plan_format_version != plan.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot source_execution_plan_format_version does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot source_execution_plan_format_version does not match execution plan").emit();
     }
 
     if (snapshot.source_runtime_session_format_version != session.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot source_runtime_session_format_version does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot source_runtime_session_format_version does not match runtime session").emit();
     }
 
     if (snapshot.source_execution_journal_format_version != journal.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot source_execution_journal_format_version does not match execution journal");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot source_execution_journal_format_version does not match execution journal").emit();
     }
 
     if (snapshot.source_replay_view_format_version != replay.format_version) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot source_replay_view_format_version does not match replay view");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot source_replay_view_format_version does not match replay view").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, session.source_package_identity)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap runtime session source_package_identity does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap runtime session source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, journal.source_package_identity)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap execution journal source_package_identity does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap execution journal source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, replay.source_package_identity)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view source_package_identity does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view source_package_identity does not match execution plan").emit();
     }
 
     if (!package_identity_equals(plan.source_package_identity, snapshot.source_package_identity)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot source_package_identity does not match execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot source_package_identity does not match execution plan").emit();
     }
 
     if (session.workflow_canonical_name != journal.workflow_canonical_name) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap execution journal workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap execution journal workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.workflow_canonical_name != replay.workflow_canonical_name) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.workflow_canonical_name != snapshot.workflow_canonical_name) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot workflow_canonical_name does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot workflow_canonical_name does not match runtime session").emit();
     }
 
     if (session.session_id != journal.session_id) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap execution journal session_id does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap execution journal session_id does not match runtime session").emit();
     }
 
     if (session.session_id != replay.session_id) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view session_id does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view session_id does not match runtime session").emit();
     }
 
     if (session.session_id != snapshot.session_id) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot session_id does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot session_id does not match runtime session").emit();
     }
 
     if (session.run_id != journal.run_id) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap execution journal run_id does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap execution journal run_id does not match runtime session").emit();
     }
 
     if (session.run_id != replay.run_id) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view run_id does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view run_id does not match runtime session").emit();
     }
 
     if (session.run_id != snapshot.run_id) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot run_id does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot run_id does not match runtime session").emit();
     }
 
     if (session.input_fixture != replay.input_fixture) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view input_fixture does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view input_fixture does not match runtime session").emit();
     }
 
     if (session.input_fixture != snapshot.input_fixture) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot input_fixture does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot input_fixture does not match runtime session").emit();
     }
 
     if (session.workflow_status != replay.workflow_status) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view workflow_status does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view workflow_status does not match runtime session").emit();
     }
 
     if (session.workflow_status != snapshot.workflow_status) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot workflow_status does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot workflow_status does not match runtime session").emit();
     }
 
     if (!failure_summary_equals(session.failure_summary, replay.workflow_failure_summary)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view workflow_failure_summary does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view workflow_failure_summary does not match runtime session").emit();
     }
 
     if (!failure_summary_equals(session.failure_summary, snapshot.workflow_failure_summary)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot workflow_failure_summary does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot workflow_failure_summary does not match runtime session").emit();
     }
 
     if (!replay.consistency.plan_matches_session || !replay.consistency.session_matches_journal ||
         !replay.consistency.journal_matches_execution_order) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view consistency must hold before building checkpoint record");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view consistency must hold before building checkpoint record").emit();
     }
 
     const auto *workflow = find_workflow_plan(plan, session.workflow_canonical_name);
     if (workflow == nullptr) {
-        result.diagnostics.error("checkpoint record bootstrap workflow '" +
-                                 session.workflow_canonical_name +
-                                 "' does not exist in execution plan");
+        result.diagnostics.error().message("checkpoint record bootstrap workflow '" + session.workflow_canonical_name + "' does not exist in execution plan").emit();
     }
 
     if (result.has_errors()) {
@@ -489,23 +424,19 @@ build_checkpoint_record(const handoff::ExecutionPlan &plan,
     }
 
     if (!vector_equals(snapshot.execution_order, plan_execution_order)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot execution_order does not match execution plan workflow order");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot execution_order does not match execution plan workflow order").emit();
     }
 
     if (!vector_equals(replay.execution_order, session.execution_order)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view execution_order does not match runtime session");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view execution_order does not match runtime session").emit();
     }
 
     if (!is_prefix(replay.execution_order, snapshot.execution_order)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap replay view execution_order must be a prefix of scheduler snapshot execution_order");
+        result.diagnostics.error().message("checkpoint record bootstrap replay view execution_order must be a prefix of scheduler snapshot execution_order").emit();
     }
 
     if (!is_prefix(snapshot.cursor.completed_prefix, replay.execution_order)) {
-        result.diagnostics.error(
-            "checkpoint record bootstrap scheduler snapshot completed_prefix must be a prefix of replay view execution_order");
+        result.diagnostics.error().message("checkpoint record bootstrap scheduler snapshot completed_prefix must be a prefix of replay view execution_order").emit();
     }
 
     if (result.has_errors()) {

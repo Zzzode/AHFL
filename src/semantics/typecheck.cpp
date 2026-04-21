@@ -328,11 +328,17 @@ MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind ki
 
 void TypeCheckPass::error_here(std::string message, SourceRange range) {
     if (current_source_ != nullptr) {
-        result_.diagnostics.error_in_source(std::move(message), current_source_->source, range);
-        return;
+        result_.diagnostics.error()
+            .message(std::move(message))
+            .range(range)
+            .source(current_source_->source)
+            .emit();
+    } else {
+        result_.diagnostics.error()
+            .message(std::move(message))
+            .range(range)
+            .emit();
     }
-
-    result_.diagnostics.error(std::move(message), range);
 }
 
 void TypeCheckPass::index_program_declarations(const ast::Program &program) {
