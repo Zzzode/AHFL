@@ -1744,39 +1744,43 @@ class ProgramBuilder {
     return "unknown";
 }
 
-class AstPrinter final : public ast::Visitor {
+class AstPrinter final {
   public:
     explicit AstPrinter(std::ostream &out, int base_indent = 0)
         : out_(out), base_indent_(base_indent) {}
 
-    void visit(ast::Program &node) override {
+    void print(const ast::Program &node) {
+        visit(node);
+    }
+
+    void visit(const ast::Program &node) {
         line(0, "program " + node.source_name);
 
-        for (auto &declaration : node.declarations) {
-            declaration->accept(*this);
+        for (const auto &declaration : node.declarations) {
+            visit_declaration(*declaration);
         }
     }
 
-    void visit(ast::ModuleDecl &node) override {
+    void visit(const ast::ModuleDecl &node) {
         line(1, "- " + node.headline());
     }
 
-    void visit(ast::ImportDecl &node) override {
+    void visit(const ast::ImportDecl &node) {
         line(1, "- " + node.headline());
     }
 
-    void visit(ast::ConstDecl &node) override {
+    void visit(const ast::ConstDecl &node) {
         line(1, "- " + node.headline());
         print_type_field("type", node.type.get(), 2);
         print_expr_field("value", node.value.get(), 2);
     }
 
-    void visit(ast::TypeAliasDecl &node) override {
+    void visit(const ast::TypeAliasDecl &node) {
         line(1, "- " + node.headline());
         print_type_field("aliased_type", node.aliased_type.get(), 2);
     }
 
-    void visit(ast::StructDecl &node) override {
+    void visit(const ast::StructDecl &node) {
         line(1, "- " + node.headline());
 
         for (const auto &field : node.fields) {
@@ -1788,7 +1792,7 @@ class AstPrinter final : public ast::Visitor {
         }
     }
 
-    void visit(ast::EnumDecl &node) override {
+    void visit(const ast::EnumDecl &node) {
         line(1, "- " + node.headline());
 
         for (const auto &variant : node.variants) {
@@ -1796,7 +1800,7 @@ class AstPrinter final : public ast::Visitor {
         }
     }
 
-    void visit(ast::CapabilityDecl &node) override {
+    void visit(const ast::CapabilityDecl &node) {
         line(1, "- " + node.headline());
 
         for (const auto &param : node.params) {
@@ -1807,7 +1811,7 @@ class AstPrinter final : public ast::Visitor {
         print_type_field("return", node.return_type.get(), 2);
     }
 
-    void visit(ast::PredicateDecl &node) override {
+    void visit(const ast::PredicateDecl &node) {
         line(1, "- " + node.headline());
 
         for (const auto &param : node.params) {
@@ -1816,7 +1820,7 @@ class AstPrinter final : public ast::Visitor {
         }
     }
 
-    void visit(ast::AgentDecl &node) override {
+    void visit(const ast::AgentDecl &node) {
         line(1, "- " + node.headline());
         print_type_field("input", node.input_type.get(), 2);
         print_type_field("context", node.context_type.get(), 2);
@@ -1845,7 +1849,7 @@ class AstPrinter final : public ast::Visitor {
         }
     }
 
-    void visit(ast::ContractDecl &node) override {
+    void visit(const ast::ContractDecl &node) {
         line(1, "- " + node.headline());
 
         for (const auto &clause : node.clauses) {
@@ -1860,7 +1864,7 @@ class AstPrinter final : public ast::Visitor {
         }
     }
 
-    void visit(ast::FlowDecl &node) override {
+    void visit(const ast::FlowDecl &node) {
         line(1, "- " + node.headline());
 
         for (const auto &handler : node.state_handlers) {
@@ -1890,7 +1894,7 @@ class AstPrinter final : public ast::Visitor {
         }
     }
 
-    void visit(ast::WorkflowDecl &node) override {
+    void visit(const ast::WorkflowDecl &node) {
         line(1, "- " + node.headline());
         print_type_field("input", node.input_type.get(), 2);
         print_type_field("output", node.output_type.get(), 2);
@@ -1919,6 +1923,49 @@ class AstPrinter final : public ast::Visitor {
   private:
     std::ostream &out_;
     int base_indent_{0};
+
+    void visit_declaration(const ast::Decl &declaration) {
+        switch (declaration.kind) {
+        case ast::NodeKind::ModuleDecl:
+            visit(static_cast<const ast::ModuleDecl &>(declaration));
+            return;
+        case ast::NodeKind::ImportDecl:
+            visit(static_cast<const ast::ImportDecl &>(declaration));
+            return;
+        case ast::NodeKind::ConstDecl:
+            visit(static_cast<const ast::ConstDecl &>(declaration));
+            return;
+        case ast::NodeKind::TypeAliasDecl:
+            visit(static_cast<const ast::TypeAliasDecl &>(declaration));
+            return;
+        case ast::NodeKind::StructDecl:
+            visit(static_cast<const ast::StructDecl &>(declaration));
+            return;
+        case ast::NodeKind::EnumDecl:
+            visit(static_cast<const ast::EnumDecl &>(declaration));
+            return;
+        case ast::NodeKind::CapabilityDecl:
+            visit(static_cast<const ast::CapabilityDecl &>(declaration));
+            return;
+        case ast::NodeKind::PredicateDecl:
+            visit(static_cast<const ast::PredicateDecl &>(declaration));
+            return;
+        case ast::NodeKind::AgentDecl:
+            visit(static_cast<const ast::AgentDecl &>(declaration));
+            return;
+        case ast::NodeKind::ContractDecl:
+            visit(static_cast<const ast::ContractDecl &>(declaration));
+            return;
+        case ast::NodeKind::FlowDecl:
+            visit(static_cast<const ast::FlowDecl &>(declaration));
+            return;
+        case ast::NodeKind::WorkflowDecl:
+            visit(static_cast<const ast::WorkflowDecl &>(declaration));
+            return;
+        case ast::NodeKind::Program:
+            return;
+        }
+    }
 
     void line(int indent_level, const std::string &text) {
         const auto effective_indent = std::max(0, base_indent_ + indent_level);
@@ -2239,8 +2286,7 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
 
 void dump_program_outline(const ast::Program &program, std::ostream &out) {
     AstPrinter printer(out);
-    auto &mutable_program = const_cast<ast::Program &>(program);
-    mutable_program.accept(printer);
+    printer.print(program);
 }
 
 void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
@@ -2263,8 +2309,7 @@ void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
         out << "  module " << source.module_name << '\n';
         out << "  ast\n";
         AstPrinter printer(out, 2);
-        auto &mutable_program = const_cast<ast::Program &>(*source.program);
-        mutable_program.accept(printer);
+        printer.print(*source.program);
     }
 }
 

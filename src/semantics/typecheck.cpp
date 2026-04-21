@@ -751,7 +751,8 @@ TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
 }
 
 void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed) {
-    for (auto &entry : result_.expression_types) {
+    auto &expression_types = result_.mutable_expression_types();
+    for (auto &entry : expression_types) {
         if (same_range(entry.range, expr.range) && entry.source_id == current_source_id_) {
             entry.type = typed.type ? typed.type->clone() : make_any_type();
             entry.is_pure = typed.is_pure;
@@ -759,7 +760,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         }
     }
 
-    result_.expression_types.push_back(ExpressionTypeInfo{
+    expression_types.push_back(ExpressionTypeInfo{
         .range = expr.range,
         .source_id = current_source_id_,
         .type = typed.type ? typed.type->clone() : make_any_type(),

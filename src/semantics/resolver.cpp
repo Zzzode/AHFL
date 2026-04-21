@@ -72,11 +72,10 @@ namespace {
 
 namespace detail {
 
-class ResolverPass final : public ast::Visitor {
+class ResolverPass final {
   public:
     [[nodiscard]] ResolveResult run(const ast::Program &program) {
-        auto &mutable_program = const_cast<ast::Program &>(program);
-        run_program(mutable_program);
+        run_program(program);
 
         detect_type_alias_cycles();
         return std::move(result_);
@@ -86,44 +85,59 @@ class ResolverPass final : public ast::Visitor {
         source_graph_mode_ = true;
         source_graph_ = &graph;
 
-        current_pass_ = Pass::CollectImports;
-        for (const auto &source : graph.sources) {
-            auto &mutable_program = const_cast<ast::Program &>(
-                require(source.program.get(), "source graph program must exist before resolution"));
-            enter_source(source);
-            mutable_program.accept(*this);
-            leave_source();
-        }
-
-        current_pass_ = Pass::RegisterSymbols;
-        for (const auto &source : graph.sources) {
-            auto &mutable_program = const_cast<ast::Program &>(
-                require(source.program.get(), "source graph program must exist before resolution"));
-            enter_source(source);
-            mutable_program.accept(*this);
-            leave_source();
-        }
-
-        current_pass_ = Pass::ResolveReferences;
-        for (const auto &source : graph.sources) {
-            auto &mutable_program = const_cast<ast::Program &>(
-                require(source.program.get(), "source graph program must exist before resolution"));
-            enter_source(source);
-            mutable_program.accept(*this);
-            leave_source();
-        }
+        run_source_graph_pass(graph, Pass::CollectImports);
+        run_source_graph_pass(graph, Pass::RegisterSymbols);
+        run_source_graph_pass(graph, Pass::ResolveReferences);
 
         detect_type_alias_cycles();
         return std::move(result_);
     }
 
-    void visit(ast::Program &node) override {
-        for (auto &declaration : node.declarations) {
-            declaration->accept(*this);
+    void visit(const ast::Decl &node) {
+        switch (node.kind) {
+        case ast::NodeKind::ModuleDecl:
+            visit(static_cast<const ast::ModuleDecl &>(node));
+            return;
+        case ast::NodeKind::ImportDecl:
+            visit(static_cast<const ast::ImportDecl &>(node));
+            return;
+        case ast::NodeKind::ConstDecl:
+            visit(static_cast<const ast::ConstDecl &>(node));
+            return;
+        case ast::NodeKind::TypeAliasDecl:
+            visit(static_cast<const ast::TypeAliasDecl &>(node));
+            return;
+        case ast::NodeKind::StructDecl:
+            visit(static_cast<const ast::StructDecl &>(node));
+            return;
+        case ast::NodeKind::EnumDecl:
+            visit(static_cast<const ast::EnumDecl &>(node));
+            return;
+        case ast::NodeKind::CapabilityDecl:
+            visit(static_cast<const ast::CapabilityDecl &>(node));
+            return;
+        case ast::NodeKind::PredicateDecl:
+            visit(static_cast<const ast::PredicateDecl &>(node));
+            return;
+        case ast::NodeKind::AgentDecl:
+            visit(static_cast<const ast::AgentDecl &>(node));
+            return;
+        case ast::NodeKind::ContractDecl:
+            visit(static_cast<const ast::ContractDecl &>(node));
+            return;
+        case ast::NodeKind::FlowDecl:
+            visit(static_cast<const ast::FlowDecl &>(node));
+            return;
+        case ast::NodeKind::WorkflowDecl:
+            visit(static_cast<const ast::WorkflowDecl &>(node));
+            return;
+        case ast::NodeKind::Program:
+            error_here("unexpected program node in declarations list", node.range);
+            return;
         }
     }
 
-    void visit(ast::ModuleDecl &node) override {
+    void visit(const ast::ModuleDecl &node) {
         if (current_pass_ != Pass::CollectImports) {
             return;
         }
@@ -146,13 +160,13 @@ class ResolverPass final : public ast::Visitor {
         note_here("first module declaration is here", module_range_);
     }
 
-    void visit(ast::ImportDecl &node) override {
+    void visit(const ast::ImportDecl &node) {
         if (current_pass_ != Pass::CollectImports) {
             return;
         }
 
         if (node.alias.empty()) {
-            result_.imports.push_back(ImportBinding{
+            result_.add_import(ImportBinding{
                 .alias = "",
                 .target_module = node.path->spelling(),
                 .source_id = current_source_id_,
@@ -165,14 +179,14 @@ class ResolverPass final : public ast::Visitor {
             existing != import_alias_index_.end()) {
             error_here("duplicate import alias '" + node.alias + "'", node.range);
             note_for_source("previous import alias is here",
-                            result_.imports[existing->second].source_id,
-                            result_.imports[existing->second].declaration_range);
+                            result_.imports()[existing->second].source_id,
+                            result_.imports()[existing->second].declaration_range);
             return;
         }
 
-        import_alias_index_.emplace(node.alias, result_.imports.size());
+        import_alias_index_.emplace(node.alias, result_.imports().size());
         import_aliases_.emplace(node.alias, node.path->spelling());
-        result_.imports.push_back(ImportBinding{
+        result_.add_import(ImportBinding{
             .alias = node.alias,
             .target_module = node.path->spelling(),
             .source_id = current_source_id_,
@@ -180,7 +194,7 @@ class ResolverPass final : public ast::Visitor {
         });
     }
 
-    void visit(ast::ConstDecl &node) override {
+    void visit(const ast::ConstDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Consts, SymbolKind::Const, node.name, node.range);
@@ -193,7 +207,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::TypeAliasDecl &node) override {
+    void visit(const ast::TypeAliasDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Types, SymbolKind::TypeAlias, node.name, node.range);
@@ -207,7 +221,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::StructDecl &node) override {
+    void visit(const ast::StructDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Types, SymbolKind::Struct, node.name, node.range);
@@ -224,13 +238,13 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::EnumDecl &node) override {
+    void visit(const ast::EnumDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(SymbolNamespace::Types, SymbolKind::Enum, node.name, node.range);
         }
     }
 
-    void visit(ast::CapabilityDecl &node) override {
+    void visit(const ast::CapabilityDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Capabilities, SymbolKind::Capability, node.name, node.range);
@@ -246,7 +260,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::PredicateDecl &node) override {
+    void visit(const ast::PredicateDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Predicates, SymbolKind::Predicate, node.name, node.range);
@@ -260,7 +274,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::AgentDecl &node) override {
+    void visit(const ast::AgentDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Agents, SymbolKind::Agent, node.name, node.range);
@@ -274,7 +288,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::ContractDecl &node) override {
+    void visit(const ast::ContractDecl &node) {
         if (current_pass_ != Pass::ResolveReferences) {
             return;
         }
@@ -293,7 +307,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::FlowDecl &node) override {
+    void visit(const ast::FlowDecl &node) {
         if (current_pass_ != Pass::ResolveReferences) {
             return;
         }
@@ -307,7 +321,7 @@ class ResolverPass final : public ast::Visitor {
         }
     }
 
-    void visit(ast::WorkflowDecl &node) override {
+    void visit(const ast::WorkflowDecl &node) {
         if (current_pass_ == Pass::RegisterSymbols) {
             (void)register_symbol(
                 SymbolNamespace::Workflows, SymbolKind::Workflow, node.name, node.range);
@@ -367,15 +381,32 @@ class ResolverPass final : public ast::Visitor {
         return *module_name_ + "::" + std::string(local_name);
     }
 
-    void run_program(ast::Program &program) {
+    void run_source_graph_pass(const SourceGraph &graph, Pass pass) {
+        current_pass_ = pass;
+        for (const auto &source : graph.sources) {
+            const auto &program =
+                require(source.program.get(), "source graph program must exist before resolution");
+            enter_source(source);
+            visit(program);
+            leave_source();
+        }
+    }
+
+    void visit(const ast::Program &program) {
+        for (const auto &declaration : program.declarations) {
+            visit(*declaration);
+        }
+    }
+
+    void run_program(const ast::Program &program) {
         current_pass_ = Pass::CollectImports;
-        program.accept(*this);
+        visit(program);
 
         current_pass_ = Pass::RegisterSymbols;
-        program.accept(*this);
+        visit(program);
 
         current_pass_ = Pass::ResolveReferences;
-        program.accept(*this);
+        visit(program);
     }
 
     void enter_source(const SourceUnit &source) {
@@ -386,8 +417,8 @@ class ResolverPass final : public ast::Visitor {
         import_alias_index_.clear();
         import_aliases_.clear();
 
-        for (std::size_t index = 0; index < result_.imports.size(); ++index) {
-            const auto &binding = result_.imports[index];
+        for (std::size_t index = 0; index < result_.imports().size(); ++index) {
+            const auto &binding = result_.imports()[index];
             if (binding.source_id != current_source_id_ || binding.alias.empty()) {
                 continue;
             }
@@ -612,7 +643,7 @@ class ResolverPass final : public ast::Visitor {
             return std::nullopt;
         }
 
-        result_.references.push_back(ResolvedReference{
+        result_.add_reference(ResolvedReference{
             .kind = kind,
             .text = name.spelling(),
             .source_id = current_source_id_,
@@ -648,7 +679,7 @@ class ResolverPass final : public ast::Visitor {
         }
 
         if (capability.has_value()) {
-            result_.references.push_back(ResolvedReference{
+            result_.add_reference(ResolvedReference{
                 .kind = ReferenceKind::CallTarget,
                 .text = name.spelling(),
                 .source_id = current_source_id_,
@@ -659,7 +690,7 @@ class ResolverPass final : public ast::Visitor {
         }
 
         if (predicate.has_value()) {
-            result_.references.push_back(ResolvedReference{
+            result_.add_reference(ResolvedReference{
                 .kind = ReferenceKind::CallTarget,
                 .text = name.spelling(),
                 .source_id = current_source_id_,
@@ -781,7 +812,7 @@ class ResolverPass final : public ast::Visitor {
         case ast::ExprSyntaxKind::QualifiedValue: {
             if (const auto resolved = lookup(SymbolNamespace::Consts, *expr.qualified_name);
                 resolved.has_value()) {
-                result_.references.push_back(ResolvedReference{
+                result_.add_reference(ResolvedReference{
                     .kind = ReferenceKind::ConstValue,
                     .text = expr.qualified_name->spelling(),
                     .source_id = current_source_id_,
@@ -1058,7 +1089,7 @@ MaybeCRef<ResolvedReference> ResolveResult::find_reference(
             return std::nullopt;
         }
 
-        return std::cref(references[iter->second]);
+        return std::cref(references_[iter->second]);
     }
 
     const auto iter = reference_lookup_no_source_cache_.find(ReferenceLookupNoSourceKey{
@@ -1070,7 +1101,16 @@ MaybeCRef<ResolvedReference> ResolveResult::find_reference(
         return std::nullopt;
     }
 
-    return std::cref(references[iter->second]);
+    return std::cref(references_[iter->second]);
+}
+
+void ResolveResult::add_reference(ResolvedReference reference) {
+    references_.push_back(std::move(reference));
+    invalidate_reference_lookup_cache();
+}
+
+void ResolveResult::add_import(ImportBinding binding) {
+    imports_.push_back(std::move(binding));
 }
 
 std::size_t ResolveResult::ReferenceLookupKeyHash::operator()(
@@ -1097,11 +1137,11 @@ void ResolveResult::rebuild_reference_lookup_cache() const {
     reference_lookup_cache_.clear();
     reference_lookup_no_source_cache_.clear();
 
-    reference_lookup_cache_.reserve(references.size());
-    reference_lookup_no_source_cache_.reserve(references.size());
+    reference_lookup_cache_.reserve(references_.size());
+    reference_lookup_no_source_cache_.reserve(references_.size());
 
-    for (std::size_t index = 0; index < references.size(); ++index) {
-        const auto &reference = references[index];
+    for (std::size_t index = 0; index < references_.size(); ++index) {
+        const auto &reference = references_[index];
         reference_lookup_cache_.try_emplace(ReferenceLookupKey{
                                                .kind = reference.kind,
                                                .begin_offset = reference.range.begin_offset,
@@ -1117,15 +1157,20 @@ void ResolveResult::rebuild_reference_lookup_cache() const {
                                                       index);
     }
 
-    reference_lookup_cache_size_ = references.size();
-    reference_lookup_cache_data_ = references.data();
+    reference_lookup_cache_size_ = references_.size();
+    reference_lookup_cache_data_ = references_.data();
+    reference_lookup_cache_valid_ = true;
 }
 
 void ResolveResult::ensure_reference_lookup_cache() const {
-    if (reference_lookup_cache_size_ != references.size() ||
-        reference_lookup_cache_data_ != references.data()) {
+    if (!reference_lookup_cache_valid_ || reference_lookup_cache_size_ != references_.size() ||
+        reference_lookup_cache_data_ != references_.data()) {
         rebuild_reference_lookup_cache();
     }
+}
+
+void ResolveResult::invalidate_reference_lookup_cache() const noexcept {
+    reference_lookup_cache_valid_ = false;
 }
 
 ResolveResult Resolver::resolve(const ast::Program &program) const {

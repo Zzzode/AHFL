@@ -144,7 +144,12 @@ TypeCheckResult::find_expression_type(SourceRange range, std::optional<SourceId>
         return std::nullopt;
     }
 
-    return std::cref(expression_types[iter->second]);
+    return std::cref(expression_types_[iter->second]);
+}
+
+std::vector<ExpressionTypeInfo> &TypeCheckResult::mutable_expression_types() noexcept {
+    invalidate_expression_type_lookup_cache();
+    return expression_types_;
 }
 
 std::size_t TypeCheckResult::ExpressionTypeLookupKeyHash::operator()(
@@ -160,10 +165,10 @@ std::size_t TypeCheckResult::ExpressionTypeLookupKeyHash::operator()(
 
 void TypeCheckResult::rebuild_expression_type_lookup_cache() const {
     expression_type_lookup_cache_.clear();
-    expression_type_lookup_cache_.reserve(expression_types.size());
+    expression_type_lookup_cache_.reserve(expression_types_.size());
 
-    for (std::size_t index = 0; index < expression_types.size(); ++index) {
-        const auto &entry = expression_types[index];
+    for (std::size_t index = 0; index < expression_types_.size(); ++index) {
+        const auto &entry = expression_types_[index];
         expression_type_lookup_cache_.try_emplace(ExpressionTypeLookupKey{
                                                       .begin_offset = entry.range.begin_offset,
                                                       .end_offset = entry.range.end_offset,
@@ -172,15 +177,21 @@ void TypeCheckResult::rebuild_expression_type_lookup_cache() const {
                                                   index);
     }
 
-    expression_type_lookup_cache_size_ = expression_types.size();
-    expression_type_lookup_cache_data_ = expression_types.data();
+    expression_type_lookup_cache_size_ = expression_types_.size();
+    expression_type_lookup_cache_data_ = expression_types_.data();
+    expression_type_lookup_cache_valid_ = true;
 }
 
 void TypeCheckResult::ensure_expression_type_lookup_cache() const {
-    if (expression_type_lookup_cache_size_ != expression_types.size() ||
-        expression_type_lookup_cache_data_ != expression_types.data()) {
+    if (!expression_type_lookup_cache_valid_ ||
+        expression_type_lookup_cache_size_ != expression_types_.size() ||
+        expression_type_lookup_cache_data_ != expression_types_.data()) {
         rebuild_expression_type_lookup_cache();
     }
+}
+
+void TypeCheckResult::invalidate_expression_type_lookup_cache() const noexcept {
+    expression_type_lookup_cache_valid_ = false;
 }
 
 void dump_type_environment(const TypeEnvironment &environment,

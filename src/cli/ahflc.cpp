@@ -121,6 +121,8 @@ struct CommandLineOptions {
 };
 
 [[nodiscard]] std::string_view command_name(CommandKind command);
+[[nodiscard]] bool is_package_supported_command(CommandKind command);
+[[nodiscard]] bool is_capability_input_supported_command(CommandKind command);
 
 constexpr int kNotListed = -1;
 
@@ -235,7 +237,8 @@ constexpr CommandSpec kCommandSpecs[] = {
     return nullptr;
 }
 
-[[nodiscard]] int command_list_order(const CommandSpec &spec, CommandListKind list_kind) {
+[[nodiscard]] constexpr int command_list_order(const CommandSpec &spec,
+                                               CommandListKind list_kind) {
     switch (list_kind) {
     case CommandListKind::UsageProjectAware:
         return spec.usage_project_aware_order;
@@ -251,6 +254,35 @@ constexpr CommandSpec kCommandSpecs[] = {
 
     return kNotListed;
 }
+
+template <CommandListKind ListKind>
+[[nodiscard]] consteval bool command_list_has_unique_orders() {
+    for (std::size_t lhs_index = 0; lhs_index < std::size(kCommandSpecs); ++lhs_index) {
+        const auto lhs_order = command_list_order(kCommandSpecs[lhs_index], ListKind);
+        if (lhs_order == kNotListed) {
+            continue;
+        }
+
+        for (std::size_t rhs_index = lhs_index + 1; rhs_index < std::size(kCommandSpecs);
+             ++rhs_index) {
+            if (lhs_order == command_list_order(kCommandSpecs[rhs_index], ListKind)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static_assert(command_list_has_unique_orders<CommandListKind::UsageProjectAware>(),
+              "duplicate usage order in command metadata");
+static_assert(command_list_has_unique_orders<CommandListKind::Action>(),
+              "duplicate action order in command metadata");
+static_assert(command_list_has_unique_orders<CommandListKind::Inference>(),
+              "duplicate inference order in command metadata");
+static_assert(command_list_has_unique_orders<CommandListKind::PackageSupported>(),
+              "duplicate package-supported order in command metadata");
+static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSupported>(),
+              "duplicate capability-input-supported order in command metadata");
 
 [[nodiscard]] std::vector<CommandKind> build_command_list(CommandListKind list_kind) {
     std::vector<std::pair<int, CommandKind>> ordered_commands;
@@ -324,6 +356,32 @@ constexpr CommandSpec kCommandSpecs[] = {
     return result;
 }
 
+[[nodiscard]] std::string_view usage_suffix_for_command(CommandKind command) {
+    if (command == CommandKind::Check) {
+        return "[--search-root <dir>]... [--dump-ast] <input.ahfl>";
+    }
+
+    if (command == CommandKind::DumpProject) {
+        return "[--search-root <dir>]... <entry.ahfl>";
+    }
+
+    if (is_capability_input_supported_command(command)) {
+        return "--package <ahfl.package.json> --capability-mocks <mocks.json> "
+               "--input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
+               "[--search-root <dir>]... <input.ahfl>";
+    }
+
+    if (is_package_supported_command(command)) {
+        return "[--package <ahfl.package.json>] [--search-root <dir>]... <input.ahfl>";
+    }
+
+    return "[--search-root <dir>]... <input.ahfl>";
+}
+
+void print_usage_line(std::ostream &out, CommandKind command) {
+    out << "  ahflc " << command_name(command) << " " << usage_suffix_for_command(command) << '\n';
+}
+
 [[nodiscard]] bool is_action_enabled(const CommandLineOptions &options, CommandKind command) {
     if (command != CommandKind::Check && options.selected_command == command) {
         return true;
@@ -370,91 +428,13 @@ void print_usage(std::ostream &out) {
         << "> [--package <ahfl.package.json>] --project <ahfl.project.json>\n"
         << "  ahflc <" << project_aware_commands
         << "> [--package <ahfl.package.json>] --workspace <ahfl.workspace.json> --project-name "
-           "<name>\n"
-        << "  ahflc check [--search-root <dir>]... [--dump-ast] <input.ahfl>\n"
-        << "  ahflc dump-ast [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc dump-types [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc dump-project [--search-root <dir>]... <entry.ahfl>\n"
-        << "  ahflc emit-ir [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-ir-json [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-native-json [--package <ahfl.package.json>] [--search-root <dir>]... "
-           "<input.ahfl>\n"
-        << "  ahflc emit-execution-plan [--package <ahfl.package.json>] [--search-root <dir>]... "
-           "<input.ahfl>\n"
-        << "  ahflc emit-execution-journal --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-replay-view --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-audit-report --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-scheduler-snapshot --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-checkpoint-record --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-checkpoint-review --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-persistence-descriptor --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-persistence-review --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-export-manifest --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-export-review --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-store-import-descriptor --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-store-import-review --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-request --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-review --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-decision --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-receipt --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-decision-review --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-receipt-review --package <ahfl.package.json> "
-           "--capability-mocks <mocks.json> --input-fixture <fixture> [--workflow <canonical>] "
-           "[--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-receipt-persistence-request --package "
-           "<ahfl.package.json> --capability-mocks <mocks.json> --input-fixture <fixture> "
-           "[--workflow <canonical>] [--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-durable-store-import-receipt-persistence-review --package "
-           "<ahfl.package.json> --capability-mocks <mocks.json> --input-fixture <fixture> "
-           "[--workflow <canonical>] [--run-id <id>] [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-scheduler-review --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-runtime-session --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-dry-run-trace --package <ahfl.package.json> --capability-mocks "
-           "<mocks.json> --input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-           "[--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-package-review [--package <ahfl.package.json>] [--search-root <dir>]... "
-           "<input.ahfl>\n"
-        << "  ahflc emit-summary [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc emit-smv [--search-root <dir>]... <input.ahfl>\n"
-        << "  ahflc [--dump-ast] <input.ahfl>\n";
+           "<name>\n";
+
+    print_usage_line(out, CommandKind::Check);
+    for (const auto command : command_list(CommandListKind::Action)) {
+        print_usage_line(out, command);
+    }
+    out << "  ahflc [--dump-ast] <input.ahfl>\n";
 }
 
 [[nodiscard]] std::optional<CommandKind> command_token_to_kind(std::string_view argument) {
@@ -1480,114 +1460,68 @@ build_durable_store_import_request_for_cli(
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
-    plan_result.diagnostics.render(std::cerr);
-    if (plan_result.has_errors() || !plan_result.plan.has_value()) {
+    const auto plan = build_execution_plan_for_cli(program, metadata);
+    if (!plan.has_value()) {
         return std::nullopt;
     }
 
-    auto workflow_name =
-        options.workflow_name.transform([](std::string_view value) { return std::string(value); });
-    if (!workflow_name.has_value()) {
-        workflow_name = plan_result.plan->entry_workflow_canonical_name;
-    }
-
-    if (!workflow_name.has_value()) {
-        std::cerr << "error: " << command_name
-                  << " requires --workflow or package workflow entry\n";
+    const auto dry_run_request = build_dry_run_request_for_cli(*plan, options, command_name);
+    if (!dry_run_request.has_value()) {
         return std::nullopt;
     }
 
-    const auto session = ahfl::runtime_session::build_runtime_session(
-        *plan_result.plan,
-        ahfl::dry_run::DryRunRequest{
-            .workflow_canonical_name = std::move(*workflow_name),
-            .input_fixture = std::string(*options.input_fixture),
-            .run_id =
-                options.run_id.transform([](std::string_view value) { return std::string(value); }),
-        },
-        mock_set);
-    session.diagnostics.render(std::cerr);
-    if (session.has_errors() || !session.session.has_value()) {
+    const auto session = build_runtime_session_for_cli(*plan, *dry_run_request, mock_set);
+    if (!session.has_value()) {
         return std::nullopt;
     }
 
-    const auto journal = ahfl::execution_journal::build_execution_journal(*session.session);
-    journal.diagnostics.render(std::cerr);
-    if (journal.has_errors() || !journal.journal.has_value()) {
+    const auto journal = build_execution_journal_for_cli(*session);
+    if (!journal.has_value()) {
         return std::nullopt;
     }
 
-    const auto replay =
-        ahfl::replay_view::build_replay_view(*plan_result.plan, *session.session, *journal.journal);
-    replay.diagnostics.render(std::cerr);
-    if (replay.has_errors() || !replay.replay.has_value()) {
+    const auto replay = build_replay_view_for_cli(*plan, *session, *journal);
+    if (!replay.has_value()) {
         return std::nullopt;
     }
 
-    const auto snapshot = ahfl::scheduler_snapshot::build_scheduler_snapshot(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay);
-    snapshot.diagnostics.render(std::cerr);
-    if (snapshot.has_errors() || !snapshot.snapshot.has_value()) {
+    const auto snapshot = build_scheduler_snapshot_for_cli(*plan, *session, *journal, *replay);
+    if (!snapshot.has_value()) {
         return std::nullopt;
     }
 
-    const auto record = ahfl::checkpoint_record::build_checkpoint_record(
-        *plan_result.plan, *session.session, *journal.journal, *replay.replay, *snapshot.snapshot);
-    record.diagnostics.render(std::cerr);
-    if (record.has_errors() || !record.record.has_value()) {
+    const auto record =
+        build_checkpoint_record_for_cli(*plan, *session, *journal, *replay, *snapshot);
+    if (!record.has_value()) {
         return std::nullopt;
     }
 
-    const auto descriptor = ahfl::persistence_descriptor::build_persistence_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record);
-    descriptor.diagnostics.render(std::cerr);
-    if (descriptor.has_errors() || !descriptor.descriptor.has_value()) {
+    const auto descriptor = build_persistence_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record);
+    if (!descriptor.has_value()) {
         return std::nullopt;
     }
 
-    const auto manifest = ahfl::persistence_export::build_persistence_export_manifest(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor);
-    manifest.diagnostics.render(std::cerr);
-    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+    const auto manifest = build_export_manifest_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor);
+    if (!manifest.has_value()) {
         return std::nullopt;
     }
 
-    const auto store_import_descriptor = ahfl::store_import::build_store_import_descriptor(
-        *plan_result.plan,
-        *session.session,
-        *journal.journal,
-        *replay.replay,
-        *snapshot.snapshot,
-        *record.record,
-        *descriptor.descriptor,
-        *manifest.manifest);
-    store_import_descriptor.diagnostics.render(std::cerr);
-    if (store_import_descriptor.has_errors() ||
-        !store_import_descriptor.descriptor.has_value()) {
+    const auto store_import_descriptor = build_store_import_descriptor_for_cli(
+        *plan, *session, *journal, *replay, *snapshot, *record, *descriptor, *manifest);
+    if (!store_import_descriptor.has_value()) {
         return std::nullopt;
     }
 
-    const auto request = ahfl::durable_store_import::build_durable_store_import_request(
-        *store_import_descriptor.descriptor);
-    request.diagnostics.render(std::cerr);
-    if (request.has_errors() || !request.request.has_value()) {
+    const auto request_result = ahfl::durable_store_import::build_durable_store_import_request(
+        *store_import_descriptor);
+    request_result.diagnostics.render(std::cerr);
+    if (request_result.has_errors() || !request_result.request.has_value()) {
         return std::nullopt;
     }
 
-    return *request.request;
+    return *request_result.request;
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportDecision>
@@ -1855,6 +1789,95 @@ build_durable_store_import_receipt_persistence_review_for_cli(
     return 0;
 }
 
+struct PackagePipelineContext {
+    const ahfl::ir::Program &program;
+    const ahfl::handoff::PackageMetadata &metadata;
+    const ahfl::dry_run::CapabilityMockSet *mock_set;
+    const CommandLineOptions &options;
+};
+
+using PackageCommandHandler = int (*)(const PackagePipelineContext &context);
+
+template <int (*CommandFn)(const ahfl::ir::Program &,
+                           const ahfl::handoff::PackageMetadata &,
+                           const ahfl::dry_run::CapabilityMockSet &,
+                           const CommandLineOptions &)>
+[[nodiscard]] int invoke_package_command(const PackagePipelineContext &context) {
+    if (context.mock_set == nullptr) {
+        std::cerr << "error: internal command dispatch failed: missing capability mocks\n";
+        return 1;
+    }
+
+    return CommandFn(context.program, context.metadata, *context.mock_set, context.options);
+}
+
+[[nodiscard]] int invoke_execution_plan_command(const PackagePipelineContext &context) {
+    return emit_execution_plan_with_diagnostics(context.program, context.metadata);
+}
+
+struct PackageCommandDispatchEntry {
+    CommandKind kind;
+    PackageCommandHandler handler;
+};
+
+constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
+    {CommandKind::EmitDryRunTrace,
+     invoke_package_command<emit_dry_run_trace_with_diagnostics>},
+    {CommandKind::EmitExecutionJournal,
+     invoke_package_command<emit_execution_journal_with_diagnostics>},
+    {CommandKind::EmitReplayView, invoke_package_command<emit_replay_view_with_diagnostics>},
+    {CommandKind::EmitAuditReport, invoke_package_command<emit_audit_report_with_diagnostics>},
+    {CommandKind::EmitSchedulerSnapshot,
+     invoke_package_command<emit_scheduler_snapshot_with_diagnostics>},
+    {CommandKind::EmitCheckpointRecord,
+     invoke_package_command<emit_checkpoint_record_with_diagnostics>},
+    {CommandKind::EmitCheckpointReview,
+     invoke_package_command<emit_checkpoint_review_with_diagnostics>},
+    {CommandKind::EmitPersistenceDescriptor,
+     invoke_package_command<emit_persistence_descriptor_with_diagnostics>},
+    {CommandKind::EmitPersistenceReview,
+     invoke_package_command<emit_persistence_review_with_diagnostics>},
+    {CommandKind::EmitExportManifest,
+     invoke_package_command<emit_export_manifest_with_diagnostics>},
+    {CommandKind::EmitExportReview, invoke_package_command<emit_export_review_with_diagnostics>},
+    {CommandKind::EmitStoreImportDescriptor,
+     invoke_package_command<emit_store_import_descriptor_with_diagnostics>},
+    {CommandKind::EmitStoreImportReview,
+     invoke_package_command<emit_store_import_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportRequest,
+     invoke_package_command<emit_durable_store_import_request_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReview,
+     invoke_package_command<emit_durable_store_import_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportDecision,
+     invoke_package_command<emit_durable_store_import_decision_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReceipt,
+     invoke_package_command<emit_durable_store_import_receipt_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+     invoke_package_command<emit_durable_store_import_receipt_persistence_request_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportDecisionReview,
+     invoke_package_command<emit_durable_store_import_decision_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReceiptReview,
+     invoke_package_command<emit_durable_store_import_receipt_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+     invoke_package_command<emit_durable_store_import_receipt_persistence_review_with_diagnostics>},
+    {CommandKind::EmitSchedulerReview,
+     invoke_package_command<emit_scheduler_review_with_diagnostics>},
+    {CommandKind::EmitRuntimeSession,
+     invoke_package_command<emit_runtime_session_with_diagnostics>},
+    {CommandKind::EmitExecutionPlan, invoke_execution_plan_command},
+};
+
+[[nodiscard]] std::optional<int> dispatch_package_command(
+    CommandKind command, const PackagePipelineContext &context) {
+    for (const auto &entry : kPackageCommandDispatch) {
+        if (entry.kind == command) {
+            return entry.handler(context);
+        }
+    }
+
+    return std::nullopt;
+}
+
 template <typename ResultT>
 void render_diagnostics(const ResultT &result, MaybeSourceFile source_file, std::ostream &out) {
     if (source_file.has_value()) {
@@ -1879,7 +1902,7 @@ void print_success_summary(const ahfl::ast::Program &program,
                            std::ostream &out) {
     out << "ok: checked " << program.declarations.size() << " top-level declaration(s), "
         << resolve_result.symbol_table.symbols().size() << " symbol(s), "
-        << resolve_result.references.size() << " reference(s), "
+        << resolve_result.references().size() << " reference(s), "
         << type_check_result.environment.structs().size() +
                type_check_result.environment.enums().size()
         << " named type(s)\n";
@@ -1891,7 +1914,7 @@ void print_success_summary(const ahfl::SourceGraph &graph,
                            std::ostream &out) {
     out << "ok: checked " << graph.sources.size() << " source(s), "
         << resolve_result.symbol_table.symbols().size() << " symbol(s), "
-        << resolve_result.references.size() << " reference(s), "
+        << resolve_result.references().size() << " reference(s), "
         << type_check_result.environment.structs().size() +
                type_check_result.environment.enums().size()
         << " named type(s)\n";
@@ -1979,81 +2002,16 @@ template <typename InputT>
         }
 
         if (effective_command.has_value()) {
-            switch (*effective_command) {
-            case CommandKind::EmitDryRunTrace:
-                return emit_dry_run_trace_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitExecutionJournal:
-                return emit_execution_journal_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitReplayView:
-                return emit_replay_view_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitAuditReport:
-                return emit_audit_report_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitSchedulerSnapshot:
-                return emit_scheduler_snapshot_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitCheckpointRecord:
-                return emit_checkpoint_record_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitCheckpointReview:
-                return emit_checkpoint_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitPersistenceDescriptor:
-                return emit_persistence_descriptor_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitPersistenceReview:
-                return emit_persistence_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitExportManifest:
-                return emit_export_manifest_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitExportReview:
-                return emit_export_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitStoreImportDescriptor:
-                return emit_store_import_descriptor_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitStoreImportReview:
-                return emit_store_import_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportRequest:
-                return emit_durable_store_import_request_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportReview:
-                return emit_durable_store_import_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportDecision:
-                return emit_durable_store_import_decision_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportReceipt:
-                return emit_durable_store_import_receipt_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportReceiptPersistenceRequest:
-                return emit_durable_store_import_receipt_persistence_request_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportDecisionReview:
-                return emit_durable_store_import_decision_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportReceiptReview:
-                return emit_durable_store_import_receipt_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitDurableStoreImportReceiptPersistenceReview:
-                return emit_durable_store_import_receipt_persistence_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitSchedulerReview:
-                return emit_scheduler_review_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitRuntimeSession:
-                return emit_runtime_session_with_diagnostics(
-                    ir_program, metadata_validation.metadata, *capability_mock_set, options);
-            case CommandKind::EmitExecutionPlan:
-                return emit_execution_plan_with_diagnostics(
-                    ir_program, metadata_validation.metadata);
-            default:
-                break;
+            const PackagePipelineContext context{
+                ir_program,
+                metadata_validation.metadata,
+                capability_mock_set,
+                options,
+            };
+            if (const auto command_status =
+                    dispatch_package_command(*effective_command, context);
+                command_status.has_value()) {
+                return *command_status;
             }
         }
 

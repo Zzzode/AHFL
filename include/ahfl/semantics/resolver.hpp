@@ -121,13 +121,22 @@ class SymbolTable {
 
 struct ResolveResult {
     SymbolTable symbol_table;
-    std::vector<ResolvedReference> references;
-    std::vector<ImportBinding> imports;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
         return diagnostics.has_error();
     }
+
+    [[nodiscard]] const std::vector<ResolvedReference> &references() const noexcept {
+        return references_;
+    }
+
+    [[nodiscard]] const std::vector<ImportBinding> &imports() const noexcept {
+        return imports_;
+    }
+
+    void add_reference(ResolvedReference reference);
+    void add_import(ImportBinding binding);
 
     [[nodiscard]] MaybeCRef<ResolvedReference>
     find_reference(ReferenceKind kind,
@@ -164,6 +173,10 @@ struct ResolveResult {
 
     void rebuild_reference_lookup_cache() const;
     void ensure_reference_lookup_cache() const;
+    void invalidate_reference_lookup_cache() const noexcept;
+
+    std::vector<ResolvedReference> references_;
+    std::vector<ImportBinding> imports_;
 
     mutable std::unordered_map<ReferenceLookupKey, std::size_t, ReferenceLookupKeyHash>
         reference_lookup_cache_;
@@ -173,6 +186,7 @@ struct ResolveResult {
         reference_lookup_no_source_cache_;
     mutable std::size_t reference_lookup_cache_size_{0};
     mutable const ResolvedReference *reference_lookup_cache_data_{nullptr};
+    mutable bool reference_lookup_cache_valid_{false};
 };
 
 class Resolver {

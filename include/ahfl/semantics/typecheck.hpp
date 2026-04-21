@@ -18,6 +18,7 @@
 namespace ahfl {
 
 struct SourceGraph;
+class TypeCheckPass;
 
 struct StructFieldInfo {
     std::string name;
@@ -153,17 +154,22 @@ struct ExpressionTypeInfo {
 
 struct TypeCheckResult {
     TypeEnvironment environment;
-    std::vector<ExpressionTypeInfo> expression_types;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
         return diagnostics.has_error();
     }
 
+    [[nodiscard]] const std::vector<ExpressionTypeInfo> &expression_types() const noexcept {
+        return expression_types_;
+    }
+
     [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
     find_expression_type(SourceRange range, std::optional<SourceId> source_id = std::nullopt) const;
 
   private:
+    friend class TypeCheckPass;
+
     struct ExpressionTypeLookupKey {
         std::size_t begin_offset{0};
         std::size_t end_offset{0};
@@ -179,13 +185,17 @@ struct TypeCheckResult {
 
     void rebuild_expression_type_lookup_cache() const;
     void ensure_expression_type_lookup_cache() const;
+    void invalidate_expression_type_lookup_cache() const noexcept;
+    [[nodiscard]] std::vector<ExpressionTypeInfo> &mutable_expression_types() noexcept;
 
+    std::vector<ExpressionTypeInfo> expression_types_;
     mutable std::unordered_map<ExpressionTypeLookupKey,
                                std::size_t,
                                ExpressionTypeLookupKeyHash>
         expression_type_lookup_cache_;
     mutable std::size_t expression_type_lookup_cache_size_{0};
     mutable const ExpressionTypeInfo *expression_type_lookup_cache_data_{nullptr};
+    mutable bool expression_type_lookup_cache_valid_{false};
 };
 
 class TypeChecker {
