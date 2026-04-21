@@ -1,6 +1,7 @@
 add_executable(ahflc
     ahflc.cpp
     command_catalog.cpp
+    pipeline_runner.cpp
 )
 
 target_link_libraries(ahflc
