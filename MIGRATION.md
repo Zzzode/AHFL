@@ -295,3 +295,89 @@ ctest --preset test-dev --output-on-failure -L 'v0.21-durable-store-import-provi
 - `docs/reference/durable-store-provider-adapter-prototype-compatibility-v0.21.zh.md`
 - `docs/reference/native-consumer-matrix-v0.21.zh.md`
 - `docs/reference/contributor-guide-v0.21.zh.md`
+
+## V0.21 to V0.22
+
+V0.22 extends the V0.21 provider-neutral durable store adapter planning boundary
+with a provider driver binding boundary. It keeps consuming the V0.21
+`ProviderWriteAttemptPreview` as the first machine-facing source of provider
+write planning state and does not introduce a real provider SDK, credential,
+endpoint URI, object storage writer, database writer, recovery daemon, retry
+token, or resume token.
+
+### New Artifact Boundary
+
+The V0.22 artifact chain is:
+
+```text
+ProviderWriteAttemptPreview
+-> ProviderDriverBindingPlan
+-> ProviderDriverReadinessReview
+```
+
+The machine-facing provider driver binding format is:
+
+```text
+ahfl.durable-store-import-provider-driver-binding-plan.v1
+```
+
+The reviewer-facing provider driver readiness format is:
+
+```text
+ahfl.durable-store-import-provider-driver-readiness-review.v1
+```
+
+### New CLI Commands
+
+Use the new V0.22 commands when you need the provider driver binding boundary
+after a V0.21 provider write attempt:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-driver-binding \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-driver-readiness \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Driver Binding Outcomes
+
+V0.22 validates these provider driver paths:
+
+- `bound`: planned provider write attempt plus matching secret-free driver
+  profile generates `TranslateProviderPersistReceipt`, deterministic
+  `provider-driver-operation::<provider-persistence-id>` operation descriptor,
+  and `invokes_provider_sdk = false`.
+- `not_bound`: source-not-planned, profile mismatch, or driver capability-gap
+  paths stay non-SDK and preserve driver binding failure attribution.
+
+V0.22 artifacts must not infer state from readiness reviews, recovery handoff
+text, review summaries, CLI text, traces, host logs, provider payloads, object
+paths, database tables, credentials, endpoint URI, or private scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.22 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.22
+ctest --preset test-dev --output-on-failure -L 'v0.22-durable-store-import-provider-driver-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.22.zh.md`
+- `docs/plan/issue-backlog-v0.22.zh.md`
+- `docs/design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md`
+- `docs/reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md`
+- `docs/reference/native-consumer-matrix-v0.22.zh.md`
+- `docs/reference/contributor-guide-v0.22.zh.md`

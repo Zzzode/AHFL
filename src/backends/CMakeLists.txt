@@ -328,6 +328,28 @@ target_link_libraries(ahfl_backend_durable_store_import_provider_recovery_handof
 
 ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_recovery_handoff)
 
+add_library(ahfl_backend_durable_store_import_provider_driver_binding STATIC
+    durable_store_import_provider_driver_binding.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_driver_binding
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_driver_binding)
+
+add_library(ahfl_backend_durable_store_import_provider_driver_readiness STATIC
+    durable_store_import_provider_driver_readiness.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_driver_readiness
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_driver_readiness)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -408,6 +430,8 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_recovery_preview
         ahfl_backend_durable_store_import_provider_write_attempt
         ahfl_backend_durable_store_import_provider_recovery_handoff
+        ahfl_backend_durable_store_import_provider_driver_binding
+        ahfl_backend_durable_store_import_provider_driver_readiness
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

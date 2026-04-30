@@ -2,6 +2,7 @@
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
+#include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -2249,6 +2250,42 @@ make_valid_provider_recovery_handoff_preview() {
     return *handoff.preview;
 }
 
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderDriverBindingPlan>
+make_valid_provider_driver_binding_plan() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderDriverReadinessReview>
+make_valid_provider_driver_readiness_review() {
+    const auto plan = make_valid_provider_driver_binding_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_driver_readiness_review(*plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
 int validate_durable_store_import_adapter_execution_ok() {
     const auto execution = make_valid_adapter_execution_receipt();
     if (!execution.has_value()) {
@@ -2913,6 +2950,414 @@ int build_durable_store_import_provider_recovery_handoff_rejects_invalid_write_a
                : 1;
 }
 
+int validate_durable_store_import_provider_driver_binding_ok() {
+    const auto plan = make_valid_provider_driver_binding_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_binding_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->binding_status !=
+            ahfl::durable_store_import::ProviderDriverBindingStatus::Bound ||
+        plan->operation_kind != ahfl::durable_store_import::
+                                    ProviderDriverOperationKind::TranslateProviderPersistReceipt ||
+        !plan->operation_descriptor_identity.has_value() || plan->invokes_provider_sdk ||
+        plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider driver binding plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_driver_binding_rejected_ok() {
+    const auto response = make_response_from_descriptor(make_failed_descriptor());
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto execution = make_adapter_execution_from_response(*response);
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto write_attempt =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (write_attempt.has_errors() || !write_attempt.preview.has_value()) {
+        write_attempt.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt.preview);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->binding_status !=
+            ahfl::durable_store_import::ProviderDriverBindingStatus::NotBound ||
+        plan.plan->operation_kind != ahfl::durable_store_import::
+                                      ProviderDriverOperationKind::NoopSourceNotPlanned ||
+        plan.plan->operation_descriptor_identity.has_value() ||
+        !plan.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected rejected provider driver binding plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_driver_binding_unsupported_capability_ok() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    auto profile =
+        ahfl::durable_store_import::build_default_provider_driver_profile(*write_attempt);
+    profile.supports_write_intent_translation = false;
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt, profile);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->binding_status !=
+            ahfl::durable_store_import::ProviderDriverBindingStatus::NotBound ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderDriverOperationKind::
+                NoopUnsupportedDriverCapability ||
+        !plan.plan->failure_attribution.has_value() ||
+        plan.plan->failure_attribution->missing_capability !=
+            std::optional<ahfl::durable_store_import::ProviderDriverCapabilityKind>(
+                ahfl::durable_store_import::ProviderDriverCapabilityKind::TranslateWriteIntent)) {
+        std::cerr << "unexpected unsupported-capability provider driver binding plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_driver_binding_missing_profile_load_capability_ok() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    auto profile =
+        ahfl::durable_store_import::build_default_provider_driver_profile(*write_attempt);
+    profile.supports_secret_free_profile_load = false;
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt, profile);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->binding_status !=
+            ahfl::durable_store_import::ProviderDriverBindingStatus::NotBound ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderDriverOperationKind::
+                NoopUnsupportedDriverCapability ||
+        !plan.plan->failure_attribution.has_value() ||
+        plan.plan->failure_attribution->missing_capability !=
+            std::optional<ahfl::durable_store_import::ProviderDriverCapabilityKind>(
+                ahfl::durable_store_import::ProviderDriverCapabilityKind::LoadSecretFreeProfile)) {
+        std::cerr
+            << "unexpected missing-profile-load provider driver binding plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_driver_binding_profile_mismatch_ok() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    auto profile =
+        ahfl::durable_store_import::build_default_provider_driver_profile(*write_attempt);
+    profile.provider_profile_ref = "provider-profile::wrong";
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt, profile);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->binding_status !=
+            ahfl::durable_store_import::ProviderDriverBindingStatus::NotBound ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderDriverOperationKind::NoopProfileMismatch ||
+        !plan.plan->failure_attribution.has_value() ||
+        plan.plan->failure_attribution->kind !=
+            ahfl::durable_store_import::ProviderDriverBindingFailureKind::DriverProfileMismatch) {
+        std::cerr << "unexpected provider driver profile mismatch binding plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_driver_profile_rejects_secret_material() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    auto profile =
+        ahfl::durable_store_import::build_default_provider_driver_profile(*write_attempt);
+    profile.credential_reference = "secret://provider-credential";
+    profile.endpoint_secret_reference = "secret://endpoint";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_profile(profile);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider driver profile with secrets to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain credential_reference") &&
+                   ahfl::test_support::diagnostics_contain(
+                       validation.diagnostics, "cannot contain endpoint_secret_reference")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_driver_profile_rejects_provider_coordinates() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    auto profile =
+        ahfl::durable_store_import::build_default_provider_driver_profile(*write_attempt);
+    profile.credential_free = false;
+    profile.endpoint_uri = "https://provider.example.invalid";
+    profile.object_path = "bucket/receipt.json";
+    profile.database_table = "receipt-table";
+    profile.sdk_payload_schema = "provider-sdk-payload-v1";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_profile(profile);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider driver profile with provider coordinates to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "must be credential_free") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain object_path") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain database_table") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_payload_schema")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_driver_binding_rejects_sdk_invocation() {
+    auto plan = make_valid_provider_driver_binding_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->invokes_provider_sdk = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_binding_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider driver binding plan invoking SDK to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot invoke provider SDK")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_driver_binding_rejects_bound_without_descriptor() {
+    auto plan = make_valid_provider_driver_binding_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->operation_descriptor_identity.reset();
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_binding_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected bound provider driver binding without descriptor to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics, "bound status requires translation operation descriptor")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_driver_binding_rejects_bound_without_profile_load() {
+    auto plan = make_valid_provider_driver_binding_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->driver_profile.supports_secret_free_profile_load = false;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_binding_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected bound provider driver binding without profile load capability to "
+                     "fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics, "requires secret-free profile load capability")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_driver_binding_ready_write_attempt() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->durable_store_import_provider_driver_binding_identity !=
+            "durable-store-import-provider-driver-binding::run-partial-001::planned" ||
+        plan.plan->operation_descriptor_identity !=
+            std::optional<std::string>(
+                "provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted") ||
+        plan.plan->driver_profile.secret_free_config_ref.empty()) {
+        std::cerr << "unexpected ready provider driver binding bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_driver_binding_rejects_invalid_write_attempt() {
+    auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    write_attempt->format_version =
+        "ahfl.durable-store-import-provider-write-attempt-preview.v999";
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt);
+    if (!plan.has_errors()) {
+        std::cerr << "expected invalid provider write attempt to fail driver binding\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               plan.diagnostics,
+               "durable store import provider write attempt preview format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_driver_readiness_ok() {
+    const auto review = make_valid_provider_driver_readiness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_driver_readiness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderDriverReadinessNextActionKind::
+                ReadyForDriverImplementation ||
+        !review->operation_descriptor_identity.has_value() || review->invokes_provider_sdk ||
+        review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider driver readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_driver_readiness_unsupported_capability_ok() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    auto profile =
+        ahfl::durable_store_import::build_default_provider_driver_profile(*write_attempt);
+    profile.supports_write_intent_translation = false;
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt, profile);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_driver_readiness_review(*plan.plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review.review->next_action !=
+            ahfl::durable_store_import::ProviderDriverReadinessNextActionKind::
+                WaitForDriverCapability ||
+        review.review->operation_descriptor_identity.has_value() ||
+        !review.review->failure_attribution.has_value()) {
+        std::cerr << "unexpected unsupported provider driver readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_driver_readiness_rejects_invalid_binding_plan() {
+    auto plan = make_valid_provider_driver_binding_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->format_version = "ahfl.durable-store-import-provider-driver-binding-plan.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_driver_readiness_review(*plan);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid provider driver binding plan to fail readiness review\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider driver binding plan format_version must be")
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -3310,6 +3755,77 @@ int main(int argc, char **argv) {
     if (command ==
         "build-durable-store-import-provider-recovery-handoff-rejects-invalid-write-attempt") {
         return build_durable_store_import_provider_recovery_handoff_rejects_invalid_write_attempt();
+    }
+
+    // V0.22: Provider Driver Binding and Readiness tests
+    if (command == "validate-durable-store-import-provider-driver-binding-ok") {
+        return validate_durable_store_import_provider_driver_binding_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-driver-binding-rejected-ok") {
+        return validate_durable_store_import_provider_driver_binding_rejected_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-driver-binding-unsupported-capability-ok") {
+        return build_durable_store_import_provider_driver_binding_unsupported_capability_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-driver-binding-missing-profile-load-capability-ok") {
+        return build_durable_store_import_provider_driver_binding_missing_profile_load_capability_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-driver-binding-profile-mismatch-ok") {
+        return build_durable_store_import_provider_driver_binding_profile_mismatch_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-driver-profile-rejects-secret-material") {
+        return validate_durable_store_import_provider_driver_profile_rejects_secret_material();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-driver-profile-rejects-provider-coordinates") {
+        return validate_durable_store_import_provider_driver_profile_rejects_provider_coordinates();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-driver-binding-rejects-sdk-invocation") {
+        return validate_durable_store_import_provider_driver_binding_rejects_sdk_invocation();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-driver-binding-rejects-bound-without-descriptor") {
+        return validate_durable_store_import_provider_driver_binding_rejects_bound_without_descriptor();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-driver-binding-rejects-bound-without-profile-load") {
+        return validate_durable_store_import_provider_driver_binding_rejects_bound_without_profile_load();
+    }
+
+    if (command == "build-durable-store-import-provider-driver-binding-ready-write-attempt") {
+        return build_durable_store_import_provider_driver_binding_ready_write_attempt();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-driver-binding-rejects-invalid-write-attempt") {
+        return build_durable_store_import_provider_driver_binding_rejects_invalid_write_attempt();
+    }
+
+    if (command == "validate-durable-store-import-provider-driver-readiness-ok") {
+        return validate_durable_store_import_provider_driver_readiness_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-driver-readiness-unsupported-capability-ok") {
+        return build_durable_store_import_provider_driver_readiness_unsupported_capability_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-driver-readiness-rejects-invalid-binding-plan") {
+        return build_durable_store_import_provider_driver_readiness_rejects_invalid_binding_plan();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

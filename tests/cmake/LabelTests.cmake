@@ -1071,3 +1071,60 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_recovery_handoff.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_recovery_handoff.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-profile-model
+    TESTS
+        ahfl.durable_store_import_provider_driver_profile.model.fail_secret_material
+        ahfl.durable_store_import_provider_driver_profile.model.fail_provider_coordinates
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-binding-model
+    TESTS
+        ahfl.durable_store_import_provider_driver_binding.model.validate_ok
+        ahfl.durable_store_import_provider_driver_binding.model.validate_rejected_ok
+        ahfl.durable_store_import_provider_driver_binding.model.unsupported_capability
+        ahfl.durable_store_import_provider_driver_binding.model.missing_profile_load_capability
+        ahfl.durable_store_import_provider_driver_binding.model.profile_mismatch
+        ahfl.durable_store_import_provider_driver_binding.model.fail_sdk_invocation
+        ahfl.durable_store_import_provider_driver_binding.model.fail_bound_without_descriptor
+        ahfl.durable_store_import_provider_driver_binding.model.fail_bound_without_profile_load
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-binding-bootstrap
+    TESTS
+        ahfl.durable_store_import_provider_driver_binding.bootstrap.ready_write_attempt
+        ahfl.durable_store_import_provider_driver_binding.bootstrap.fail_invalid_write_attempt
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-readiness-model
+    TESTS
+        ahfl.durable_store_import_provider_driver_readiness.model.validate_ok
+        ahfl.durable_store_import_provider_driver_readiness.bootstrap.unsupported_capability
+        ahfl.durable_store_import_provider_driver_readiness.bootstrap.fail_invalid_binding_plan
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_driver_binding.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_driver_binding.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_binding.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.22 v0.22-durable-store-import-provider-driver-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_driver_binding.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_driver_binding.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_binding.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_driver_readiness.workspace.workflow_value_flow.partial.with_package
+)

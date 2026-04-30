@@ -1,0 +1,42 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-driver-binding-plan.v1",
+  "source_durable_store_import_provider_write_attempt_preview_format_version": "ahfl.durable-store-import-provider-write-attempt-preview.v1",
+  "source_durable_store_import_provider_adapter_config_format_version": "ahfl.durable-store-import-provider-adapter-config.v1",
+  "source_durable_store_import_provider_capability_matrix_format_version": "ahfl.durable-store-import-provider-capability-matrix.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "durable_store_import_provider_write_attempt_identity": "durable-store-import-provider-write-attempt::workflow-value-flow::run-failed-001::rejected",
+  "durable_store_import_provider_driver_binding_identity": "durable-store-import-provider-driver-binding::run-failed-001::not-planned",
+  "source_planning_status": "not_planned",
+  "provider_persistence_id": null,
+  "driver_profile": {
+    "format_version": "ahfl.durable-store-import-provider-driver-profile.v1",
+    "driver_kind": "provider_neutral_preview_driver",
+    "driver_profile_identity": "provider-driver-profile::provider-adapter-config::workflow-value-flow::run-failed-001::provider-neutral",
+    "provider_profile_ref": "provider-neutral-default",
+    "provider_namespace": "provider-neutral::workflow-value-flow",
+    "secret_free_config_ref": "secret-free-driver-config::provider-adapter-config::workflow-value-flow::run-failed-001::provider-neutral",
+    "credential_free": true,
+    "supports_secret_free_profile_load": true,
+    "supports_write_intent_translation": true,
+    "supports_retry_placeholder_translation": true,
+    "supports_resume_placeholder_translation": true,
+    "credential_reference": null,
+    "endpoint_uri": null,
+    "endpoint_secret_reference": null,
+    "object_path": null,
+    "database_table": null,
+    "sdk_payload_schema": null
+  },
+  "operation_kind": "noop_source_not_planned",
+  "binding_status": "not_bound",
+  "operation_descriptor_identity": null,
+  "invokes_provider_sdk": false,
+  "failure_attribution": {
+    "kind": "source_write_attempt_not_planned",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'",
+    "missing_capability": null
+  }
+}

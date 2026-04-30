@@ -1,0 +1,21 @@
+ahfl.durable-store-import-provider-driver-readiness-review.v1
+source_provider_driver_binding_plan_format ahfl.durable-store-import-provider-driver-binding-plan.v1
+source_provider_write_attempt_format ahfl.durable-store-import-provider-write-attempt-preview.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_provider_write_attempt_identity durable-store-import-provider-write-attempt::workflow-value-flow::run-failed-001::rejected
+durable_store_import_provider_driver_binding_identity durable-store-import-provider-driver-binding::run-failed-001::not-planned
+binding_status not_bound
+operation_kind noop_source_not_planned
+operation_descriptor_identity none
+invokes_provider_sdk false
+next_action manual_review_required
+driver_boundary provider driver binding skipped because source provider write attempt is not planned
+next_step manual review required before provider driver binding can proceed
+failure_attribution {
+  kind source_write_attempt_not_planned
+  missing_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

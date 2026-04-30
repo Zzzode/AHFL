@@ -1,0 +1,19 @@
+ahfl.durable-store-import-provider-driver-readiness-review.v1
+source_provider_driver_binding_plan_format ahfl.durable-store-import-provider-driver-binding-plan.v1
+source_provider_write_attempt_format ahfl.durable-store-import-provider-write-attempt-preview.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+durable_store_import_provider_write_attempt_identity durable-store-import-provider-write-attempt::workflow-value-flow::run-001::accepted
+durable_store_import_provider_driver_binding_identity durable-store-import-provider-driver-binding::run-001::planned
+binding_status bound
+operation_kind translate_provider_persist_receipt
+operation_descriptor_identity provider-driver-operation::provider-persistence::workflow-value-flow::run-001::accepted
+invokes_provider_sdk false
+next_action ready_for_driver_implementation
+driver_boundary provider-specific driver binding is planned without invoking a provider SDK
+next_step ready for future provider driver implementation; no provider SDK was invoked
+failure_attribution {
+  value none
+}

@@ -145,6 +145,9 @@ jobs:
       - name: Run V0.21 Durable Provider Adapter Prototype Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.21'
 
+      - name: Run V0.22 Durable Provider Driver Prototype Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.22'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -207,6 +210,9 @@ jobs:
 
       - name: Run V0.21 Durable Provider Adapter Prototype Regression
         run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.21'
+
+      - name: Run V0.22 Durable Provider Driver Prototype Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.22'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

@@ -8,6 +8,8 @@
 #include "ahfl/backends/durable_store_import_adapter_execution.hpp"
 #include "ahfl/backends/durable_store_import_decision.hpp"
 #include "ahfl/backends/durable_store_import_decision_review.hpp"
+#include "ahfl/backends/durable_store_import_provider_driver_binding.hpp"
+#include "ahfl/backends/durable_store_import_provider_driver_readiness.hpp"
 #include "ahfl/backends/durable_store_import_provider_recovery_handoff.hpp"
 #include "ahfl/backends/durable_store_import_provider_write_attempt.hpp"
 #include "ahfl/backends/durable_store_import_receipt.hpp"
@@ -38,6 +40,7 @@
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
+#include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -1334,6 +1337,85 @@ build_durable_store_import_provider_recovery_handoff_for_cli(
     return 0;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverBindingPlan>
+build_durable_store_import_provider_driver_binding_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto write_attempt = build_durable_store_import_provider_write_attempt_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!write_attempt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt);
+    plan.diagnostics.render(std::cerr);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_driver_binding_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_driver_binding_for_cli(
+        program, metadata, mock_set, options, "emit-durable-store-import-provider-driver-binding");
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_driver_binding_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverReadinessReview>
+build_durable_store_import_provider_driver_readiness_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_driver_binding_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_driver_readiness_review(*plan);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_driver_readiness_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_driver_readiness_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-driver-readiness");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_driver_readiness(*review, std::cout);
+    return 0;
+}
+
 [[nodiscard]] int emit_durable_store_import_decision_review_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1441,6 +1523,10 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
      invoke_package_command<emit_durable_store_import_provider_write_attempt_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportProviderRecoveryHandoff,
      invoke_package_command<emit_durable_store_import_provider_recovery_handoff_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderDriverBinding,
+     invoke_package_command<emit_durable_store_import_provider_driver_binding_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderDriverReadiness,
+     invoke_package_command<emit_durable_store_import_provider_driver_readiness_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,
