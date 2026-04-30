@@ -100,6 +100,8 @@ Avoid:
 
 ### Plan
 
+- [roadmap-v0.21.zh.md](./plan/roadmap-v0.21.zh.md) - current execution plan
+- [issue-backlog-v0.21.zh.md](./plan/issue-backlog-v0.21.zh.md) - current execution backlog
 - [roadmap-v0.20.zh.md](./plan/roadmap-v0.20.zh.md) - completed baseline
 - [issue-backlog-v0.20.zh.md](./plan/issue-backlog-v0.20.zh.md) - completed baseline
 - [roadmap-v0.19.zh.md](./plan/roadmap-v0.19.zh.md) - completed baseline
