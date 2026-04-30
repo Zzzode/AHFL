@@ -1,0 +1,25 @@
+ahfl.durable-store-import-provider-host-execution-readiness-review.v1
+source_provider_host_execution_plan_format ahfl.durable-store-import-provider-host-execution-plan.v1
+source_provider_sdk_request_envelope_plan_format ahfl.durable-store-import-provider-sdk-request-envelope-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+durable_store_import_provider_sdk_request_envelope_identity durable-store-import-provider-sdk-request-envelope::run-partial-001::ready
+durable_store_import_provider_host_execution_identity durable-store-import-provider-host-execution::run-partial-001::ready
+execution_status ready
+operation_kind plan_provider_host_execution
+provider_host_execution_descriptor_identity provider-host-execution-descriptor::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted
+provider_host_receipt_placeholder_identity provider-host-receipt-placeholder::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted
+starts_host_process false
+reads_host_environment false
+opens_network_connection false
+materializes_sdk_request_payload false
+invokes_provider_sdk false
+writes_host_filesystem false
+next_action ready_for_local_host_execution_harness
+host_execution_boundary provider host execution is planned without starting a host process, reading host environment, opening network, materializing SDK payload, invoking a provider SDK, or writing host filesystem
+next_step ready for future local host execution harness; no process, host env, network, SDK payload, SDK call, or filesystem write was used
+failure_attribution {
+  value none
+}

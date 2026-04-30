@@ -10,6 +10,8 @@
 #include "ahfl/backends/durable_store_import_decision_review.hpp"
 #include "ahfl/backends/durable_store_import_provider_driver_binding.hpp"
 #include "ahfl/backends/durable_store_import_provider_driver_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_host_execution.hpp"
+#include "ahfl/backends/durable_store_import_provider_host_execution_readiness.hpp"
 #include "ahfl/backends/durable_store_import_provider_recovery_handoff.hpp"
 #include "ahfl/backends/durable_store_import_provider_runtime_preflight.hpp"
 #include "ahfl/backends/durable_store_import_provider_runtime_readiness.hpp"
@@ -45,6 +47,7 @@
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
+#include "ahfl/durable_store_import/provider_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
@@ -1585,6 +1588,85 @@ build_durable_store_import_provider_sdk_handoff_readiness_for_cli(
     return 0;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderHostExecutionPlan>
+build_durable_store_import_provider_host_execution_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto envelope = build_durable_store_import_provider_sdk_envelope_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!envelope.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_host_execution_plan(*envelope);
+    plan.diagnostics.render(std::cerr);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_host_execution_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_host_execution_for_cli(
+        program, metadata, mock_set, options, "emit-durable-store-import-provider-host-execution");
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_host_execution_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderHostExecutionReadinessReview>
+build_durable_store_import_provider_host_execution_readiness_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_host_execution_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_host_execution_readiness_review(*plan);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_host_execution_readiness_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_host_execution_readiness_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-host-execution-readiness");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_host_execution_readiness(*review, std::cout);
+    return 0;
+}
+
 [[nodiscard]] int emit_durable_store_import_decision_review_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1705,6 +1787,11 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitDurableStoreImportProviderSdkHandoffReadiness,
      invoke_package_command<
          emit_durable_store_import_provider_sdk_handoff_readiness_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderHostExecution,
+     invoke_package_command<emit_durable_store_import_provider_host_execution_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderHostExecutionReadiness,
+     invoke_package_command<
+         emit_durable_store_import_provider_host_execution_readiness_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,

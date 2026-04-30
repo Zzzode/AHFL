@@ -559,3 +559,95 @@ ctest --preset test-dev --output-on-failure -L 'v0.24-durable-store-import-provi
 - `docs/reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md`
 - `docs/reference/native-consumer-matrix-v0.24.zh.md`
 - `docs/reference/contributor-guide-v0.24.zh.md`
+
+## V0.24 to V0.25
+
+V0.25 extends the V0.24 provider SDK request envelope boundary with a provider
+host execution planning boundary. It keeps consuming the V0.24
+`ProviderSdkRequestEnvelopePlan` as the first machine-facing source of host
+handoff state and does not introduce a real provider SDK, runtime config loader,
+secret manager, credential, endpoint URI, object storage writer, database
+writer, host process, host environment read, network connection, filesystem
+write, retry token, or resume token.
+
+### New Artifact Boundary
+
+The V0.25 artifact chain is:
+
+```text
+ProviderSdkRequestEnvelopePlan
+-> ProviderHostExecutionPlan
+-> ProviderHostExecutionReadinessReview
+```
+
+The machine-facing provider host execution format is:
+
+```text
+ahfl.durable-store-import-provider-host-execution-plan.v1
+```
+
+The reviewer-facing provider host execution readiness format is:
+
+```text
+ahfl.durable-store-import-provider-host-execution-readiness-review.v1
+```
+
+### New CLI Commands
+
+Use the new V0.25 commands when you need the host execution planning boundary
+after a V0.24 provider SDK request envelope:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-host-execution \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-host-execution-readiness \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Host Execution Outcomes
+
+V0.25 validates these provider host execution paths:
+
+- `ready`: ready SDK request envelope plus matching secret-free, network-free
+  host execution policy generates `PlanProviderHostExecution`, deterministic
+  `provider-host-execution-descriptor::<provider-sdk-host-handoff-id>`
+  identity, deterministic
+  `provider-host-receipt-placeholder::<provider-sdk-host-handoff-id>`
+  identity, and side-effect flags all set to `false`.
+- `blocked`: sdk-handoff-not-ready, host policy mismatch, or host
+  capability-gap paths stay non-executing and preserve host execution failure
+  attribution.
+
+V0.25 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, runtime config loader output, provider
+payloads, SDK payloads, object paths, database tables, credentials, endpoint
+URI, host commands, host environment, network endpoints, filesystem output, or
+private scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.25 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.25
+ctest --preset test-dev --output-on-failure -L 'v0.25-durable-store-import-provider-host-execution-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.25.zh.md`
+- `docs/plan/issue-backlog-v0.25.zh.md`
+- `docs/design/native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md`
+- `docs/reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md`
+- `docs/reference/native-consumer-matrix-v0.25.zh.md`
+- `docs/reference/contributor-guide-v0.25.zh.md`

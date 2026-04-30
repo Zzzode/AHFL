@@ -1,0 +1,27 @@
+ahfl.durable-store-import-provider-host-execution-readiness-review.v1
+source_provider_host_execution_plan_format ahfl.durable-store-import-provider-host-execution-plan.v1
+source_provider_sdk_request_envelope_plan_format ahfl.durable-store-import-provider-sdk-request-envelope-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_provider_sdk_request_envelope_identity durable-store-import-provider-sdk-request-envelope::run-failed-001::blocked
+durable_store_import_provider_host_execution_identity durable-store-import-provider-host-execution::run-failed-001::blocked
+execution_status blocked
+operation_kind noop_sdk_handoff_not_ready
+provider_host_execution_descriptor_identity none
+provider_host_receipt_placeholder_identity none
+starts_host_process false
+reads_host_environment false
+opens_network_connection false
+materializes_sdk_request_payload false
+invokes_provider_sdk false
+writes_host_filesystem false
+next_action manual_review_required
+host_execution_boundary provider host execution skipped because SDK handoff is not ready
+next_step manual review required before provider host execution can proceed
+failure_attribution {
+  kind sdk_handoff_not_ready
+  missing_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

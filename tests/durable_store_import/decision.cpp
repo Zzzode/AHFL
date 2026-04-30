@@ -3,6 +3,7 @@
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
+#include "ahfl/durable_store_import/provider_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
@@ -2360,6 +2361,40 @@ make_valid_provider_sdk_handoff_readiness_review() {
     return *review.review;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderHostExecutionPlan>
+make_valid_provider_host_execution_plan() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_host_execution_plan(*envelope);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderHostExecutionReadinessReview>
+make_valid_provider_host_execution_readiness_review() {
+    const auto plan = make_valid_provider_host_execution_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_host_execution_readiness_review(*plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
 int validate_durable_store_import_adapter_execution_ok() {
     const auto execution = make_valid_adapter_execution_receipt();
     if (!execution.has_value()) {
@@ -4213,6 +4248,430 @@ int build_durable_store_import_provider_sdk_handoff_readiness_rejects_invalid_en
                : 1;
 }
 
+int validate_durable_store_import_provider_host_execution_ok() {
+    const auto plan = make_valid_provider_host_execution_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_host_execution_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->execution_status !=
+            ahfl::durable_store_import::ProviderHostExecutionStatus::Ready ||
+        plan->operation_kind !=
+            ahfl::durable_store_import::ProviderHostExecutionOperationKind::
+                PlanProviderHostExecution ||
+        !plan->provider_host_execution_descriptor_identity.has_value() ||
+        !plan->provider_host_receipt_placeholder_identity.has_value() ||
+        plan->starts_host_process || plan->reads_host_environment ||
+        plan->opens_network_connection || plan->materializes_sdk_request_payload ||
+        plan->invokes_provider_sdk || plan->writes_host_filesystem ||
+        plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider host execution plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_host_execution_blocked_ok() {
+    const auto response = make_response_from_descriptor(make_failed_descriptor());
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto execution = make_adapter_execution_from_response(*response);
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto write_attempt =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (write_attempt.has_errors() || !write_attempt.preview.has_value()) {
+        write_attempt.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto binding =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt.preview);
+    if (binding.has_errors() || !binding.plan.has_value()) {
+        binding.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto preflight =
+        ahfl::durable_store_import::build_provider_runtime_preflight_plan(*binding.plan);
+    if (preflight.has_errors() || !preflight.plan.has_value()) {
+        preflight.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight.plan);
+    if (envelope.has_errors() || !envelope.plan.has_value()) {
+        envelope.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto host_execution =
+        ahfl::durable_store_import::build_provider_host_execution_plan(*envelope.plan);
+    if (host_execution.has_errors() || !host_execution.plan.has_value()) {
+        host_execution.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (host_execution.plan->execution_status !=
+            ahfl::durable_store_import::ProviderHostExecutionStatus::Blocked ||
+        host_execution.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderHostExecutionOperationKind::
+                NoopSdkHandoffNotReady ||
+        host_execution.plan->provider_host_execution_descriptor_identity.has_value() ||
+        host_execution.plan->provider_host_receipt_placeholder_identity.has_value() ||
+        !host_execution.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider host execution plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_host_execution_unsupported_capability_ok() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_host_execution_policy(*envelope);
+    policy.supports_dry_run_host_receipt_placeholder_planning = false;
+    const auto host_execution =
+        ahfl::durable_store_import::build_provider_host_execution_plan(*envelope, policy);
+    if (host_execution.has_errors() || !host_execution.plan.has_value()) {
+        host_execution.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (host_execution.plan->execution_status !=
+            ahfl::durable_store_import::ProviderHostExecutionStatus::Blocked ||
+        host_execution.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderHostExecutionOperationKind::
+                NoopUnsupportedHostCapability ||
+        !host_execution.plan->failure_attribution.has_value() ||
+        host_execution.plan->failure_attribution->missing_capability !=
+            std::optional<ahfl::durable_store_import::ProviderHostExecutionCapabilityKind>(
+                ahfl::durable_store_import::ProviderHostExecutionCapabilityKind::
+                    PlanDryRunHostReceiptPlaceholder)) {
+        std::cerr << "unexpected unsupported-capability provider host execution plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_host_execution_policy_mismatch_ok() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_host_execution_policy(*envelope);
+    policy.host_handoff_policy_ref = "host-handoff-policy::wrong";
+    const auto host_execution =
+        ahfl::durable_store_import::build_provider_host_execution_plan(*envelope, policy);
+    if (host_execution.has_errors() || !host_execution.plan.has_value()) {
+        host_execution.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (host_execution.plan->execution_status !=
+            ahfl::durable_store_import::ProviderHostExecutionStatus::Blocked ||
+        host_execution.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderHostExecutionOperationKind::
+                NoopHostPolicyMismatch ||
+        !host_execution.plan->failure_attribution.has_value() ||
+        host_execution.plan->failure_attribution->kind !=
+            ahfl::durable_store_import::ProviderHostExecutionFailureKind::HostPolicyMismatch) {
+        std::cerr << "unexpected provider host execution policy mismatch plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_host_policy_rejects_secret_material() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_host_execution_policy(*envelope);
+    policy.credential_reference = "secret://provider-credential";
+    policy.secret_value = "plaintext-secret";
+    policy.host_environment_secret = "AHFL_PROVIDER_SECRET";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_host_execution_policy(policy);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider host execution policy with secrets to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain credential_reference") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain secret_value") &&
+                   ahfl::test_support::diagnostics_contain(
+                       validation.diagnostics, "cannot contain host_environment_secret")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_host_policy_rejects_host_side_effects() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_host_execution_policy(*envelope);
+    policy.credential_free = false;
+    policy.network_free = false;
+    policy.host_command = "/usr/bin/provider-host";
+    policy.provider_endpoint_uri = "https://provider.example.invalid";
+    policy.network_endpoint_uri = "https://network.example.invalid";
+    policy.object_path = "bucket/receipt.json";
+    policy.database_table = "receipt-table";
+    policy.sdk_request_payload = "{\"unsafe\":true}";
+    policy.sdk_response_payload = "{\"unsafe\":true}";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_host_execution_policy(policy);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider host execution policy with host side effects to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "must be credential_free") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "must be network_free") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain host_command") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain provider_endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain network_endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain object_path") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain database_table") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_request_payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_response_payload")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_host_execution_rejects_side_effects() {
+    auto plan = make_valid_provider_host_execution_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->starts_host_process = true;
+    plan->reads_host_environment = true;
+    plan->opens_network_connection = true;
+    plan->materializes_sdk_request_payload = true;
+    plan->invokes_provider_sdk = true;
+    plan->writes_host_filesystem = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_host_execution_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider host execution with side effects to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot start host process") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot read host environment") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot open network connection") &&
+                   ahfl::test_support::diagnostics_contain(
+                       validation.diagnostics, "cannot materialize SDK request payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot invoke provider SDK") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot write host filesystem")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_host_execution_rejects_ready_without_descriptor() {
+    auto plan = make_valid_provider_host_execution_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->provider_host_execution_descriptor_identity.reset();
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_host_execution_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected ready provider host execution without descriptor to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics,
+               "ready status requires host execution descriptor and receipt placeholder identities")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_host_execution_ready_envelope() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    const auto host_execution =
+        ahfl::durable_store_import::build_provider_host_execution_plan(*envelope);
+    if (host_execution.has_errors() || !host_execution.plan.has_value()) {
+        host_execution.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (host_execution.plan->durable_store_import_provider_host_execution_identity !=
+            "durable-store-import-provider-host-execution::run-partial-001::ready" ||
+        host_execution.plan->provider_host_execution_descriptor_identity !=
+            std::optional<std::string>(
+                "provider-host-execution-descriptor::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted") ||
+        host_execution.plan->provider_host_receipt_placeholder_identity !=
+            std::optional<std::string>(
+                "provider-host-receipt-placeholder::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted")) {
+        std::cerr << "unexpected ready provider host execution bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_host_execution_rejects_invalid_envelope() {
+    auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    envelope->format_version =
+        "ahfl.durable-store-import-provider-sdk-request-envelope-plan.v999";
+    const auto host_execution =
+        ahfl::durable_store_import::build_provider_host_execution_plan(*envelope);
+    if (!host_execution.has_errors()) {
+        std::cerr << "expected invalid provider SDK envelope to fail host execution\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               host_execution.diagnostics,
+               "durable store import provider SDK request envelope plan format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_host_execution_readiness_ok() {
+    const auto review = make_valid_provider_host_execution_readiness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_host_execution_readiness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderHostExecutionReadinessNextActionKind::
+                ReadyForLocalHostExecutionHarness ||
+        !review->provider_host_execution_descriptor_identity.has_value() ||
+        !review->provider_host_receipt_placeholder_identity.has_value() ||
+        review->starts_host_process || review->reads_host_environment ||
+        review->opens_network_connection || review->materializes_sdk_request_payload ||
+        review->invokes_provider_sdk || review->writes_host_filesystem ||
+        review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider host execution readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_host_execution_readiness_unsupported_capability_ok() {
+    const auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_host_execution_policy(*envelope);
+    policy.supports_local_host_execution_descriptor_planning = false;
+    const auto host_execution =
+        ahfl::durable_store_import::build_provider_host_execution_plan(*envelope, policy);
+    if (host_execution.has_errors() || !host_execution.plan.has_value()) {
+        host_execution.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_host_execution_readiness_review(
+            *host_execution.plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review.review->next_action !=
+            ahfl::durable_store_import::ProviderHostExecutionReadinessNextActionKind::
+                WaitForHostCapability ||
+        review.review->provider_host_execution_descriptor_identity.has_value() ||
+        !review.review->failure_attribution.has_value()) {
+        std::cerr << "unexpected unsupported provider host execution readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_host_execution_readiness_rejects_invalid_host_execution() {
+    auto host_execution = make_valid_provider_host_execution_plan();
+    if (!host_execution.has_value()) {
+        return 1;
+    }
+
+    host_execution->format_version =
+        "ahfl.durable-store-import-provider-host-execution-plan.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_host_execution_readiness_review(
+            *host_execution);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid provider host execution to fail readiness review\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider host execution plan format_version must be")
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -4804,6 +5263,67 @@ int main(int argc, char **argv) {
     if (command ==
         "build-durable-store-import-provider-sdk-handoff-readiness-rejects-invalid-envelope") {
         return build_durable_store_import_provider_sdk_handoff_readiness_rejects_invalid_envelope();
+    }
+
+    // V0.25: Provider Host Execution and Readiness tests
+    if (command == "validate-durable-store-import-provider-host-execution-ok") {
+        return validate_durable_store_import_provider_host_execution_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-host-execution-blocked-ok") {
+        return validate_durable_store_import_provider_host_execution_blocked_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-host-execution-unsupported-capability-ok") {
+        return build_durable_store_import_provider_host_execution_unsupported_capability_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-host-execution-policy-mismatch-ok") {
+        return build_durable_store_import_provider_host_execution_policy_mismatch_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-host-policy-rejects-secret-material") {
+        return validate_durable_store_import_provider_host_policy_rejects_secret_material();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-host-policy-rejects-host-side-effects") {
+        return validate_durable_store_import_provider_host_policy_rejects_host_side_effects();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-host-execution-rejects-side-effects") {
+        return validate_durable_store_import_provider_host_execution_rejects_side_effects();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-host-execution-rejects-ready-without-descriptor") {
+        return validate_durable_store_import_provider_host_execution_rejects_ready_without_descriptor();
+    }
+
+    if (command == "build-durable-store-import-provider-host-execution-ready-envelope") {
+        return build_durable_store_import_provider_host_execution_ready_envelope();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-host-execution-rejects-invalid-envelope") {
+        return build_durable_store_import_provider_host_execution_rejects_invalid_envelope();
+    }
+
+    if (command == "validate-durable-store-import-provider-host-execution-readiness-ok") {
+        return validate_durable_store_import_provider_host_execution_readiness_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-host-execution-readiness-unsupported-capability-ok") {
+        return build_durable_store_import_provider_host_execution_readiness_unsupported_capability_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-host-execution-readiness-rejects-invalid-host-execution") {
+        return build_durable_store_import_provider_host_execution_readiness_rejects_invalid_host_execution();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

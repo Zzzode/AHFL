@@ -52,6 +52,8 @@ enum class CommandKind {
     EmitDurableStoreImportProviderRuntimeReadiness,
     EmitDurableStoreImportProviderSdkEnvelope,
     EmitDurableStoreImportProviderSdkHandoffReadiness,
+    EmitDurableStoreImportProviderHostExecution,
+    EmitDurableStoreImportProviderHostExecutionReadiness,
     EmitSchedulerReview,
     EmitRuntimeSession,
     EmitDryRunTrace,
