@@ -150,6 +150,8 @@ Backend outputs:
 | `emit-durable-store-import-receipt-persistence-review` | reviewer-facing durable receipt persistence summary |
 | `emit-durable-store-import-receipt-persistence-response` | durable receipt persistence response artifact over persistence request |
 | `emit-durable-store-import-receipt-persistence-response-review` | reviewer-facing durable receipt persistence response summary |
+| `emit-durable-store-import-adapter-execution` | local fake durable store adapter execution receipt over persistence response |
+| `emit-durable-store-import-recovery-preview` | reviewer-facing recovery command preview over adapter execution receipt |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |

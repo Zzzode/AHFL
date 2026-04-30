@@ -2,7 +2,7 @@
 
 本文给出与 [roadmap-v0.20.zh.md](./roadmap-v0.20.zh.md) 对齐的 issue-ready backlog。目标是把 V0.19 已冻结的 durable adapter receipt persistence response 边界推进到 production-adjacent durable store adapter / persistence executor contract，而不是直接实现完整生产存储平台。
 
-## [ ] Issue 01
+## [x] Issue 01
 
 标题：
 冻结 V0.20 durable store adapter / persistence executor scope 与 non-goals
@@ -24,7 +24,7 @@
 - `docs/plan/`
 - `docs/design/`
 
-## [ ] Issue 02
+## [x] Issue 02
 
 标题：
 冻结 persistence id、store mutation intent 与 adapter execution receipt 的最小模型
@@ -46,7 +46,7 @@
 - `docs/design/`
 - `docs/reference/`
 
-## [ ] Issue 03
+## [x] Issue 03
 
 标题：
 冻结 V0.19 response、future real adapter 与 recovery command 的分层关系
@@ -68,7 +68,7 @@
 - `docs/design/`
 - `docs/reference/`
 
-## [ ] Issue 04
+## [x] Issue 04
 
 标题：
 引入 local fake durable store contract 数据模型
@@ -91,7 +91,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 05
+## [x] Issue 05
 
 标题：
 增加 store mutation intent validation 与 direct regression
@@ -113,7 +113,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 06
+## [x] Issue 06
 
 标题：
 增加 deterministic fake store bootstrap
@@ -135,7 +135,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 07
+## [x] Issue 07
 
 标题：
 增加 adapter execution receipt 输出路径
@@ -158,7 +158,7 @@
 - `src/cli/`
 - `tests/`
 
-## [ ] Issue 08
+## [x] Issue 08
 
 标题：
 增加 recovery command preview / reviewer summary
@@ -181,7 +181,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 09
+## [x] Issue 09
 
 标题：
 增加 accepted、blocked、deferred、rejected 至 adapter execution 的 golden / direct 回归
@@ -203,7 +203,7 @@
 - `tests/cmake/`
 - `tests/`
 
-## [ ] Issue 10
+## [x] Issue 10
 
 标题：
 冻结 V0.20 compatibility contract
@@ -224,7 +224,7 @@
 
 - `docs/reference/`
 
-## [ ] Issue 11
+## [x] Issue 11
 
 标题：
 更新 native consumer matrix 与 contributor guide
@@ -247,7 +247,7 @@
 - `docs/README.md`
 - `docs/reference/`
 
-## [ ] Issue 12
+## [x] Issue 12
 
 标题：
 建立 V0.20 regression、CI 与 migration docs 闭环

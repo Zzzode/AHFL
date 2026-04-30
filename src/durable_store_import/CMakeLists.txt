@@ -1,4 +1,5 @@
 add_library(ahfl_durable_store_import STATIC
+    adapter_execution.cpp
     decision.cpp
     decision_review.cpp
     receipt.cpp
@@ -6,6 +7,7 @@ add_library(ahfl_durable_store_import STATIC
     receipt_persistence_response.cpp
     receipt_persistence_response_review.cpp
     receipt_persistence_review.cpp
+    recovery_preview.cpp
     receipt_review.cpp
     request.cpp
     review.cpp

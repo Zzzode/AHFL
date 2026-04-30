@@ -49,9 +49,9 @@ V0.20 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 01 冻结 V0.20 durable store adapter / persistence executor scope 与 non-goals
-- [ ] Issue 02 冻结 persistence id、store mutation intent 与 adapter execution receipt 的最小模型
-- [ ] Issue 03 冻结 V0.19 response、future real adapter 与 recovery command 的分层关系
+- [x] Issue 01 冻结 V0.20 durable store adapter / persistence executor scope 与 non-goals
+- [x] Issue 02 冻结 persistence id、store mutation intent 与 adapter execution receipt 的最小模型
+- [x] Issue 03 冻结 V0.19 response、future real adapter 与 recovery command 的分层关系
 
 目标：
 
@@ -63,9 +63,9 @@ V0.20 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 04 引入 local fake durable store contract 数据模型
-- [ ] Issue 05 增加 store mutation intent validation 与 direct regression
-- [ ] Issue 06 增加 deterministic fake store bootstrap
+- [x] Issue 04 引入 local fake durable store contract 数据模型
+- [x] Issue 05 增加 store mutation intent validation 与 direct regression
+- [x] Issue 06 增加 deterministic fake store bootstrap
 
 目标：
 
@@ -77,9 +77,9 @@ V0.20 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 07 增加 adapter execution receipt 输出路径
-- [ ] Issue 08 增加 recovery command preview / reviewer summary
-- [ ] Issue 09 增加 accepted、blocked、deferred、rejected 至 adapter execution 的 golden / direct 回归
+- [x] Issue 07 增加 adapter execution receipt 输出路径
+- [x] Issue 08 增加 recovery command preview / reviewer summary
+- [x] Issue 09 增加 accepted、blocked、deferred、rejected 至 adapter execution 的 golden / direct 回归
 
 目标：
 
@@ -91,9 +91,9 @@ V0.20 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 10 冻结 V0.20 compatibility contract
-- [ ] Issue 11 更新 native consumer matrix 与 contributor guide
-- [ ] Issue 12 建立 V0.20 regression、CI 与 migration docs 闭环
+- [x] Issue 10 冻结 V0.20 compatibility contract
+- [x] Issue 11 更新 native consumer matrix 与 contributor guide
+- [x] Issue 12 建立 V0.20 regression、CI 与 migration docs 闭环
 
 目标：
 
@@ -103,7 +103,7 @@ V0.20 初始阶段仍不直接承诺：
 
 ## 当前状态
 
-V0.20 当前处于规划启动状态，尚未实现 production-adjacent durable store adapter / persistence executor 代码。下一步应从 `Issue 01-03` 开始冻结 scope、model 和 layering，再进入 local fake durable store contract 的模型实现。
+V0.20 已完成 production-adjacent durable store adapter execution prototype：新增 `AdapterExecutionReceipt`、local fake durable store contract、deterministic fake persistence id、non-mutating failure attribution、`RecoveryCommandPreview`、CLI/backend 输出、direct regression、golden、compatibility / consumer / contributor 文档、migration notes 与 CI 标签切片。当前实现仍刻意不包含真实 provider SDK、credential、object storage writer、database writer、recovery daemon 或 operator console。
 
 ## 对应 backlog
 

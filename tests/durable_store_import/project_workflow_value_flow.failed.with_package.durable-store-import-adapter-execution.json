@@ -1,0 +1,43 @@
+{
+  "format_version": "ahfl.durable-store-import-adapter-execution.v1",
+  "source_durable_store_import_decision_receipt_persistence_response_format_version": "ahfl.durable-store-import-decision-receipt-persistence-response.v1",
+  "source_durable_store_import_decision_receipt_persistence_request_format_version": "ahfl.durable-store-import-decision-receipt-persistence-request.v1",
+  "source_durable_store_import_decision_receipt_format_version": "ahfl.durable-store-import-decision-receipt.v1",
+  "source_durable_store_import_decision_format_version": "ahfl.durable-store-import-decision.v1",
+  "source_durable_store_import_request_format_version": "ahfl.durable-store-import-request.v1",
+  "source_package_identity": {
+    "format_version": "ahfl.native-package.v1",
+    "name": "workflow-value-flow",
+    "version": "0.2.0"
+  },
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "durable_store_import_decision_identity": "durable-store-import-decision::workflow-value-flow::run-failed-001::rejected",
+  "durable_store_import_receipt_identity": "durable-store-import-receipt::workflow-value-flow::run-failed-001::rejected",
+  "durable_store_import_receipt_persistence_request_identity": "durable-store-import-receipt-persistence-request::workflow-value-flow::run-failed-001::rejected",
+  "durable_store_import_receipt_persistence_response_identity": "durable-store-import-receipt-persistence-response::workflow-value-flow::run-failed-001::rejected",
+  "durable_store_import_adapter_execution_identity": "durable-store-import-adapter-execution::workflow-value-flow::run-failed-001::rejected",
+  "planned_durable_identity": "plan::workflow-value-flow::run-failed-001::prefix-0",
+  "response_status": "rejected",
+  "response_outcome": "reject_failed_request",
+  "response_boundary_kind": "local_contract_only",
+  "acknowledged_for_response": false,
+  "store_kind": "local_fake_durable_store",
+  "local_fake_store_contract_version": "ahfl.local-fake-durable-store.v1",
+  "mutation_intent": {
+    "kind": "noop_rejected",
+    "source_response_identity": "durable-store-import-receipt-persistence-response::workflow-value-flow::run-failed-001::rejected",
+    "target_receipt_identity": "durable-store-import-receipt::workflow-value-flow::run-failed-001::rejected",
+    "target_planned_durable_identity": "plan::workflow-value-flow::run-failed-001::prefix-0",
+    "mutates_store": false
+  },
+  "mutation_status": "not_mutated",
+  "persistence_id": null,
+  "failure_attribution": {
+    "kind": "source_response_rejected",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'",
+    "required_capability": null
+  }
+}
