@@ -245,8 +245,8 @@ struct ExecutionPlanValidationResult {
     }
 };
 
-[[nodiscard]] PackageMetadataValidationResult
-validate_package_metadata(const ir::Program &program, PackageMetadata metadata);
+[[nodiscard]] PackageMetadataValidationResult validate_package_metadata(const ir::Program &program,
+                                                                        PackageMetadata metadata);
 
 [[nodiscard]] Package lower_package(const ir::Program &program, PackageMetadata metadata = {});
 

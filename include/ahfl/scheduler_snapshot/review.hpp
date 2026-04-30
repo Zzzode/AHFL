@@ -33,8 +33,7 @@ struct SchedulerReviewBlockedNode {
     std::string node_name;
     std::string target;
     std::optional<std::size_t> execution_index;
-    SchedulerBlockedReasonKind blocked_reason{
-        SchedulerBlockedReasonKind::WaitingOnDependencies};
+    SchedulerBlockedReasonKind blocked_reason{SchedulerBlockedReasonKind::WaitingOnDependencies};
     std::vector<std::string> missing_dependencies;
     bool may_become_ready{true};
 };

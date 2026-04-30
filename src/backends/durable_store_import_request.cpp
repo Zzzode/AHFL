@@ -17,9 +17,8 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
     void print(const durable_store_import::Request &request) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(request.format_version); });
-            field("source_store_import_descriptor_format_version", [&]() {
-                write_string(request.source_store_import_descriptor_format_version);
-            });
+            field("source_store_import_descriptor_format_version",
+                  [&]() { write_string(request.source_store_import_descriptor_format_version); });
             field("source_execution_plan_format_version",
                   [&]() { write_string(request.source_execution_plan_format_version); });
             field("source_runtime_session_format_version",
@@ -79,11 +78,9 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
                   [&]() { write_string(request.planned_durable_identity); });
             field("request_boundary_kind",
                   [&]() { print_request_boundary_kind(request.request_boundary_kind); });
-            field("requested_artifact_set", [&]() {
-                print_requested_artifact_set(request.requested_artifact_set, 1);
-            });
-            field("adapter_ready",
-                  [&]() { out_ << (request.adapter_ready ? "true" : "false"); });
+            field("requested_artifact_set",
+                  [&]() { print_requested_artifact_set(request.requested_artifact_set, 1); });
+            field("adapter_ready", [&]() { out_ << (request.adapter_ready ? "true" : "false"); });
             field("next_required_adapter_artifact_kind", [&]() {
                 if (request.next_required_adapter_artifact_kind.has_value()) {
                     print_requested_artifact_kind(*request.next_required_adapter_artifact_kind);
@@ -104,7 +101,6 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -325,23 +321,21 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
         }
     }
 
-    void print_requested_artifact_entry(
-        const durable_store_import::RequestedArtifactEntry &entry,
-        int indent_level) {
+    void print_requested_artifact_entry(const durable_store_import::RequestedArtifactEntry &entry,
+                                        int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("artifact_kind", [&]() { print_requested_artifact_kind(entry.artifact_kind); });
             field("logical_artifact_name", [&]() { write_string(entry.logical_artifact_name); });
             field("source_format_version", [&]() { write_string(entry.source_format_version); });
-            field("required_for_import", [&]() {
-                out_ << (entry.required_for_import ? "true" : "false");
-            });
+            field("required_for_import",
+                  [&]() { out_ << (entry.required_for_import ? "true" : "false"); });
             field("adapter_role", [&]() { print_adapter_role(entry.adapter_role); });
         });
     }
 
-    void print_requested_artifact_set(
-        const durable_store_import::RequestedArtifactSet &artifact_set,
-        int indent_level) {
+    void
+    print_requested_artifact_set(const durable_store_import::RequestedArtifactSet &artifact_set,
+                                 int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("entry_count", [&]() { out_ << artifact_set.entry_count; });
             field("entries", [&]() {
@@ -372,9 +366,8 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
 
 } // namespace
 
-void print_durable_store_import_request_json(
-    const durable_store_import::Request &request,
-    std::ostream &out) {
+void print_durable_store_import_request_json(const durable_store_import::Request &request,
+                                             std::ostream &out) {
     DurableStoreImportRequestJsonPrinter(out).print(request);
 }
 

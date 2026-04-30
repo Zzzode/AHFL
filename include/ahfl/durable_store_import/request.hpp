@@ -12,12 +12,10 @@
 namespace ahfl::durable_store_import {
 
 // Format version - stable contract, DO NOT CHANGE
-inline constexpr std::string_view kRequestFormatVersion =
-    "ahfl.durable-store-import-request.v1";
+inline constexpr std::string_view kRequestFormatVersion = "ahfl.durable-store-import-request.v1";
 
 // Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportRequestFormatVersion =
-    kRequestFormatVersion;
+inline constexpr std::string_view kDurableStoreImportRequestFormatVersion = kRequestFormatVersion;
 
 enum class RequestStatus {
     ReadyForAdapter,
@@ -122,14 +120,14 @@ struct Request {
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
-    std::string durable_store_import_request_identity;  // Keep for JSON compatibility
+    std::string durable_store_import_request_identity; // Keep for JSON compatibility
     std::string planned_durable_identity;
     RequestBoundaryKind request_boundary_kind{RequestBoundaryKind::LocalIntentOnly};
     RequestedArtifactSet requested_artifact_set;
     bool adapter_ready{false};
     std::optional<RequestedArtifactKind> next_required_adapter_artifact_kind;
     RequestStatus request_status{RequestStatus::Blocked};
-    std::optional<RequestBlocker> adapter_blocker;  // Keep for JSON compatibility
+    std::optional<RequestBlocker> adapter_blocker; // Keep for JSON compatibility
 };
 
 // Legacy alias for backward compatibility
@@ -144,7 +142,8 @@ struct RequestValidationResult {
 };
 
 // Legacy alias
-using DurableStoreImportRequestValidationResult [[deprecated("Use RequestValidationResult")]] = RequestValidationResult;
+using DurableStoreImportRequestValidationResult [[deprecated("Use RequestValidationResult")]] =
+    RequestValidationResult;
 
 struct RequestResult {
     std::optional<Request> request;

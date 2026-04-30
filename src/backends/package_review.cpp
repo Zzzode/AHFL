@@ -33,8 +33,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string workflow_node_start_condition_name(
-    handoff::WorkflowNodeStartConditionKind kind) {
+[[nodiscard]] std::string
+workflow_node_start_condition_name(handoff::WorkflowNodeStartConditionKind kind) {
     switch (kind) {
     case handoff::WorkflowNodeStartConditionKind::Immediate:
         return "immediate";
@@ -45,8 +45,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string workflow_node_completion_condition_name(
-    handoff::WorkflowNodeCompletionConditionKind kind) {
+[[nodiscard]] std::string
+workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionConditionKind kind) {
     switch (kind) {
     case handoff::WorkflowNodeCompletionConditionKind::TargetReachedFinalState:
         return "target_reached_final_state";
@@ -103,9 +103,7 @@ void print_package_reader_summary(const handoff::PackageReaderSummary &summary, 
     line(out, 1, "format " + summary.format_version);
 
     if (summary.identity.has_value()) {
-        line(out,
-             1,
-             "identity " + summary.identity->name + "@" + summary.identity->version);
+        line(out, 1, "identity " + summary.identity->name + "@" + summary.identity->version);
     } else {
         line(out, 1, "identity none");
     }
@@ -122,9 +120,7 @@ void print_package_reader_summary(const handoff::PackageReaderSummary &summary, 
     line(out, 1, "exports {");
     line(out, 2, "count " + std::to_string(summary.export_targets.size()));
     for (const auto &target : summary.export_targets) {
-        line(out,
-             2,
-             "- " + executable_kind_name(target.kind) + " " + target.canonical_name);
+        line(out, 2, "- " + executable_kind_name(target.kind) + " " + target.canonical_name);
     }
     line(out, 1, "}");
 
@@ -153,8 +149,12 @@ void print_package_reader_summary(const handoff::PackageReaderSummary &summary, 
 
     line(out, 1, "formal_observations {");
     line(out, 2, "count " + std::to_string(summary.formal_observations.total));
-    line(out, 2, "called_capability " + std::to_string(summary.formal_observations.called_capability));
-    line(out, 2, "embedded_bool_expr " + std::to_string(summary.formal_observations.embedded_bool_expr));
+    line(out,
+         2,
+         "called_capability " + std::to_string(summary.formal_observations.called_capability));
+    line(out,
+         2,
+         "embedded_bool_expr " + std::to_string(summary.formal_observations.embedded_bool_expr));
     line(out, 1, "}");
     line(out, 0, "}");
 }

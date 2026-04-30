@@ -32,9 +32,8 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(snapshot.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(snapshot.workflow_canonical_name); });
             field("session_id", [&]() { write_string(snapshot.session_id); });
             field("run_id", [&]() {
                 if (snapshot.run_id.has_value()) {
@@ -44,12 +43,8 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
                 out_ << "null";
             });
             field("input_fixture", [&]() { write_string(snapshot.input_fixture); });
-            field("workflow_status", [&]() {
-                print_workflow_status(snapshot.workflow_status);
-            });
-            field("snapshot_status", [&]() {
-                print_snapshot_status(snapshot.snapshot_status);
-            });
+            field("workflow_status", [&]() { print_workflow_status(snapshot.workflow_status); });
+            field("snapshot_status", [&]() { print_snapshot_status(snapshot.snapshot_status); });
             field("workflow_failure_summary", [&]() {
                 if (snapshot.workflow_failure_summary.has_value()) {
                     print_failure_summary(*snapshot.workflow_failure_summary, 1);
@@ -84,7 +79,6 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -101,10 +95,10 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
                         item([&]() {
                             print_object(indent_level + 2, [&](const auto &read_field) {
                                 read_field("kind", [&]() {
-                                    write_string(
-                                        read.kind == ir::WorkflowValueSourceKind::WorkflowInput
-                                            ? "workflow_input"
-                                            : "workflow_node_output");
+                                    write_string(read.kind ==
+                                                         ir::WorkflowValueSourceKind::WorkflowInput
+                                                     ? "workflow_input"
+                                                     : "workflow_node_output");
                                 });
                                 read_field("root_name", [&]() { write_string(read.root_name); });
                                 read_field("members", [&]() {
@@ -218,15 +212,12 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
             field("node_name", [&]() { write_string(node.node_name); });
             field("target", [&]() { write_string(node.target); });
             field("execution_index", [&]() { out_ << node.execution_index; });
-            field("planned_dependencies", [&]() {
-                print_string_array(node.planned_dependencies, indent_level + 1);
-            });
-            field("satisfied_dependencies", [&]() {
-                print_string_array(node.satisfied_dependencies, indent_level + 1);
-            });
-            field("input_summary", [&]() {
-                print_workflow_value_summary(node.input_summary, indent_level + 1);
-            });
+            field("planned_dependencies",
+                  [&]() { print_string_array(node.planned_dependencies, indent_level + 1); });
+            field("satisfied_dependencies",
+                  [&]() { print_string_array(node.satisfied_dependencies, indent_level + 1); });
+            field("input_summary",
+                  [&]() { print_workflow_value_summary(node.input_summary, indent_level + 1); });
             field("capability_bindings", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &binding : node.capability_bindings) {
@@ -249,16 +240,13 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("planned_dependencies", [&]() {
-                print_string_array(node.planned_dependencies, indent_level + 1);
-            });
-            field("missing_dependencies", [&]() {
-                print_string_array(node.missing_dependencies, indent_level + 1);
-            });
+            field("planned_dependencies",
+                  [&]() { print_string_array(node.planned_dependencies, indent_level + 1); });
+            field("missing_dependencies",
+                  [&]() { print_string_array(node.missing_dependencies, indent_level + 1); });
             field("blocked_reason", [&]() { print_blocked_reason(node.blocked_reason); });
-            field("may_become_ready", [&]() {
-                out_ << (node.may_become_ready ? "true" : "false");
-            });
+            field("may_become_ready",
+                  [&]() { out_ << (node.may_become_ready ? "true" : "false"); });
             field("blocking_failure_summary", [&]() {
                 if (node.blocking_failure_summary.has_value()) {
                     print_failure_summary(*node.blocking_failure_summary, indent_level + 1);
@@ -272,9 +260,8 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
     void print_cursor(const scheduler_snapshot::SchedulerCursor &cursor, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("completed_prefix_size", [&]() { out_ << cursor.completed_prefix_size; });
-            field("completed_prefix", [&]() {
-                print_string_array(cursor.completed_prefix, indent_level + 1);
-            });
+            field("completed_prefix",
+                  [&]() { print_string_array(cursor.completed_prefix, indent_level + 1); });
             field("next_candidate_node_name", [&]() {
                 if (cursor.next_candidate_node_name.has_value()) {
                     write_string(*cursor.next_candidate_node_name);
@@ -282,9 +269,8 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("checkpoint_friendly", [&]() {
-                out_ << (cursor.checkpoint_friendly ? "true" : "false");
-            });
+            field("checkpoint_friendly",
+                  [&]() { out_ << (cursor.checkpoint_friendly ? "true" : "false"); });
         });
     }
 };

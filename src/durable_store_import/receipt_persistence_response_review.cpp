@@ -8,14 +8,14 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_RECEIPT_PERSISTENCE_RESPONSE_REVIEW";
+inline constexpr std::string_view kValidationDiagnosticCode =
+    "AHFL.VAL.DSI_RECEIPT_PERSISTENCE_RESPONSE_REVIEW";
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
 }
 
-[[nodiscard]] std::string response_status_summary(
-    PersistenceResponseStatus status) {
+[[nodiscard]] std::string response_status_summary(PersistenceResponseStatus status) {
     switch (status) {
     case PersistenceResponseStatus::Accepted:
         return "accepted for persistence response";
@@ -30,9 +30,7 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     return "unknown";
 }
 
-[[nodiscard]] std::string next_action_summary(
-    PersistenceResponseStatus status,
-    bool acknowledged) {
+[[nodiscard]] std::string next_action_summary(PersistenceResponseStatus status, bool acknowledged) {
     if (acknowledged) {
         return "response acknowledged; ready for next persistence phase";
     }
@@ -79,45 +77,58 @@ validate_persistence_response_review(const PersistenceResponseReviewSummary &rev
     auto &diagnostics = result.diagnostics;
 
     if (review.format_version != kPersistenceResponseReviewFormatVersion) {
-        emit_validation_error(diagnostics, "durable store import receipt persistence response review format_version must be '" +
-                          std::string(kPersistenceResponseReviewFormatVersion) + "'");
+        emit_validation_error(
+            diagnostics,
+            "durable store import receipt persistence response review format_version must be '" +
+                std::string(kPersistenceResponseReviewFormatVersion) + "'");
     }
 
     if (review.source_durable_store_import_decision_receipt_persistence_response_format_version !=
         kPersistenceResponseFormatVersion) {
         emit_validation_error(diagnostics,
-            "durable store import receipt persistence response review source_durable_store_import_decision_receipt_persistence_response_format_version must be '" +
-            std::string(kPersistenceResponseFormatVersion) + "'");
+                              "durable store import receipt persistence response review "
+                              "source_durable_store_import_decision_receipt_persistence_response_"
+                              "format_version must be '" +
+                                  std::string(kPersistenceResponseFormatVersion) + "'");
     }
 
     if (review.workflow_canonical_name.empty()) {
-        emit_validation_error(diagnostics, "durable store import receipt persistence response review workflow_canonical_name "
-                          "must not be empty");
+        emit_validation_error(
+            diagnostics,
+            "durable store import receipt persistence response review workflow_canonical_name "
+            "must not be empty");
     }
 
     if (review.session_id.empty()) {
         emit_validation_error(diagnostics,
-            "durable store import receipt persistence response review session_id must not be empty");
+                              "durable store import receipt persistence response review session_id "
+                              "must not be empty");
     }
 
     if (review.durable_store_import_decision_identity.empty()) {
-        emit_validation_error(diagnostics, "durable store import receipt persistence response review "
-                          "durable_store_import_decision_identity must not be empty");
+        emit_validation_error(diagnostics,
+                              "durable store import receipt persistence response review "
+                              "durable_store_import_decision_identity must not be empty");
     }
 
     if (review.durable_store_import_receipt_identity.empty()) {
-        emit_validation_error(diagnostics, "durable store import receipt persistence response review "
-                          "durable_store_import_receipt_identity must not be empty");
+        emit_validation_error(diagnostics,
+                              "durable store import receipt persistence response review "
+                              "durable_store_import_receipt_identity must not be empty");
     }
 
     if (review.durable_store_import_receipt_persistence_request_identity.empty()) {
-        emit_validation_error(diagnostics, "durable store import receipt persistence response review "
-                          "durable_store_import_receipt_persistence_request_identity must not be empty");
+        emit_validation_error(
+            diagnostics,
+            "durable store import receipt persistence response review "
+            "durable_store_import_receipt_persistence_request_identity must not be empty");
     }
 
     if (review.durable_store_import_receipt_persistence_response_identity.empty()) {
-        emit_validation_error(diagnostics, "durable store import receipt persistence response review "
-                          "durable_store_import_receipt_persistence_response_identity must not be empty");
+        emit_validation_error(
+            diagnostics,
+            "durable store import receipt persistence response review "
+            "durable_store_import_receipt_persistence_response_identity must not be empty");
     }
 
     return result;
@@ -138,9 +149,11 @@ build_persistence_response_review(const PersistenceResponse &response) {
 
     PersistenceResponseReviewSummary review{
         .format_version = std::string(kPersistenceResponseReviewFormatVersion),
-        .source_durable_store_import_decision_receipt_persistence_response_format_version = response.format_version,
+        .source_durable_store_import_decision_receipt_persistence_response_format_version =
+            response.format_version,
         .source_durable_store_import_decision_receipt_persistence_request_format_version =
-            response.source_durable_store_import_decision_receipt_persistence_request_format_version,
+            response
+                .source_durable_store_import_decision_receipt_persistence_request_format_version,
         .source_durable_store_import_decision_receipt_format_version =
             response.source_durable_store_import_decision_receipt_format_version,
         .source_durable_store_import_decision_format_version =
@@ -163,18 +176,20 @@ build_persistence_response_review(const PersistenceResponse &response) {
         .acknowledged_for_response = response.acknowledged_for_response,
         .next_required_adapter_capability = response.next_required_adapter_capability,
         .response_blocker = response.response_blocker,
-        .response_preview = PersistenceResponsePreview{
-            .response_identity = response.durable_store_import_receipt_persistence_response_identity,
-            .response_status = response.response_status,
-            .response_outcome = response.response_outcome,
-            .acknowledged_for_response = response.acknowledged_for_response,
-            .response_boundary_kind = response.receipt_persistence_response_boundary_kind,
-        },
+        .response_preview =
+            PersistenceResponsePreview{
+                .response_identity =
+                    response.durable_store_import_receipt_persistence_response_identity,
+                .response_status = response.response_status,
+                .response_outcome = response.response_outcome,
+                .acknowledged_for_response = response.acknowledged_for_response,
+                .response_boundary_kind = response.receipt_persistence_response_boundary_kind,
+            },
         .adapter_response_contract_summary = response_status_summary(response.response_status),
-        .next_step_recommendation = next_action_summary(response.response_status,
-                                                        response.acknowledged_for_response),
-        .next_action = to_next_action_kind(response.response_status,
-                                           response.acknowledged_for_response),
+        .next_step_recommendation =
+            next_action_summary(response.response_status, response.acknowledged_for_response),
+        .next_action =
+            to_next_action_kind(response.response_status, response.acknowledged_for_response),
     };
 
     const auto validation = validate_persistence_response_review(review);

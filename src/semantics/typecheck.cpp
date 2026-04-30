@@ -334,10 +334,7 @@ void TypeCheckPass::error_here(std::string message, SourceRange range) {
             .source(current_source_->source)
             .emit();
     } else {
-        result_.diagnostics.error()
-            .message(std::move(message))
-            .range(range)
-            .emit();
+        result_.diagnostics.error().message(std::move(message)).range(range).emit();
     }
 }
 

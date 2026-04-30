@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string persistence_status_name(
-    persistence_descriptor::PersistenceDescriptorStatus status) {
+[[nodiscard]] std::string
+persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";
@@ -62,8 +61,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string manifest_status_name(
-    persistence_export::PersistenceExportManifestStatus status) {
+[[nodiscard]] std::string
+manifest_status_name(persistence_export::PersistenceExportManifestStatus status) {
     switch (status) {
     case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
         return "ready_to_import";
@@ -80,8 +79,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string descriptor_status_name(
-    store_import::StoreImportDescriptorStatus status) {
+[[nodiscard]] std::string descriptor_status_name(store_import::StoreImportDescriptorStatus status) {
     switch (status) {
     case store_import::StoreImportDescriptorStatus::ReadyToImport:
         return "ready_to_import";
@@ -98,8 +96,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string descriptor_boundary_kind_name(
-    store_import::StoreImportBoundaryKind kind) {
+[[nodiscard]] std::string
+descriptor_boundary_kind_name(store_import::StoreImportBoundaryKind kind) {
     switch (kind) {
     case store_import::StoreImportBoundaryKind::LocalStagingOnly:
         return "local_staging_only";
@@ -142,8 +140,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string
-next_action_name(store_import::StoreImportReviewNextActionKind action) {
+[[nodiscard]] std::string next_action_name(store_import::StoreImportReviewNextActionKind action) {
     switch (action) {
     case store_import::StoreImportReviewNextActionKind::HandoffStoreImportDescriptor:
         return "handoff_store_import_descriptor";
@@ -205,9 +202,9 @@ void print_staging_blocker(std::ostream &out,
     line(out, indent_level + 1, "kind " + blocker_kind_name(blocker->kind));
     line(out,
          indent_level + 1,
-         "logical_artifact_name " +
-             (blocker->logical_artifact_name.has_value() ? *blocker->logical_artifact_name
-                                                         : "none"));
+         "logical_artifact_name " + (blocker->logical_artifact_name.has_value()
+                                         ? *blocker->logical_artifact_name
+                                         : "none"));
     line(out, indent_level + 1, "message " + blocker->message);
     line(out, indent_level, "}");
 }
@@ -235,8 +232,7 @@ void print_store_import_review(const store_import::StoreImportReviewSummary &sum
     out << summary.format_version << '\n';
     line(out,
          0,
-         "source_descriptor_format " +
-             summary.source_store_import_descriptor_format_version);
+         "source_descriptor_format " + summary.source_store_import_descriptor_format_version);
     line(out, 0, "source_manifest_format " + summary.source_export_manifest_format_version);
     line(out, 0, "workflow " + summary.workflow_canonical_name);
     line(out, 0, "session " + summary.session_id);

@@ -145,7 +145,9 @@ class ResolverPass final {
 
         if (source_graph_mode_ && current_source_id_.has_value()) {
             if (module_name_.has_value() && node.name->spelling() != *module_name_) {
-                emit_error("source unit module boundary does not match graph owner", current_source_, node.range);
+                emit_error("source unit module boundary does not match graph owner",
+                           current_source_,
+                           node.range);
             }
             return;
         }
@@ -157,7 +159,9 @@ class ResolverPass final {
             return;
         }
 
-        emit_error("multiple module declarations are not supported in one source file", current_source_, node.range);
+        emit_error("multiple module declarations are not supported in one source file",
+                   current_source_,
+                   node.range);
         emit_note("first module declaration is here", current_source_, module_range_);
     }
 
@@ -181,7 +185,8 @@ class ResolverPass final {
             emit_error("duplicate import alias '" + node.alias + "'", current_source_, node.range);
             const auto &prev_import = result_.imports()[existing->second];
             if (auto src = source_unit_for(*prev_import.source_id); src.has_value()) {
-                emit_note("previous import alias is here", &src->get(), prev_import.declaration_range);
+                emit_note(
+                    "previous import alias is here", &src->get(), prev_import.declaration_range);
             }
             return;
         }
@@ -453,7 +458,8 @@ class ResolverPass final {
         return std::nullopt;
     }
 
-    void emit_error(std::string message, const SourceUnit *source,
+    void emit_error(std::string message,
+                    const SourceUnit *source,
                     std::optional<SourceRange> range = std::nullopt) {
         if (source != nullptr) {
             result_.diagnostics.error()
@@ -462,14 +468,12 @@ class ResolverPass final {
                 .source(source->source)
                 .emit();
         } else {
-            result_.diagnostics.error()
-                .message(std::move(message))
-                .range(range)
-                .emit();
+            result_.diagnostics.error().message(std::move(message)).range(range).emit();
         }
     }
 
-    void emit_note(std::string message, const SourceUnit *source,
+    void emit_note(std::string message,
+                   const SourceUnit *source,
                    std::optional<SourceRange> range = std::nullopt) {
         if (source != nullptr) {
             result_.diagnostics.note()
@@ -478,10 +482,7 @@ class ResolverPass final {
                 .source(source->source)
                 .emit();
         } else {
-            result_.diagnostics.note()
-                .message(std::move(message))
-                .range(range)
-                .emit();
+            result_.diagnostics.note().message(std::move(message)).range(range).emit();
         }
     }
 
@@ -497,11 +498,15 @@ class ResolverPass final {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
             emit_error("duplicate " + namespace_name(name_space) + " '" + std::string(local_name) +
                            "'",
-                       current_source_, range);
+                       current_source_,
+                       range);
 
             if (previous_symbol.has_value()) {
-                if (auto src = source_unit_for(*previous_symbol->get().source_id); src.has_value()) {
-                    emit_note("previous declaration is here", &src->get(), previous_symbol->get().declaration_range);
+                if (auto src = source_unit_for(*previous_symbol->get().source_id);
+                    src.has_value()) {
+                    emit_note("previous declaration is here",
+                              &src->get(),
+                              previous_symbol->get().declaration_range);
                 }
             }
 
@@ -525,11 +530,15 @@ class ResolverPass final {
             const auto previous_symbol = result_.symbol_table.get(existing->second);
             emit_error("duplicate " + namespace_name(name_space) + " '" + symbol.canonical_name +
                            "'",
-                       current_source_, range);
+                       current_source_,
+                       range);
 
             if (previous_symbol.has_value()) {
-                if (auto src = source_unit_for(*previous_symbol->get().source_id); src.has_value()) {
-                    emit_note("previous declaration is here", &src->get(), previous_symbol->get().declaration_range);
+                if (auto src = source_unit_for(*previous_symbol->get().source_id);
+                    src.has_value()) {
+                    emit_note("previous declaration is here",
+                              &src->get(),
+                              previous_symbol->get().declaration_range);
                 }
             }
 
@@ -628,7 +637,8 @@ class ResolverPass final {
         const auto resolved = lookup(name_space, name);
         if (!resolved.has_value()) {
             emit_error("unknown " + std::string(expected_name) + " '" + name.spelling() + "'",
-                       current_source_, name.range);
+                       current_source_,
+                       name.range);
             return std::nullopt;
         }
 
@@ -650,17 +660,22 @@ class ResolverPass final {
         if (capability.has_value() && predicate.has_value()) {
             emit_error("ambiguous callable '" + name.spelling() +
                            "' matches both a capability and a predicate",
-                       current_source_, name.range);
+                       current_source_,
+                       name.range);
 
             if (const auto symbol = result_.symbol_table.get(*capability); symbol.has_value()) {
                 if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
-                    emit_note("capability declaration is here", &src->get(), symbol->get().declaration_range);
+                    emit_note("capability declaration is here",
+                              &src->get(),
+                              symbol->get().declaration_range);
                 }
             }
 
             if (const auto symbol = result_.symbol_table.get(*predicate); symbol.has_value()) {
                 if (auto src = source_unit_for(*symbol->get().source_id); src.has_value()) {
-                    emit_note("predicate declaration is here", &src->get(), symbol->get().declaration_range);
+                    emit_note("predicate declaration is here",
+                              &src->get(),
+                              symbol->get().declaration_range);
                 }
             }
 
@@ -1138,19 +1153,21 @@ void ResolveResult::rebuild_reference_lookup_cache() const {
 
     for (std::size_t index = 0; index < references_.size(); ++index) {
         const auto &reference = references_[index];
-        reference_lookup_cache_.try_emplace(ReferenceLookupKey{
-                                               .kind = reference.kind,
-                                               .begin_offset = reference.range.begin_offset,
-                                               .end_offset = reference.range.end_offset,
-                                               .source_id = reference.source_id,
-                                           },
-                                           index);
-        reference_lookup_no_source_cache_.try_emplace(ReferenceLookupNoSourceKey{
-                                                          .kind = reference.kind,
-                                                          .begin_offset = reference.range.begin_offset,
-                                                          .end_offset = reference.range.end_offset,
-                                                      },
-                                                      index);
+        reference_lookup_cache_.try_emplace(
+            ReferenceLookupKey{
+                .kind = reference.kind,
+                .begin_offset = reference.range.begin_offset,
+                .end_offset = reference.range.end_offset,
+                .source_id = reference.source_id,
+            },
+            index);
+        reference_lookup_no_source_cache_.try_emplace(
+            ReferenceLookupNoSourceKey{
+                .kind = reference.kind,
+                .begin_offset = reference.range.begin_offset,
+                .end_offset = reference.range.end_offset,
+            },
+            index);
     }
 
     reference_lookup_cache_size_ = references_.size();

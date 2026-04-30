@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string persistence_status_name(
-    persistence_descriptor::PersistenceDescriptorStatus status) {
+[[nodiscard]] std::string
+persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";
@@ -62,8 +61,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string manifest_status_name(
-    persistence_export::PersistenceExportManifestStatus status) {
+[[nodiscard]] std::string
+manifest_status_name(persistence_export::PersistenceExportManifestStatus status) {
     switch (status) {
     case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
         return "ready_to_import";
@@ -80,8 +79,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string manifest_boundary_kind_name(
-    persistence_export::ManifestBoundaryKind kind) {
+[[nodiscard]] std::string
+manifest_boundary_kind_name(persistence_export::ManifestBoundaryKind kind) {
     switch (kind) {
     case persistence_export::ManifestBoundaryKind::LocalBundleOnly:
         return "local_bundle_only";
@@ -105,8 +104,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string blocker_kind_name(
-    persistence_export::StoreImportBlockerKind kind) {
+[[nodiscard]] std::string blocker_kind_name(persistence_export::StoreImportBlockerKind kind) {
     switch (kind) {
     case persistence_export::StoreImportBlockerKind::WaitingOnPersistenceState:
         return "waiting_on_persistence_state";
@@ -123,8 +121,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string next_action_name(
-    persistence_export::PersistenceExportReviewNextActionKind action) {
+[[nodiscard]] std::string
+next_action_name(persistence_export::PersistenceExportReviewNextActionKind action) {
     switch (action) {
     case persistence_export::PersistenceExportReviewNextActionKind::HandoffExportPackage:
         return "handoff_export_package";
@@ -187,9 +185,9 @@ void print_store_import_blocker(
     line(out, indent_level + 1, "kind " + blocker_kind_name(blocker->kind));
     line(out,
          indent_level + 1,
-         "logical_artifact_name " +
-             (blocker->logical_artifact_name.has_value() ? *blocker->logical_artifact_name
-                                                         : "none"));
+         "logical_artifact_name " + (blocker->logical_artifact_name.has_value()
+                                         ? *blocker->logical_artifact_name
+                                         : "none"));
     line(out, indent_level + 1, "message " + blocker->message);
     line(out, indent_level, "}");
 }
@@ -213,14 +211,11 @@ void print_string_list(std::ostream &out,
 } // namespace
 
 void print_persistence_export_review(
-    const persistence_export::PersistenceExportReviewSummary &summary,
-    std::ostream &out) {
+    const persistence_export::PersistenceExportReviewSummary &summary, std::ostream &out) {
     out << summary.format_version << '\n';
     line(out, 0, "source_manifest_format " + summary.source_export_manifest_format_version);
-    line(out,
-         0,
-         "source_descriptor_format " +
-             summary.source_persistence_descriptor_format_version);
+    line(
+        out, 0, "source_descriptor_format " + summary.source_persistence_descriptor_format_version);
     line(out, 0, "source_record_format " + summary.source_checkpoint_record_format_version);
     line(out, 0, "workflow " + summary.workflow_canonical_name);
     line(out, 0, "session " + summary.session_id);
@@ -234,8 +229,7 @@ void print_persistence_export_review(
     line(out, 0, "planned_durable_identity " + summary.planned_durable_identity);
     line(out,
          0,
-         "manifest_boundary_kind " +
-             manifest_boundary_kind_name(summary.manifest_boundary_kind));
+         "manifest_boundary_kind " + manifest_boundary_kind_name(summary.manifest_boundary_kind));
     line(out, 0, std::string("manifest_ready ") + (summary.manifest_ready ? "true" : "false"));
     line(out, 0, "next_action " + next_action_name(summary.next_action));
     line(out, 0, "store_boundary " + summary.store_boundary_summary);
@@ -243,10 +237,9 @@ void print_persistence_export_review(
     line(out, 0, "next_step " + summary.next_step_recommendation);
     line(out,
          0,
-         "next_required_artifact " +
-             (summary.next_required_artifact_kind.has_value()
-                  ? artifact_kind_name(*summary.next_required_artifact_kind)
-                  : "none"));
+         "next_required_artifact " + (summary.next_required_artifact_kind.has_value()
+                                          ? artifact_kind_name(*summary.next_required_artifact_kind)
+                                          : "none"));
 
     print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_store_import_blocker(out, 0, summary.store_import_blocker);

@@ -75,8 +75,7 @@ struct CheckpointPersistenceDescriptor {
         runtime_session::WorkflowSessionStatus::Completed};
     checkpoint_record::CheckpointRecordStatus checkpoint_status{
         checkpoint_record::CheckpointRecordStatus::Blocked};
-    PersistenceDescriptorStatus persistence_status{
-        PersistenceDescriptorStatus::Blocked};
+    PersistenceDescriptorStatus persistence_status{PersistenceDescriptorStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::vector<std::string> execution_order;
     std::string planned_durable_identity;

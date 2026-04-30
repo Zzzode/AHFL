@@ -24,9 +24,8 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(report.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(report.workflow_canonical_name); });
             field("session_id", [&]() { write_string(report.session_id); });
             field("run_id", [&]() {
                 if (report.run_id.has_value()) {
@@ -53,18 +52,15 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
             field("session_summary", [&]() { print_session_summary(report.session_summary, 1); });
             field("journal_summary", [&]() { print_journal_summary(report.journal_summary, 1); });
             field("trace_summary", [&]() { print_trace_summary(report.trace_summary, 1); });
-            field("replay_consistency", [&]() {
-                print_replay_consistency(report.replay_consistency, 1);
-            });
-            field("audit_consistency", [&]() {
-                print_audit_consistency(report.audit_consistency, 1);
-            });
+            field("replay_consistency",
+                  [&]() { print_replay_consistency(report.replay_consistency, 1); });
+            field("audit_consistency",
+                  [&]() { print_audit_consistency(report.audit_consistency, 1); });
         });
         out_ << '\n';
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -81,10 +77,10 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
                         item([&]() {
                             print_object(indent_level + 2, [&](const auto &read_field) {
                                 read_field("kind", [&]() {
-                                    write_string(
-                                        read.kind == ir::WorkflowValueSourceKind::WorkflowInput
-                                            ? "workflow_input"
-                                            : "workflow_node_output");
+                                    write_string(read.kind ==
+                                                         ir::WorkflowValueSourceKind::WorkflowInput
+                                                     ? "workflow_input"
+                                                     : "workflow_node_output");
                                 });
                                 read_field("root_name", [&]() { write_string(read.root_name); });
                                 read_field("members", [&]() {
@@ -133,9 +129,8 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
 
     void print_plan_summary(const audit_report::AuditPlanSummary &summary, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("source_execution_plan_format_version", [&]() {
-                write_string(summary.source_execution_plan_format_version);
-            });
+            field("source_execution_plan_format_version",
+                  [&]() { write_string(summary.source_execution_plan_format_version); });
             field("execution_order", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &node_name : summary.execution_order) {
@@ -196,12 +191,10 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
         });
     }
 
-    void print_session_summary(const audit_report::AuditSessionSummary &summary,
-                               int indent_level) {
+    void print_session_summary(const audit_report::AuditSessionSummary &summary, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("source_runtime_session_format_version", [&]() {
-                write_string(summary.source_runtime_session_format_version);
-            });
+            field("source_runtime_session_format_version",
+                  [&]() { write_string(summary.source_runtime_session_format_version); });
             field("workflow_status", [&]() {
                 switch (summary.workflow_status) {
                 case runtime_session::WorkflowSessionStatus::Completed:
@@ -225,23 +218,18 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
         });
     }
 
-    void print_journal_summary(const audit_report::AuditJournalSummary &summary,
-                               int indent_level) {
+    void print_journal_summary(const audit_report::AuditJournalSummary &summary, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("source_execution_journal_format_version", [&]() {
-                write_string(summary.source_execution_journal_format_version);
-            });
+            field("source_execution_journal_format_version",
+                  [&]() { write_string(summary.source_execution_journal_format_version); });
             field("total_events", [&]() { out_ << summary.total_events; });
             field("node_ready_events", [&]() { out_ << summary.node_ready_events; });
             field("node_started_events", [&]() { out_ << summary.node_started_events; });
             field("node_completed_events", [&]() { out_ << summary.node_completed_events; });
             field("node_failed_events", [&]() { out_ << summary.node_failed_events; });
-            field("workflow_completed_events", [&]() {
-                out_ << summary.workflow_completed_events;
-            });
-            field("workflow_failed_events", [&]() {
-                out_ << summary.workflow_failed_events;
-            });
+            field("workflow_completed_events",
+                  [&]() { out_ << summary.workflow_completed_events; });
+            field("workflow_failed_events", [&]() { out_ << summary.workflow_failed_events; });
             field("completed_node_order", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &node_name : summary.completed_node_order) {
@@ -268,9 +256,8 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
 
     void print_trace_summary(const audit_report::AuditTraceSummary &summary, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("source_dry_run_trace_format_version", [&]() {
-                write_string(summary.source_dry_run_trace_format_version);
-            });
+            field("source_dry_run_trace_format_version",
+                  [&]() { write_string(summary.source_dry_run_trace_format_version); });
             field("status", [&]() { write_string("completed"); });
             field("execution_order", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
@@ -295,12 +282,10 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
     void print_replay_consistency(const replay_view::ReplayConsistencySummary &consistency,
                                   int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("plan_matches_session", [&]() {
-                out_ << (consistency.plan_matches_session ? "true" : "false");
-            });
-            field("session_matches_journal", [&]() {
-                out_ << (consistency.session_matches_journal ? "true" : "false");
-            });
+            field("plan_matches_session",
+                  [&]() { out_ << (consistency.plan_matches_session ? "true" : "false"); });
+            field("session_matches_journal",
+                  [&]() { out_ << (consistency.session_matches_journal ? "true" : "false"); });
             field("journal_matches_execution_order", [&]() {
                 out_ << (consistency.journal_matches_execution_order ? "true" : "false");
             });
@@ -310,18 +295,14 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
     void print_audit_consistency(const audit_report::AuditConsistencySummary &consistency,
                                  int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("plan_matches_session", [&]() {
-                out_ << (consistency.plan_matches_session ? "true" : "false");
-            });
-            field("session_matches_journal", [&]() {
-                out_ << (consistency.session_matches_journal ? "true" : "false");
-            });
-            field("journal_matches_trace", [&]() {
-                out_ << (consistency.journal_matches_trace ? "true" : "false");
-            });
-            field("trace_matches_replay", [&]() {
-                out_ << (consistency.trace_matches_replay ? "true" : "false");
-            });
+            field("plan_matches_session",
+                  [&]() { out_ << (consistency.plan_matches_session ? "true" : "false"); });
+            field("session_matches_journal",
+                  [&]() { out_ << (consistency.session_matches_journal ? "true" : "false"); });
+            field("journal_matches_trace",
+                  [&]() { out_ << (consistency.journal_matches_trace ? "true" : "false"); });
+            field("trace_matches_replay",
+                  [&]() { out_ << (consistency.trace_matches_replay ? "true" : "false"); });
         });
     }
 };

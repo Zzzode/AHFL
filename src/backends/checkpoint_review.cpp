@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string snapshot_status_name(
-    scheduler_snapshot::SchedulerSnapshotStatus status) {
+[[nodiscard]] std::string snapshot_status_name(scheduler_snapshot::SchedulerSnapshotStatus status) {
     switch (status) {
     case scheduler_snapshot::SchedulerSnapshotStatus::Runnable:
         return "runnable";
@@ -44,8 +43,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -73,8 +71,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string resume_blocker_kind_name(
-    checkpoint_record::CheckpointResumeBlockerKind kind) {
+[[nodiscard]] std::string
+resume_blocker_kind_name(checkpoint_record::CheckpointResumeBlockerKind kind) {
     switch (kind) {
     case checkpoint_record::CheckpointResumeBlockerKind::NotCheckpointFriendly:
         return "not_checkpoint_friendly";
@@ -89,8 +87,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string next_action_name(
-    checkpoint_record::CheckpointReviewNextActionKind action) {
+[[nodiscard]] std::string
+next_action_name(checkpoint_record::CheckpointReviewNextActionKind action) {
     switch (action) {
     case checkpoint_record::CheckpointReviewNextActionKind::PersistCheckpoint:
         return "persist_checkpoint";
@@ -199,9 +197,9 @@ void print_checkpoint_review(const checkpoint_record::CheckpointReviewSummary &s
     line(out, 0, "next_step " + summary.next_step_recommendation);
     line(out,
          0,
-         "resume_candidate " +
-             (summary.resume_candidate_node_name.has_value() ? *summary.resume_candidate_node_name
-                                                            : "none"));
+         "resume_candidate " + (summary.resume_candidate_node_name.has_value()
+                                    ? *summary.resume_candidate_node_name
+                                    : "none"));
     line(out,
          0,
          "terminal_reason " +

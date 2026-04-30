@@ -53,9 +53,8 @@ class PrettyJsonWriter {
         : out_(out), indent_width_(indent_width) {}
 
     void write_indent(int indent_level) {
-        out_ << std::string(static_cast<std::size_t>(indent_level) *
-                                static_cast<std::size_t>(indent_width_),
-                            ' ');
+        out_ << std::string(
+            static_cast<std::size_t>(indent_level) * static_cast<std::size_t>(indent_width_), ' ');
     }
 
     void newline_and_indent(int indent_level) {
@@ -63,7 +62,9 @@ class PrettyJsonWriter {
         write_indent(indent_level);
     }
 
-    void write_string(std::string_view value) { write_escaped_json_string(out_, value); }
+    void write_string(std::string_view value) {
+        write_escaped_json_string(out_, value);
+    }
 
     template <typename WriteFields> void print_object(int indent_level, WriteFields write_fields) {
         out_ << '{';

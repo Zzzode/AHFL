@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string persistence_status_name(
-    persistence_descriptor::PersistenceDescriptorStatus status) {
+[[nodiscard]] std::string
+persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";
@@ -62,8 +61,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string basis_kind_name(
-    persistence_descriptor::PersistenceBasisKind kind) {
+[[nodiscard]] std::string basis_kind_name(persistence_descriptor::PersistenceBasisKind kind) {
     switch (kind) {
     case persistence_descriptor::PersistenceBasisKind::LocalPlanningOnly:
         return "local_planning_only";
@@ -74,8 +72,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string blocker_kind_name(
-    persistence_descriptor::PersistenceBlockerKind kind) {
+[[nodiscard]] std::string blocker_kind_name(persistence_descriptor::PersistenceBlockerKind kind) {
     switch (kind) {
     case persistence_descriptor::PersistenceBlockerKind::WaitingOnCheckpointState:
         return "waiting_on_checkpoint_state";
@@ -90,8 +87,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string next_action_name(
-    persistence_descriptor::PersistenceReviewNextActionKind action) {
+[[nodiscard]] std::string
+next_action_name(persistence_descriptor::PersistenceReviewNextActionKind action) {
     switch (action) {
     case persistence_descriptor::PersistenceReviewNextActionKind::ExportPersistenceHandoff:
         return "export_persistence_handoff";
@@ -180,7 +177,8 @@ void print_string_list(std::ostream &out,
 void print_persistence_review(const persistence_descriptor::PersistenceReviewSummary &summary,
                               std::ostream &out) {
     out << summary.format_version << '\n';
-    line(out, 0, "source_descriptor_format " + summary.source_persistence_descriptor_format_version);
+    line(
+        out, 0, "source_descriptor_format " + summary.source_persistence_descriptor_format_version);
     line(out, 0, "source_record_format " + summary.source_checkpoint_record_format_version);
     line(out, 0, "workflow " + summary.workflow_canonical_name);
     line(out, 0, "session " + summary.session_id);
@@ -198,10 +196,9 @@ void print_persistence_review(const persistence_descriptor::PersistenceReviewSum
     line(out, 0, "next_step " + summary.next_step_recommendation);
     line(out,
          0,
-         "next_export_candidate " +
-             (summary.next_export_candidate_node_name.has_value()
-                  ? *summary.next_export_candidate_node_name
-                  : "none"));
+         "next_export_candidate " + (summary.next_export_candidate_node_name.has_value()
+                                         ? *summary.next_export_candidate_node_name
+                                         : "none"));
 
     print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_persistence_blocker(out, 0, summary.persistence_blocker);

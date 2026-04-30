@@ -13,11 +13,9 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
 }
 
-
 void validate_package_identity(const handoff::PackageIdentity &identity,
                                DiagnosticBag &diagnostics) {
-    validation::validate_package_identity(
-        identity, diagnostics, "durable store import decision");
+    validation::validate_package_identity(identity, diagnostics, "durable store import decision");
 }
 
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
@@ -41,20 +39,19 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
     return "invalid";
 }
 
-[[nodiscard]] std::string build_decision_identity(
-    const std::optional<handoff::PackageIdentity> &source_package_identity,
-    std::string_view workflow_canonical_name,
-    std::string_view session_id,
-    DecisionOutcome outcome) {
+[[nodiscard]] std::string
+build_decision_identity(const std::optional<handoff::PackageIdentity> &source_package_identity,
+                        std::string_view workflow_canonical_name,
+                        std::string_view session_id,
+                        DecisionOutcome outcome) {
     const auto &identity_anchor = source_package_identity.has_value()
                                       ? source_package_identity->name
                                       : std::string(workflow_canonical_name);
-    return "durable-store-import-decision::" + identity_anchor + "::" +
-           std::string(session_id) + "::" + decision_outcome_slug(outcome);
+    return "durable-store-import-decision::" + identity_anchor + "::" + std::string(session_id) +
+           "::" + decision_outcome_slug(outcome);
 }
 
-[[nodiscard]] AdapterCapabilityKind
-to_adapter_capability_kind(RequestedArtifactKind kind) {
+[[nodiscard]] AdapterCapabilityKind to_adapter_capability_kind(RequestedArtifactKind kind) {
     switch (kind) {
     case RequestedArtifactKind::StoreImportDescriptor:
         return AdapterCapabilityKind::ConsumeStoreImportDescriptor;
@@ -78,117 +75,135 @@ DecisionValidationResult validate_decision(const Decision &decision) {
     auto &diagnostics = result.diagnostics;
 
     if (decision.format_version != kDecisionFormatVersion) {
-        emit_validation_error(diagnostics, "durable store import decision format_version must be '" +
-                          std::string(kDecisionFormatVersion) + "'");
+        emit_validation_error(diagnostics,
+                              "durable store import decision format_version must be '" +
+                                  std::string(kDecisionFormatVersion) + "'");
     }
 
-    if (decision.source_durable_store_import_request_format_version !=
-        kRequestFormatVersion) {
+    if (decision.source_durable_store_import_request_format_version != kRequestFormatVersion) {
         emit_validation_error(diagnostics,
-            "durable store import decision source_durable_store_import_request_format_version must be '" +
-            std::string(kRequestFormatVersion) + "'");
+                              "durable store import decision "
+                              "source_durable_store_import_request_format_version must be '" +
+                                  std::string(kRequestFormatVersion) + "'");
     }
 
     if (decision.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
         emit_validation_error(diagnostics,
-            "durable store import decision source_store_import_descriptor_format_version must be '" +
-            std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
+                              "durable store import decision "
+                              "source_store_import_descriptor_format_version must be '" +
+                                  std::string(store_import::kStoreImportDescriptorFormatVersion) +
+                                  "'");
     }
 
     if (decision.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_execution_plan_format_version must be '" +
-            std::string(handoff::kExecutionPlanFormatVersion) + "'");
+                std::string(handoff::kExecutionPlanFormatVersion) + "'");
     }
 
     if (decision.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_runtime_session_format_version must be '" +
-            std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
+                std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
     }
 
     if (decision.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_execution_journal_format_version must be '" +
-            std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
+                std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
     }
 
     if (decision.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_replay_view_format_version must be '" +
-            std::string(replay_view::kReplayViewFormatVersion) + "'");
+                std::string(replay_view::kReplayViewFormatVersion) + "'");
     }
 
     if (decision.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_scheduler_snapshot_format_version must be '" +
-            std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
+                std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (decision.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_checkpoint_record_format_version must be '" +
-            std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
+                std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
     }
 
     if (decision.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_persistence_descriptor_format_version must be '" +
-            std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
+                std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
     }
 
     if (decision.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision source_export_manifest_format_version must be '" +
-            std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
+                std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
     }
 
     if (decision.workflow_canonical_name.empty()) {
-        emit_validation_error(diagnostics,
-            "durable store import decision workflow_canonical_name must not be empty");
+        emit_validation_error(
+            diagnostics, "durable store import decision workflow_canonical_name must not be empty");
     }
 
     if (decision.session_id.empty()) {
-        emit_validation_error(diagnostics, "durable store import decision session_id must not be empty");
+        emit_validation_error(diagnostics,
+                              "durable store import decision session_id must not be empty");
     }
 
     if (decision.run_id.has_value() && decision.run_id->empty()) {
-        emit_validation_error(diagnostics, "durable store import decision run_id must not be empty when present");
+        emit_validation_error(
+            diagnostics, "durable store import decision run_id must not be empty when present");
     }
 
     if (decision.input_fixture.empty()) {
-        emit_validation_error(diagnostics, "durable store import decision input_fixture must not be empty");
+        emit_validation_error(diagnostics,
+                              "durable store import decision input_fixture must not be empty");
     }
 
     if (decision.export_package_identity.empty()) {
-        emit_validation_error(diagnostics,
-            "durable store import decision export_package_identity must not be empty");
+        emit_validation_error(
+            diagnostics, "durable store import decision export_package_identity must not be empty");
     }
 
     if (decision.store_import_candidate_identity.empty()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision store_import_candidate_identity must not be empty");
     }
 
     if (decision.durable_store_import_request_identity.empty()) {
         emit_validation_error(diagnostics,
-            "durable store import decision durable_store_import_request_identity must not be empty");
+                              "durable store import decision durable_store_import_request_identity "
+                              "must not be empty");
     }
 
     if (decision.durable_store_import_decision_identity.empty()) {
         emit_validation_error(diagnostics,
-            "durable store import decision durable_store_import_decision_identity must not be empty");
+                              "durable store import decision "
+                              "durable_store_import_decision_identity must not be empty");
     }
 
     if (decision.planned_durable_identity.empty()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "durable store import decision planned_durable_identity must not be empty");
     }
 
@@ -201,149 +216,176 @@ DecisionValidationResult validate_decision(const Decision &decision) {
     }
 
     if (decision.accepted_for_future_execution && decision.decision_blocker.has_value()) {
-        emit_validation_error(diagnostics, "durable store import decision cannot contain decision_blocker when "
-                          "accepted_for_future_execution is true");
+        emit_validation_error(diagnostics,
+                              "durable store import decision cannot contain decision_blocker when "
+                              "accepted_for_future_execution is true");
     }
 
     if (decision.accepted_for_future_execution &&
         decision.next_required_adapter_capability.has_value()) {
-        emit_validation_error(diagnostics, "durable store import decision cannot contain "
-                          "next_required_adapter_capability when accepted_for_future_execution "
-                          "is true");
+        emit_validation_error(diagnostics,
+                              "durable store import decision cannot contain "
+                              "next_required_adapter_capability when accepted_for_future_execution "
+                              "is true");
     }
 
     if (!decision.accepted_for_future_execution && !decision.decision_blocker.has_value()) {
-        emit_validation_error(diagnostics, "durable store import decision must contain decision_blocker when "
-                          "accepted_for_future_execution is false");
+        emit_validation_error(diagnostics,
+                              "durable store import decision must contain decision_blocker when "
+                              "accepted_for_future_execution is false");
     }
 
     if (decision.decision_blocker.has_value()) {
         if (decision.decision_blocker->message.empty()) {
-            emit_validation_error(diagnostics,
+            emit_validation_error(
+                diagnostics,
                 "durable store import decision decision_blocker message must not be empty");
         }
 
         if (decision.decision_blocker->required_capability.has_value() &&
             decision.next_required_adapter_capability !=
                 decision.decision_blocker->required_capability) {
-            emit_validation_error(diagnostics, "durable store import decision decision_blocker "
-                              "required_capability must match "
-                              "next_required_adapter_capability");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision decision_blocker "
+                                  "required_capability must match "
+                                  "next_required_adapter_capability");
         }
     }
 
     if (decision.decision_boundary_kind == DecisionBoundaryKind::AdapterDecisionConsumable &&
         !decision.accepted_for_future_execution) {
-        emit_validation_error(diagnostics, "durable store import decision adapter-decision-consumable boundary "
-                          "requires accepted_for_future_execution");
+        emit_validation_error(diagnostics,
+                              "durable store import decision adapter-decision-consumable boundary "
+                              "requires accepted_for_future_execution");
     }
 
     switch (decision.decision_status) {
     case DecisionStatus::Accepted:
         if (decision.decision_outcome != DecisionOutcome::AcceptRequest) {
-            emit_validation_error(diagnostics,
+            emit_validation_error(
+                diagnostics,
                 "durable store import decision Accepted status requires AcceptRequest outcome");
         }
         if (!decision.accepted_for_future_execution) {
-            emit_validation_error(diagnostics, "durable store import decision Accepted status requires "
-                              "accepted_for_future_execution");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Accepted status requires "
+                                  "accepted_for_future_execution");
         }
         if (decision.request_status != RequestStatus::ReadyForAdapter &&
             decision.request_status != RequestStatus::TerminalCompleted) {
-            emit_validation_error(diagnostics, "durable store import decision Accepted status requires "
-                              "ReadyForAdapter or TerminalCompleted request_status");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Accepted status requires "
+                                  "ReadyForAdapter or TerminalCompleted request_status");
         }
         if (decision.request_boundary_kind != RequestBoundaryKind::AdapterContractConsumable) {
-            emit_validation_error(diagnostics, "durable store import decision Accepted status requires "
-                              "AdapterContractConsumable request_boundary_kind");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Accepted status requires "
+                                  "AdapterContractConsumable request_boundary_kind");
         }
         break;
     case DecisionStatus::Blocked:
         if (decision.decision_outcome != DecisionOutcome::BlockRequest) {
-            emit_validation_error(diagnostics,
+            emit_validation_error(
+                diagnostics,
                 "durable store import decision Blocked status requires BlockRequest outcome");
         }
         if (decision.accepted_for_future_execution) {
-            emit_validation_error(diagnostics, "durable store import decision Blocked status cannot be "
-                              "accepted_for_future_execution");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Blocked status cannot be "
+                                  "accepted_for_future_execution");
         }
         if (decision.request_status != RequestStatus::Blocked) {
-            emit_validation_error(diagnostics,
+            emit_validation_error(
+                diagnostics,
                 "durable store import decision Blocked status requires Blocked request_status");
         }
         if (!decision.decision_blocker.has_value()) {
-            emit_validation_error(diagnostics,
+            emit_validation_error(
+                diagnostics,
                 "durable store import decision Blocked status requires decision_blocker");
         }
         break;
     case DecisionStatus::Deferred:
         if (decision.decision_outcome != DecisionOutcome::DeferPartialRequest) {
-            emit_validation_error(diagnostics, "durable store import decision Deferred status requires "
-                              "DeferPartialRequest outcome");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Deferred status requires "
+                                  "DeferPartialRequest outcome");
         }
         if (decision.accepted_for_future_execution) {
-            emit_validation_error(diagnostics, "durable store import decision Deferred status cannot be "
-                              "accepted_for_future_execution");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Deferred status cannot be "
+                                  "accepted_for_future_execution");
         }
         if (decision.request_status != RequestStatus::TerminalPartial) {
-            emit_validation_error(diagnostics, "durable store import decision Deferred status requires "
-                              "TerminalPartial request_status");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Deferred status requires "
+                                  "TerminalPartial request_status");
         }
         if (!decision.next_required_adapter_capability.has_value() ||
             *decision.next_required_adapter_capability !=
                 AdapterCapabilityKind::PreservePartialWorkflowState) {
-            emit_validation_error(diagnostics, "durable store import decision Deferred status requires "
-                              "PreservePartialWorkflowState next_required_adapter_capability");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Deferred status requires "
+                                  "PreservePartialWorkflowState next_required_adapter_capability");
         }
         if (!decision.decision_blocker.has_value() ||
             decision.decision_blocker->kind != DecisionBlockerKind::PartialWorkflowState) {
-            emit_validation_error(diagnostics, "durable store import decision Deferred status requires "
-                              "PartialWorkflowState decision_blocker");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Deferred status requires "
+                                  "PartialWorkflowState decision_blocker");
         }
         break;
     case DecisionStatus::Rejected:
         if (decision.decision_outcome != DecisionOutcome::RejectFailedRequest) {
-            emit_validation_error(diagnostics, "durable store import decision Rejected status requires "
-                              "RejectFailedRequest outcome");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Rejected status requires "
+                                  "RejectFailedRequest outcome");
         }
         if (decision.accepted_for_future_execution) {
-            emit_validation_error(diagnostics, "durable store import decision Rejected status cannot be "
-                              "accepted_for_future_execution");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Rejected status cannot be "
+                                  "accepted_for_future_execution");
         }
         if (decision.request_status != RequestStatus::TerminalFailed) {
-            emit_validation_error(diagnostics, "durable store import decision Rejected status requires "
-                              "TerminalFailed request_status");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Rejected status requires "
+                                  "TerminalFailed request_status");
         }
         if (!decision.workflow_failure_summary.has_value()) {
-            emit_validation_error(diagnostics, "durable store import decision Rejected status requires "
-                              "workflow_failure_summary");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Rejected status requires "
+                                  "workflow_failure_summary");
         }
         if (!decision.decision_blocker.has_value() ||
             decision.decision_blocker->kind != DecisionBlockerKind::WorkflowFailure) {
-            emit_validation_error(diagnostics, "durable store import decision Rejected status requires "
-                              "WorkflowFailure decision_blocker");
+            emit_validation_error(diagnostics,
+                                  "durable store import decision Rejected status requires "
+                                  "WorkflowFailure decision_blocker");
         }
         break;
     }
 
     if (decision.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         decision.decision_status != DecisionStatus::Accepted) {
-        emit_validation_error(diagnostics, "durable store import decision completed workflow_status requires "
-                          "Accepted decision_status");
+        emit_validation_error(diagnostics,
+                              "durable store import decision completed workflow_status requires "
+                              "Accepted decision_status");
     }
 
     if (decision.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         decision.decision_status != DecisionStatus::Rejected) {
-        emit_validation_error(diagnostics, "durable store import decision failed workflow_status requires "
-                          "Rejected decision_status");
+        emit_validation_error(diagnostics,
+                              "durable store import decision failed workflow_status requires "
+                              "Rejected decision_status");
     }
 
     if (decision.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
         decision.decision_status != DecisionStatus::Accepted &&
         decision.decision_status != DecisionStatus::Blocked &&
         decision.decision_status != DecisionStatus::Deferred) {
-        emit_validation_error(diagnostics, "durable store import decision partial workflow_status must map to "
-                          "Accepted, Blocked, or Deferred decision_status");
+        emit_validation_error(diagnostics,
+                              "durable store import decision partial workflow_status must map to "
+                              "Accepted, Blocked, or Deferred decision_status");
     }
 
     return result;
@@ -372,8 +414,7 @@ DecisionResult build_decision(const Request &request) {
         .source_replay_view_format_version = request.source_replay_view_format_version,
         .source_scheduler_snapshot_format_version =
             request.source_scheduler_snapshot_format_version,
-        .source_checkpoint_record_format_version =
-            request.source_checkpoint_record_format_version,
+        .source_checkpoint_record_format_version = request.source_checkpoint_record_format_version,
         .source_persistence_descriptor_format_version =
             request.source_persistence_descriptor_format_version,
         .source_export_manifest_format_version = request.source_export_manifest_format_version,
@@ -437,7 +478,8 @@ DecisionResult build_decision(const Request &request) {
             .kind = DecisionBlockerKind::PartialWorkflowState,
             .message = request.adapter_blocker.has_value()
                            ? request.adapter_blocker->message
-                           : "partial durable store import state must be preserved before future adapter execution",
+                           : "partial durable store import state must be preserved before future "
+                             "adapter execution",
             .required_capability = AdapterCapabilityKind::PreservePartialWorkflowState,
         };
         break;

@@ -101,10 +101,9 @@ struct RuntimeSessionValidationResult {
 [[nodiscard]] RuntimeSessionValidationResult
 validate_runtime_session(const RuntimeSession &session);
 
-[[nodiscard]] RuntimeSessionResult
-build_runtime_session(const handoff::ExecutionPlan &plan,
-                      const dry_run::DryRunRequest &request,
-                      const dry_run::CapabilityMockSet &mock_set,
-                      const RuntimeSessionOptions &options = {});
+[[nodiscard]] RuntimeSessionResult build_runtime_session(const handoff::ExecutionPlan &plan,
+                                                         const dry_run::DryRunRequest &request,
+                                                         const dry_run::CapabilityMockSet &mock_set,
+                                                         const RuntimeSessionOptions &options = {});
 
 } // namespace ahfl::runtime_session

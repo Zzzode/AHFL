@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string persistence_status_name(
-    persistence_descriptor::PersistenceDescriptorStatus status) {
+[[nodiscard]] std::string
+persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";
@@ -62,8 +61,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string manifest_status_name(
-    persistence_export::PersistenceExportManifestStatus status) {
+[[nodiscard]] std::string
+manifest_status_name(persistence_export::PersistenceExportManifestStatus status) {
     switch (status) {
     case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
         return "ready_to_import";
@@ -80,8 +79,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string descriptor_status_name(
-    store_import::StoreImportDescriptorStatus status) {
+[[nodiscard]] std::string descriptor_status_name(store_import::StoreImportDescriptorStatus status) {
     switch (status) {
     case store_import::StoreImportDescriptorStatus::ReadyToImport:
         return "ready_to_import";
@@ -98,8 +96,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string request_status_name(
-    durable_store_import::RequestStatus status) {
+[[nodiscard]] std::string request_status_name(durable_store_import::RequestStatus status) {
     switch (status) {
     case durable_store_import::RequestStatus::ReadyForAdapter:
         return "ready_for_adapter";
@@ -116,8 +113,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string decision_status_name(
-    durable_store_import::DecisionStatus status) {
+[[nodiscard]] std::string decision_status_name(durable_store_import::DecisionStatus status) {
     switch (status) {
     case durable_store_import::DecisionStatus::Accepted:
         return "accepted";
@@ -132,8 +128,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string receipt_status_name(
-    durable_store_import::ReceiptStatus status) {
+[[nodiscard]] std::string receipt_status_name(durable_store_import::ReceiptStatus status) {
     switch (status) {
     case durable_store_import::ReceiptStatus::ReadyForArchive:
         return "ready_for_archive";
@@ -148,11 +143,10 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string receipt_persistence_request_status_name(
-    durable_store_import::PersistenceRequestStatus status) {
+[[nodiscard]] std::string
+receipt_persistence_request_status_name(durable_store_import::PersistenceRequestStatus status) {
     switch (status) {
-    case durable_store_import::PersistenceRequestStatus::
-        ReadyToPersist:
+    case durable_store_import::PersistenceRequestStatus::ReadyToPersist:
         return "ready_to_persist";
     case durable_store_import::PersistenceRequestStatus::Blocked:
         return "blocked";
@@ -165,8 +159,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string receipt_boundary_kind_name(
-    durable_store_import::ReceiptBoundaryKind kind) {
+[[nodiscard]] std::string
+receipt_boundary_kind_name(durable_store_import::ReceiptBoundaryKind kind) {
     switch (kind) {
     case durable_store_import::ReceiptBoundaryKind::LocalContractOnly:
         return "local_contract_only";
@@ -177,48 +171,41 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string receipt_persistence_boundary_kind_name(
-    durable_store_import::PersistenceBoundaryKind kind) {
+[[nodiscard]] std::string
+receipt_persistence_boundary_kind_name(durable_store_import::PersistenceBoundaryKind kind) {
     switch (kind) {
     case durable_store_import::PersistenceBoundaryKind::LocalContractOnly:
         return "local_contract_only";
-    case durable_store_import::PersistenceBoundaryKind::
-        AdapterReceiptPersistenceConsumable:
+    case durable_store_import::PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable:
         return "adapter_receipt_persistence_consumable";
     }
 
     return "invalid";
 }
 
-[[nodiscard]] std::string receipt_persistence_request_outcome_name(
-    durable_store_import::PersistenceRequestOutcome outcome) {
+[[nodiscard]] std::string
+receipt_persistence_request_outcome_name(durable_store_import::PersistenceRequestOutcome outcome) {
     switch (outcome) {
-    case durable_store_import::PersistenceRequestOutcome::
-        PersistReadyReceipt:
+    case durable_store_import::PersistenceRequestOutcome::PersistReadyReceipt:
         return "persist_ready_receipt";
-    case durable_store_import::PersistenceRequestOutcome::
-        BlockBlockedReceipt:
+    case durable_store_import::PersistenceRequestOutcome::BlockBlockedReceipt:
         return "block_blocked_receipt";
-    case durable_store_import::PersistenceRequestOutcome::
-        DeferPartialReceipt:
+    case durable_store_import::PersistenceRequestOutcome::DeferPartialReceipt:
         return "defer_partial_receipt";
-    case durable_store_import::PersistenceRequestOutcome::
-        RejectFailedReceipt:
+    case durable_store_import::PersistenceRequestOutcome::RejectFailedReceipt:
         return "reject_failed_receipt";
     }
 
     return "invalid";
 }
 
-[[nodiscard]] std::string next_action_name(
-    durable_store_import::PersistenceReviewNextActionKind
-        action) {
+[[nodiscard]] std::string
+next_action_name(durable_store_import::PersistenceReviewNextActionKind action) {
     switch (action) {
     case durable_store_import::PersistenceReviewNextActionKind::
         HandoffDurableStoreImportDecisionReceiptPersistenceRequest:
         return "handoff_durable_store_import_decision_receipt_persistence_request";
-    case durable_store_import::PersistenceReviewNextActionKind::
-        ResolveRequiredAdapterCapability:
+    case durable_store_import::PersistenceReviewNextActionKind::ResolveRequiredAdapterCapability:
         return "resolve_required_adapter_capability";
     case durable_store_import::PersistenceReviewNextActionKind::
         PersistCompletedDurableStoreImportDecisionReceipt:
@@ -253,8 +240,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string blocker_kind_name(
-    durable_store_import::PersistenceBlockerKind kind) {
+[[nodiscard]] std::string blocker_kind_name(durable_store_import::PersistenceBlockerKind kind) {
     switch (kind) {
     case durable_store_import::PersistenceBlockerKind::SourceReceiptBlocked:
         return "source_receipt_blocked";
@@ -315,10 +301,9 @@ void print_receipt_persistence_blocker(
     line(out, indent_level + 1, "kind " + blocker_kind_name(blocker->kind));
     line(out,
          indent_level + 1,
-         "required_capability " +
-             (blocker->required_capability.has_value()
-                  ? capability_name(*blocker->required_capability)
-                  : std::string("none")));
+         "required_capability " + (blocker->required_capability.has_value()
+                                       ? capability_name(*blocker->required_capability)
+                                       : std::string("none")));
     line(out, indent_level + 1, "message " + blocker->message);
     line(out, indent_level, "}");
 }
@@ -326,20 +311,26 @@ void print_receipt_persistence_blocker(
 } // namespace
 
 void print_durable_store_import_receipt_persistence_review(
-    const durable_store_import::PersistenceReviewSummary &summary,
-    std::ostream &out) {
+    const durable_store_import::PersistenceReviewSummary &summary, std::ostream &out) {
     out << summary.format_version << '\n';
-    line(out, 0, "source_persistence_request_format " +
-                     summary
-                         .source_durable_store_import_decision_receipt_persistence_request_format_version);
-    line(out, 0, "source_receipt_format " +
-                     summary.source_durable_store_import_decision_receipt_format_version);
-    line(out, 0, "source_decision_format " +
-                     summary.source_durable_store_import_decision_format_version);
-    line(out, 0, "source_request_format " +
-                     summary.source_durable_store_import_request_format_version);
-    line(out, 0, "source_descriptor_format " +
-                     summary.source_store_import_descriptor_format_version);
+    line(out,
+         0,
+         "source_persistence_request_format " +
+             summary
+                 .source_durable_store_import_decision_receipt_persistence_request_format_version);
+    line(out,
+         0,
+         "source_receipt_format " +
+             summary.source_durable_store_import_decision_receipt_format_version);
+    line(out,
+         0,
+         "source_decision_format " + summary.source_durable_store_import_decision_format_version);
+    line(out,
+         0,
+         "source_request_format " + summary.source_durable_store_import_request_format_version);
+    line(out,
+         0,
+         "source_descriptor_format " + summary.source_store_import_descriptor_format_version);
     line(out, 0, "workflow " + summary.workflow_canonical_name);
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
@@ -356,16 +347,17 @@ void print_durable_store_import_receipt_persistence_review(
          0,
          "receipt_persistence_request_status " +
              receipt_persistence_request_status_name(summary.receipt_persistence_request_status));
-    line(out, 0, "receipt_boundary_kind " +
-                     receipt_boundary_kind_name(summary.receipt_boundary_kind));
-    line(out, 0, "receipt_persistence_boundary_kind " +
-                     receipt_persistence_boundary_kind_name(
-                         summary.receipt_persistence_boundary_kind));
+    line(out,
+         0,
+         "receipt_boundary_kind " + receipt_boundary_kind_name(summary.receipt_boundary_kind));
+    line(out,
+         0,
+         "receipt_persistence_boundary_kind " +
+             receipt_persistence_boundary_kind_name(summary.receipt_persistence_boundary_kind));
     line(out,
          0,
          "receipt_persistence_request_outcome " +
-             receipt_persistence_request_outcome_name(
-                 summary.receipt_persistence_request_outcome));
+             receipt_persistence_request_outcome_name(summary.receipt_persistence_request_outcome));
     line(out,
          0,
          std::string("accepted_for_receipt_persistence ") +
@@ -373,12 +365,16 @@ void print_durable_store_import_receipt_persistence_review(
     line(out, 0, "next_action " + next_action_name(summary.next_action));
     line(out, 0, "export_package_identity " + summary.export_package_identity);
     line(out, 0, "store_import_candidate_identity " + summary.store_import_candidate_identity);
-    line(out, 0, "durable_store_import_request_identity " +
-                     summary.durable_store_import_request_identity);
-    line(out, 0, "durable_store_import_decision_identity " +
-                     summary.durable_store_import_decision_identity);
-    line(out, 0, "durable_store_import_receipt_identity " +
-                     summary.durable_store_import_receipt_identity);
+    line(out,
+         0,
+         "durable_store_import_request_identity " + summary.durable_store_import_request_identity);
+    line(out,
+         0,
+         "durable_store_import_decision_identity " +
+             summary.durable_store_import_decision_identity);
+    line(out,
+         0,
+         "durable_store_import_receipt_identity " + summary.durable_store_import_receipt_identity);
     line(out,
          0,
          "durable_store_import_receipt_persistence_request_identity " +

@@ -7,7 +7,6 @@
 namespace ahfl {
 
 void print_persistence_descriptor_json(
-    const persistence_descriptor::CheckpointPersistenceDescriptor &descriptor,
-    std::ostream &out);
+    const persistence_descriptor::CheckpointPersistenceDescriptor &descriptor, std::ostream &out);
 
 } // namespace ahfl

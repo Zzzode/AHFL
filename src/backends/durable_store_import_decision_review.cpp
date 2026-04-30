@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string persistence_status_name(
-    persistence_descriptor::PersistenceDescriptorStatus status) {
+[[nodiscard]] std::string
+persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";
@@ -62,8 +61,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string manifest_status_name(
-    persistence_export::PersistenceExportManifestStatus status) {
+[[nodiscard]] std::string
+manifest_status_name(persistence_export::PersistenceExportManifestStatus status) {
     switch (status) {
     case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
         return "ready_to_import";
@@ -80,8 +79,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string descriptor_status_name(
-    store_import::StoreImportDescriptorStatus status) {
+[[nodiscard]] std::string descriptor_status_name(store_import::StoreImportDescriptorStatus status) {
     switch (status) {
     case store_import::StoreImportDescriptorStatus::ReadyToImport:
         return "ready_to_import";
@@ -98,8 +96,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string request_status_name(
-    durable_store_import::RequestStatus status) {
+[[nodiscard]] std::string request_status_name(durable_store_import::RequestStatus status) {
     switch (status) {
     case durable_store_import::RequestStatus::ReadyForAdapter:
         return "ready_for_adapter";
@@ -116,8 +113,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string decision_status_name(
-    durable_store_import::DecisionStatus status) {
+[[nodiscard]] std::string decision_status_name(durable_store_import::DecisionStatus status) {
     switch (status) {
     case durable_store_import::DecisionStatus::Accepted:
         return "accepted";
@@ -132,8 +128,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string decision_outcome_name(
-    durable_store_import::DecisionOutcome outcome) {
+[[nodiscard]] std::string decision_outcome_name(durable_store_import::DecisionOutcome outcome) {
     switch (outcome) {
     case durable_store_import::DecisionOutcome::AcceptRequest:
         return "accept_request";
@@ -148,8 +143,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string decision_boundary_kind_name(
-    durable_store_import::DecisionBoundaryKind kind) {
+[[nodiscard]] std::string
+decision_boundary_kind_name(durable_store_import::DecisionBoundaryKind kind) {
     switch (kind) {
     case durable_store_import::DecisionBoundaryKind::LocalContractOnly:
         return "local_contract_only";
@@ -160,14 +155,12 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string next_action_name(
-    durable_store_import::DecisionReviewNextActionKind action) {
+[[nodiscard]] std::string
+next_action_name(durable_store_import::DecisionReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::DecisionReviewNextActionKind::
-        HandoffDurableStoreImportDecision:
+    case durable_store_import::DecisionReviewNextActionKind::HandoffDurableStoreImportDecision:
         return "handoff_durable_store_import_decision";
-    case durable_store_import::DecisionReviewNextActionKind::
-        ResolveRequiredAdapterCapability:
+    case durable_store_import::DecisionReviewNextActionKind::ResolveRequiredAdapterCapability:
         return "resolve_required_adapter_capability";
     case durable_store_import::DecisionReviewNextActionKind::
         ArchiveCompletedDurableStoreImportDecision:
@@ -249,10 +242,9 @@ void print_failure_summary(std::ostream &out,
     line(out, indent_level, "}");
 }
 
-void print_decision_blocker(
-    std::ostream &out,
-    int indent_level,
-    const std::optional<durable_store_import::DecisionBlocker> &blocker) {
+void print_decision_blocker(std::ostream &out,
+                            int indent_level,
+                            const std::optional<durable_store_import::DecisionBlocker> &blocker) {
     line(out, indent_level, "decision_blocker {");
     if (!blocker.has_value()) {
         line(out, indent_level + 1, "value none");
@@ -263,10 +255,9 @@ void print_decision_blocker(
     line(out, indent_level + 1, "kind " + blocker_kind_name(blocker->kind));
     line(out,
          indent_level + 1,
-         "required_capability " +
-             (blocker->required_capability.has_value()
-                  ? capability_name(*blocker->required_capability)
-                  : std::string("none")));
+         "required_capability " + (blocker->required_capability.has_value()
+                                       ? capability_name(*blocker->required_capability)
+                                       : std::string("none")));
     line(out, indent_level + 1, "message " + blocker->message);
     line(out, indent_level, "}");
 }
@@ -274,15 +265,17 @@ void print_decision_blocker(
 } // namespace
 
 void print_durable_store_import_decision_review(
-    const durable_store_import::DecisionReviewSummary &summary,
-    std::ostream &out) {
+    const durable_store_import::DecisionReviewSummary &summary, std::ostream &out) {
     out << summary.format_version << '\n';
-    line(out, 0, "source_decision_format " +
-                     summary.source_durable_store_import_decision_format_version);
-    line(out, 0, "source_request_format " +
-                     summary.source_durable_store_import_request_format_version);
-    line(out, 0, "source_descriptor_format " +
-                     summary.source_store_import_descriptor_format_version);
+    line(out,
+         0,
+         "source_decision_format " + summary.source_durable_store_import_decision_format_version);
+    line(out,
+         0,
+         "source_request_format " + summary.source_durable_store_import_request_format_version);
+    line(out,
+         0,
+         "source_descriptor_format " + summary.source_store_import_descriptor_format_version);
     line(out, 0, "workflow " + summary.workflow_canonical_name);
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
@@ -294,8 +287,9 @@ void print_durable_store_import_decision_review(
     line(out, 0, "descriptor_status " + descriptor_status_name(summary.descriptor_status));
     line(out, 0, "request_status " + request_status_name(summary.request_status));
     line(out, 0, "decision_status " + decision_status_name(summary.decision_status));
-    line(out, 0, "decision_boundary_kind " +
-                     decision_boundary_kind_name(summary.decision_boundary_kind));
+    line(out,
+         0,
+         "decision_boundary_kind " + decision_boundary_kind_name(summary.decision_boundary_kind));
     line(out, 0, "decision_outcome " + decision_outcome_name(summary.decision_outcome));
     line(out,
          0,
@@ -304,10 +298,13 @@ void print_durable_store_import_decision_review(
     line(out, 0, "next_action " + next_action_name(summary.next_action));
     line(out, 0, "export_package_identity " + summary.export_package_identity);
     line(out, 0, "store_import_candidate_identity " + summary.store_import_candidate_identity);
-    line(out, 0, "durable_store_import_request_identity " +
-                     summary.durable_store_import_request_identity);
-    line(out, 0, "durable_store_import_decision_identity " +
-                     summary.durable_store_import_decision_identity);
+    line(out,
+         0,
+         "durable_store_import_request_identity " + summary.durable_store_import_request_identity);
+    line(out,
+         0,
+         "durable_store_import_decision_identity " +
+             summary.durable_store_import_decision_identity);
     line(out, 0, "planned_durable_identity " + summary.planned_durable_identity);
     line(out,
          0,

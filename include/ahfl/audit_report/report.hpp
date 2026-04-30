@@ -39,8 +39,7 @@ struct AuditPlanSummary {
 
 struct AuditSessionNodeSummary {
     std::string node_name;
-    runtime_session::NodeSessionStatus final_status{
-        runtime_session::NodeSessionStatus::Blocked};
+    runtime_session::NodeSessionStatus final_status{runtime_session::NodeSessionStatus::Blocked};
     std::size_t execution_index{0};
     std::vector<std::string> satisfied_dependencies;
     std::vector<std::string> used_mock_selectors;
@@ -121,8 +120,7 @@ struct AuditReportResult {
     }
 };
 
-[[nodiscard]] AuditReportValidationResult
-validate_audit_report(const AuditReport &report);
+[[nodiscard]] AuditReportValidationResult validate_audit_report(const AuditReport &report);
 
 [[nodiscard]] AuditReportResult
 build_audit_report(const handoff::ExecutionPlan &plan,

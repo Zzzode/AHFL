@@ -28,9 +28,8 @@ class ExecutionJournalJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(journal.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(journal.workflow_canonical_name); });
             field("session_id", [&]() { write_string(journal.session_id); });
             field("run_id", [&]() {
                 if (journal.run_id.has_value()) {
@@ -51,7 +50,6 @@ class ExecutionJournalJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -90,9 +88,8 @@ class ExecutionJournalJsonPrinter final : private PrettyJsonWriter {
                     return;
                 }
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(event.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(event.workflow_canonical_name); });
             field("node_name", [&]() {
                 if (event.node_name.has_value()) {
                     write_string(*event.node_name);

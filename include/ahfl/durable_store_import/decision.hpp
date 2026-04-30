@@ -10,12 +10,10 @@
 namespace ahfl::durable_store_import {
 
 // Format version - stable contract, DO NOT CHANGE
-inline constexpr std::string_view kDecisionFormatVersion =
-    "ahfl.durable-store-import-decision.v1";
+inline constexpr std::string_view kDecisionFormatVersion = "ahfl.durable-store-import-decision.v1";
 
 // Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportDecisionFormatVersion =
-    kDecisionFormatVersion;
+inline constexpr std::string_view kDurableStoreImportDecisionFormatVersion = kDecisionFormatVersion;
 
 enum class DecisionStatus {
     Accepted,
@@ -120,7 +118,8 @@ struct DecisionValidationResult {
 };
 
 // Legacy alias
-using DurableStoreImportDecisionValidationResult [[deprecated("Use DecisionValidationResult")]] = DecisionValidationResult;
+using DurableStoreImportDecisionValidationResult [[deprecated("Use DecisionValidationResult")]] =
+    DecisionValidationResult;
 
 struct DecisionResult {
     std::optional<Decision> decision;
@@ -143,8 +142,7 @@ validate_durable_store_import_decision(const Decision &decision) {
     return validate_decision(decision);
 }
 
-[[nodiscard]] inline DecisionResult
-build_durable_store_import_decision(const Request &request) {
+[[nodiscard]] inline DecisionResult build_durable_store_import_decision(const Request &request) {
     return build_decision(request);
 }
 

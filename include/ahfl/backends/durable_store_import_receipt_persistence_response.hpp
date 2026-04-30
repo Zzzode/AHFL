@@ -7,7 +7,6 @@
 namespace ahfl {
 
 void print_durable_store_import_receipt_persistence_response_json(
-    const durable_store_import::PersistenceResponse &response,
-    std::ostream &out);
+    const durable_store_import::PersistenceResponse &response, std::ostream &out);
 
 } // namespace ahfl

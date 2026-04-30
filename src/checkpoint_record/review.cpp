@@ -16,14 +16,17 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
         summary, owner_name, diagnostics, "checkpoint review summary");
 }
 
-void validate_resume_blocker(const CheckpointResumeBlocker &blocker,
-                             DiagnosticBag &diagnostics) {
+void validate_resume_blocker(const CheckpointResumeBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        diagnostics.error().message("checkpoint review summary resume_blocker message must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary resume_blocker message must not be empty")
+            .emit();
     }
 
     if (blocker.node_name.has_value() && blocker.node_name->empty()) {
-        diagnostics.error().message("checkpoint review summary resume_blocker node_name must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary resume_blocker node_name must not be empty")
+            .emit();
     }
 }
 
@@ -67,7 +70,8 @@ next_action_for_record(const CheckpointRecord &record) {
     case CheckpointBasisKind::LocalOnly:
         return "local checkpoint basis only; durable recovery ABI not yet promised";
     case CheckpointBasisKind::DurableAdjacent:
-        return "durable-adjacent checkpoint shape available; durable recovery ABI still not promised";
+        return "durable-adjacent checkpoint shape available; durable recovery ABI still not "
+               "promised";
     }
 
     return "local checkpoint basis only; durable recovery ABI not yet promised";
@@ -77,20 +81,18 @@ next_action_for_record(const CheckpointRecord &record) {
     switch (record.checkpoint_status) {
     case CheckpointRecordStatus::ReadyToPersist:
         if (record.cursor.resume_candidate_node_name.has_value()) {
-            return "checkpoint can resume from node '" +
-                   *record.cursor.resume_candidate_node_name +
+            return "checkpoint can resume from node '" + *record.cursor.resume_candidate_node_name +
                    "' after persisting current prefix";
         }
         return "checkpoint can resume after persisting current prefix";
     case CheckpointRecordStatus::Blocked:
         if (record.resume_blocker.has_value() &&
-            record.resume_blocker->kind ==
-                CheckpointResumeBlockerKind::NotCheckpointFriendly) {
+            record.resume_blocker->kind == CheckpointResumeBlockerKind::NotCheckpointFriendly) {
             return "resume is blocked because current checkpoint source is not checkpoint friendly";
         }
         if (record.resume_blocker.has_value() && record.resume_blocker->node_name.has_value()) {
-            return "resume is blocked while waiting on node '" +
-                   *record.resume_blocker->node_name + "'";
+            return "resume is blocked while waiting on node '" + *record.resume_blocker->node_name +
+                   "'";
         }
         return "resume is currently blocked until checkpoint readiness improves";
     case CheckpointRecordStatus::TerminalCompleted:
@@ -98,8 +100,7 @@ next_action_for_record(const CheckpointRecord &record) {
     case CheckpointRecordStatus::TerminalFailed:
         if (record.workflow_failure_summary.has_value() &&
             record.workflow_failure_summary->node_name.has_value()) {
-            return "workflow failed at node '" +
-                   *record.workflow_failure_summary->node_name +
+            return "workflow failed at node '" + *record.workflow_failure_summary->node_name +
                    "'; resume is not available from current checkpoint";
         }
         return "workflow failed; resume is not available from current checkpoint";
@@ -116,8 +117,7 @@ next_action_for_record(const CheckpointRecord &record) {
         return "persist current checkpoint basis before future resume";
     case CheckpointRecordStatus::Blocked:
         if (record.resume_blocker.has_value() &&
-            record.resume_blocker->kind ==
-                CheckpointResumeBlockerKind::NotCheckpointFriendly) {
+            record.resume_blocker->kind == CheckpointResumeBlockerKind::NotCheckpointFriendly) {
             return "keep checkpoint local-only and avoid advertising durable resume";
         }
         if (record.resume_blocker.has_value() && record.resume_blocker->node_name.has_value()) {
@@ -144,27 +144,41 @@ validate_checkpoint_review_summary(const CheckpointReviewSummary &summary) {
     auto &diagnostics = result.diagnostics;
 
     if (summary.format_version != kCheckpointReviewSummaryFormatVersion) {
-        diagnostics.error().message("checkpoint review summary format_version must be '" + std::string(kCheckpointReviewSummaryFormatVersion) + "'").emit();
+        diagnostics.error()
+            .message("checkpoint review summary format_version must be '" +
+                     std::string(kCheckpointReviewSummaryFormatVersion) + "'")
+            .emit();
     }
 
     if (summary.source_checkpoint_record_format_version != kCheckpointRecordFormatVersion) {
-        diagnostics.error().message("checkpoint review summary source_checkpoint_record_format_version must be '" + std::string(kCheckpointRecordFormatVersion) + "'").emit();
+        diagnostics.error()
+            .message("checkpoint review summary source_checkpoint_record_format_version must be '" +
+                     std::string(kCheckpointRecordFormatVersion) + "'")
+            .emit();
     }
 
     if (summary.workflow_canonical_name.empty()) {
-        diagnostics.error().message("checkpoint review summary workflow_canonical_name must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary workflow_canonical_name must not be empty")
+            .emit();
     }
 
     if (summary.session_id.empty()) {
-        diagnostics.error().message("checkpoint review summary session_id must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary session_id must not be empty")
+            .emit();
     }
 
     if (summary.run_id.has_value() && summary.run_id->empty()) {
-        diagnostics.error().message("checkpoint review summary run_id must not be empty when present").emit();
+        diagnostics.error()
+            .message("checkpoint review summary run_id must not be empty when present")
+            .emit();
     }
 
     if (summary.input_fixture.empty()) {
-        diagnostics.error().message("checkpoint review summary input_fixture must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary input_fixture must not be empty")
+            .emit();
     }
 
     if (summary.workflow_failure_summary.has_value()) {
@@ -172,12 +186,17 @@ validate_checkpoint_review_summary(const CheckpointReviewSummary &summary) {
     }
 
     if (summary.persistable_prefix_size != summary.persistable_prefix.size()) {
-        diagnostics.error().message("checkpoint review summary persistable_prefix_size must match persistable_prefix length").emit();
+        diagnostics.error()
+            .message("checkpoint review summary persistable_prefix_size must match "
+                     "persistable_prefix length")
+            .emit();
     }
 
     if (summary.resume_candidate_node_name.has_value() &&
         summary.resume_candidate_node_name->empty()) {
-        diagnostics.error().message("checkpoint review summary resume_candidate_node_name must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary resume_candidate_node_name must not be empty")
+            .emit();
     }
 
     if (summary.resume_blocker.has_value()) {
@@ -185,86 +204,145 @@ validate_checkpoint_review_summary(const CheckpointReviewSummary &summary) {
     }
 
     if (summary.resume_ready && summary.resume_blocker.has_value()) {
-        diagnostics.error().message("checkpoint review summary cannot contain resume_blocker when resume_ready is true").emit();
+        diagnostics.error()
+            .message(
+                "checkpoint review summary cannot contain resume_blocker when resume_ready is true")
+            .emit();
     }
 
     if (!summary.terminal_reason.has_value() &&
         (summary.checkpoint_status == CheckpointRecordStatus::TerminalCompleted ||
          summary.checkpoint_status == CheckpointRecordStatus::TerminalFailed ||
          summary.checkpoint_status == CheckpointRecordStatus::TerminalPartial)) {
-        diagnostics.error().message("checkpoint review summary terminal checkpoint_status requires terminal_reason").emit();
+        diagnostics.error()
+            .message(
+                "checkpoint review summary terminal checkpoint_status requires terminal_reason")
+            .emit();
     }
 
     if (summary.terminal_reason.has_value() && summary.terminal_reason->empty()) {
-        diagnostics.error().message("checkpoint review summary terminal_reason must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary terminal_reason must not be empty")
+            .emit();
     }
 
     if (summary.checkpoint_boundary_summary.empty()) {
-        diagnostics.error().message("checkpoint review summary checkpoint_boundary_summary must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary checkpoint_boundary_summary must not be empty")
+            .emit();
     }
 
     if (summary.resume_preview.empty()) {
-        diagnostics.error().message("checkpoint review summary resume_preview must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary resume_preview must not be empty")
+            .emit();
     }
 
     if (summary.next_step_recommendation.empty()) {
-        diagnostics.error().message("checkpoint review summary next_step_recommendation must not be empty").emit();
+        diagnostics.error()
+            .message("checkpoint review summary next_step_recommendation must not be empty")
+            .emit();
     }
 
     switch (summary.checkpoint_status) {
     case CheckpointRecordStatus::ReadyToPersist:
         if (summary.next_action != CheckpointReviewNextActionKind::PersistCheckpoint) {
-            diagnostics.error().message("checkpoint review summary ReadyToPersist checkpoint_status requires next_action persist_checkpoint").emit();
+            diagnostics.error()
+                .message("checkpoint review summary ReadyToPersist checkpoint_status requires "
+                         "next_action persist_checkpoint")
+                .emit();
         }
         if (summary.terminal_reason.has_value()) {
-            diagnostics.error().message("checkpoint review summary ReadyToPersist checkpoint_status must not declare terminal_reason").emit();
+            diagnostics.error()
+                .message("checkpoint review summary ReadyToPersist checkpoint_status must not "
+                         "declare terminal_reason")
+                .emit();
         }
         if (!summary.resume_ready) {
-            diagnostics.error().message("checkpoint review summary ReadyToPersist checkpoint_status requires resume_ready").emit();
+            diagnostics.error()
+                .message("checkpoint review summary ReadyToPersist checkpoint_status requires "
+                         "resume_ready")
+                .emit();
         }
         break;
     case CheckpointRecordStatus::Blocked:
         if (summary.next_action != CheckpointReviewNextActionKind::AwaitCheckpointReadiness) {
-            diagnostics.error().message("checkpoint review summary Blocked checkpoint_status requires next_action await_checkpoint_readiness").emit();
+            diagnostics.error()
+                .message("checkpoint review summary Blocked checkpoint_status requires next_action "
+                         "await_checkpoint_readiness")
+                .emit();
         }
         if (summary.terminal_reason.has_value()) {
-            diagnostics.error().message("checkpoint review summary Blocked checkpoint_status must not declare terminal_reason").emit();
+            diagnostics.error()
+                .message("checkpoint review summary Blocked checkpoint_status must not declare "
+                         "terminal_reason")
+                .emit();
         }
         if (summary.resume_ready) {
-            diagnostics.error().message("checkpoint review summary Blocked checkpoint_status cannot be resume_ready").emit();
+            diagnostics.error()
+                .message(
+                    "checkpoint review summary Blocked checkpoint_status cannot be resume_ready")
+                .emit();
         }
         if (!summary.resume_blocker.has_value()) {
-            diagnostics.error().message("checkpoint review summary Blocked checkpoint_status requires resume_blocker").emit();
+            diagnostics.error()
+                .message(
+                    "checkpoint review summary Blocked checkpoint_status requires resume_blocker")
+                .emit();
         }
         break;
     case CheckpointRecordStatus::TerminalCompleted:
         if (summary.next_action != CheckpointReviewNextActionKind::WorkflowCompleted) {
-            diagnostics.error().message("checkpoint review summary TerminalCompleted checkpoint_status requires next_action workflow_completed").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalCompleted checkpoint_status requires "
+                         "next_action workflow_completed")
+                .emit();
         }
         if (summary.terminal_reason != "workflow_completed") {
-            diagnostics.error().message("checkpoint review summary TerminalCompleted checkpoint_status requires terminal_reason 'workflow_completed'").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalCompleted checkpoint_status requires "
+                         "terminal_reason 'workflow_completed'")
+                .emit();
         }
         break;
     case CheckpointRecordStatus::TerminalFailed:
         if (summary.next_action != CheckpointReviewNextActionKind::InvestigateFailure) {
-            diagnostics.error().message("checkpoint review summary TerminalFailed checkpoint_status requires next_action investigate_failure").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalFailed checkpoint_status requires "
+                         "next_action investigate_failure")
+                .emit();
         }
         if (summary.terminal_reason != "workflow_failed") {
-            diagnostics.error().message("checkpoint review summary TerminalFailed checkpoint_status requires terminal_reason 'workflow_failed'").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalFailed checkpoint_status requires "
+                         "terminal_reason 'workflow_failed'")
+                .emit();
         }
         if (!summary.resume_blocker.has_value()) {
-            diagnostics.error().message("checkpoint review summary TerminalFailed checkpoint_status requires resume_blocker").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalFailed checkpoint_status requires "
+                         "resume_blocker")
+                .emit();
         }
         break;
     case CheckpointRecordStatus::TerminalPartial:
         if (summary.next_action != CheckpointReviewNextActionKind::PreservePartialState) {
-            diagnostics.error().message("checkpoint review summary TerminalPartial checkpoint_status requires next_action preserve_partial_state").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalPartial checkpoint_status requires "
+                         "next_action preserve_partial_state")
+                .emit();
         }
         if (summary.terminal_reason != "partial_checkpoint_retained") {
-            diagnostics.error().message("checkpoint review summary TerminalPartial checkpoint_status requires terminal_reason 'partial_checkpoint_retained'").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalPartial checkpoint_status requires "
+                         "terminal_reason 'partial_checkpoint_retained'")
+                .emit();
         }
         if (!summary.resume_blocker.has_value()) {
-            diagnostics.error().message("checkpoint review summary TerminalPartial checkpoint_status requires resume_blocker").emit();
+            diagnostics.error()
+                .message("checkpoint review summary TerminalPartial checkpoint_status requires "
+                         "resume_blocker")
+                .emit();
         }
         break;
     }
@@ -272,8 +350,7 @@ validate_checkpoint_review_summary(const CheckpointReviewSummary &summary) {
     return result;
 }
 
-CheckpointReviewSummaryResult
-build_checkpoint_review_summary(const CheckpointRecord &record) {
+CheckpointReviewSummaryResult build_checkpoint_review_summary(const CheckpointRecord &record) {
     CheckpointReviewSummaryResult result{
         .summary = std::nullopt,
         .diagnostics = {},

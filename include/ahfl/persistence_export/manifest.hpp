@@ -98,8 +98,7 @@ struct PersistenceExportManifest {
     ExportArtifactBundle artifact_bundle;
     bool manifest_ready{false};
     std::optional<ExportArtifactKind> next_required_artifact_kind;
-    PersistenceExportManifestStatus manifest_status{
-        PersistenceExportManifestStatus::Blocked};
+    PersistenceExportManifestStatus manifest_status{PersistenceExportManifestStatus::Blocked};
     std::optional<StoreImportBlocker> store_import_blocker;
 };
 
@@ -123,8 +122,7 @@ struct PersistenceExportManifestResult {
 [[nodiscard]] PersistenceExportManifestValidationResult
 validate_persistence_export_manifest(const PersistenceExportManifest &manifest);
 
-[[nodiscard]] PersistenceExportManifestResult
-build_persistence_export_manifest(
+[[nodiscard]] PersistenceExportManifestResult build_persistence_export_manifest(
     const handoff::ExecutionPlan &plan,
     const runtime_session::RuntimeSession &session,
     const execution_journal::ExecutionJournal &journal,

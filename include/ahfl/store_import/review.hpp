@@ -44,8 +44,7 @@ struct StoreImportReviewSummary {
     std::string export_package_identity;
     std::string store_import_candidate_identity;
     std::string planned_durable_identity;
-    StoreImportBoundaryKind descriptor_boundary_kind{
-        StoreImportBoundaryKind::LocalStagingOnly};
+    StoreImportBoundaryKind descriptor_boundary_kind{StoreImportBoundaryKind::LocalStagingOnly};
     std::size_t staging_artifact_entry_count{0};
     std::vector<std::string> staging_artifact_preview;
     bool import_ready{false};

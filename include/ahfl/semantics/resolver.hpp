@@ -150,8 +150,8 @@ struct ResolveResult {
         std::size_t end_offset{0};
         std::optional<SourceId> source_id;
 
-        [[nodiscard]] friend bool
-        operator==(const ReferenceLookupKey &lhs, const ReferenceLookupKey &rhs) noexcept = default;
+        [[nodiscard]] friend bool operator==(const ReferenceLookupKey &lhs,
+                                             const ReferenceLookupKey &rhs) noexcept = default;
     };
 
     struct ReferenceLookupKeyHash {
@@ -163,8 +163,9 @@ struct ResolveResult {
         std::size_t begin_offset{0};
         std::size_t end_offset{0};
 
-        [[nodiscard]] friend bool operator==(const ReferenceLookupNoSourceKey &lhs,
-                                             const ReferenceLookupNoSourceKey &rhs) noexcept = default;
+        [[nodiscard]] friend bool
+        operator==(const ReferenceLookupNoSourceKey &lhs,
+                   const ReferenceLookupNoSourceKey &rhs) noexcept = default;
     };
 
     struct ReferenceLookupNoSourceKeyHash {
@@ -180,10 +181,9 @@ struct ResolveResult {
 
     mutable std::unordered_map<ReferenceLookupKey, std::size_t, ReferenceLookupKeyHash>
         reference_lookup_cache_;
-    mutable std::unordered_map<ReferenceLookupNoSourceKey,
-                               std::size_t,
-                               ReferenceLookupNoSourceKeyHash>
-        reference_lookup_no_source_cache_;
+    mutable std::
+        unordered_map<ReferenceLookupNoSourceKey, std::size_t, ReferenceLookupNoSourceKeyHash>
+            reference_lookup_no_source_cache_;
     mutable std::size_t reference_lookup_cache_size_{0};
     mutable const ResolvedReference *reference_lookup_cache_data_{nullptr};
     mutable bool reference_lookup_cache_valid_{false};

@@ -45,8 +45,8 @@ enum class PersistenceResponseBoundaryKind {
 };
 
 // Legacy alias
-using ReceiptPersistenceResponseBoundaryKind
-    [[deprecated("Use PersistenceResponseBoundaryKind")]] = PersistenceResponseBoundaryKind;
+using ReceiptPersistenceResponseBoundaryKind [[deprecated("Use PersistenceResponseBoundaryKind")]] =
+    PersistenceResponseBoundaryKind;
 
 enum class PersistenceResponseBlockerKind {
     SourcePersistenceRequestBlocked,
@@ -56,8 +56,8 @@ enum class PersistenceResponseBlockerKind {
 };
 
 // Legacy alias
-using ReceiptPersistenceResponseBlockerKind
-    [[deprecated("Use PersistenceResponseBlockerKind")]] = PersistenceResponseBlockerKind;
+using ReceiptPersistenceResponseBlockerKind [[deprecated("Use PersistenceResponseBlockerKind")]] =
+    PersistenceResponseBlockerKind;
 
 struct PersistenceResponseBlocker {
     PersistenceResponseBlockerKind kind{
@@ -67,8 +67,8 @@ struct PersistenceResponseBlocker {
 };
 
 // Legacy alias
-using ReceiptPersistenceResponseBlocker
-    [[deprecated("Use PersistenceResponseBlocker")]] = PersistenceResponseBlocker;
+using ReceiptPersistenceResponseBlocker [[deprecated("Use PersistenceResponseBlocker")]] =
+    PersistenceResponseBlocker;
 
 struct PersistenceResponse {
     std::string format_version{std::string(kPersistenceResponseFormatVersion)};
@@ -116,8 +116,8 @@ struct PersistenceResponse {
     RequestStatus request_status{RequestStatus::Blocked};
     DecisionStatus decision_status{DecisionStatus::Blocked};
     ReceiptStatus receipt_status{ReceiptStatus::Blocked};
-    PersistenceRequestStatus persistence_request_status{  // Keep field name for JSON
-        PersistenceRequestStatus::Blocked};
+    PersistenceRequestStatus persistence_request_status{// Keep field name for JSON
+                                                        PersistenceRequestStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
@@ -128,17 +128,19 @@ struct PersistenceResponse {
     std::string durable_store_import_receipt_persistence_response_identity;
     std::string planned_durable_identity;
     ReceiptBoundaryKind receipt_boundary_kind{ReceiptBoundaryKind::LocalContractOnly};
-    PersistenceBoundaryKind receipt_persistence_boundary_kind{  // Keep field name
+    PersistenceBoundaryKind receipt_persistence_boundary_kind{
+        // Keep field name
         PersistenceBoundaryKind::LocalContractOnly};
-    PersistenceResponseBoundaryKind receipt_persistence_response_boundary_kind{  // Keep field name
+    PersistenceResponseBoundaryKind receipt_persistence_response_boundary_kind{
+        // Keep field name
         PersistenceResponseBoundaryKind::LocalContractOnly};
-    PersistenceResponseStatus response_status{  // Keep field name
-        PersistenceResponseStatus::Blocked};
-    PersistenceResponseOutcome response_outcome{  // Keep field name
-        PersistenceResponseOutcome::BlockBlockedRequest};
+    PersistenceResponseStatus response_status{// Keep field name
+                                              PersistenceResponseStatus::Blocked};
+    PersistenceResponseOutcome response_outcome{// Keep field name
+                                                PersistenceResponseOutcome::BlockBlockedRequest};
     bool acknowledged_for_response{false};
     std::optional<AdapterCapabilityKind> next_required_adapter_capability;
-    std::optional<PersistenceResponseBlocker> response_blocker;  // Keep field name
+    std::optional<PersistenceResponseBlocker> response_blocker; // Keep field name
 };
 
 // Legacy alias for backward compatibility

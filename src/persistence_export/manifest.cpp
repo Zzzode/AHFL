@@ -30,8 +30,7 @@ void validate_package_identity(const handoff::PackageIdentity &identity,
 
 void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
                               DiagnosticBag &diagnostics) {
-    validation::validate_failure_summary_field(
-        summary, diagnostics, "persistence export manifest");
+    validation::validate_failure_summary_field(summary, diagnostics, "persistence export manifest");
 }
 
 [[nodiscard]] const handoff::WorkflowPlan *
@@ -50,9 +49,9 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
     return validation::package_identity_equals(lhs, rhs);
 }
 
-[[nodiscard]] bool failure_summary_equals(
-    const std::optional<runtime_session::RuntimeFailureSummary> &lhs,
-    const std::optional<runtime_session::RuntimeFailureSummary> &rhs) {
+[[nodiscard]] bool
+failure_summary_equals(const std::optional<runtime_session::RuntimeFailureSummary> &lhs,
+                       const std::optional<runtime_session::RuntimeFailureSummary> &rhs) {
     return validation::failure_summary_equals(lhs, rhs);
 }
 
@@ -71,9 +70,9 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
     std::string_view workflow_canonical_name,
     std::string_view session_id,
     std::size_t exportable_prefix_size) {
-    const auto &identity_anchor =
-        source_package_identity.has_value() ? source_package_identity->name
-                                            : std::string(workflow_canonical_name);
+    const auto &identity_anchor = source_package_identity.has_value()
+                                      ? source_package_identity->name
+                                      : std::string(workflow_canonical_name);
     return "export::" + identity_anchor + "::" + std::string(session_id) + "::prefix-" +
            std::to_string(exportable_prefix_size);
 }
@@ -97,8 +96,8 @@ find_workflow_plan(const handoff::ExecutionPlan &plan, std::string_view workflow
     return bundle;
 }
 
-[[nodiscard]] StoreImportBlockerKind to_store_import_blocker_kind(
-    persistence_descriptor::PersistenceBlockerKind kind) {
+[[nodiscard]] StoreImportBlockerKind
+to_store_import_blocker_kind(persistence_descriptor::PersistenceBlockerKind kind) {
     switch (kind) {
     case persistence_descriptor::PersistenceBlockerKind::WaitingOnCheckpointState:
     case persistence_descriptor::PersistenceBlockerKind::MissingPlannedDurableIdentity:
@@ -120,76 +119,88 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
     auto &diagnostics = result.diagnostics;
 
     if (manifest.format_version != kPersistenceExportManifestFormatVersion) {
-        emit_validation_error(diagnostics, "persistence export manifest format_version must be '" +
-                          std::string(kPersistenceExportManifestFormatVersion) + "'");
+        emit_validation_error(diagnostics,
+                              "persistence export manifest format_version must be '" +
+                                  std::string(kPersistenceExportManifestFormatVersion) + "'");
     }
 
     if (manifest.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_execution_plan_format_version must be '" +
-            std::string(handoff::kExecutionPlanFormatVersion) + "'");
+                std::string(handoff::kExecutionPlanFormatVersion) + "'");
     }
 
     if (manifest.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_runtime_session_format_version must be '" +
-            std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
+                std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
     }
 
     if (manifest.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_execution_journal_format_version must be '" +
-            std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
+                std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
     }
 
     if (manifest.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_replay_view_format_version must be '" +
-            std::string(replay_view::kReplayViewFormatVersion) + "'");
+                std::string(replay_view::kReplayViewFormatVersion) + "'");
     }
 
     if (manifest.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_scheduler_snapshot_format_version must be '" +
-            std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
+                std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (manifest.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_checkpoint_record_format_version must be '" +
-            std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
+                std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
     }
 
     if (manifest.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest source_persistence_descriptor_format_version must be '" +
-            std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
+                std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
     }
 
     if (manifest.workflow_canonical_name.empty()) {
-        emit_validation_error(diagnostics, "persistence export manifest workflow_canonical_name must not be empty");
+        emit_validation_error(
+            diagnostics, "persistence export manifest workflow_canonical_name must not be empty");
     }
 
     if (manifest.session_id.empty()) {
-        emit_validation_error(diagnostics, "persistence export manifest session_id must not be empty");
+        emit_validation_error(diagnostics,
+                              "persistence export manifest session_id must not be empty");
     }
 
     if (manifest.input_fixture.empty()) {
-        emit_validation_error(diagnostics, "persistence export manifest input_fixture must not be empty");
+        emit_validation_error(diagnostics,
+                              "persistence export manifest input_fixture must not be empty");
     }
 
     if (manifest.export_package_identity.empty()) {
-        emit_validation_error(diagnostics, "persistence export manifest export_package_identity must not be empty");
+        emit_validation_error(
+            diagnostics, "persistence export manifest export_package_identity must not be empty");
     }
 
     if (manifest.planned_durable_identity.empty()) {
-        emit_validation_error(diagnostics,
-            "persistence export manifest planned_durable_identity must not be empty");
+        emit_validation_error(
+            diagnostics, "persistence export manifest planned_durable_identity must not be empty");
     }
 
     if (manifest.source_package_identity.has_value()) {
@@ -201,12 +212,14 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
     }
 
     if (manifest.artifact_bundle.entry_count != manifest.artifact_bundle.entries.size()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest artifact_bundle entry_count must match entries length");
     }
 
     if (manifest.manifest_ready && manifest.artifact_bundle.entries.empty()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest manifest_ready requires non-empty artifact_bundle");
     }
 
@@ -214,52 +227,61 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
     for (const auto &entry : manifest.artifact_bundle.entries) {
         if (entry.logical_artifact_name.empty()) {
             emit_validation_error(diagnostics,
-                "persistence export manifest artifact_bundle entry logical_artifact_name must not be empty");
+                                  "persistence export manifest artifact_bundle entry "
+                                  "logical_artifact_name must not be empty");
         } else if (!logical_names.insert(entry.logical_artifact_name).second) {
             emit_validation_error(diagnostics,
-                "persistence export manifest artifact_bundle contains duplicate logical_artifact_name '" +
-                entry.logical_artifact_name + "'");
+                                  "persistence export manifest artifact_bundle contains duplicate "
+                                  "logical_artifact_name '" +
+                                      entry.logical_artifact_name + "'");
         }
 
         if (entry.source_format_version.empty()) {
             emit_validation_error(diagnostics,
-                "persistence export manifest artifact_bundle entry source_format_version must not be empty");
+                                  "persistence export manifest artifact_bundle entry "
+                                  "source_format_version must not be empty");
         }
     }
 
     if (manifest.manifest_ready && manifest.store_import_blocker.has_value()) {
         emit_validation_error(diagnostics,
-            "persistence export manifest cannot contain store_import_blocker when manifest_ready is true");
+                              "persistence export manifest cannot contain store_import_blocker "
+                              "when manifest_ready is true");
     }
 
     if (manifest.manifest_ready && manifest.next_required_artifact_kind.has_value()) {
         emit_validation_error(diagnostics,
-            "persistence export manifest cannot contain next_required_artifact_kind when manifest_ready is true");
+                              "persistence export manifest cannot contain "
+                              "next_required_artifact_kind when manifest_ready is true");
     }
 
     if (!manifest.manifest_ready &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalCompleted &&
         !manifest.store_import_blocker.has_value()) {
         emit_validation_error(diagnostics,
-            "persistence export manifest must contain store_import_blocker when manifest_ready is false");
+                              "persistence export manifest must contain store_import_blocker when "
+                              "manifest_ready is false");
     }
 
     if (manifest.store_import_blocker.has_value()) {
         if (manifest.store_import_blocker->message.empty()) {
-            emit_validation_error(diagnostics,
+            emit_validation_error(
+                diagnostics,
                 "persistence export manifest store_import_blocker message must not be empty");
         }
 
         if (manifest.store_import_blocker->logical_artifact_name.has_value() &&
             manifest.store_import_blocker->logical_artifact_name->empty()) {
             emit_validation_error(diagnostics,
-                "persistence export manifest store_import_blocker logical_artifact_name must not be empty");
+                                  "persistence export manifest store_import_blocker "
+                                  "logical_artifact_name must not be empty");
         }
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::ReadyToImport &&
         !manifest.manifest_ready) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest ReadyToImport status requires manifest_ready");
     }
 
@@ -267,50 +289,57 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
         manifest.persistence_status !=
             persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport) {
         emit_validation_error(diagnostics,
-            "persistence export manifest ReadyToImport status requires ReadyToExport persistence_status");
+                              "persistence export manifest ReadyToImport status requires "
+                              "ReadyToExport persistence_status");
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::ReadyToImport &&
         manifest.store_import_blocker.has_value()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest ReadyToImport status cannot have store_import_blocker");
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::Blocked &&
         manifest.manifest_ready) {
-        emit_validation_error(diagnostics,
-            "persistence export manifest Blocked status cannot be manifest_ready");
+        emit_validation_error(
+            diagnostics, "persistence export manifest Blocked status cannot be manifest_ready");
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::TerminalCompleted &&
         !manifest.manifest_ready) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest TerminalCompleted status requires manifest_ready");
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::TerminalCompleted &&
         manifest.store_import_blocker.has_value()) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalCompleted status cannot have store_import_blocker");
+                              "persistence export manifest TerminalCompleted status cannot have "
+                              "store_import_blocker");
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::TerminalCompleted &&
         manifest.next_required_artifact_kind.has_value()) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalCompleted status cannot have next_required_artifact_kind");
+                              "persistence export manifest TerminalCompleted status cannot have "
+                              "next_required_artifact_kind");
     }
 
     if ((manifest.manifest_status == PersistenceExportManifestStatus::TerminalFailed ||
          manifest.manifest_status == PersistenceExportManifestStatus::TerminalPartial) &&
         !manifest.store_import_blocker.has_value()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest terminal blocked status requires store_import_blocker");
     }
 
     if ((manifest.manifest_status == PersistenceExportManifestStatus::TerminalFailed ||
          manifest.manifest_status == PersistenceExportManifestStatus::TerminalPartial) &&
         manifest.manifest_ready) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest terminal blocked status cannot be manifest_ready");
     }
 
@@ -318,12 +347,14 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
          manifest.manifest_status == PersistenceExportManifestStatus::TerminalPartial) &&
         manifest.next_required_artifact_kind.has_value()) {
         emit_validation_error(diagnostics,
-            "persistence export manifest terminal blocked status cannot have next_required_artifact_kind");
+                              "persistence export manifest terminal blocked status cannot have "
+                              "next_required_artifact_kind");
     }
 
     if (manifest.manifest_status == PersistenceExportManifestStatus::TerminalFailed &&
         !manifest.workflow_failure_summary.has_value()) {
-        emit_validation_error(diagnostics,
+        emit_validation_error(
+            diagnostics,
             "persistence export manifest TerminalFailed status requires workflow_failure_summary");
     }
 
@@ -331,58 +362,68 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
         !manifest.manifest_ready &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
         emit_validation_error(diagnostics,
-            "persistence export manifest store-import-adjacent boundary requires ready or completed manifest_status");
+                              "persistence export manifest store-import-adjacent boundary requires "
+                              "ready or completed manifest_status");
     }
 
     if (manifest.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
         emit_validation_error(diagnostics,
-            "persistence export manifest completed workflow_status requires TerminalCompleted manifest_status");
+                              "persistence export manifest completed workflow_status requires "
+                              "TerminalCompleted manifest_status");
     }
 
     if (manifest.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalFailed) {
         emit_validation_error(diagnostics,
-            "persistence export manifest failed workflow_status requires TerminalFailed manifest_status");
+                              "persistence export manifest failed workflow_status requires "
+                              "TerminalFailed manifest_status");
     }
 
-    if (manifest.checkpoint_status == checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
+    if (manifest.checkpoint_status ==
+            checkpoint_record::CheckpointRecordStatus::TerminalCompleted &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalCompleted checkpoint_status requires TerminalCompleted manifest_status");
+                              "persistence export manifest TerminalCompleted checkpoint_status "
+                              "requires TerminalCompleted manifest_status");
     }
 
     if (manifest.checkpoint_status == checkpoint_record::CheckpointRecordStatus::TerminalFailed &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalFailed) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalFailed checkpoint_status requires TerminalFailed manifest_status");
+                              "persistence export manifest TerminalFailed checkpoint_status "
+                              "requires TerminalFailed manifest_status");
     }
 
     if (manifest.checkpoint_status == checkpoint_record::CheckpointRecordStatus::TerminalPartial &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalPartial) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalPartial checkpoint_status requires TerminalPartial manifest_status");
+                              "persistence export manifest TerminalPartial checkpoint_status "
+                              "requires TerminalPartial manifest_status");
     }
 
     if (manifest.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalCompleted) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalCompleted persistence_status requires TerminalCompleted manifest_status");
+                              "persistence export manifest TerminalCompleted persistence_status "
+                              "requires TerminalCompleted manifest_status");
     }
 
     if (manifest.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalFailed) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalFailed persistence_status requires TerminalFailed manifest_status");
+                              "persistence export manifest TerminalFailed persistence_status "
+                              "requires TerminalFailed manifest_status");
     }
 
     if (manifest.persistence_status ==
             persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalPartial) {
         emit_validation_error(diagnostics,
-            "persistence export manifest TerminalPartial persistence_status requires TerminalPartial manifest_status");
+                              "persistence export manifest TerminalPartial persistence_status "
+                              "requires TerminalPartial manifest_status");
     }
 
     if (manifest.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
@@ -390,14 +431,14 @@ validate_persistence_export_manifest(const PersistenceExportManifest &manifest) 
         manifest.manifest_status != PersistenceExportManifestStatus::Blocked &&
         manifest.manifest_status != PersistenceExportManifestStatus::TerminalPartial) {
         emit_validation_error(diagnostics,
-            "persistence export manifest partial workflow_status must map to ReadyToImport, Blocked, or TerminalPartial manifest_status");
+                              "persistence export manifest partial workflow_status must map to "
+                              "ReadyToImport, Blocked, or TerminalPartial manifest_status");
     }
 
     return result;
 }
 
-PersistenceExportManifestResult
-build_persistence_export_manifest(
+PersistenceExportManifestResult build_persistence_export_manifest(
     const handoff::ExecutionPlan &plan,
     const runtime_session::RuntimeSession &session,
     const execution_journal::ExecutionJournal &journal,
@@ -438,284 +479,352 @@ build_persistence_export_manifest(
 
     if (session.source_execution_plan_format_version != plan.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap runtime session source_execution_plan_format_version does not match execution plan");
+                             "persistence export manifest bootstrap runtime session "
+                             "source_execution_plan_format_version does not match execution plan");
     }
 
     if (journal.source_execution_plan_format_version != plan.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap execution journal source_execution_plan_format_version does not match execution plan");
+                             "persistence export manifest bootstrap execution journal "
+                             "source_execution_plan_format_version does not match execution plan");
     }
 
     if (journal.source_runtime_session_format_version != session.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap execution journal source_runtime_session_format_version does not match runtime session");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap execution journal "
+            "source_runtime_session_format_version does not match runtime session");
     }
 
     if (replay.source_execution_plan_format_version != plan.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view source_execution_plan_format_version does not match execution plan");
+                             "persistence export manifest bootstrap replay view "
+                             "source_execution_plan_format_version does not match execution plan");
     }
 
     if (replay.source_runtime_session_format_version != session.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view source_runtime_session_format_version does not match runtime session");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap replay view "
+            "source_runtime_session_format_version does not match runtime session");
     }
 
     if (replay.source_execution_journal_format_version != journal.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view source_execution_journal_format_version does not match execution journal");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap replay view "
+            "source_execution_journal_format_version does not match execution journal");
     }
 
     if (snapshot.source_execution_plan_format_version != plan.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot source_execution_plan_format_version does not match execution plan");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "source_execution_plan_format_version does not match execution plan");
     }
 
     if (snapshot.source_runtime_session_format_version != session.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot source_runtime_session_format_version does not match runtime session");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap scheduler snapshot "
+            "source_runtime_session_format_version does not match runtime session");
     }
 
     if (snapshot.source_execution_journal_format_version != journal.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot source_execution_journal_format_version does not match execution journal");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap scheduler snapshot "
+            "source_execution_journal_format_version does not match execution journal");
     }
 
     if (snapshot.source_replay_view_format_version != replay.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot source_replay_view_format_version does not match replay view");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "source_replay_view_format_version does not match replay view");
     }
 
     if (record.source_execution_plan_format_version != plan.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record source_execution_plan_format_version does not match execution plan");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "source_execution_plan_format_version does not match execution plan");
     }
 
     if (record.source_runtime_session_format_version != session.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record source_runtime_session_format_version does not match runtime session");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap checkpoint record "
+            "source_runtime_session_format_version does not match runtime session");
     }
 
     if (record.source_execution_journal_format_version != journal.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record source_execution_journal_format_version does not match execution journal");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap checkpoint record "
+            "source_execution_journal_format_version does not match execution journal");
     }
 
     if (record.source_replay_view_format_version != replay.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record source_replay_view_format_version does not match replay view");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "source_replay_view_format_version does not match replay view");
     }
 
     if (record.source_scheduler_snapshot_format_version != snapshot.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record source_scheduler_snapshot_format_version does not match scheduler snapshot");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap checkpoint record "
+            "source_scheduler_snapshot_format_version does not match scheduler snapshot");
     }
 
     if (descriptor.source_execution_plan_format_version != plan.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_execution_plan_format_version does not match execution plan");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "source_execution_plan_format_version does not match execution plan");
     }
 
     if (descriptor.source_runtime_session_format_version != session.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_runtime_session_format_version does not match runtime session");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap persistence descriptor "
+            "source_runtime_session_format_version does not match runtime session");
     }
 
     if (descriptor.source_execution_journal_format_version != journal.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_execution_journal_format_version does not match execution journal");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap persistence descriptor "
+            "source_execution_journal_format_version does not match execution journal");
     }
 
     if (descriptor.source_replay_view_format_version != replay.format_version) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_replay_view_format_version does not match replay view");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "source_replay_view_format_version does not match replay view");
     }
 
     if (descriptor.source_scheduler_snapshot_format_version != snapshot.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_scheduler_snapshot_format_version does not match scheduler snapshot");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap persistence descriptor "
+            "source_scheduler_snapshot_format_version does not match scheduler snapshot");
     }
 
     if (descriptor.source_checkpoint_record_format_version != record.format_version) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_checkpoint_record_format_version does not match checkpoint record");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap persistence descriptor "
+            "source_checkpoint_record_format_version does not match checkpoint record");
     }
 
     if (!package_identity_equals(plan.source_package_identity, session.source_package_identity)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap runtime session source_package_identity does not match execution plan");
+                             "persistence export manifest bootstrap runtime session "
+                             "source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity, journal.source_package_identity)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap execution journal source_package_identity does not match execution plan");
+                             "persistence export manifest bootstrap execution journal "
+                             "source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity, replay.source_package_identity)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view source_package_identity does not match execution plan");
+                             "persistence export manifest bootstrap replay view "
+                             "source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity, snapshot.source_package_identity)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot source_package_identity does not match execution plan");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity, record.source_package_identity)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record source_package_identity does not match execution plan");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "source_package_identity does not match execution plan");
     }
 
     if (!package_identity_equals(plan.source_package_identity,
                                  descriptor.source_package_identity)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor source_package_identity does not match execution plan");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "source_package_identity does not match execution plan");
     }
 
     if (session.workflow_canonical_name != journal.workflow_canonical_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap execution journal workflow_canonical_name does not match runtime session");
+                             "persistence export manifest bootstrap execution journal "
+                             "workflow_canonical_name does not match runtime session");
     }
 
     if (session.workflow_canonical_name != replay.workflow_canonical_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view workflow_canonical_name does not match runtime session");
+                             "persistence export manifest bootstrap replay view "
+                             "workflow_canonical_name does not match runtime session");
     }
 
     if (session.workflow_canonical_name != snapshot.workflow_canonical_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot workflow_canonical_name does not match runtime session");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "workflow_canonical_name does not match runtime session");
     }
 
     if (session.workflow_canonical_name != record.workflow_canonical_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record workflow_canonical_name does not match runtime session");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "workflow_canonical_name does not match runtime session");
     }
 
     if (session.workflow_canonical_name != descriptor.workflow_canonical_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor workflow_canonical_name does not match runtime session");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "workflow_canonical_name does not match runtime session");
     }
 
     if (session.session_id != journal.session_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap execution journal session_id does not match runtime session");
+                             "persistence export manifest bootstrap execution journal session_id "
+                             "does not match runtime session");
     }
 
     if (session.session_id != replay.session_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view session_id does not match runtime session");
+                             "persistence export manifest bootstrap replay view session_id does "
+                             "not match runtime session");
     }
 
     if (session.session_id != snapshot.session_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot session_id does not match runtime session");
+                             "persistence export manifest bootstrap scheduler snapshot session_id "
+                             "does not match runtime session");
     }
 
     if (session.session_id != record.session_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record session_id does not match runtime session");
+                             "persistence export manifest bootstrap checkpoint record session_id "
+                             "does not match runtime session");
     }
 
     if (session.session_id != descriptor.session_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor session_id does not match runtime session");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "session_id does not match runtime session");
     }
 
     if (session.run_id != journal.run_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap execution journal run_id does not match runtime session");
+                             "persistence export manifest bootstrap execution journal run_id does "
+                             "not match runtime session");
     }
 
     if (session.run_id != replay.run_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view run_id does not match runtime session");
+                             "persistence export manifest bootstrap replay view run_id does not "
+                             "match runtime session");
     }
 
     if (session.run_id != snapshot.run_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot run_id does not match runtime session");
+                             "persistence export manifest bootstrap scheduler snapshot run_id does "
+                             "not match runtime session");
     }
 
     if (session.run_id != record.run_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record run_id does not match runtime session");
+                             "persistence export manifest bootstrap checkpoint record run_id does "
+                             "not match runtime session");
     }
 
     if (session.run_id != descriptor.run_id) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor run_id does not match runtime session");
+                             "persistence export manifest bootstrap persistence descriptor run_id "
+                             "does not match runtime session");
     }
 
     if (session.input_fixture != replay.input_fixture) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view input_fixture does not match runtime session");
+                             "persistence export manifest bootstrap replay view input_fixture does "
+                             "not match runtime session");
     }
 
     if (session.input_fixture != snapshot.input_fixture) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot input_fixture does not match runtime session");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "input_fixture does not match runtime session");
     }
 
     if (session.input_fixture != record.input_fixture) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record input_fixture does not match runtime session");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "input_fixture does not match runtime session");
     }
 
     if (session.input_fixture != descriptor.input_fixture) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor input_fixture does not match runtime session");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "input_fixture does not match runtime session");
     }
 
     if (session.workflow_status != replay.workflow_status) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view workflow_status does not match runtime session");
+                             "persistence export manifest bootstrap replay view workflow_status "
+                             "does not match runtime session");
     }
 
     if (session.workflow_status != snapshot.workflow_status) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot workflow_status does not match runtime session");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "workflow_status does not match runtime session");
     }
 
     if (session.workflow_status != record.workflow_status) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record workflow_status does not match runtime session");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "workflow_status does not match runtime session");
     }
 
     if (session.workflow_status != descriptor.workflow_status) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor workflow_status does not match runtime session");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "workflow_status does not match runtime session");
     }
 
     if (!failure_summary_equals(session.failure_summary, replay.workflow_failure_summary)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view workflow_failure_summary does not match runtime session");
+                             "persistence export manifest bootstrap replay view "
+                             "workflow_failure_summary does not match runtime session");
     }
 
     if (!failure_summary_equals(session.failure_summary, snapshot.workflow_failure_summary)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot workflow_failure_summary does not match runtime session");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "workflow_failure_summary does not match runtime session");
     }
 
     if (!failure_summary_equals(session.failure_summary, record.workflow_failure_summary)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record workflow_failure_summary does not match runtime session");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "workflow_failure_summary does not match runtime session");
     }
 
     if (!failure_summary_equals(session.failure_summary, descriptor.workflow_failure_summary)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor workflow_failure_summary does not match runtime session");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "workflow_failure_summary does not match runtime session");
     }
 
     if (!replay.consistency.plan_matches_session || !replay.consistency.session_matches_journal ||
         !replay.consistency.journal_matches_execution_order) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view consistency must hold before building export manifest");
+                             "persistence export manifest bootstrap replay view consistency must "
+                             "hold before building export manifest");
     }
 
     const auto *workflow = find_workflow_plan(plan, session.workflow_canonical_name);
     if (workflow == nullptr) {
-        emit_bootstrap_error(result.diagnostics, "persistence export manifest bootstrap workflow '" +
+        emit_bootstrap_error(result.diagnostics,
+                             "persistence export manifest bootstrap workflow '" +
                                  session.workflow_canonical_name +
                                  "' does not exist in execution plan");
     }
@@ -732,63 +841,77 @@ build_persistence_export_manifest(
 
     if (!vector_equals(snapshot.execution_order, plan_execution_order)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot execution_order does not match execution plan workflow order");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "execution_order does not match execution plan workflow order");
     }
 
     if (!vector_equals(replay.execution_order, session.execution_order)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view execution_order does not match runtime session");
+                             "persistence export manifest bootstrap replay view execution_order "
+                             "does not match runtime session");
     }
 
     if (!is_prefix(replay.execution_order, snapshot.execution_order)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap replay view execution_order must be a prefix of scheduler snapshot execution_order");
+                             "persistence export manifest bootstrap replay view execution_order "
+                             "must be a prefix of scheduler snapshot execution_order");
     }
 
     if (!is_prefix(snapshot.cursor.completed_prefix, replay.execution_order)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap scheduler snapshot completed_prefix must be a prefix of replay view execution_order");
+                             "persistence export manifest bootstrap scheduler snapshot "
+                             "completed_prefix must be a prefix of replay view execution_order");
     }
 
     if (record.snapshot_status != snapshot.snapshot_status) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record snapshot_status does not match scheduler snapshot");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "snapshot_status does not match scheduler snapshot");
     }
 
     if (!vector_equals(record.execution_order, snapshot.execution_order)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record execution_order does not match scheduler snapshot");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "execution_order does not match scheduler snapshot");
     }
 
     if (!vector_equals(record.cursor.persistable_prefix, snapshot.cursor.completed_prefix)) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record persistable_prefix does not match scheduler snapshot completed_prefix");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap checkpoint record persistable_prefix does not "
+            "match scheduler snapshot completed_prefix");
     }
 
     if (record.cursor.resume_candidate_node_name != snapshot.cursor.next_candidate_node_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap checkpoint record resume_candidate_node_name does not match scheduler snapshot");
+                             "persistence export manifest bootstrap checkpoint record "
+                             "resume_candidate_node_name does not match scheduler snapshot");
     }
 
     if (!vector_equals(descriptor.execution_order, record.execution_order)) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor execution_order does not match checkpoint record");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "execution_order does not match checkpoint record");
     }
 
     if (!vector_equals(descriptor.cursor.exportable_prefix, record.cursor.persistable_prefix)) {
-        emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor exportable_prefix does not match checkpoint record persistable_prefix");
+        emit_bootstrap_error(
+            result.diagnostics,
+            "persistence export manifest bootstrap persistence descriptor exportable_prefix does "
+            "not match checkpoint record persistable_prefix");
     }
 
     if (descriptor.cursor.next_export_candidate_node_name !=
         record.cursor.resume_candidate_node_name) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor next_export_candidate_node_name does not match checkpoint record");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "next_export_candidate_node_name does not match checkpoint record");
     }
 
     if (descriptor.checkpoint_status != record.checkpoint_status) {
         emit_bootstrap_error(result.diagnostics,
-            "persistence export manifest bootstrap persistence descriptor checkpoint_status does not match checkpoint record");
+                             "persistence export manifest bootstrap persistence descriptor "
+                             "checkpoint_status does not match checkpoint record");
     }
 
     if (result.has_errors()) {

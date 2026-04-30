@@ -13,21 +13,18 @@ namespace {
 
 class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWriter {
   public:
-    explicit DurableStoreImportDecisionReceiptJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit DurableStoreImportDecisionReceiptJsonPrinter(std::ostream &out)
+        : PrettyJsonWriter(out) {}
 
     void print(const durable_store_import::Receipt &receipt) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(receipt.format_version); });
-            field("source_durable_store_import_decision_format_version",
-                  [&]() {
-                      write_string(
-                          receipt.source_durable_store_import_decision_format_version);
-                  });
-            field("source_durable_store_import_request_format_version",
-                  [&]() {
-                      write_string(
-                          receipt.source_durable_store_import_request_format_version);
-                  });
+            field("source_durable_store_import_decision_format_version", [&]() {
+                write_string(receipt.source_durable_store_import_decision_format_version);
+            });
+            field("source_durable_store_import_request_format_version", [&]() {
+                write_string(receipt.source_durable_store_import_request_format_version);
+            });
             field("source_store_import_descriptor_format_version",
                   [&]() { write_string(receipt.source_store_import_descriptor_format_version); });
             field("source_execution_plan_format_version",
@@ -97,10 +94,8 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
                   [&]() { print_decision_boundary_kind(receipt.decision_boundary_kind); });
             field("receipt_boundary_kind",
                   [&]() { print_receipt_boundary_kind(receipt.receipt_boundary_kind); });
-            field("receipt_status",
-                  [&]() { print_receipt_status(receipt.receipt_status); });
-            field("receipt_outcome",
-                  [&]() { print_receipt_outcome(receipt.receipt_outcome); });
+            field("receipt_status", [&]() { print_receipt_status(receipt.receipt_status); });
+            field("receipt_outcome", [&]() { print_receipt_outcome(receipt.receipt_outcome); });
             field("accepted_for_receipt_archive",
                   [&]() { out_ << (receipt.accepted_for_receipt_archive ? "true" : "false"); });
             field("next_required_adapter_capability", [&]() {
@@ -122,7 +117,6 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -328,8 +322,7 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
         }
     }
 
-    void print_receipt_outcome(
-        durable_store_import::ReceiptOutcome outcome) {
+    void print_receipt_outcome(durable_store_import::ReceiptOutcome outcome) {
         switch (outcome) {
         case durable_store_import::ReceiptOutcome::ArchiveAcceptedDecision:
             write_string("archive_accepted_decision");
@@ -402,9 +395,8 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
 
 } // namespace
 
-void print_durable_store_import_receipt_json(
-    const durable_store_import::Receipt &receipt,
-    std::ostream &out) {
+void print_durable_store_import_receipt_json(const durable_store_import::Receipt &receipt,
+                                             std::ostream &out) {
     DurableStoreImportDecisionReceiptJsonPrinter(out).print(receipt);
 }
 

@@ -30,9 +30,8 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(replay.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(replay.workflow_canonical_name); });
             field("session_id", [&]() { write_string(replay.session_id); });
             field("run_id", [&]() {
                 if (replay.run_id.has_value()) {
@@ -95,7 +94,6 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -107,12 +105,10 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
     void print_consistency(const replay_view::ReplayConsistencySummary &consistency,
                            int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("plan_matches_session", [&]() {
-                out_ << (consistency.plan_matches_session ? "true" : "false");
-            });
-            field("session_matches_journal", [&]() {
-                out_ << (consistency.session_matches_journal ? "true" : "false");
-            });
+            field("plan_matches_session",
+                  [&]() { out_ << (consistency.plan_matches_session ? "true" : "false"); });
+            field("session_matches_journal",
+                  [&]() { out_ << (consistency.session_matches_journal ? "true" : "false"); });
             field("journal_matches_execution_order", [&]() {
                 out_ << (consistency.journal_matches_execution_order ? "true" : "false");
             });
@@ -138,18 +134,13 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
-            field("saw_node_became_ready", [&]() {
-                out_ << (node.saw_node_became_ready ? "true" : "false");
-            });
-            field("saw_node_started", [&]() {
-                out_ << (node.saw_node_started ? "true" : "false");
-            });
-            field("saw_node_completed", [&]() {
-                out_ << (node.saw_node_completed ? "true" : "false");
-            });
-            field("saw_node_failed", [&]() {
-                out_ << (node.saw_node_failed ? "true" : "false");
-            });
+            field("saw_node_became_ready",
+                  [&]() { out_ << (node.saw_node_became_ready ? "true" : "false"); });
+            field("saw_node_started",
+                  [&]() { out_ << (node.saw_node_started ? "true" : "false"); });
+            field("saw_node_completed",
+                  [&]() { out_ << (node.saw_node_completed ? "true" : "false"); });
+            field("saw_node_failed", [&]() { out_ << (node.saw_node_failed ? "true" : "false"); });
             field("failure_summary", [&]() {
                 if (node.failure_summary.has_value()) {
                     print_failure_summary(*node.failure_summary, indent_level + 1);

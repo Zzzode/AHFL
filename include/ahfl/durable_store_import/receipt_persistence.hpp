@@ -45,8 +45,8 @@ enum class PersistenceBoundaryKind {
 };
 
 // Legacy alias
-using ReceiptPersistenceBoundaryKind
-    [[deprecated("Use PersistenceBoundaryKind")]] = PersistenceBoundaryKind;
+using ReceiptPersistenceBoundaryKind [[deprecated("Use PersistenceBoundaryKind")]] =
+    PersistenceBoundaryKind;
 
 enum class PersistenceBlockerKind {
     SourceReceiptBlocked,
@@ -56,8 +56,8 @@ enum class PersistenceBlockerKind {
 };
 
 // Legacy alias
-using ReceiptPersistenceBlockerKind
-    [[deprecated("Use PersistenceBlockerKind")]] = PersistenceBlockerKind;
+using ReceiptPersistenceBlockerKind [[deprecated("Use PersistenceBlockerKind")]] =
+    PersistenceBlockerKind;
 
 struct PersistenceBlocker {
     PersistenceBlockerKind kind{PersistenceBlockerKind::SourceReceiptBlocked};
@@ -66,8 +66,7 @@ struct PersistenceBlocker {
 };
 
 // Legacy alias
-using ReceiptPersistenceBlocker
-    [[deprecated("Use PersistenceBlocker")]] = PersistenceBlocker;
+using ReceiptPersistenceBlocker [[deprecated("Use PersistenceBlocker")]] = PersistenceBlocker;
 
 struct PersistenceRequest {
     std::string format_version{std::string(kPersistenceRequestFormatVersion)};
@@ -122,20 +121,22 @@ struct PersistenceRequest {
     std::string durable_store_import_receipt_persistence_request_identity;
     std::string planned_durable_identity;
     ReceiptBoundaryKind receipt_boundary_kind{ReceiptBoundaryKind::LocalContractOnly};
-    PersistenceBoundaryKind receipt_persistence_boundary_kind{  // Keep for JSON compatibility
+    PersistenceBoundaryKind receipt_persistence_boundary_kind{
+        // Keep for JSON compatibility
         PersistenceBoundaryKind::LocalContractOnly};
-    PersistenceRequestStatus receipt_persistence_request_status{  // Keep for JSON compatibility
-        PersistenceRequestStatus::Blocked};
-    PersistenceRequestOutcome receipt_persistence_request_outcome{  // Keep for JSON compatibility
+    PersistenceRequestStatus receipt_persistence_request_status{// Keep for JSON compatibility
+                                                                PersistenceRequestStatus::Blocked};
+    PersistenceRequestOutcome receipt_persistence_request_outcome{
+        // Keep for JSON compatibility
         PersistenceRequestOutcome::BlockBlockedReceipt};
     bool accepted_for_receipt_persistence{false};
     std::optional<AdapterCapabilityKind> next_required_adapter_capability;
-    std::optional<PersistenceBlocker> receipt_persistence_blocker;  // Keep for JSON compatibility
+    std::optional<PersistenceBlocker> receipt_persistence_blocker; // Keep for JSON compatibility
 };
 
 // Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptPersistenceRequest
-    [[deprecated("Use PersistenceRequest")]] = PersistenceRequest;
+using DurableStoreImportDecisionReceiptPersistenceRequest [[deprecated("Use PersistenceRequest")]] =
+    PersistenceRequest;
 
 struct PersistenceRequestValidationResult {
     DiagnosticBag diagnostics;
@@ -165,8 +166,7 @@ using DurableStoreImportDecisionReceiptPersistenceRequestResult
 [[nodiscard]] PersistenceRequestValidationResult
 validate_persistence_request(const PersistenceRequest &request);
 
-[[nodiscard]] PersistenceRequestResult
-build_persistence_request(const Receipt &receipt);
+[[nodiscard]] PersistenceRequestResult build_persistence_request(const Receipt &receipt);
 
 // Legacy function names - delegate to new functions
 [[nodiscard]] inline PersistenceRequestValidationResult

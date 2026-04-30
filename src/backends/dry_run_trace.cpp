@@ -26,9 +26,8 @@ class DryRunTraceJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(trace.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(trace.workflow_canonical_name); });
             field("status", [&]() { write_string("completed"); });
             field("input_fixture", [&]() { write_string(trace.input_fixture); });
             field("run_id", [&]() {
@@ -52,15 +51,13 @@ class DryRunTraceJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
-            field("return_summary", [&]() {
-                print_workflow_value_summary(trace.return_summary, 1);
-            });
+            field("return_summary",
+                  [&]() { print_workflow_value_summary(trace.return_summary, 1); });
         });
         out_ << '\n';
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -77,10 +74,10 @@ class DryRunTraceJsonPrinter final : private PrettyJsonWriter {
                         item([&]() {
                             print_object(indent_level + 2, [&](const auto &read_field) {
                                 read_field("kind", [&]() {
-                                    write_string(
-                                        read.kind == ir::WorkflowValueSourceKind::WorkflowInput
-                                            ? "workflow_input"
-                                            : "workflow_node_output");
+                                    write_string(read.kind ==
+                                                         ir::WorkflowValueSourceKind::WorkflowInput
+                                                     ? "workflow_input"
+                                                     : "workflow_node_output");
                                 });
                                 read_field("root_name", [&]() { write_string(read.root_name); });
                                 read_field("members", [&]() {
@@ -106,12 +103,9 @@ class DryRunTraceJsonPrinter final : private PrettyJsonWriter {
                                  ? "immediate"
                                  : "after_dependencies_completed");
             });
-            field("completion_condition", [&]() {
-                write_string("target_reached_final_state");
-            });
-            field("completion_latched", [&]() {
-                out_ << (lifecycle.completion_latched ? "true" : "false");
-            });
+            field("completion_condition", [&]() { write_string("target_reached_final_state"); });
+            field("completion_latched",
+                  [&]() { out_ << (lifecycle.completion_latched ? "true" : "false"); });
             field("target_initial_state", [&]() { write_string(lifecycle.target_initial_state); });
             field("target_final_states", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
@@ -171,9 +165,8 @@ class DryRunTraceJsonPrinter final : private PrettyJsonWriter {
                 });
             });
             field("lifecycle", [&]() { print_lifecycle(node.lifecycle, indent_level + 1); });
-            field("input_summary", [&]() {
-                print_workflow_value_summary(node.input_summary, indent_level + 1);
-            });
+            field("input_summary",
+                  [&]() { print_workflow_value_summary(node.input_summary, indent_level + 1); });
             field("capability_bindings", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &binding : node.capability_bindings) {

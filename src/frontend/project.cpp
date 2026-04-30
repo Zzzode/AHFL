@@ -99,7 +99,9 @@ struct ProgramImports {
 
     std::ifstream input(path, std::ios::binary);
     if (!input) {
-        diagnostics.error().message("failed to open " + std::string(kind) + ": " + display_path(path)).emit();
+        diagnostics.error()
+            .message("failed to open " + std::string(kind) + ": " + display_path(path))
+            .emit();
         return false;
     }
 
@@ -396,8 +398,8 @@ class PackageAuthoringJsonParser {
                 }
 
                 if (*key == "format_version") {
-                    format_version =
-                        parse_string("package authoring descriptor field 'format_version' must be a string");
+                    format_version = parse_string(
+                        "package authoring descriptor field 'format_version' must be a string");
                 } else if (*key == "package") {
                     if (!parse_package_object(package_name, package_version)) {
                         return std::nullopt;
@@ -473,7 +475,7 @@ class PackageAuthoringJsonParser {
         if (*format_version != kPackageAuthoringFormatVersion) {
             diagnostics_.error()
                 .message("unsupported package authoring descriptor format_version '" +
-                                             *format_version + "'")
+                         *format_version + "'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -516,7 +518,8 @@ class PackageAuthoringJsonParser {
             const auto key = std::to_string(static_cast<int>(target.kind)) + ":" + target.name;
             if (!seen_exports.insert(key).second) {
                 diagnostics_.error()
-                    .message("package authoring descriptor contains duplicate export target '" + target.name + "'")
+                    .message("package authoring descriptor contains duplicate export target '" +
+                             target.name + "'")
                     .range(point_range(source_, 0))
                     .source(source_)
                     .emit();
@@ -528,30 +531,35 @@ class PackageAuthoringJsonParser {
         for (const auto &binding : capability_bindings) {
             if (binding.capability.empty()) {
                 diagnostics_.error()
-                    .message("package authoring descriptor capability binding field 'capability' must not be empty")
+                    .message("package authoring descriptor capability binding field 'capability' "
+                             "must not be empty")
                     .range(point_range(source_, 0))
                     .source(source_)
                     .emit();
             }
             if (binding.binding_key.empty()) {
                 diagnostics_.error()
-                    .message("package authoring descriptor capability binding field 'binding_key' must not be empty")
+                    .message("package authoring descriptor capability binding field 'binding_key' "
+                             "must not be empty")
                     .range(point_range(source_, 0))
                     .source(source_)
                     .emit();
             }
-            if (!binding.capability.empty() && !seen_capabilities.insert(binding.capability).second) {
+            if (!binding.capability.empty() &&
+                !seen_capabilities.insert(binding.capability).second) {
                 diagnostics_.error()
-                    .message("package authoring descriptor contains duplicate capability binding for '" +
+                    .message(
+                        "package authoring descriptor contains duplicate capability binding for '" +
                         binding.capability + "'")
                     .range(point_range(source_, 0))
                     .source(source_)
                     .emit();
             }
-            if (!binding.binding_key.empty() && !seen_binding_keys.insert(binding.binding_key).second) {
+            if (!binding.binding_key.empty() &&
+                !seen_binding_keys.insert(binding.binding_key).second) {
                 diagnostics_.error()
                     .message("package authoring descriptor contains duplicate binding_key '" +
-                        binding.binding_key + "'")
+                             binding.binding_key + "'")
                     .range(point_range(source_, 0))
                     .source(source_)
                     .emit();
@@ -629,7 +637,8 @@ class PackageAuthoringJsonParser {
 
             if (ch == '\\') {
                 if (at_end()) {
-                    error_here("unterminated escape sequence in package authoring descriptor string");
+                    error_here(
+                        "unterminated escape sequence in package authoring descriptor string");
                     return std::nullopt;
                 }
 
@@ -656,7 +665,8 @@ class PackageAuthoringJsonParser {
                     value.push_back('\t');
                     break;
                 default:
-                    error_here("unsupported escape sequence in package authoring descriptor string");
+                    error_here(
+                        "unsupported escape sequence in package authoring descriptor string");
                     return std::nullopt;
                 }
                 continue;
@@ -685,7 +695,7 @@ class PackageAuthoringJsonParser {
 
         diagnostics_.error()
             .message("package authoring descriptor field '" + std::string(field_path) +
-                                         "' must be 'workflow' or 'agent'")
+                     "' must be 'workflow' or 'agent'")
             .range(point_range(source_, 0))
             .source(source_)
             .emit();
@@ -704,12 +714,14 @@ class PackageAuthoringJsonParser {
         skip_whitespace();
         if (consume('}')) {
             diagnostics_.error()
-                .message("package authoring descriptor field 'package' is missing required field 'name'")
+                .message(
+                    "package authoring descriptor field 'package' is missing required field 'name'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
             diagnostics_.error()
-                .message("package authoring descriptor field 'package' is missing required field 'version'")
+                .message("package authoring descriptor field 'package' is missing required field "
+                         "'version'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -733,10 +745,11 @@ class PackageAuthoringJsonParser {
             }
 
             if (*key == "name") {
-                package_name = parse_string("package authoring descriptor field 'package.name' must be a string");
+                package_name = parse_string(
+                    "package authoring descriptor field 'package.name' must be a string");
             } else if (*key == "version") {
-                package_version =
-                    parse_string("package authoring descriptor field 'package.version' must be a string");
+                package_version = parse_string(
+                    "package authoring descriptor field 'package.version' must be a string");
             } else {
                 error_here("unsupported package authoring descriptor field 'package." + *key + "'");
                 return false;
@@ -758,14 +771,16 @@ class PackageAuthoringJsonParser {
 
         if (!package_name.has_value()) {
             diagnostics_.error()
-                .message("package authoring descriptor field 'package' is missing required field 'name'")
+                .message(
+                    "package authoring descriptor field 'package' is missing required field 'name'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
         }
         if (!package_version.has_value()) {
             diagnostics_.error()
-                .message("package authoring descriptor field 'package' is missing required field 'version'")
+                .message("package authoring descriptor field 'package' is missing required field "
+                         "'version'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -773,7 +788,8 @@ class PackageAuthoringJsonParser {
         return !diagnostics_.has_error();
     }
 
-    [[nodiscard]] bool parse_target_object(std::string_view field_name, PackageAuthoringTarget &target) {
+    [[nodiscard]] bool parse_target_object(std::string_view field_name,
+                                           PackageAuthoringTarget &target) {
         skip_whitespace();
         if (!consume('{')) {
             error_here("package authoring descriptor field '" + std::string(field_name) +
@@ -789,13 +805,13 @@ class PackageAuthoringJsonParser {
         if (consume('}')) {
             diagnostics_.error()
                 .message("package authoring descriptor field '" + std::string(field_name) +
-                                             "' is missing required field 'kind'")
+                         "' is missing required field 'kind'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
             diagnostics_.error()
                 .message("package authoring descriptor field '" + std::string(field_name) +
-                                             "' is missing required field 'name'")
+                         "' is missing required field 'name'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -808,8 +824,8 @@ class PackageAuthoringJsonParser {
                 return false;
             }
             if (!seen_fields.insert(*key).second) {
-                error_here("duplicate package authoring descriptor field '" + std::string(field_name) +
-                           "." + *key + "'");
+                error_here("duplicate package authoring descriptor field '" +
+                           std::string(field_name) + "." + *key + "'");
                 return false;
             }
 
@@ -822,7 +838,8 @@ class PackageAuthoringJsonParser {
             if (*key == "kind") {
                 kind = parse_target_kind(std::string(field_name) + ".kind");
             } else if (*key == "name") {
-                name = parse_string("package authoring descriptor target field 'name' must be a string");
+                name = parse_string(
+                    "package authoring descriptor target field 'name' must be a string");
             } else {
                 error_here("unsupported package authoring descriptor field '" +
                            std::string(field_name) + "." + *key + "'");
@@ -846,7 +863,7 @@ class PackageAuthoringJsonParser {
         if (!kind.has_value()) {
             diagnostics_.error()
                 .message("package authoring descriptor field '" + std::string(field_name) +
-                                             "' is missing required field 'kind'")
+                         "' is missing required field 'kind'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -854,7 +871,7 @@ class PackageAuthoringJsonParser {
         if (!name.has_value()) {
             diagnostics_.error()
                 .message("package authoring descriptor field '" + std::string(field_name) +
-                                             "' is missing required field 'name'")
+                         "' is missing required field 'name'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -898,11 +915,11 @@ class PackageAuthoringJsonParser {
         }
     }
 
-    [[nodiscard]] bool
-    parse_capability_binding_object(PackageAuthoringCapabilityBinding &binding) {
+    [[nodiscard]] bool parse_capability_binding_object(PackageAuthoringCapabilityBinding &binding) {
         skip_whitespace();
         if (!consume('{')) {
-            error_here("package authoring descriptor field 'capability_bindings[]' must be an object");
+            error_here(
+                "package authoring descriptor field 'capability_bindings[]' must be an object");
             return false;
         }
 
@@ -913,12 +930,14 @@ class PackageAuthoringJsonParser {
         skip_whitespace();
         if (consume('}')) {
             diagnostics_.error()
-                .message("package authoring descriptor field 'capability_bindings[]' is missing required field 'capability'")
+                .message("package authoring descriptor field 'capability_bindings[]' is missing "
+                         "required field 'capability'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
             diagnostics_.error()
-                .message("package authoring descriptor field 'capability_bindings[]' is missing required field 'binding_key'")
+                .message("package authoring descriptor field 'capability_bindings[]' is missing "
+                         "required field 'binding_key'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -943,14 +962,15 @@ class PackageAuthoringJsonParser {
             }
 
             if (*key == "capability") {
-                capability = parse_string(
-                    "package authoring descriptor capability binding field 'capability' must be a string");
+                capability = parse_string("package authoring descriptor capability binding field "
+                                          "'capability' must be a string");
             } else if (*key == "binding_key") {
-                binding_key = parse_string(
-                    "package authoring descriptor capability binding field 'binding_key' must be a string");
+                binding_key = parse_string("package authoring descriptor capability binding field "
+                                           "'binding_key' must be a string");
             } else {
-                error_here("unsupported package authoring descriptor field 'capability_bindings[]." +
-                           *key + "'");
+                error_here(
+                    "unsupported package authoring descriptor field 'capability_bindings[]." +
+                    *key + "'");
                 return false;
             }
 
@@ -970,14 +990,16 @@ class PackageAuthoringJsonParser {
 
         if (!capability.has_value()) {
             diagnostics_.error()
-                .message("package authoring descriptor field 'capability_bindings[]' is missing required field 'capability'")
+                .message("package authoring descriptor field 'capability_bindings[]' is missing "
+                         "required field 'capability'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
         }
         if (!binding_key.has_value()) {
             diagnostics_.error()
-                .message("package authoring descriptor field 'capability_bindings[]' is missing required field 'binding_key'")
+                .message("package authoring descriptor field 'capability_bindings[]' is missing "
+                         "required field 'binding_key'")
                 .range(point_range(source_, 0))
                 .source(source_)
                 .emit();
@@ -991,8 +1013,8 @@ class PackageAuthoringJsonParser {
         return true;
     }
 
-    [[nodiscard]] bool parse_capability_binding_array(
-        std::vector<PackageAuthoringCapabilityBinding> &bindings) {
+    [[nodiscard]] bool
+    parse_capability_binding_array(std::vector<PackageAuthoringCapabilityBinding> &bindings) {
         skip_whitespace();
         if (!consume('[')) {
             error_here("package authoring descriptor field 'capability_bindings' must be an array");
@@ -1069,8 +1091,7 @@ required_string_array_field(std::string_view field_name,
 
     if (it->second.kind != DescriptorJsonValue::Kind::StringArray) {
         diagnostics.error()
-            .message("project descriptor field '" + key +
-                                        "' must be an array of strings")
+            .message("project descriptor field '" + key + "' must be an array of strings")
             .range(point_range(source, 0))
             .source(source)
             .emit();
@@ -1115,8 +1136,7 @@ void reject_unknown_workspace_fields(
     for (const auto &[field_name, _] : fields) {
         if (!allowed.contains(field_name)) {
             diagnostics.error()
-                .message("unsupported workspace descriptor field '" + field_name +
-                                            "'")
+                .message("unsupported workspace descriptor field '" + field_name + "'")
                 .range(point_range(source, 0))
                 .source(source)
                 .emit();
@@ -1137,7 +1157,7 @@ resolve_descriptor_path(const std::filesystem::path &descriptor_root,
     if (!input_path.is_absolute() && !path_has_prefix(descriptor_root, resolved)) {
         diagnostics.error()
             .message("descriptor field '" + std::string(field_name) +
-                                        "' must not escape the descriptor root")
+                     "' must not escape the descriptor root")
             .range(point_range(source, 0))
             .source(source)
             .emit();
@@ -1166,7 +1186,7 @@ bool append_descriptor_paths(PathContainerT &out,
         if (!seen.insert(key).second) {
             diagnostics.error()
                 .message("descriptor field '" + std::string(field_name) +
-                                            "' contains duplicate path '" + raw_path + "'")
+                         "' contains duplicate path '" + raw_path + "'")
                 .range(point_range(source, 0))
                 .source(source)
                 .emit();
@@ -1247,11 +1267,7 @@ resolve_import_path(std::string_view module_name,
     if (candidates.empty()) {
         const auto message = "failed to resolve imported module '" + std::string(module_name) + "'";
         if (source.has_value()) {
-            diagnostics.error()
-                .message(message)
-                .range(range)
-                .source(source->get())
-                .emit();
+            diagnostics.error().message(message).range(range).source(source->get()).emit();
         } else {
             diagnostics.error().message(message).range(range).emit();
         }
@@ -1262,11 +1278,7 @@ resolve_import_path(std::string_view module_name,
         std::ostringstream builder;
         builder << "imported module '" << module_name << "' is ambiguous across search roots";
         if (source.has_value()) {
-            diagnostics.error()
-                .message(builder.str())
-                .range(range)
-                .source(source->get())
-                .emit();
+            diagnostics.error().message(builder.str()).range(range).source(source->get()).emit();
         } else {
             diagnostics.error().message(builder.str()).range(range).emit();
         }
@@ -1325,8 +1337,7 @@ Frontend::load_project_descriptor(const std::filesystem::path &path) const {
 
     if (*format_version != "ahfl.project.v0.3") {
         result.diagnostics.error()
-            .message("unsupported project descriptor format_version '" +
-                                               *format_version + "'")
+            .message("unsupported project descriptor format_version '" + *format_version + "'")
             .range(point_range(source, 0))
             .source(source)
             .emit();
@@ -1430,8 +1441,7 @@ Frontend::load_workspace_descriptor(const std::filesystem::path &path) const {
 
     if (*format_version != "ahfl.workspace.v0.3") {
         result.diagnostics.error()
-            .message("unsupported workspace descriptor format_version '" +
-                                               *format_version + "'")
+            .message("unsupported workspace descriptor format_version '" + *format_version + "'")
             .range(point_range(source, 0))
             .source(source)
             .emit();
@@ -1494,12 +1504,18 @@ Frontend::load_project_descriptor_from_workspace(const std::filesystem::path &wo
         }
 
         if (selected_descriptor.has_value()) {
-            result.diagnostics.error().message("workspace contains duplicate project name '" +
-                                     std::string(project_name) + "'").emit();
-            result.diagnostics.note().message("first matching project descriptor is '" +
-                                    display_path(*first_match_path) + "'").emit();
-            result.diagnostics.note().message("second matching project descriptor is '" +
-                                    display_path(project_result.descriptor->descriptor_path) + "'").emit();
+            result.diagnostics.error()
+                .message("workspace contains duplicate project name '" + std::string(project_name) +
+                         "'")
+                .emit();
+            result.diagnostics.note()
+                .message("first matching project descriptor is '" +
+                         display_path(*first_match_path) + "'")
+                .emit();
+            result.diagnostics.note()
+                .message("second matching project descriptor is '" +
+                         display_path(project_result.descriptor->descriptor_path) + "'")
+                .emit();
             return result;
         }
 
@@ -1508,8 +1524,9 @@ Frontend::load_project_descriptor_from_workspace(const std::filesystem::path &wo
     }
 
     if (!selected_descriptor.has_value()) {
-        result.diagnostics.error().message("workspace does not contain project named '" +
-                                 std::string(project_name) + "'").emit();
+        result.diagnostics.error()
+            .message("workspace does not contain project named '" + std::string(project_name) + "'")
+            .emit();
         return result;
     }
 
@@ -1521,7 +1538,9 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
     ProjectParseResult result;
 
     if (input.entry_files.empty()) {
-        result.diagnostics.error().message("project input must contain at least one entry file").emit();
+        result.diagnostics.error()
+            .message("project input must contain at least one entry file")
+            .emit();
         return result;
     }
 
@@ -1591,16 +1610,15 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                 const auto &module_name = imports.modules.front().first;
                 if (expected_module.has_value() && module_name != *expected_module) {
                     result.diagnostics.error()
-                        .message("source file declares module '" + module_name + "' but import requested '" +
-                            *expected_module + "'")
+                        .message("source file declares module '" + module_name +
+                                 "' but import requested '" + *expected_module + "'")
                         .range(imports.modules.front().second)
                         .source(parse_result.source)
                         .emit();
                 } else if (const auto existing = result.graph.module_to_source.find(module_name);
                            existing != result.graph.module_to_source.end()) {
                     result.diagnostics.error()
-                        .message("duplicate module owner for '" +
-                                                           module_name + "'")
+                        .message("duplicate module owner for '" + module_name + "'")
                         .range(imports.modules.front().second)
                         .source(parse_result.source)
                         .emit();
@@ -1608,8 +1626,7 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
                         previous.has_value()) {
                         result.diagnostics.note()
                             .message("previous module owner is '" +
-                                                              previous->get().source.display_name +
-                                                              "'")
+                                     previous->get().source.display_name + "'")
                             .range(previous->get().module_range)
                             .source(previous->get().source)
                             .emit();
@@ -1663,8 +1680,7 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
         if (!loaded_id.has_value() && expected_module.has_value()) {
             if (request_source.has_value()) {
                 result.diagnostics.note()
-                    .message("import requested module '" + *expected_module +
-                                                      "' here")
+                    .message("import requested module '" + *expected_module + "' here")
                     .range(import_range)
                     .source(request_source->get())
                     .emit();

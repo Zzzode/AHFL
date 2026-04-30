@@ -169,12 +169,13 @@ void TypeCheckResult::rebuild_expression_type_lookup_cache() const {
 
     for (std::size_t index = 0; index < expression_types_.size(); ++index) {
         const auto &entry = expression_types_[index];
-        expression_type_lookup_cache_.try_emplace(ExpressionTypeLookupKey{
-                                                      .begin_offset = entry.range.begin_offset,
-                                                      .end_offset = entry.range.end_offset,
-                                                      .source_id = entry.source_id,
-                                                  },
-                                                  index);
+        expression_type_lookup_cache_.try_emplace(
+            ExpressionTypeLookupKey{
+                .begin_offset = entry.range.begin_offset,
+                .end_offset = entry.range.end_offset,
+                .source_id = entry.source_id,
+            },
+            index);
     }
 
     expression_type_lookup_cache_size_ = expression_types_.size();

@@ -1,8 +1,8 @@
 #include "ahfl/backends/driver.hpp"
-#include "ahfl/dry_run/runner.hpp"
-#include "ahfl/frontend/frontend.hpp"
 #include "ahfl/cli/command_catalog.hpp"
 #include "ahfl/cli/pipeline_runner.hpp"
+#include "ahfl/dry_run/runner.hpp"
+#include "ahfl/frontend/frontend.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
@@ -12,8 +12,8 @@
 #include <functional>
 #include <iostream>
 #include <optional>
-#include <sstream>
 #include <span>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -22,12 +22,12 @@
 namespace {
 
 using MaybeSourceFile = std::optional<std::reference_wrapper<const ahfl::SourceFile>>;
-using ahfl::cli::CommandKind;
-using ahfl::cli::CommandLineOptions;
-using ahfl::cli::CommandListKind;
 using ahfl::cli::command_list;
 using ahfl::cli::command_name;
 using ahfl::cli::command_token_to_kind;
+using ahfl::cli::CommandKind;
+using ahfl::cli::CommandLineOptions;
+using ahfl::cli::CommandListKind;
 using ahfl::cli::count_enabled_actions;
 using ahfl::cli::format_comma_or_commands;
 using ahfl::cli::infer_effective_command;
@@ -88,14 +88,12 @@ template <typename InputT>
         return false;
     }
 
-    ahfl::emit_backend(
-        *backend, input, resolve_result, type_check_result, out, package_metadata);
+    ahfl::emit_backend(*backend, input, resolve_result, type_check_result, out, package_metadata);
     return true;
 }
 
-[[nodiscard]] bool read_text_file(const std::filesystem::path &path,
-                                  std::string &content,
-                                  std::ostream &diagnostics) {
+[[nodiscard]] bool
+read_text_file(const std::filesystem::path &path, std::string &content, std::ostream &diagnostics) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
         diagnostics << "error: failed to open capability mock descriptor: "
@@ -190,12 +188,13 @@ void print_success_summary(const ahfl::SourceGraph &graph,
 }
 
 template <typename InputT>
-[[nodiscard]] int run_analysis_pipeline(const CommandLineOptions &options,
-                                        std::optional<CommandKind> effective_command,
-                                        const InputT &input,
-                                        MaybeSourceFile source_file,
-                                        const ahfl::handoff::PackageMetadata *package_metadata,
-                                        const ahfl::dry_run::CapabilityMockSet *capability_mock_set) {
+[[nodiscard]] int
+run_analysis_pipeline(const CommandLineOptions &options,
+                      std::optional<CommandKind> effective_command,
+                      const InputT &input,
+                      MaybeSourceFile source_file,
+                      const ahfl::handoff::PackageMetadata *package_metadata,
+                      const ahfl::dry_run::CapabilityMockSet *capability_mock_set) {
     const ahfl::Resolver resolver;
     auto resolve_result = resolver.resolve(input);
     render_diagnostics(resolve_result, source_file, std::cerr);
@@ -461,8 +460,7 @@ int run_cli(std::span<const std::string_view> arguments) {
     }
 
     if (options.package_descriptor.has_value() &&
-        (!effective_command.has_value() ||
-         !is_package_supported_command(*effective_command))) {
+        (!effective_command.has_value() || !is_package_supported_command(*effective_command))) {
         std::cerr << "error: --package is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::PackageSupported))
                   << "\n";
@@ -473,42 +471,42 @@ int run_cli(std::span<const std::string_view> arguments) {
     if (options.capability_mocks_descriptor.has_value() &&
         !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --capability-mocks is only supported with "
-                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << format_comma_or_commands(
+                         command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.input_fixture.has_value() &&
-        !supports_capability_inputs(effective_command)) {
+    if (options.input_fixture.has_value() && !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --input-fixture is only supported with "
-                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << format_comma_or_commands(
+                         command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.run_id.has_value() &&
-        !supports_capability_inputs(effective_command)) {
+    if (options.run_id.has_value() && !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --run-id is only supported with "
-                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << format_comma_or_commands(
+                         command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
-    if (options.workflow_name.has_value() &&
-        !supports_capability_inputs(effective_command)) {
+    if (options.workflow_name.has_value() && !supports_capability_inputs(effective_command)) {
         std::cerr << "error: --workflow is only supported with "
-                  << format_comma_or_commands(command_list(CommandListKind::CapabilityInputSupported))
+                  << format_comma_or_commands(
+                         command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
         print_usage(std::cerr);
         return 2;
     }
 
     std::optional<ahfl::dry_run::CapabilityMockSet> capability_mock_set;
-    if (effective_command.has_value() &&
-        is_command_requiring_package(*effective_command)) {
+    if (effective_command.has_value() && is_command_requiring_package(*effective_command)) {
         const auto selected_command_name = command_name(*effective_command);
         if (!options.package_descriptor.has_value()) {
             std::cerr << "error: " << selected_command_name << " requires --package\n";

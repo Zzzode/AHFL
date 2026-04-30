@@ -6,8 +6,7 @@
 
 namespace ahfl {
 
-void print_durable_store_import_request_json(
-    const durable_store_import::Request &request,
-    std::ostream &out);
+void print_durable_store_import_request_json(const durable_store_import::Request &request,
+                                             std::ostream &out);
 
 } // namespace ahfl

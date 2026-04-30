@@ -20,11 +20,11 @@ struct Program;
 
 namespace ahfl::cli {
 
-[[nodiscard]] std::optional<int> dispatch_package_command(
-    CommandKind command,
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet *mock_set,
-    const CommandLineOptions &options);
+[[nodiscard]] std::optional<int>
+dispatch_package_command(CommandKind command,
+                         const ahfl::ir::Program &program,
+                         const ahfl::handoff::PackageMetadata &metadata,
+                         const ahfl::dry_run::CapabilityMockSet *mock_set,
+                         const CommandLineOptions &options);
 
 } // namespace ahfl::cli

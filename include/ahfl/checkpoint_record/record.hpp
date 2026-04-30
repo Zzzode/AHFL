@@ -15,8 +15,7 @@
 
 namespace ahfl::checkpoint_record {
 
-inline constexpr std::string_view kCheckpointRecordFormatVersion =
-    "ahfl.checkpoint-record.v1";
+inline constexpr std::string_view kCheckpointRecordFormatVersion = "ahfl.checkpoint-record.v1";
 
 enum class CheckpointRecordStatus {
     ReadyToPersist,
@@ -39,8 +38,7 @@ enum class CheckpointResumeBlockerKind {
 };
 
 struct CheckpointResumeBlocker {
-    CheckpointResumeBlockerKind kind{
-        CheckpointResumeBlockerKind::WaitingOnSchedulerState};
+    CheckpointResumeBlockerKind kind{CheckpointResumeBlockerKind::WaitingOnSchedulerState};
     std::string message;
     std::optional<std::string> node_name;
 };

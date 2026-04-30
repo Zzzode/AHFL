@@ -58,8 +58,7 @@ struct PersistenceReviewSummary {
     RequestStatus request_status{RequestStatus::Blocked};
     DecisionStatus decision_status{DecisionStatus::Blocked};
     ReceiptStatus receipt_status{ReceiptStatus::Blocked};
-    PersistenceRequestStatus receipt_persistence_request_status{
-        PersistenceRequestStatus::Blocked};
+    PersistenceRequestStatus receipt_persistence_request_status{PersistenceRequestStatus::Blocked};
     PersistenceRequestOutcome receipt_persistence_request_outcome{
         PersistenceRequestOutcome::BlockBlockedReceipt};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
@@ -97,7 +96,8 @@ struct PersistenceReviewSummaryValidationResult {
 
 // Legacy alias
 using DurableStoreImportDecisionReceiptPersistenceReviewSummaryValidationResult
-    [[deprecated("Use PersistenceReviewSummaryValidationResult")]] = PersistenceReviewSummaryValidationResult;
+    [[deprecated("Use PersistenceReviewSummaryValidationResult")]] =
+        PersistenceReviewSummaryValidationResult;
 
 struct PersistenceReviewSummaryResult {
     std::optional<PersistenceReviewSummary> summary;

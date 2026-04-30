@@ -26,7 +26,8 @@ enum class PersistenceResponseReviewNextActionKind {
 
 // Legacy alias
 using ReceiptPersistenceResponseReviewNextActionKind
-    [[deprecated("Use PersistenceResponseReviewNextActionKind")]] = PersistenceResponseReviewNextActionKind;
+    [[deprecated("Use PersistenceResponseReviewNextActionKind")]] =
+        PersistenceResponseReviewNextActionKind;
 
 struct PersistenceResponsePreview {
     std::string response_identity;
@@ -37,8 +38,8 @@ struct PersistenceResponsePreview {
 };
 
 // Legacy alias
-using ReceiptPersistenceResponsePreview
-    [[deprecated("Use PersistenceResponsePreview")]] = PersistenceResponsePreview;
+using ReceiptPersistenceResponsePreview [[deprecated("Use PersistenceResponsePreview")]] =
+    PersistenceResponsePreview;
 
 struct PersistenceResponseReviewSummary {
     std::string format_version{std::string(kPersistenceResponseReviewFormatVersion)};
@@ -61,8 +62,7 @@ struct PersistenceResponseReviewSummary {
     std::string durable_store_import_receipt_persistence_request_identity;
     std::string durable_store_import_receipt_persistence_response_identity;
     PersistenceResponseStatus response_status{PersistenceResponseStatus::Blocked};
-    PersistenceResponseOutcome response_outcome{
-        PersistenceResponseOutcome::BlockBlockedRequest};
+    PersistenceResponseOutcome response_outcome{PersistenceResponseOutcome::BlockBlockedRequest};
     PersistenceResponseBoundaryKind response_boundary_kind{
         PersistenceResponseBoundaryKind::LocalContractOnly};
     bool acknowledged_for_response{false};
@@ -89,7 +89,8 @@ struct PersistenceResponseReviewValidationResult {
 
 // Legacy alias
 using DurableStoreImportDecisionReceiptPersistenceResponseReviewValidationResult
-    [[deprecated("Use PersistenceResponseReviewValidationResult")]] = PersistenceResponseReviewValidationResult;
+    [[deprecated("Use PersistenceResponseReviewValidationResult")]] =
+        PersistenceResponseReviewValidationResult;
 
 struct PersistenceResponseReviewResult {
     std::optional<PersistenceResponseReviewSummary> review;

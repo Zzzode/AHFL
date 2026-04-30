@@ -11,28 +11,24 @@ namespace ahfl {
 
 namespace {
 
-class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
+    : private PrettyJsonWriter {
   public:
     explicit DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter(std::ostream &out)
         : PrettyJsonWriter(out) {}
 
-    void print(
-        const durable_store_import::PersistenceRequest &request) {
+    void print(const durable_store_import::PersistenceRequest &request) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(request.format_version); });
-            field("source_durable_store_import_decision_receipt_format_version",
-                  [&]() {
-                      write_string(
-                          request.source_durable_store_import_decision_receipt_format_version);
-                  });
-            field("source_durable_store_import_decision_format_version",
-                  [&]() {
-                      write_string(request.source_durable_store_import_decision_format_version);
-                  });
-            field("source_durable_store_import_request_format_version",
-                  [&]() {
-                      write_string(request.source_durable_store_import_request_format_version);
-                  });
+            field("source_durable_store_import_decision_receipt_format_version", [&]() {
+                write_string(request.source_durable_store_import_decision_receipt_format_version);
+            });
+            field("source_durable_store_import_decision_format_version", [&]() {
+                write_string(request.source_durable_store_import_decision_format_version);
+            });
+            field("source_durable_store_import_request_format_version", [&]() {
+                write_string(request.source_durable_store_import_request_format_version);
+            });
             field("source_store_import_descriptor_format_version",
                   [&]() { write_string(request.source_store_import_descriptor_format_version); });
             field("source_execution_plan_format_version",
@@ -97,33 +93,26 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
                   [&]() { write_string(request.durable_store_import_decision_identity); });
             field("durable_store_import_receipt_identity",
                   [&]() { write_string(request.durable_store_import_receipt_identity); });
-            field("durable_store_import_receipt_persistence_request_identity",
-                  [&]() {
-                      write_string(
-                          request.durable_store_import_receipt_persistence_request_identity);
-                  });
+            field("durable_store_import_receipt_persistence_request_identity", [&]() {
+                write_string(request.durable_store_import_receipt_persistence_request_identity);
+            });
             field("planned_durable_identity",
                   [&]() { write_string(request.planned_durable_identity); });
             field("receipt_boundary_kind",
                   [&]() { print_receipt_boundary_kind(request.receipt_boundary_kind); });
-            field("receipt_persistence_boundary_kind",
-                  [&]() {
-                      print_receipt_persistence_boundary_kind(
-                          request.receipt_persistence_boundary_kind);
-                  });
-            field("receipt_persistence_request_status",
-                  [&]() {
-                      print_receipt_persistence_request_status(
-                          request.receipt_persistence_request_status);
-                  });
-            field("receipt_persistence_request_outcome",
-                  [&]() {
-                      print_receipt_persistence_request_outcome(
-                          request.receipt_persistence_request_outcome);
-                  });
-            field("accepted_for_receipt_persistence", [&]() {
-                out_ << (request.accepted_for_receipt_persistence ? "true" : "false");
+            field("receipt_persistence_boundary_kind", [&]() {
+                print_receipt_persistence_boundary_kind(request.receipt_persistence_boundary_kind);
             });
+            field("receipt_persistence_request_status", [&]() {
+                print_receipt_persistence_request_status(
+                    request.receipt_persistence_request_status);
+            });
+            field("receipt_persistence_request_outcome", [&]() {
+                print_receipt_persistence_request_outcome(
+                    request.receipt_persistence_request_outcome);
+            });
+            field("accepted_for_receipt_persistence",
+                  [&]() { out_ << (request.accepted_for_receipt_persistence ? "true" : "false"); });
             field("next_required_adapter_capability", [&]() {
                 if (request.next_required_adapter_capability.has_value()) {
                     print_adapter_capability(*request.next_required_adapter_capability);
@@ -143,7 +132,6 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -338,14 +326,13 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
         }
     }
 
-    void print_receipt_persistence_boundary_kind(
-        durable_store_import::PersistenceBoundaryKind kind) {
+    void
+    print_receipt_persistence_boundary_kind(durable_store_import::PersistenceBoundaryKind kind) {
         switch (kind) {
         case durable_store_import::PersistenceBoundaryKind::LocalContractOnly:
             write_string("local_contract_only");
             return;
-        case durable_store_import::PersistenceBoundaryKind::
-            AdapterReceiptPersistenceConsumable:
+        case durable_store_import::PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable:
             write_string("adapter_receipt_persistence_consumable");
             return;
         }
@@ -354,8 +341,7 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
     void print_receipt_persistence_request_status(
         durable_store_import::PersistenceRequestStatus status) {
         switch (status) {
-        case durable_store_import::PersistenceRequestStatus::
-            ReadyToPersist:
+        case durable_store_import::PersistenceRequestStatus::ReadyToPersist:
             write_string("ready_to_persist");
             return;
         case durable_store_import::PersistenceRequestStatus::Blocked:
@@ -373,20 +359,16 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
     void print_receipt_persistence_request_outcome(
         durable_store_import::PersistenceRequestOutcome outcome) {
         switch (outcome) {
-        case durable_store_import::PersistenceRequestOutcome::
-            PersistReadyReceipt:
+        case durable_store_import::PersistenceRequestOutcome::PersistReadyReceipt:
             write_string("persist_ready_receipt");
             return;
-        case durable_store_import::PersistenceRequestOutcome::
-            BlockBlockedReceipt:
+        case durable_store_import::PersistenceRequestOutcome::BlockBlockedReceipt:
             write_string("block_blocked_receipt");
             return;
-        case durable_store_import::PersistenceRequestOutcome::
-            DeferPartialReceipt:
+        case durable_store_import::PersistenceRequestOutcome::DeferPartialReceipt:
             write_string("defer_partial_receipt");
             return;
-        case durable_store_import::PersistenceRequestOutcome::
-            RejectFailedReceipt:
+        case durable_store_import::PersistenceRequestOutcome::RejectFailedReceipt:
             write_string("reject_failed_receipt");
             return;
         }
@@ -415,17 +397,15 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
         }
     }
 
-    void print_receipt_persistence_blocker(
-        const durable_store_import::PersistenceBlocker &blocker,
-        int indent_level) {
+    void print_receipt_persistence_blocker(const durable_store_import::PersistenceBlocker &blocker,
+                                           int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() {
                 switch (blocker.kind) {
                 case durable_store_import::PersistenceBlockerKind::SourceReceiptBlocked:
                     write_string("source_receipt_blocked");
                     return;
-                case durable_store_import::PersistenceBlockerKind::
-                    MissingRequiredAdapterCapability:
+                case durable_store_import::PersistenceBlockerKind::MissingRequiredAdapterCapability:
                     write_string("missing_required_adapter_capability");
                     return;
                 case durable_store_import::PersistenceBlockerKind::PartialWorkflowState:
@@ -451,8 +431,7 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
 } // namespace
 
 void print_durable_store_import_receipt_persistence_request_json(
-    const durable_store_import::PersistenceRequest &request,
-    std::ostream &out) {
+    const durable_store_import::PersistenceRequest &request, std::ostream &out) {
     DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter(out).print(request);
 }
 

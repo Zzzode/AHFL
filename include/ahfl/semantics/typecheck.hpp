@@ -189,9 +189,7 @@ struct TypeCheckResult {
     [[nodiscard]] std::vector<ExpressionTypeInfo> &mutable_expression_types() noexcept;
 
     std::vector<ExpressionTypeInfo> expression_types_;
-    mutable std::unordered_map<ExpressionTypeLookupKey,
-                               std::size_t,
-                               ExpressionTypeLookupKeyHash>
+    mutable std::unordered_map<ExpressionTypeLookupKey, std::size_t, ExpressionTypeLookupKeyHash>
         expression_type_lookup_cache_;
     mutable std::size_t expression_type_lookup_cache_size_{0};
     mutable const ExpressionTypeInfo *expression_type_lookup_cache_data_{nullptr};

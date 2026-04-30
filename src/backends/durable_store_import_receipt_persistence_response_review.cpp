@@ -13,8 +13,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     out << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
 }
 
-[[nodiscard]] std::string response_status_name(
-    durable_store_import::PersistenceResponseStatus status) {
+[[nodiscard]] std::string
+response_status_name(durable_store_import::PersistenceResponseStatus status) {
     switch (status) {
     case durable_store_import::PersistenceResponseStatus::Accepted:
         return "accepted";
@@ -29,28 +29,24 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string response_outcome_name(
-    durable_store_import::PersistenceResponseOutcome outcome) {
+[[nodiscard]] std::string
+response_outcome_name(durable_store_import::PersistenceResponseOutcome outcome) {
     switch (outcome) {
-    case durable_store_import::PersistenceResponseOutcome::
-        AcceptPersistenceRequest:
+    case durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest:
         return "accept_persistence_request";
-    case durable_store_import::PersistenceResponseOutcome::
-        BlockBlockedRequest:
+    case durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest:
         return "block_blocked_request";
-    case durable_store_import::PersistenceResponseOutcome::
-        DeferDeferredRequest:
+    case durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest:
         return "defer_deferred_request";
-    case durable_store_import::PersistenceResponseOutcome::
-        RejectFailedRequest:
+    case durable_store_import::PersistenceResponseOutcome::RejectFailedRequest:
         return "reject_failed_request";
     }
 
     return "invalid";
 }
 
-[[nodiscard]] std::string response_boundary_kind_name(
-    durable_store_import::PersistenceResponseBoundaryKind kind) {
+[[nodiscard]] std::string
+response_boundary_kind_name(durable_store_import::PersistenceResponseBoundaryKind kind) {
     switch (kind) {
     case durable_store_import::PersistenceResponseBoundaryKind::LocalContractOnly:
         return "local_contract_only";
@@ -61,8 +57,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string next_action_name(
-    durable_store_import::PersistenceResponseReviewNextActionKind action) {
+[[nodiscard]] std::string
+next_action_name(durable_store_import::PersistenceResponseReviewNextActionKind action) {
     switch (action) {
     case durable_store_import::PersistenceResponseReviewNextActionKind::AcknowledgeResponse:
         return "acknowledge_response";
@@ -96,8 +92,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string blocker_kind_name(
-    durable_store_import::PersistenceResponseBlockerKind kind) {
+[[nodiscard]] std::string
+blocker_kind_name(durable_store_import::PersistenceResponseBlockerKind kind) {
     switch (kind) {
     case durable_store_import::PersistenceResponseBlockerKind::SourcePersistenceRequestBlocked:
         return "source_persistence_request_blocked";
@@ -126,10 +122,9 @@ void print_response_blocker(
     line(out, indent_level + 1, "kind " + blocker_kind_name(blocker->kind));
     line(out,
          indent_level + 1,
-         "required_capability " +
-             (blocker->required_capability.has_value()
-                  ? capability_name(*blocker->required_capability)
-                  : std::string("none")));
+         "required_capability " + (blocker->required_capability.has_value()
+                                       ? capability_name(*blocker->required_capability)
+                                       : std::string("none")));
     line(out, indent_level + 1, "message " + blocker->message);
     line(out, indent_level, "}");
 }
@@ -137,44 +132,63 @@ void print_response_blocker(
 } // namespace
 
 void print_durable_store_import_receipt_persistence_response_review(
-    const durable_store_import::PersistenceResponseReviewSummary &review,
-    std::ostream &out) {
+    const durable_store_import::PersistenceResponseReviewSummary &review, std::ostream &out) {
     out << review.format_version << '\n';
-    line(out, 0, "source_response_format " +
-                     review.source_durable_store_import_decision_receipt_persistence_response_format_version);
-    line(out, 0, "source_persistence_request_format " +
-                     review.source_durable_store_import_decision_receipt_persistence_request_format_version);
-    line(out, 0, "source_receipt_format " +
-                     review.source_durable_store_import_decision_receipt_format_version);
-    line(out, 0, "source_decision_format " +
-                     review.source_durable_store_import_decision_format_version);
-    line(out, 0, "source_request_format " +
-                     review.source_durable_store_import_request_format_version);
+    line(out,
+         0,
+         "source_response_format " +
+             review
+                 .source_durable_store_import_decision_receipt_persistence_response_format_version);
+    line(
+        out,
+        0,
+        "source_persistence_request_format " +
+            review.source_durable_store_import_decision_receipt_persistence_request_format_version);
+    line(out,
+         0,
+         "source_receipt_format " +
+             review.source_durable_store_import_decision_receipt_format_version);
+    line(out,
+         0,
+         "source_decision_format " + review.source_durable_store_import_decision_format_version);
+    line(out,
+         0,
+         "source_request_format " + review.source_durable_store_import_request_format_version);
     line(out, 0, "workflow " + review.workflow_canonical_name);
     line(out, 0, "session " + review.session_id);
     line(out, 0, "run_id " + (review.run_id.has_value() ? *review.run_id : "none"));
     line(out, 0, "input_fixture " + review.input_fixture);
-    line(out, 0, "durable_store_import_decision_identity " +
-                     review.durable_store_import_decision_identity);
-    line(out, 0, "durable_store_import_receipt_identity " +
-                     review.durable_store_import_receipt_identity);
-    line(out, 0, "durable_store_import_receipt_persistence_request_identity " +
-                     review.durable_store_import_receipt_persistence_request_identity);
-    line(out, 0, "durable_store_import_receipt_persistence_response_identity " +
-                     review.durable_store_import_receipt_persistence_response_identity);
+    line(out,
+         0,
+         "durable_store_import_decision_identity " + review.durable_store_import_decision_identity);
+    line(out,
+         0,
+         "durable_store_import_receipt_identity " + review.durable_store_import_receipt_identity);
+    line(out,
+         0,
+         "durable_store_import_receipt_persistence_request_identity " +
+             review.durable_store_import_receipt_persistence_request_identity);
+    line(out,
+         0,
+         "durable_store_import_receipt_persistence_response_identity " +
+             review.durable_store_import_receipt_persistence_response_identity);
     line(out, 0, "response_status " + response_status_name(review.response_status));
     line(out, 0, "response_outcome " + response_outcome_name(review.response_outcome));
-    line(out, 0, "response_boundary_kind " +
-                     response_boundary_kind_name(review.response_boundary_kind));
-    line(out, 0, std::string("acknowledged_for_response ") +
-                     (review.acknowledged_for_response ? "true" : "false"));
+    line(out,
+         0,
+         "response_boundary_kind " + response_boundary_kind_name(review.response_boundary_kind));
+    line(out,
+         0,
+         std::string("acknowledged_for_response ") +
+             (review.acknowledged_for_response ? "true" : "false"));
     line(out, 0, "next_action " + next_action_name(review.next_action));
-    line(out, 0, "next_required_adapter_capability " +
-                     (review.next_required_adapter_capability.has_value()
-                          ? capability_name(*review.next_required_adapter_capability)
-                          : std::string("none")));
-    line(out, 0, "adapter_response_contract " +
-                     review.adapter_response_contract_summary);
+    line(out,
+         0,
+         "next_required_adapter_capability " +
+             (review.next_required_adapter_capability.has_value()
+                  ? capability_name(*review.next_required_adapter_capability)
+                  : std::string("none")));
+    line(out, 0, "adapter_response_contract " + review.adapter_response_contract_summary);
     line(out, 0, "response_preview " + review.response_preview.response_identity);
     line(out, 0, "next_step " + review.next_step_recommendation);
 

@@ -71,8 +71,8 @@ struct DecisionReviewSummary {
 };
 
 // Legacy alias for backward compatibility
-using DurableStoreImportDecisionReviewSummary
-    [[deprecated("Use DecisionReviewSummary")]] = DecisionReviewSummary;
+using DurableStoreImportDecisionReviewSummary [[deprecated("Use DecisionReviewSummary")]] =
+    DecisionReviewSummary;
 
 struct DecisionReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
@@ -84,7 +84,8 @@ struct DecisionReviewSummaryValidationResult {
 
 // Legacy alias
 using DurableStoreImportDecisionReviewSummaryValidationResult
-    [[deprecated("Use DecisionReviewSummaryValidationResult")]] = DecisionReviewSummaryValidationResult;
+    [[deprecated("Use DecisionReviewSummaryValidationResult")]] =
+        DecisionReviewSummaryValidationResult;
 
 struct DecisionReviewSummaryResult {
     std::optional<DecisionReviewSummary> summary;
@@ -102,8 +103,7 @@ using DurableStoreImportDecisionReviewSummaryResult
 [[nodiscard]] DecisionReviewSummaryValidationResult
 validate_decision_review_summary(const DecisionReviewSummary &summary);
 
-[[nodiscard]] DecisionReviewSummaryResult
-build_decision_review_summary(const Decision &decision);
+[[nodiscard]] DecisionReviewSummaryResult build_decision_review_summary(const Decision &decision);
 
 // Legacy function names - delegate to new functions
 [[nodiscard]] inline DecisionReviewSummaryValidationResult

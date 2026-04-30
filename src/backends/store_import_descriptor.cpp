@@ -70,23 +70,20 @@ class StoreImportDescriptorJsonPrinter final : private PrettyJsonWriter {
                   [&]() { write_string(descriptor.store_import_candidate_identity); });
             field("planned_durable_identity",
                   [&]() { write_string(descriptor.planned_durable_identity); });
-            field("descriptor_boundary_kind", [&]() {
-                print_descriptor_boundary_kind(descriptor.descriptor_boundary_kind);
-            });
+            field("descriptor_boundary_kind",
+                  [&]() { print_descriptor_boundary_kind(descriptor.descriptor_boundary_kind); });
             field("staging_artifact_set",
                   [&]() { print_staging_artifact_set(descriptor.staging_artifact_set, 1); });
             field("import_ready", [&]() { out_ << (descriptor.import_ready ? "true" : "false"); });
             field("next_required_staging_artifact_kind", [&]() {
                 if (descriptor.next_required_staging_artifact_kind.has_value()) {
-                    print_staging_artifact_kind(
-                        *descriptor.next_required_staging_artifact_kind);
+                    print_staging_artifact_kind(*descriptor.next_required_staging_artifact_kind);
                     return;
                 }
                 out_ << "null";
             });
-            field("descriptor_status", [&]() {
-                print_descriptor_status(descriptor.descriptor_status);
-            });
+            field("descriptor_status",
+                  [&]() { print_descriptor_status(descriptor.descriptor_status); });
             field("staging_blocker", [&]() {
                 if (descriptor.staging_blocker.has_value()) {
                     print_staging_blocker(*descriptor.staging_blocker, 1);
@@ -99,7 +96,6 @@ class StoreImportDescriptorJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -283,9 +279,8 @@ class StoreImportDescriptorJsonPrinter final : private PrettyJsonWriter {
             field("artifact_kind", [&]() { print_staging_artifact_kind(entry.artifact_kind); });
             field("logical_artifact_name", [&]() { write_string(entry.logical_artifact_name); });
             field("source_format_version", [&]() { write_string(entry.source_format_version); });
-            field("required_for_import", [&]() {
-                out_ << (entry.required_for_import ? "true" : "false");
-            });
+            field("required_for_import",
+                  [&]() { out_ << (entry.required_for_import ? "true" : "false"); });
         });
     }
 

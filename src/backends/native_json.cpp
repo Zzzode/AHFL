@@ -143,7 +143,6 @@ class NativeJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_provenance(const ir::DeclarationProvenance &provenance, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("module_name", [&]() { write_string(provenance.module_name); });

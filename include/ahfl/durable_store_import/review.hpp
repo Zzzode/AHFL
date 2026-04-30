@@ -27,8 +27,8 @@ enum class ReviewNextActionKind {
 };
 
 // Legacy alias
-using DurableStoreImportReviewNextActionKind
-    [[deprecated("Use ReviewNextActionKind")]] = ReviewNextActionKind;
+using DurableStoreImportReviewNextActionKind [[deprecated("Use ReviewNextActionKind")]] =
+    ReviewNextActionKind;
 
 struct ReviewSummary {
     std::string format_version{std::string(kReviewSummaryFormatVersion)};
@@ -63,17 +63,15 @@ struct ReviewSummary {
     std::vector<std::string> requested_artifact_preview;
     bool adapter_ready{false};
     std::optional<RequestedArtifactKind> next_required_adapter_artifact_kind;
-    std::optional<RequestBlocker> adapter_blocker;  // Keep field name for JSON compatibility
-    ReviewNextActionKind next_action{
-        ReviewNextActionKind::AwaitAdapterReadiness};
+    std::optional<RequestBlocker> adapter_blocker; // Keep field name for JSON compatibility
+    ReviewNextActionKind next_action{ReviewNextActionKind::AwaitAdapterReadiness};
     std::string adapter_boundary_summary;
     std::string request_preview;
     std::string next_step_recommendation;
 };
 
 // Legacy alias for backward compatibility
-using DurableStoreImportReviewSummary
-    [[deprecated("Use ReviewSummary")]] = ReviewSummary;
+using DurableStoreImportReviewSummary [[deprecated("Use ReviewSummary")]] = ReviewSummary;
 
 struct ReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
@@ -97,14 +95,12 @@ struct ReviewSummaryResult {
 };
 
 // Legacy alias
-using DurableStoreImportReviewSummaryResult
-    [[deprecated("Use ReviewSummaryResult")]] = ReviewSummaryResult;
+using DurableStoreImportReviewSummaryResult [[deprecated("Use ReviewSummaryResult")]] =
+    ReviewSummaryResult;
 
-[[nodiscard]] ReviewSummaryValidationResult
-validate_review_summary(const ReviewSummary &summary);
+[[nodiscard]] ReviewSummaryValidationResult validate_review_summary(const ReviewSummary &summary);
 
-[[nodiscard]] ReviewSummaryResult
-build_review_summary(const Request &request);
+[[nodiscard]] ReviewSummaryResult build_review_summary(const Request &request);
 
 // Legacy function names - delegate to new functions
 [[nodiscard]] inline ReviewSummaryValidationResult

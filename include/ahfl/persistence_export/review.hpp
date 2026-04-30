@@ -39,8 +39,7 @@ struct PersistenceExportReviewSummary {
         checkpoint_record::CheckpointRecordStatus::Blocked};
     persistence_descriptor::PersistenceDescriptorStatus persistence_status{
         persistence_descriptor::PersistenceDescriptorStatus::Blocked};
-    PersistenceExportManifestStatus manifest_status{
-        PersistenceExportManifestStatus::Blocked};
+    PersistenceExportManifestStatus manifest_status{PersistenceExportManifestStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string planned_durable_identity;

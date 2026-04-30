@@ -14,8 +14,7 @@
 
 namespace ahfl {
 
-inline constexpr std::string_view kPackageAuthoringFormatVersion =
-    "ahfl.package-authoring.v0.5";
+inline constexpr std::string_view kPackageAuthoringFormatVersion = "ahfl.package-authoring.v0.5";
 
 struct FrontendOptions {
     bool emit_parse_note{false};

@@ -11,8 +11,7 @@
 namespace ahfl::dry_run {
 
 inline constexpr std::string_view kTraceFormatVersion = "ahfl.dry-run-trace.v1";
-inline constexpr std::string_view kCapabilityMockSetFormatVersion =
-    "ahfl.capability-mocks.v0.6";
+inline constexpr std::string_view kCapabilityMockSetFormatVersion = "ahfl.capability-mocks.v0.6";
 
 enum class DryRunStatus {
     Completed,
@@ -82,7 +81,6 @@ struct DryRunResult {
                                              const DryRunRequest &request,
                                              const CapabilityMockSet &mock_set);
 
-[[nodiscard]] CapabilityMockSetParseResult
-parse_capability_mock_set_json(std::string_view content);
+[[nodiscard]] CapabilityMockSetParseResult parse_capability_mock_set_json(std::string_view content);
 
 } // namespace ahfl::dry_run

@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string snapshot_status_name(
-    scheduler_snapshot::SchedulerSnapshotStatus status) {
+[[nodiscard]] std::string snapshot_status_name(scheduler_snapshot::SchedulerSnapshotStatus status) {
     switch (status) {
     case scheduler_snapshot::SchedulerSnapshotStatus::Runnable:
         return "runnable";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string blocked_reason_name(
-    scheduler_snapshot::SchedulerBlockedReasonKind reason) {
+[[nodiscard]] std::string
+blocked_reason_name(scheduler_snapshot::SchedulerBlockedReasonKind reason) {
     switch (reason) {
     case scheduler_snapshot::SchedulerBlockedReasonKind::WaitingOnDependencies:
         return "waiting_on_dependencies";
@@ -133,13 +132,14 @@ void print_ready_nodes(const std::vector<scheduler_snapshot::SchedulerReviewRead
         for (const auto &node : nodes) {
             line(out,
                  1,
-                 "- " + node.node_name + " target=" + node.target + " execution_index=" +
-                     std::to_string(node.execution_index));
+                 "- " + node.node_name + " target=" + node.target +
+                     " execution_index=" + std::to_string(node.execution_index));
             line(out,
                  2,
                  "planned_dependencies " +
-                     (node.planned_dependencies.empty() ? std::string("none")
-                                                        : std::to_string(node.planned_dependencies.size())));
+                     (node.planned_dependencies.empty()
+                          ? std::string("none")
+                          : std::to_string(node.planned_dependencies.size())));
             for (const auto &dependency : node.planned_dependencies) {
                 line(out, 3, "- " + dependency);
             }
@@ -177,8 +177,9 @@ void print_blocked_nodes(const std::vector<scheduler_snapshot::SchedulerReviewBl
             line(out,
                  2,
                  "missing_dependencies " +
-                     (node.missing_dependencies.empty() ? std::string("none")
-                                                        : std::to_string(node.missing_dependencies.size())));
+                     (node.missing_dependencies.empty()
+                          ? std::string("none")
+                          : std::to_string(node.missing_dependencies.size())));
             for (const auto &dependency : node.missing_dependencies) {
                 line(out, 3, "- " + dependency);
             }
@@ -201,15 +202,14 @@ void print_scheduler_review(const scheduler_snapshot::SchedulerDecisionSummary &
     line(out, 0, "snapshot_status " + snapshot_status_name(summary.snapshot_status));
     line(out,
          0,
-         std::string("checkpoint_friendly ") +
-             (summary.checkpoint_friendly ? "true" : "false"));
+         std::string("checkpoint_friendly ") + (summary.checkpoint_friendly ? "true" : "false"));
     line(out, 0, "next_action " + next_action_name(summary.next_action));
     line(out, 0, "next_step " + summary.next_step_recommendation);
     line(out,
          0,
-         "next_candidate " +
-             (summary.next_candidate_node_name.has_value() ? *summary.next_candidate_node_name
-                                                           : "none"));
+         "next_candidate " + (summary.next_candidate_node_name.has_value()
+                                  ? *summary.next_candidate_node_name
+                                  : "none"));
     line(out,
          0,
          "terminal_reason " +

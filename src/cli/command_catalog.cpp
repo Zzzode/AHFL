@@ -47,7 +47,13 @@ constexpr CommandSpec kCommandSpecs[] = {
      17,
      32,
      12},
-    {CommandKind::EmitDurableStoreImportReview, "emit-durable-store-import-review", 23, 20, 18, 33, 13},
+    {CommandKind::EmitDurableStoreImportReview,
+     "emit-durable-store-import-review",
+     23,
+     20,
+     18,
+     33,
+     13},
     {CommandKind::EmitDurableStoreImportDecision,
      "emit-durable-store-import-decision",
      24,
@@ -55,7 +61,13 @@ constexpr CommandSpec kCommandSpecs[] = {
      19,
      34,
      14},
-    {CommandKind::EmitDurableStoreImportReceipt, "emit-durable-store-import-receipt", 25, 22, 20, 35, 15},
+    {CommandKind::EmitDurableStoreImportReceipt,
+     "emit-durable-store-import-receipt",
+     25,
+     22,
+     20,
+     35,
+     15},
     {CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
      "emit-durable-store-import-receipt-persistence-request",
      26,
@@ -143,8 +155,7 @@ constexpr CommandSpec kCommandSpecs[] = {
     return kNotListed;
 }
 
-template <CommandListKind ListKind>
-[[nodiscard]] consteval bool command_list_has_unique_orders() {
+template <CommandListKind ListKind> [[nodiscard]] consteval bool command_list_has_unique_orders() {
     for (std::size_t lhs_index = 0; lhs_index < std::size(kCommandSpecs); ++lhs_index) {
         const auto lhs_order = command_list_order(kCommandSpecs[lhs_index], ListKind);
         if (lhs_order == kNotListed) {
@@ -181,9 +192,9 @@ static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSup
         }
     }
 
-    std::sort(ordered_commands.begin(), ordered_commands.end(), [](const auto &lhs, const auto &rhs) {
-        return lhs.first < rhs.first;
-    });
+    std::sort(ordered_commands.begin(),
+              ordered_commands.end(),
+              [](const auto &lhs, const auto &rhs) { return lhs.first < rhs.first; });
 
     std::vector<CommandKind> commands;
     commands.reserve(ordered_commands.size());
@@ -349,7 +360,8 @@ void set_command_option(CommandLineOptions &options, CommandKind command) {
     }
 }
 
-[[nodiscard]] std::optional<CommandKind> infer_effective_command(const CommandLineOptions &options) {
+[[nodiscard]] std::optional<CommandKind>
+infer_effective_command(const CommandLineOptions &options) {
     if (options.selected_command.has_value()) {
         return options.selected_command;
     }

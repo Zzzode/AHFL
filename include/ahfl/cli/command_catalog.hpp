@@ -80,8 +80,7 @@ enum class CommandListKind {
 [[nodiscard]] std::string format_comma_or_commands(std::span<const CommandKind> commands);
 
 [[nodiscard]] bool is_action_enabled(const CommandLineOptions &options, CommandKind command);
-[[nodiscard]] std::optional<CommandKind> infer_effective_command(
-    const CommandLineOptions &options);
+[[nodiscard]] std::optional<CommandKind> infer_effective_command(const CommandLineOptions &options);
 [[nodiscard]] int count_enabled_actions(const CommandLineOptions &options);
 
 [[nodiscard]] bool is_package_supported_command(CommandKind command);

@@ -7,7 +7,6 @@
 namespace ahfl {
 
 void print_durable_store_import_receipt_review(
-    const durable_store_import::ReceiptReviewSummary &summary,
-    std::ostream &out);
+    const durable_store_import::ReceiptReviewSummary &summary, std::ostream &out);
 
 } // namespace ahfl

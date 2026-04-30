@@ -35,7 +35,8 @@ enum class ReceiptOutcome {
 };
 
 // Legacy alias
-using DurableStoreImportDecisionReceiptOutcome [[deprecated("Use ReceiptOutcome")]] = ReceiptOutcome;
+using DurableStoreImportDecisionReceiptOutcome [[deprecated("Use ReceiptOutcome")]] =
+    ReceiptOutcome;
 
 enum class ReceiptBoundaryKind {
     LocalContractOnly,
@@ -124,7 +125,8 @@ struct ReceiptValidationResult {
 };
 
 // Legacy alias
-using DurableStoreImportDecisionReceiptValidationResult [[deprecated("Use ReceiptValidationResult")]] = ReceiptValidationResult;
+using DurableStoreImportDecisionReceiptValidationResult
+    [[deprecated("Use ReceiptValidationResult")]] = ReceiptValidationResult;
 
 struct ReceiptResult {
     std::optional<Receipt> receipt;

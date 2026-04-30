@@ -35,9 +35,8 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_canonical_name", [&]() {
-                write_string(record.workflow_canonical_name);
-            });
+            field("workflow_canonical_name",
+                  [&]() { write_string(record.workflow_canonical_name); });
             field("session_id", [&]() { write_string(record.session_id); });
             field("run_id", [&]() {
                 if (record.run_id.has_value()) {
@@ -47,15 +46,10 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
                 out_ << "null";
             });
             field("input_fixture", [&]() { write_string(record.input_fixture); });
-            field("workflow_status", [&]() {
-                print_workflow_status(record.workflow_status);
-            });
-            field("snapshot_status", [&]() {
-                print_snapshot_status(record.snapshot_status);
-            });
-            field("checkpoint_status", [&]() {
-                print_checkpoint_status(record.checkpoint_status);
-            });
+            field("workflow_status", [&]() { print_workflow_status(record.workflow_status); });
+            field("snapshot_status", [&]() { print_snapshot_status(record.snapshot_status); });
+            field("checkpoint_status",
+                  [&]() { print_checkpoint_status(record.checkpoint_status); });
             field("workflow_failure_summary", [&]() {
                 if (record.workflow_failure_summary.has_value()) {
                     print_failure_summary(*record.workflow_failure_summary, 1);
@@ -63,13 +57,10 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("execution_order", [&]() {
-                print_string_array(record.execution_order, 1);
-            });
+            field("execution_order", [&]() { print_string_array(record.execution_order, 1); });
             field("basis_kind", [&]() { print_basis_kind(record.basis_kind); });
-            field("checkpoint_friendly_source", [&]() {
-                out_ << (record.checkpoint_friendly_source ? "true" : "false");
-            });
+            field("checkpoint_friendly_source",
+                  [&]() { out_ << (record.checkpoint_friendly_source ? "true" : "false"); });
             field("cursor", [&]() { print_cursor(record.cursor, 1); });
             field("resume_blocker", [&]() {
                 if (record.resume_blocker.has_value()) {
@@ -83,7 +74,6 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -212,9 +202,8 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
     void print_cursor(const checkpoint_record::CheckpointCursor &cursor, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("persistable_prefix_size", [&]() { out_ << cursor.persistable_prefix_size; });
-            field("persistable_prefix", [&]() {
-                print_string_array(cursor.persistable_prefix, indent_level + 1);
-            });
+            field("persistable_prefix",
+                  [&]() { print_string_array(cursor.persistable_prefix, indent_level + 1); });
             field("resume_candidate_node_name", [&]() {
                 if (cursor.resume_candidate_node_name.has_value()) {
                     write_string(*cursor.resume_candidate_node_name);

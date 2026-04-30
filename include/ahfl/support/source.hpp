@@ -45,9 +45,10 @@ struct SourceFile {
         SourcePosition position{.offset = std::min(offset, content.size())};
         const auto it =
             std::upper_bound(line_starts_cache.begin(), line_starts_cache.end(), position.offset);
-        const auto line_index = it == line_starts_cache.begin()
-                                    ? 0
-                                    : static_cast<std::size_t>((it - line_starts_cache.begin()) - 1);
+        const auto line_index =
+            it == line_starts_cache.begin()
+                ? 0
+                : static_cast<std::size_t>((it - line_starts_cache.begin()) - 1);
         position.line = line_index + 1;
         position.column = position.offset - line_starts_cache[line_index] + 1;
         return position;

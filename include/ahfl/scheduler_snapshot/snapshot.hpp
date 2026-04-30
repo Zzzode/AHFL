@@ -14,8 +14,7 @@
 
 namespace ahfl::scheduler_snapshot {
 
-inline constexpr std::string_view kSchedulerSnapshotFormatVersion =
-    "ahfl.scheduler-snapshot.v1";
+inline constexpr std::string_view kSchedulerSnapshotFormatVersion = "ahfl.scheduler-snapshot.v1";
 
 enum class SchedulerSnapshotStatus {
     Runnable,
@@ -47,8 +46,7 @@ struct SchedulerBlockedNode {
     std::optional<std::size_t> execution_index;
     std::vector<std::string> planned_dependencies;
     std::vector<std::string> missing_dependencies;
-    SchedulerBlockedReasonKind blocked_reason{
-        SchedulerBlockedReasonKind::WaitingOnDependencies};
+    SchedulerBlockedReasonKind blocked_reason{SchedulerBlockedReasonKind::WaitingOnDependencies};
     bool may_become_ready{true};
     std::optional<runtime_session::RuntimeFailureSummary> blocking_failure_summary;
 };

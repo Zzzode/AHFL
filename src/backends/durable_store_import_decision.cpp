@@ -18,11 +18,9 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
     void print(const durable_store_import::Decision &decision) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(decision.format_version); });
-            field("source_durable_store_import_request_format_version",
-                  [&]() {
-                      write_string(
-                          decision.source_durable_store_import_request_format_version);
-                  });
+            field("source_durable_store_import_request_format_version", [&]() {
+                write_string(decision.source_durable_store_import_request_format_version);
+            });
             field("source_store_import_descriptor_format_version",
                   [&]() { write_string(decision.source_store_import_descriptor_format_version); });
             field("source_execution_plan_format_version",
@@ -89,10 +87,8 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
                   [&]() { print_request_boundary_kind(decision.request_boundary_kind); });
             field("decision_boundary_kind",
                   [&]() { print_decision_boundary_kind(decision.decision_boundary_kind); });
-            field("decision_status",
-                  [&]() { print_decision_status(decision.decision_status); });
-            field("decision_outcome",
-                  [&]() { print_decision_outcome(decision.decision_outcome); });
+            field("decision_status", [&]() { print_decision_status(decision.decision_status); });
+            field("decision_outcome", [&]() { print_decision_outcome(decision.decision_outcome); });
             field("accepted_for_future_execution",
                   [&]() { out_ << (decision.accepted_for_future_execution ? "true" : "false"); });
             field("next_required_adapter_capability", [&]() {
@@ -114,7 +110,6 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -376,9 +371,8 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
 
 } // namespace
 
-void print_durable_store_import_decision_json(
-    const durable_store_import::Decision &decision,
-    std::ostream &out) {
+void print_durable_store_import_decision_json(const durable_store_import::Decision &decision,
+                                              std::ostream &out) {
     DurableStoreImportDecisionJsonPrinter(out).print(decision);
 }
 

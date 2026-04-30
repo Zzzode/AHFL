@@ -68,9 +68,9 @@ class PersistenceExportManifestJsonPrinter final : private PrettyJsonWriter {
                   [&]() { write_string(manifest.planned_durable_identity); });
             field("manifest_boundary_kind",
                   [&]() { print_manifest_boundary_kind(manifest.manifest_boundary_kind); });
-            field("artifact_bundle",
-                  [&]() { print_artifact_bundle(manifest.artifact_bundle, 1); });
-            field("manifest_ready", [&]() { out_ << (manifest.manifest_ready ? "true" : "false"); });
+            field("artifact_bundle", [&]() { print_artifact_bundle(manifest.artifact_bundle, 1); });
+            field("manifest_ready",
+                  [&]() { out_ << (manifest.manifest_ready ? "true" : "false"); });
             field("next_required_artifact_kind", [&]() {
                 if (manifest.next_required_artifact_kind.has_value()) {
                     print_artifact_kind(*manifest.next_required_artifact_kind);
@@ -90,7 +90,6 @@ class PersistenceExportManifestJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-
     void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("format_version", [&]() { write_string(identity.format_version); });
@@ -249,10 +248,8 @@ class PersistenceExportManifestJsonPrinter final : private PrettyJsonWriter {
                               int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("artifact_kind", [&]() { print_artifact_kind(entry.artifact_kind); });
-            field("logical_artifact_name",
-                  [&]() { write_string(entry.logical_artifact_name); });
-            field("source_format_version",
-                  [&]() { write_string(entry.source_format_version); });
+            field("logical_artifact_name", [&]() { write_string(entry.logical_artifact_name); });
+            field("source_format_version", [&]() { write_string(entry.source_format_version); });
         });
     }
 
@@ -289,8 +286,7 @@ class PersistenceExportManifestJsonPrinter final : private PrettyJsonWriter {
 } // namespace
 
 void print_persistence_export_manifest_json(
-    const persistence_export::PersistenceExportManifest &manifest,
-    std::ostream &out) {
+    const persistence_export::PersistenceExportManifest &manifest, std::ostream &out) {
     PersistenceExportManifestJsonPrinter printer(out);
     printer.print(manifest);
 }

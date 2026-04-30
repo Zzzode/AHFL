@@ -6,8 +6,7 @@
 
 namespace ahfl {
 
-void print_durable_store_import_receipt_json(
-    const durable_store_import::Receipt &receipt,
-    std::ostream &out);
+void print_durable_store_import_receipt_json(const durable_store_import::Receipt &receipt,
+                                             std::ostream &out);
 
 } // namespace ahfl

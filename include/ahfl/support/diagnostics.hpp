@@ -107,7 +107,9 @@ struct MessageTemplate {
 
     constexpr explicit MessageTemplate(std::string_view fmt) noexcept : format(fmt) {}
 
-    [[nodiscard]] std::string format_with() const { return std::string(format); }
+    [[nodiscard]] std::string format_with() const {
+        return std::string(format);
+    }
 
     [[nodiscard]] std::string format_with(std::string_view arg) const {
         std::string result(format);
@@ -133,8 +135,8 @@ struct MessageTemplate {
         return result;
     }
 
-    [[nodiscard]] std::string format_with(std::string_view arg1, std::string_view arg2,
-                                          std::string_view arg3) const {
+    [[nodiscard]] std::string
+    format_with(std::string_view arg1, std::string_view arg2, std::string_view arg3) const {
         std::string result(format);
         constexpr std::string_view placeholder = "{}";
         std::size_t pos = result.find(placeholder);
@@ -152,8 +154,10 @@ struct MessageTemplate {
         return result;
     }
 
-    [[nodiscard]] std::string format_with(std::string_view arg1, std::string_view arg2,
-                                          std::string_view arg3, std::string_view arg4) const {
+    [[nodiscard]] std::string format_with(std::string_view arg1,
+                                          std::string_view arg2,
+                                          std::string_view arg3,
+                                          std::string_view arg4) const {
         std::string result(format);
         constexpr std::string_view placeholder = "{}";
         std::size_t pos = result.find(placeholder);
@@ -182,70 +186,70 @@ struct MessageTemplate {
 
 namespace error_codes {
 namespace parse {
-    inline constexpr ErrorCode<DiagnosticCategory::Parse> UnexpectedToken{"UNEXPECTED_TOKEN"};
-    inline constexpr ErrorCode<DiagnosticCategory::Parse> InvalidSyntax{"INVALID_SYNTAX"};
-    inline constexpr ErrorCode<DiagnosticCategory::Parse> UnterminatedString{"UNTERMINATED_STRING"};
+inline constexpr ErrorCode<DiagnosticCategory::Parse> UnexpectedToken{"UNEXPECTED_TOKEN"};
+inline constexpr ErrorCode<DiagnosticCategory::Parse> InvalidSyntax{"INVALID_SYNTAX"};
+inline constexpr ErrorCode<DiagnosticCategory::Parse> UnterminatedString{"UNTERMINATED_STRING"};
 } // namespace parse
 
 namespace resolve {
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateSymbol{"DUPLICATE_SYMBOL"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownSymbol{"UNKNOWN_SYMBOL"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> CyclicTypeAlias{"CYCLIC_TYPE_ALIAS"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousReference{"AMBIGUOUS_REFERENCE"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownCallable{"UNKNOWN_CALLABLE"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousCallable{"AMBIGUOUS_CALLABLE"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateImport{"DUPLICATE_IMPORT"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> ModuleBoundaryMismatch{
-        "MODULE_BOUNDARY_MISMATCH"};
-    inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclarations{
-        "MULTIPLE_MODULE_DECLARATIONS"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateSymbol{"DUPLICATE_SYMBOL"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownSymbol{"UNKNOWN_SYMBOL"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> CyclicTypeAlias{"CYCLIC_TYPE_ALIAS"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousReference{"AMBIGUOUS_REFERENCE"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> UnknownCallable{"UNKNOWN_CALLABLE"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> AmbiguousCallable{"AMBIGUOUS_CALLABLE"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> DuplicateImport{"DUPLICATE_IMPORT"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> ModuleBoundaryMismatch{
+    "MODULE_BOUNDARY_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclarations{
+    "MULTIPLE_MODULE_DECLARATIONS"};
 } // namespace resolve
 
 namespace typecheck {
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TypeMismatch{"TYPE_MISMATCH"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownType{"UNKNOWN_TYPE"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidOperation{"INVALID_OPERATION"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NonPureExpression{"NON_PURE_EXPRESSION"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidMemberAccess{
-        "INVALID_MEMBER_ACCESS"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownField{"UNKNOWN_FIELD"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingField{"MISSING_FIELD"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateField{"DUPLICATE_FIELD"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidIndexAccess{
-        "INVALID_INDEX_ACCESS"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoneWithoutContext{
-        "NONE_WITHOUT_CONTEXT"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EmptyLiteralWithoutContext{
-        "EMPTY_LITERAL_WITHOUT_CONTEXT"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidAgentType{"INVALID_AGENT_TYPE"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownCapability{"UNKNOWN_CAPABILITY"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
-        "CAPABILITY_NOT_ALLOWED"};
-    inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARITY"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TypeMismatch{"TYPE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownType{"UNKNOWN_TYPE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidOperation{"INVALID_OPERATION"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NonPureExpression{"NON_PURE_EXPRESSION"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidMemberAccess{
+    "INVALID_MEMBER_ACCESS"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownField{"UNKNOWN_FIELD"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingField{"MISSING_FIELD"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateField{"DUPLICATE_FIELD"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidIndexAccess{
+    "INVALID_INDEX_ACCESS"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoneWithoutContext{
+    "NONE_WITHOUT_CONTEXT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EmptyLiteralWithoutContext{
+    "EMPTY_LITERAL_WITHOUT_CONTEXT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidAgentType{"INVALID_AGENT_TYPE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownCapability{"UNKNOWN_CAPABILITY"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
+    "CAPABILITY_NOT_ALLOWED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARITY"};
 } // namespace typecheck
 
 namespace validation {
-    inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
-    inline constexpr ErrorCode<DiagnosticCategory::Validation> RequiredFieldEmpty{
-        "REQUIRED_FIELD_EMPTY"};
-    inline constexpr ErrorCode<DiagnosticCategory::Validation> OptionalFieldEmpty{
-        "OPTIONAL_FIELD_EMPTY"};
-    inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidState{"INVALID_STATE"};
-    inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyMessage{
-        "FAILURE_SUMMARY_EMPTY_MESSAGE"};
-    inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNodeName{
-        "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> RequiredFieldEmpty{
+    "REQUIRED_FIELD_EMPTY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> OptionalFieldEmpty{
+    "OPTIONAL_FIELD_EMPTY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidState{"INVALID_STATE"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyMessage{
+    "FAILURE_SUMMARY_EMPTY_MESSAGE"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNodeName{
+    "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
 } // namespace validation
 
 namespace backend {
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> BootstrapError{"BOOTSTRAP_ERROR"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> ExecutionError{"EXECUTION_ERROR"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownTarget{"UNKNOWN_TARGET"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> DuplicateWorkflow{"DUPLICATE_WORKFLOW"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> NoWorkflows{"NO_WORKFLOWS"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownWorkflow{"UNKNOWN_WORKFLOW"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> MissingBootstrap{"MISSING_BOOTSTRAP"};
-    inline constexpr ErrorCode<DiagnosticCategory::Backend> InvalidDependency{"INVALID_DEPENDENCY"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> BootstrapError{"BOOTSTRAP_ERROR"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> ExecutionError{"EXECUTION_ERROR"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownTarget{"UNKNOWN_TARGET"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> DuplicateWorkflow{"DUPLICATE_WORKFLOW"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> NoWorkflows{"NO_WORKFLOWS"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> UnknownWorkflow{"UNKNOWN_WORKFLOW"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> MissingBootstrap{"MISSING_BOOTSTRAP"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> InvalidDependency{"INVALID_DEPENDENCY"};
 } // namespace backend
 } // namespace error_codes
 
@@ -255,55 +259,52 @@ namespace backend {
 
 namespace messages {
 namespace resolve {
-    inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};
-    inline constexpr MessageTemplate UnknownSymbol{"unknown {} '{}'"};
-    inline constexpr MessageTemplate AmbiguousCallable{
-        "ambiguous callable '{}' matches both a capability and a predicate"};
-    inline constexpr MessageTemplate CyclicTypeAlias{"type alias cycle detected: {}"};
-    inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
-    inline constexpr MessageTemplate ModuleBoundaryMismatch{
-        "source unit module boundary does not match graph owner"};
-    inline constexpr MessageTemplate MultipleModuleDeclarations{
-        "multiple module declarations are not supported in one source file"};
+inline constexpr MessageTemplate DuplicateSymbol{"duplicate {} '{}'"};
+inline constexpr MessageTemplate UnknownSymbol{"unknown {} '{}'"};
+inline constexpr MessageTemplate AmbiguousCallable{
+    "ambiguous callable '{}' matches both a capability and a predicate"};
+inline constexpr MessageTemplate CyclicTypeAlias{"type alias cycle detected: {}"};
+inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
+inline constexpr MessageTemplate ModuleBoundaryMismatch{
+    "source unit module boundary does not match graph owner"};
+inline constexpr MessageTemplate MultipleModuleDeclarations{
+    "multiple module declarations are not supported in one source file"};
 } // namespace resolve
 
 namespace typecheck {
-    inline constexpr MessageTemplate TypeMismatch{"type mismatch in {}: expected {}, got {}"};
-    inline constexpr MessageTemplate InvalidMemberAccess{
-        "member access requires a struct value, got {}"};
-    inline constexpr MessageTemplate UnknownField{"unknown field '{}' on struct '{}'"};
-    inline constexpr MessageTemplate MissingField{"missing field '{}' in struct literal"};
-    inline constexpr MessageTemplate DuplicateField{"duplicate field '{}' in struct literal"};
-    inline constexpr MessageTemplate InvalidOperator{"operator '{}' is not defined for {} and {}"};
-    inline constexpr MessageTemplate NoneWithoutContext{
-        "cannot infer type of 'none' without an expected Optional<T> context"};
-    inline constexpr MessageTemplate EmptyListWithoutContext{
-        "cannot infer type of empty list literal"};
-    inline constexpr MessageTemplate EmptySetWithoutContext{
-        "cannot infer type of empty set literal"};
-    inline constexpr MessageTemplate EmptyMapWithoutContext{
-        "cannot infer type of empty map literal"};
-    inline constexpr MessageTemplate InvalidAgentType{"agent {} type must resolve to a struct type"};
-    inline constexpr MessageTemplate UnknownCapabilityInAgent{
-        "unknown capability '{}' in agent capability list"};
-    inline constexpr MessageTemplate CapabilityNotAllowed{
-        "capability call '{}' is not allowed in this context"};
-    inline constexpr MessageTemplate CapabilityNotDeclared{
-        "capability '{}' is not declared in the current agent capabilities"};
-    inline constexpr MessageTemplate WrongArity{"{} '{}' expects {} argument(s), got {}"};
-    inline constexpr MessageTemplate PredicateArgsNotPure{
-        "predicate arguments must be pure expressions"};
-    inline constexpr MessageTemplate NonPureContext{"{} must be a pure expression"};
+inline constexpr MessageTemplate TypeMismatch{"type mismatch in {}: expected {}, got {}"};
+inline constexpr MessageTemplate InvalidMemberAccess{
+    "member access requires a struct value, got {}"};
+inline constexpr MessageTemplate UnknownField{"unknown field '{}' on struct '{}'"};
+inline constexpr MessageTemplate MissingField{"missing field '{}' in struct literal"};
+inline constexpr MessageTemplate DuplicateField{"duplicate field '{}' in struct literal"};
+inline constexpr MessageTemplate InvalidOperator{"operator '{}' is not defined for {} and {}"};
+inline constexpr MessageTemplate NoneWithoutContext{
+    "cannot infer type of 'none' without an expected Optional<T> context"};
+inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};
+inline constexpr MessageTemplate EmptySetWithoutContext{"cannot infer type of empty set literal"};
+inline constexpr MessageTemplate EmptyMapWithoutContext{"cannot infer type of empty map literal"};
+inline constexpr MessageTemplate InvalidAgentType{"agent {} type must resolve to a struct type"};
+inline constexpr MessageTemplate UnknownCapabilityInAgent{
+    "unknown capability '{}' in agent capability list"};
+inline constexpr MessageTemplate CapabilityNotAllowed{
+    "capability call '{}' is not allowed in this context"};
+inline constexpr MessageTemplate CapabilityNotDeclared{
+    "capability '{}' is not declared in the current agent capabilities"};
+inline constexpr MessageTemplate WrongArity{"{} '{}' expects {} argument(s), got {}"};
+inline constexpr MessageTemplate PredicateArgsNotPure{
+    "predicate arguments must be pure expressions"};
+inline constexpr MessageTemplate NonPureContext{"{} must be a pure expression"};
 } // namespace typecheck
 
 namespace validation {
-    inline constexpr MessageTemplate VersionMismatch{"{} must be '{}'"};
-    inline constexpr MessageTemplate RequiredFieldEmpty{"{} must not be empty"};
-    inline constexpr MessageTemplate OptionalFieldEmpty{"{} {}"};
-    inline constexpr MessageTemplate FailureSummaryEmptyMessage{
-        "{} contains failure summary with empty message"};
-    inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
-        "{} contains failure summary with empty node_name"};
+inline constexpr MessageTemplate VersionMismatch{"{} must be '{}'"};
+inline constexpr MessageTemplate RequiredFieldEmpty{"{} must not be empty"};
+inline constexpr MessageTemplate OptionalFieldEmpty{"{} {}"};
+inline constexpr MessageTemplate FailureSummaryEmptyMessage{
+    "{} contains failure summary with empty message"};
+inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
+    "{} contains failure summary with empty node_name"};
 } // namespace validation
 } // namespace messages
 
@@ -352,20 +353,25 @@ class DiagnosticBuilder {
         return std::move(*this);
     }
 
-    DiagnosticBuilder &&message(MessageTemplate tmpl, std::string_view arg1,
-                                std::string_view arg2) && {
+    DiagnosticBuilder &&
+    message(MessageTemplate tmpl, std::string_view arg1, std::string_view arg2) && {
         message_ = tmpl.format_with(arg1, arg2);
         return std::move(*this);
     }
 
-    DiagnosticBuilder &&message(MessageTemplate tmpl, std::string_view arg1, std::string_view arg2,
+    DiagnosticBuilder &&message(MessageTemplate tmpl,
+                                std::string_view arg1,
+                                std::string_view arg2,
                                 std::string_view arg3) && {
         message_ = tmpl.format_with(arg1, arg2, arg3);
         return std::move(*this);
     }
 
-    DiagnosticBuilder &&message(MessageTemplate tmpl, std::string_view arg1, std::string_view arg2,
-                                std::string_view arg3, std::string_view arg4) && {
+    DiagnosticBuilder &&message(MessageTemplate tmpl,
+                                std::string_view arg1,
+                                std::string_view arg2,
+                                std::string_view arg3,
+                                std::string_view arg4) && {
         message_ = tmpl.format_with(arg1, arg2, arg3, arg4);
         return std::move(*this);
     }
@@ -469,11 +475,13 @@ class DiagnosticBag {
         return false;
     }
 
-    [[nodiscard]] const std::vector<Diagnostic> &entries() const noexcept { return diagnostics_; }
+    [[nodiscard]] const std::vector<Diagnostic> &entries() const noexcept {
+        return diagnostics_;
+    }
 
     void append(const DiagnosticBag &other) {
-        diagnostics_.insert(diagnostics_.end(), other.diagnostics_.begin(),
-                            other.diagnostics_.end());
+        diagnostics_.insert(
+            diagnostics_.end(), other.diagnostics_.begin(), other.diagnostics_.end());
     }
 
     void append_from_source(const DiagnosticBag &other, const SourceFile &source) {
@@ -489,7 +497,8 @@ class DiagnosticBag {
         }
     }
 
-    void render(std::ostream &out, MaybeCRef<SourceFile> source = std::nullopt,
+    void render(std::ostream &out,
+                MaybeCRef<SourceFile> source = std::nullopt,
                 bool include_code = false) const {
         for (const auto &diagnostic : diagnostics_) {
             out << to_string(diagnostic.severity);
@@ -516,7 +525,9 @@ class DiagnosticBag {
     }
 
     // Internal method for DiagnosticBuilder
-    void add_diagnostic(Diagnostic diagnostic) { diagnostics_.push_back(std::move(diagnostic)); }
+    void add_diagnostic(Diagnostic diagnostic) {
+        diagnostics_.push_back(std::move(diagnostic));
+    }
 
   private:
     std::vector<Diagnostic> diagnostics_;

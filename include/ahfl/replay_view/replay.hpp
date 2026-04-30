@@ -39,8 +39,7 @@ struct ReplayNodeProgression {
     bool saw_node_failed{false};
     std::optional<runtime_session::RuntimeFailureSummary> failure_summary;
     std::vector<std::string> used_mock_selectors;
-    runtime_session::NodeSessionStatus final_status{
-        runtime_session::NodeSessionStatus::Blocked};
+    runtime_session::NodeSessionStatus final_status{runtime_session::NodeSessionStatus::Blocked};
 };
 
 struct ReplayView {
@@ -81,8 +80,7 @@ struct ReplayViewValidationResult {
     }
 };
 
-[[nodiscard]] ReplayViewValidationResult
-validate_replay_view(const ReplayView &replay);
+[[nodiscard]] ReplayViewValidationResult validate_replay_view(const ReplayView &replay);
 
 [[nodiscard]] ReplayViewResult
 build_replay_view(const handoff::ExecutionPlan &plan,

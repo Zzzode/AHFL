@@ -75,8 +75,8 @@ struct ReceiptReviewSummary {
 };
 
 // Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptReviewSummary
-    [[deprecated("Use ReceiptReviewSummary")]] = ReceiptReviewSummary;
+using DurableStoreImportDecisionReceiptReviewSummary [[deprecated("Use ReceiptReviewSummary")]] =
+    ReceiptReviewSummary;
 
 struct ReceiptReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
@@ -88,7 +88,8 @@ struct ReceiptReviewSummaryValidationResult {
 
 // Legacy alias
 using DurableStoreImportDecisionReceiptReviewSummaryValidationResult
-    [[deprecated("Use ReceiptReviewSummaryValidationResult")]] = ReceiptReviewSummaryValidationResult;
+    [[deprecated("Use ReceiptReviewSummaryValidationResult")]] =
+        ReceiptReviewSummaryValidationResult;
 
 struct ReceiptReviewSummaryResult {
     std::optional<ReceiptReviewSummary> summary;
@@ -106,8 +107,7 @@ using DurableStoreImportDecisionReceiptReviewSummaryResult
 [[nodiscard]] ReceiptReviewSummaryValidationResult
 validate_receipt_review_summary(const ReceiptReviewSummary &summary);
 
-[[nodiscard]] ReceiptReviewSummaryResult
-build_receipt_review_summary(const Receipt &receipt);
+[[nodiscard]] ReceiptReviewSummaryResult build_receipt_review_summary(const Receipt &receipt);
 
 // Legacy function names - delegate to new functions
 [[nodiscard]] inline ReceiptReviewSummaryValidationResult

@@ -26,8 +26,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string checkpoint_status_name(
-    checkpoint_record::CheckpointRecordStatus status) {
+[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         return "ready_to_persist";
@@ -44,8 +43,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string persistence_status_name(
-    persistence_descriptor::PersistenceDescriptorStatus status) {
+[[nodiscard]] std::string
+persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";
@@ -62,8 +61,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string manifest_status_name(
-    persistence_export::PersistenceExportManifestStatus status) {
+[[nodiscard]] std::string
+manifest_status_name(persistence_export::PersistenceExportManifestStatus status) {
     switch (status) {
     case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
         return "ready_to_import";
@@ -80,8 +79,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string descriptor_status_name(
-    store_import::StoreImportDescriptorStatus status) {
+[[nodiscard]] std::string descriptor_status_name(store_import::StoreImportDescriptorStatus status) {
     switch (status) {
     case store_import::StoreImportDescriptorStatus::ReadyToImport:
         return "ready_to_import";
@@ -98,8 +96,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string request_status_name(
-    durable_store_import::RequestStatus status) {
+[[nodiscard]] std::string request_status_name(durable_store_import::RequestStatus status) {
     switch (status) {
     case durable_store_import::RequestStatus::ReadyForAdapter:
         return "ready_for_adapter";
@@ -116,8 +113,8 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string request_boundary_kind_name(
-    durable_store_import::RequestBoundaryKind kind) {
+[[nodiscard]] std::string
+request_boundary_kind_name(durable_store_import::RequestBoundaryKind kind) {
     switch (kind) {
     case durable_store_import::RequestBoundaryKind::LocalIntentOnly:
         return "local_intent_only";
@@ -128,8 +125,7 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string artifact_kind_name(
-    durable_store_import::RequestedArtifactKind kind) {
+[[nodiscard]] std::string artifact_kind_name(durable_store_import::RequestedArtifactKind kind) {
     switch (kind) {
     case durable_store_import::RequestedArtifactKind::StoreImportDescriptor:
         return "store_import_descriptor";
@@ -163,23 +159,17 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string
-next_action_name(durable_store_import::ReviewNextActionKind action) {
+[[nodiscard]] std::string next_action_name(durable_store_import::ReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::ReviewNextActionKind::
-        HandoffDurableStoreImportRequest:
+    case durable_store_import::ReviewNextActionKind::HandoffDurableStoreImportRequest:
         return "handoff_durable_store_import_request";
-    case durable_store_import::ReviewNextActionKind::
-        AwaitAdapterReadiness:
+    case durable_store_import::ReviewNextActionKind::AwaitAdapterReadiness:
         return "await_adapter_readiness";
-    case durable_store_import::ReviewNextActionKind::
-        ArchiveCompletedDurableStoreImportState:
+    case durable_store_import::ReviewNextActionKind::ArchiveCompletedDurableStoreImportState:
         return "archive_completed_durable_store_import_state";
-    case durable_store_import::ReviewNextActionKind::
-        InvestigateDurableStoreImportFailure:
+    case durable_store_import::ReviewNextActionKind::InvestigateDurableStoreImportFailure:
         return "investigate_durable_store_import_failure";
-    case durable_store_import::ReviewNextActionKind::
-        PreservePartialDurableStoreImportState:
+    case durable_store_import::ReviewNextActionKind::PreservePartialDurableStoreImportState:
         return "preserve_partial_durable_store_import_state";
     }
 
@@ -231,9 +221,9 @@ void print_adapter_blocker(std::ostream &out,
     line(out, indent_level + 1, "kind " + blocker_kind_name(blocker->kind));
     line(out,
          indent_level + 1,
-         "logical_artifact_name " +
-             (blocker->logical_artifact_name.has_value() ? *blocker->logical_artifact_name
-                                                         : "none"));
+         "logical_artifact_name " + (blocker->logical_artifact_name.has_value()
+                                         ? *blocker->logical_artifact_name
+                                         : "none"));
     line(out, indent_level + 1, "message " + blocker->message);
     line(out, indent_level, "}");
 }
@@ -256,18 +246,15 @@ void print_string_list(std::ostream &out,
 
 } // namespace
 
-void print_durable_store_import_review(
-    const durable_store_import::ReviewSummary &summary,
-    std::ostream &out) {
+void print_durable_store_import_review(const durable_store_import::ReviewSummary &summary,
+                                       std::ostream &out) {
     out << summary.format_version << '\n';
     line(out,
          0,
-         "source_request_format " +
-             summary.source_durable_store_import_request_format_version);
+         "source_request_format " + summary.source_durable_store_import_request_format_version);
     line(out,
          0,
-         "source_descriptor_format " +
-             summary.source_store_import_descriptor_format_version);
+         "source_descriptor_format " + summary.source_store_import_descriptor_format_version);
     line(out, 0, "source_manifest_format " + summary.source_export_manifest_format_version);
     line(out, 0, "workflow " + summary.workflow_canonical_name);
     line(out, 0, "session " + summary.session_id);
@@ -283,13 +270,11 @@ void print_durable_store_import_review(
     line(out, 0, "store_import_candidate_identity " + summary.store_import_candidate_identity);
     line(out,
          0,
-         "durable_store_import_request_identity " +
-             summary.durable_store_import_request_identity);
+         "durable_store_import_request_identity " + summary.durable_store_import_request_identity);
     line(out, 0, "planned_durable_identity " + summary.planned_durable_identity);
     line(out,
          0,
-         "request_boundary_kind " +
-             request_boundary_kind_name(summary.request_boundary_kind));
+         "request_boundary_kind " + request_boundary_kind_name(summary.request_boundary_kind));
     line(out, 0, std::string("adapter_ready ") + (summary.adapter_ready ? "true" : "false"));
     line(out, 0, "next_action " + next_action_name(summary.next_action));
     line(out, 0, "adapter_boundary " + summary.adapter_boundary_summary);

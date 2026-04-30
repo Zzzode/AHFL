@@ -102,13 +102,11 @@ struct StoreImportDescriptor {
     std::string export_package_identity;
     std::string store_import_candidate_identity;
     std::string planned_durable_identity;
-    StoreImportBoundaryKind descriptor_boundary_kind{
-        StoreImportBoundaryKind::LocalStagingOnly};
+    StoreImportBoundaryKind descriptor_boundary_kind{StoreImportBoundaryKind::LocalStagingOnly};
     StagingArtifactSet staging_artifact_set;
     bool import_ready{false};
     std::optional<StagingArtifactKind> next_required_staging_artifact_kind;
-    StoreImportDescriptorStatus descriptor_status{
-        StoreImportDescriptorStatus::Blocked};
+    StoreImportDescriptorStatus descriptor_status{StoreImportDescriptorStatus::Blocked};
     std::optional<StagingBlocker> staging_blocker;
 };
 
@@ -132,8 +130,7 @@ struct StoreImportDescriptorResult {
 [[nodiscard]] StoreImportDescriptorValidationResult
 validate_store_import_descriptor(const StoreImportDescriptor &descriptor);
 
-[[nodiscard]] StoreImportDescriptorResult
-build_store_import_descriptor(
+[[nodiscard]] StoreImportDescriptorResult build_store_import_descriptor(
     const handoff::ExecutionPlan &plan,
     const runtime_session::RuntimeSession &session,
     const execution_journal::ExecutionJournal &journal,

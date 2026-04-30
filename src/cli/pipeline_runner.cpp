@@ -60,16 +60,15 @@
 
 namespace ahfl::cli {
 namespace {
-[[nodiscard]] std::optional<std::string> to_owned_string(
-    std::optional<std::string_view> value) {
+[[nodiscard]] std::optional<std::string> to_owned_string(std::optional<std::string_view> value) {
     return value.transform([](std::string_view text) { return std::string(text); });
 }
 
 [[nodiscard]] std::optional<ahfl::handoff::ExecutionPlan>
 build_execution_plan_for_cli(const ahfl::ir::Program &program,
                              const ahfl::handoff::PackageMetadata &metadata) {
-    auto plan_result = ahfl::handoff::build_execution_plan(
-        ahfl::handoff::lower_package(program, metadata));
+    auto plan_result =
+        ahfl::handoff::build_execution_plan(ahfl::handoff::lower_package(program, metadata));
     plan_result.diagnostics.render(std::cerr);
     if (plan_result.has_errors() || !plan_result.plan.has_value()) {
         return std::nullopt;
@@ -124,10 +123,10 @@ build_execution_journal_for_cli(const ahfl::runtime_session::RuntimeSession &ses
     return std::move(*journal_result.journal);
 }
 
-[[nodiscard]] std::optional<ahfl::replay_view::ReplayView> build_replay_view_for_cli(
-    const ahfl::handoff::ExecutionPlan &plan,
-    const ahfl::runtime_session::RuntimeSession &session,
-    const ahfl::execution_journal::ExecutionJournal &journal) {
+[[nodiscard]] std::optional<ahfl::replay_view::ReplayView>
+build_replay_view_for_cli(const ahfl::handoff::ExecutionPlan &plan,
+                          const ahfl::runtime_session::RuntimeSession &session,
+                          const ahfl::execution_journal::ExecutionJournal &journal) {
     auto replay_result = ahfl::replay_view::build_replay_view(plan, session, journal);
     replay_result.diagnostics.render(std::cerr);
     if (replay_result.has_errors() || !replay_result.replay.has_value()) {
@@ -264,8 +263,7 @@ class CliPipelineArtifacts final {
             const auto *plan = execution_plan();
             const auto *request = dry_run_request();
             if (plan != nullptr && request != nullptr) {
-                runtime_session_ =
-                    build_runtime_session_for_cli(*plan, *request, inputs_.mock_set);
+                runtime_session_ = build_runtime_session_for_cli(*plan, *request, inputs_.mock_set);
             }
         }
 
@@ -419,8 +417,8 @@ class CliPipelineArtifacts final {
             const auto *journal = execution_journal();
             const auto *trace = dry_run_trace();
             if (plan != nullptr && session != nullptr && journal != nullptr && trace != nullptr) {
-                auto report = ahfl::audit_report::build_audit_report(
-                    *plan, *session, *journal, *trace);
+                auto report =
+                    ahfl::audit_report::build_audit_report(*plan, *session, *journal, *trace);
                 report.diagnostics.render(std::cerr);
                 if (!report.has_errors() && report.report.has_value()) {
                     audit_report_ = std::move(*report.report);
@@ -472,8 +470,9 @@ class CliPipelineArtifacts final {
     std::optional<ahfl::audit_report::AuditReport> audit_report_;
 };
 
-[[nodiscard]] int emit_execution_plan_with_diagnostics(const ahfl::ir::Program &program,
-                                                       const ahfl::handoff::PackageMetadata &metadata) {
+[[nodiscard]] int
+emit_execution_plan_with_diagnostics(const ahfl::ir::Program &program,
+                                     const ahfl::handoff::PackageMetadata &metadata) {
     const auto plan = build_execution_plan_for_cli(program, metadata);
     if (!plan.has_value()) {
         return 1;
@@ -482,11 +481,11 @@ class CliPipelineArtifacts final {
     ahfl::print_execution_plan_json(*plan, std::cout);
     return 0;
 }
-[[nodiscard]] int emit_dry_run_trace_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_dry_run_trace_with_diagnostics(const ahfl::ir::Program &program,
+                                    const ahfl::handoff::PackageMetadata &metadata,
+                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                    const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -503,11 +502,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_runtime_session_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_runtime_session_with_diagnostics(const ahfl::ir::Program &program,
+                                      const ahfl::handoff::PackageMetadata &metadata,
+                                      const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                      const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -524,11 +523,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_execution_journal_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_execution_journal_with_diagnostics(const ahfl::ir::Program &program,
+                                        const ahfl::handoff::PackageMetadata &metadata,
+                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                        const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -545,11 +544,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_replay_view_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_replay_view_with_diagnostics(const ahfl::ir::Program &program,
+                                  const ahfl::handoff::PackageMetadata &metadata,
+                                  const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                  const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -566,11 +565,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_audit_report_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_audit_report_with_diagnostics(const ahfl::ir::Program &program,
+                                   const ahfl::handoff::PackageMetadata &metadata,
+                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                   const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -587,11 +586,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_scheduler_snapshot_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_scheduler_snapshot_with_diagnostics(const ahfl::ir::Program &program,
+                                         const ahfl::handoff::PackageMetadata &metadata,
+                                         const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                         const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -608,11 +607,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_scheduler_review_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_scheduler_review_with_diagnostics(const ahfl::ir::Program &program,
+                                       const ahfl::handoff::PackageMetadata &metadata,
+                                       const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                       const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -625,8 +624,7 @@ class CliPipelineArtifacts final {
         return 1;
     }
 
-    const auto summary =
-        ahfl::scheduler_snapshot::build_scheduler_decision_summary(*snapshot);
+    const auto summary = ahfl::scheduler_snapshot::build_scheduler_decision_summary(*snapshot);
     summary.diagnostics.render(std::cerr);
     if (summary.has_errors() || !summary.summary.has_value()) {
         return 1;
@@ -636,11 +634,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_checkpoint_record_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_checkpoint_record_with_diagnostics(const ahfl::ir::Program &program,
+                                        const ahfl::handoff::PackageMetadata &metadata,
+                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                        const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -657,11 +655,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_checkpoint_review_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_checkpoint_review_with_diagnostics(const ahfl::ir::Program &program,
+                                        const ahfl::handoff::PackageMetadata &metadata,
+                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                        const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -684,11 +682,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_persistence_descriptor_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_persistence_descriptor_with_diagnostics(const ahfl::ir::Program &program,
+                                             const ahfl::handoff::PackageMetadata &metadata,
+                                             const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                             const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -705,11 +703,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_persistence_review_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_persistence_review_with_diagnostics(const ahfl::ir::Program &program,
+                                         const ahfl::handoff::PackageMetadata &metadata,
+                                         const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                         const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -733,11 +731,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_export_manifest_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_export_manifest_with_diagnostics(const ahfl::ir::Program &program,
+                                      const ahfl::handoff::PackageMetadata &metadata,
+                                      const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                      const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -754,11 +752,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_export_review_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_export_review_with_diagnostics(const ahfl::ir::Program &program,
+                                    const ahfl::handoff::PackageMetadata &metadata,
+                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                    const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -782,11 +780,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_store_import_descriptor_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_store_import_descriptor_with_diagnostics(const ahfl::ir::Program &program,
+                                              const ahfl::handoff::PackageMetadata &metadata,
+                                              const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                              const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -803,11 +801,11 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] int emit_store_import_review_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_store_import_review_with_diagnostics(const ahfl::ir::Program &program,
+                                          const ahfl::handoff::PackageMetadata &metadata,
+                                          const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                          const CommandLineOptions &options) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -832,12 +830,11 @@ class CliPipelineArtifacts final {
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Request>
-build_durable_store_import_request_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
+build_durable_store_import_request_for_cli(const ahfl::ir::Program &program,
+                                           const ahfl::handoff::PackageMetadata &metadata,
+                                           const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                           const CommandLineOptions &options,
+                                           std::string_view command_name) {
     CliPipelineArtifacts artifacts({
         program,
         metadata,
@@ -850,8 +847,8 @@ build_durable_store_import_request_for_cli(
         return std::nullopt;
     }
 
-    const auto request_result = ahfl::durable_store_import::build_durable_store_import_request(
-        *store_import_descriptor);
+    const auto request_result =
+        ahfl::durable_store_import::build_durable_store_import_request(*store_import_descriptor);
     request_result.diagnostics.render(std::cerr);
     if (request_result.has_errors() || !request_result.request.has_value()) {
         return std::nullopt;
@@ -861,14 +858,13 @@ build_durable_store_import_request_for_cli(
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Decision>
-build_durable_store_import_decision_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto request =
-        build_durable_store_import_request_for_cli(program, metadata, mock_set, options, command_name);
+build_durable_store_import_decision_for_cli(const ahfl::ir::Program &program,
+                                            const ahfl::handoff::PackageMetadata &metadata,
+                                            const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                            const CommandLineOptions &options,
+                                            std::string_view command_name) {
+    const auto request = build_durable_store_import_request_for_cli(
+        program, metadata, mock_set, options, command_name);
     if (!request.has_value()) {
         return std::nullopt;
     }
@@ -883,14 +879,13 @@ build_durable_store_import_decision_for_cli(
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Receipt>
-build_durable_store_import_receipt_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto decision =
-        build_durable_store_import_decision_for_cli(program, metadata, mock_set, options, command_name);
+build_durable_store_import_receipt_for_cli(const ahfl::ir::Program &program,
+                                           const ahfl::handoff::PackageMetadata &metadata,
+                                           const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                           const CommandLineOptions &options,
+                                           std::string_view command_name) {
+    const auto decision = build_durable_store_import_decision_for_cli(
+        program, metadata, mock_set, options, command_name);
     if (!decision.has_value()) {
         return std::nullopt;
     }
@@ -905,8 +900,7 @@ build_durable_store_import_receipt_for_cli(
     return *receipt.receipt;
 }
 
-[[nodiscard]] std::optional<
-    ahfl::durable_store_import::PersistenceRequest>
+[[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceRequest>
 build_durable_store_import_receipt_persistence_request_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -919,8 +913,9 @@ build_durable_store_import_receipt_persistence_request_for_cli(
         return std::nullopt;
     }
 
-    const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(*receipt);
+    const auto request =
+        ahfl::durable_store_import::build_durable_store_import_decision_receipt_persistence_request(
+            *receipt);
     request.diagnostics.render(std::cerr);
     if (request.has_errors() || !request.request.has_value()) {
         return std::nullopt;
@@ -929,11 +924,11 @@ build_durable_store_import_receipt_persistence_request_for_cli(
     return *request.request;
 }
 
-[[nodiscard]] int emit_durable_store_import_request_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_durable_store_import_request_with_diagnostics(const ahfl::ir::Program &program,
+                                                   const ahfl::handoff::PackageMetadata &metadata,
+                                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                                   const CommandLineOptions &options) {
     const auto request = build_durable_store_import_request_for_cli(
         program, metadata, mock_set, options, "emit-durable-store-import-request");
     if (!request.has_value()) {
@@ -944,11 +939,11 @@ build_durable_store_import_receipt_persistence_request_for_cli(
     return 0;
 }
 
-[[nodiscard]] int emit_durable_store_import_review_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_durable_store_import_review_with_diagnostics(const ahfl::ir::Program &program,
+                                                  const ahfl::handoff::PackageMetadata &metadata,
+                                                  const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                                  const CommandLineOptions &options) {
     const auto request = build_durable_store_import_request_for_cli(
         program, metadata, mock_set, options, "emit-durable-store-import-review");
     if (!request.has_value()) {
@@ -981,11 +976,11 @@ build_durable_store_import_receipt_persistence_request_for_cli(
     return 0;
 }
 
-[[nodiscard]] int emit_durable_store_import_receipt_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
+[[nodiscard]] int
+emit_durable_store_import_receipt_with_diagnostics(const ahfl::ir::Program &program,
+                                                   const ahfl::handoff::PackageMetadata &metadata,
+                                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                                   const CommandLineOptions &options) {
     const auto receipt = build_durable_store_import_receipt_for_cli(
         program, metadata, mock_set, options, "emit-durable-store-import-receipt");
     if (!receipt.has_value()) {
@@ -1015,14 +1010,12 @@ build_durable_store_import_receipt_persistence_request_for_cli(
     return 0;
 }
 
-[[nodiscard]] std::optional<
-    ahfl::durable_store_import::ReceiptReviewSummary>
-build_durable_store_import_receipt_review_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
+[[nodiscard]] std::optional<ahfl::durable_store_import::ReceiptReviewSummary>
+build_durable_store_import_receipt_review_for_cli(const ahfl::ir::Program &program,
+                                                  const ahfl::handoff::PackageMetadata &metadata,
+                                                  const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                                  const CommandLineOptions &options,
+                                                  std::string_view command_name) {
     const auto receipt = build_durable_store_import_receipt_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!receipt.has_value()) {
@@ -1046,11 +1039,7 @@ build_durable_store_import_receipt_review_for_cli(
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
     const auto review = build_durable_store_import_receipt_review_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-receipt-review");
+        program, metadata, mock_set, options, "emit-durable-store-import-receipt-review");
     if (!review.has_value()) {
         return 1;
     }
@@ -1059,8 +1048,7 @@ build_durable_store_import_receipt_review_for_cli(
     return 0;
 }
 
-[[nodiscard]] std::optional<
-    ahfl::durable_store_import::PersistenceReviewSummary>
+[[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceReviewSummary>
 build_durable_store_import_receipt_persistence_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1073,9 +1061,7 @@ build_durable_store_import_receipt_persistence_review_for_cli(
         return std::nullopt;
     }
 
-    const auto review =
-        ahfl::durable_store_import::
-            build_persistence_review_summary(*request);
+    const auto review = ahfl::durable_store_import::build_persistence_review_summary(*request);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
         return std::nullopt;
@@ -1103,8 +1089,7 @@ build_durable_store_import_receipt_persistence_review_for_cli(
     return 0;
 }
 
-[[nodiscard]] std::optional<
-    ahfl::durable_store_import::PersistenceResponse>
+[[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceResponse>
 build_durable_store_import_receipt_persistence_response_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1146,8 +1131,7 @@ build_durable_store_import_receipt_persistence_response_for_cli(
     return 0;
 }
 
-[[nodiscard]] std::optional<
-    ahfl::durable_store_import::PersistenceResponseReviewSummary>
+[[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceResponseReviewSummary>
 build_durable_store_import_receipt_persistence_response_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1243,8 +1227,7 @@ struct PackageCommandDispatchEntry {
 };
 
 constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
-    {CommandKind::EmitDryRunTrace,
-     invoke_package_command<emit_dry_run_trace_with_diagnostics>},
+    {CommandKind::EmitDryRunTrace, invoke_package_command<emit_dry_run_trace_with_diagnostics>},
     {CommandKind::EmitExecutionJournal,
      invoke_package_command<emit_execution_journal_with_diagnostics>},
     {CommandKind::EmitReplayView, invoke_package_command<emit_replay_view_with_diagnostics>},
@@ -1275,7 +1258,8 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitDurableStoreImportReceipt,
      invoke_package_command<emit_durable_store_import_receipt_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-     invoke_package_command<emit_durable_store_import_receipt_persistence_request_with_diagnostics>},
+     invoke_package_command<
+         emit_durable_store_import_receipt_persistence_request_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportDecisionReview,
      invoke_package_command<emit_durable_store_import_decision_review_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportReceiptReview,
@@ -1283,9 +1267,11 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
      invoke_package_command<emit_durable_store_import_receipt_persistence_review_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportReceiptPersistenceResponse,
-     invoke_package_command<emit_durable_store_import_receipt_persistence_response_with_diagnostics>},
+     invoke_package_command<
+         emit_durable_store_import_receipt_persistence_response_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportReceiptPersistenceResponseReview,
-     invoke_package_command<emit_durable_store_import_receipt_persistence_response_review_with_diagnostics>},
+     invoke_package_command<
+         emit_durable_store_import_receipt_persistence_response_review_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,
@@ -1293,8 +1279,8 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitExecutionPlan, invoke_execution_plan_command},
 };
 
-[[nodiscard]] std::optional<int> dispatch_package_command_impl(
-    CommandKind command, const PackagePipelineContext &context) {
+[[nodiscard]] std::optional<int>
+dispatch_package_command_impl(CommandKind command, const PackagePipelineContext &context) {
     for (const auto &entry : kPackageCommandDispatch) {
         if (entry.kind == command) {
             return entry.handler(context);
@@ -1306,12 +1292,11 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
 
 } // namespace
 
-std::optional<int> dispatch_package_command(
-    CommandKind command,
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet *mock_set,
-    const CommandLineOptions &options) {
+std::optional<int> dispatch_package_command(CommandKind command,
+                                            const ahfl::ir::Program &program,
+                                            const ahfl::handoff::PackageMetadata &metadata,
+                                            const ahfl::dry_run::CapabilityMockSet *mock_set,
+                                            const CommandLineOptions &options) {
     const PackagePipelineContext context{
         program,
         metadata,
