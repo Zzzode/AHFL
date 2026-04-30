@@ -13,6 +13,8 @@
 #include "ahfl/backends/durable_store_import_provider_recovery_handoff.hpp"
 #include "ahfl/backends/durable_store_import_provider_runtime_preflight.hpp"
 #include "ahfl/backends/durable_store_import_provider_runtime_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_envelope.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_handoff_readiness.hpp"
 #include "ahfl/backends/durable_store_import_provider_write_attempt.hpp"
 #include "ahfl/backends/durable_store_import_receipt.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_request.hpp"
@@ -44,6 +46,7 @@
 #include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
+#include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -1502,6 +1505,86 @@ build_durable_store_import_provider_runtime_readiness_for_cli(
     return 0;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkRequestEnvelopePlan>
+build_durable_store_import_provider_sdk_envelope_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto preflight = build_durable_store_import_provider_runtime_preflight_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!preflight.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight);
+    plan.diagnostics.render(std::cerr);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_sdk_envelope_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_sdk_envelope_for_cli(
+        program, metadata, mock_set, options, "emit-durable-store-import-provider-sdk-envelope");
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_envelope_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkHandoffReadinessReview>
+build_durable_store_import_provider_sdk_handoff_readiness_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_sdk_envelope_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_handoff_readiness_review(*plan);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_sdk_handoff_readiness_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_sdk_handoff_readiness_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-sdk-handoff-readiness");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_handoff_readiness(*review, std::cout);
+    return 0;
+}
+
 [[nodiscard]] int emit_durable_store_import_decision_review_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1617,6 +1700,11 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
      invoke_package_command<emit_durable_store_import_provider_runtime_preflight_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportProviderRuntimeReadiness,
      invoke_package_command<emit_durable_store_import_provider_runtime_readiness_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkEnvelope,
+     invoke_package_command<emit_durable_store_import_provider_sdk_envelope_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkHandoffReadiness,
+     invoke_package_command<
+         emit_durable_store_import_provider_sdk_handoff_readiness_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,

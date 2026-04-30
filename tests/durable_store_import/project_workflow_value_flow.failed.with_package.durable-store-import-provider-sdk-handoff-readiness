@@ -1,0 +1,25 @@
+ahfl.durable-store-import-provider-sdk-handoff-readiness-review.v1
+source_provider_sdk_request_envelope_plan_format ahfl.durable-store-import-provider-sdk-request-envelope-plan.v1
+source_provider_runtime_preflight_plan_format ahfl.durable-store-import-provider-runtime-preflight-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_provider_runtime_preflight_identity durable-store-import-provider-runtime-preflight::run-failed-001::blocked
+durable_store_import_provider_sdk_request_envelope_identity durable-store-import-provider-sdk-request-envelope::run-failed-001::blocked
+envelope_status blocked
+operation_kind noop_runtime_preflight_not_ready
+provider_sdk_request_envelope_identity none
+host_handoff_descriptor_identity none
+materializes_sdk_request_payload false
+starts_host_process false
+opens_network_connection false
+invokes_provider_sdk false
+next_action manual_review_required
+sdk_boundary provider SDK request envelope skipped because runtime preflight is not ready
+next_step manual review required before provider SDK handoff can proceed
+failure_attribution {
+  kind runtime_preflight_not_ready
+  missing_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

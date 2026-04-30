@@ -1,0 +1,23 @@
+ahfl.durable-store-import-provider-sdk-handoff-readiness-review.v1
+source_provider_sdk_request_envelope_plan_format ahfl.durable-store-import-provider-sdk-request-envelope-plan.v1
+source_provider_runtime_preflight_plan_format ahfl.durable-store-import-provider-runtime-preflight-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+durable_store_import_provider_runtime_preflight_identity durable-store-import-provider-runtime-preflight::run-partial-001::ready
+durable_store_import_provider_sdk_request_envelope_identity durable-store-import-provider-sdk-request-envelope::run-partial-001::ready
+envelope_status ready
+operation_kind plan_provider_sdk_request_envelope
+provider_sdk_request_envelope_identity provider-sdk-request-envelope::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted
+host_handoff_descriptor_identity provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted
+materializes_sdk_request_payload false
+starts_host_process false
+opens_network_connection false
+invokes_provider_sdk false
+next_action ready_for_host_execution_prototype
+sdk_boundary provider SDK request envelope is planned without materializing SDK payload, starting a host process, opening network, or invoking a provider SDK
+next_step ready for future host execution prototype; no SDK payload, process, network, or SDK call was used
+failure_attribution {
+  value none
+}

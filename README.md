@@ -158,6 +158,8 @@ Backend outputs:
 | `emit-durable-store-import-provider-driver-readiness` | reviewer-facing provider driver readiness review over driver binding plan |
 | `emit-durable-store-import-provider-runtime-preflight` | provider runtime preflight plan over driver binding plan |
 | `emit-durable-store-import-provider-runtime-readiness` | reviewer-facing provider runtime readiness review over runtime preflight plan |
+| `emit-durable-store-import-provider-sdk-envelope` | provider SDK request envelope plan over runtime preflight plan |
+| `emit-durable-store-import-provider-sdk-handoff-readiness` | reviewer-facing provider SDK handoff readiness review over SDK request envelope plan |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -209,6 +211,7 @@ ctest --preset test-dev -L ahfl-v0.20
 ctest --preset test-dev -L ahfl-v0.21
 ctest --preset test-dev -L ahfl-v0.22
 ctest --preset test-dev -L ahfl-v0.23
+ctest --preset test-dev -L ahfl-v0.24
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -245,9 +248,16 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.24.zh.md`](docs/plan/roadmap-v0.24.zh.md)
+  - [`docs/plan/issue-backlog-v0.24.zh.md`](docs/plan/issue-backlog-v0.24.zh.md)
+- Current provider-SDK-envelope boundary
+  - [`docs/design/native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md`](docs/design/native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md)
+  - [`docs/reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md`](docs/reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.24.zh.md`](docs/reference/native-consumer-matrix-v0.24.zh.md)
+  - [`docs/reference/contributor-guide-v0.24.zh.md`](docs/reference/contributor-guide-v0.24.zh.md)
+- Completed provider-runtime baseline
   - [`docs/plan/roadmap-v0.23.zh.md`](docs/plan/roadmap-v0.23.zh.md)
   - [`docs/plan/issue-backlog-v0.23.zh.md`](docs/plan/issue-backlog-v0.23.zh.md)
-- Current provider-runtime boundary
   - [`docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md`](docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md)
   - [`docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md`](docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md)
   - [`docs/reference/native-consumer-matrix-v0.23.zh.md`](docs/reference/native-consumer-matrix-v0.23.zh.md)

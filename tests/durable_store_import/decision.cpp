@@ -4,6 +4,7 @@
 #include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
+#include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -2323,6 +2324,42 @@ make_valid_provider_runtime_readiness_review() {
     return *review.review;
 }
 
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderSdkRequestEnvelopePlan>
+make_valid_provider_sdk_request_envelope_plan() {
+    const auto runtime_preflight = make_valid_provider_runtime_preflight_plan();
+    if (!runtime_preflight.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*runtime_preflight);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderSdkHandoffReadinessReview>
+make_valid_provider_sdk_handoff_readiness_review() {
+    const auto plan = make_valid_provider_sdk_request_envelope_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_handoff_readiness_review(*plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
 int validate_durable_store_import_adapter_execution_ok() {
     const auto execution = make_valid_adapter_execution_receipt();
     if (!execution.has_value()) {
@@ -3775,6 +3812,407 @@ int build_durable_store_import_provider_runtime_readiness_rejects_invalid_prefli
                : 1;
 }
 
+int validate_durable_store_import_provider_sdk_envelope_ok() {
+    const auto plan = make_valid_provider_sdk_request_envelope_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_request_envelope_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->envelope_status != ahfl::durable_store_import::ProviderSdkEnvelopeStatus::Ready ||
+        plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeOperationKind::
+                PlanProviderSdkRequestEnvelope ||
+        !plan->provider_sdk_request_envelope_identity.has_value() ||
+        !plan->host_handoff_descriptor_identity.has_value() ||
+        plan->materializes_sdk_request_payload || plan->starts_host_process ||
+        plan->opens_network_connection || plan->invokes_provider_sdk ||
+        plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK request envelope plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_envelope_blocked_ok() {
+    const auto response = make_response_from_descriptor(make_failed_descriptor());
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto execution = make_adapter_execution_from_response(*response);
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto write_attempt =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (write_attempt.has_errors() || !write_attempt.preview.has_value()) {
+        write_attempt.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto binding =
+        ahfl::durable_store_import::build_provider_driver_binding_plan(*write_attempt.preview);
+    if (binding.has_errors() || !binding.plan.has_value()) {
+        binding.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto preflight =
+        ahfl::durable_store_import::build_provider_runtime_preflight_plan(*binding.plan);
+    if (preflight.has_errors() || !preflight.plan.has_value()) {
+        preflight.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight.plan);
+    if (envelope.has_errors() || !envelope.plan.has_value()) {
+        envelope.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (envelope.plan->envelope_status !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeStatus::Blocked ||
+        envelope.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeOperationKind::
+                NoopRuntimePreflightNotReady ||
+        envelope.plan->provider_sdk_request_envelope_identity.has_value() ||
+        envelope.plan->host_handoff_descriptor_identity.has_value() ||
+        !envelope.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider SDK request envelope plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_envelope_unsupported_capability_ok() {
+    const auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_sdk_envelope_policy(*preflight);
+    policy.supports_host_handoff_descriptor_planning = false;
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight, policy);
+    if (envelope.has_errors() || !envelope.plan.has_value()) {
+        envelope.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (envelope.plan->envelope_status !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeStatus::Blocked ||
+        envelope.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeOperationKind::
+                NoopUnsupportedEnvelopeCapability ||
+        !envelope.plan->failure_attribution.has_value() ||
+        envelope.plan->failure_attribution->missing_capability !=
+            std::optional<ahfl::durable_store_import::ProviderSdkEnvelopeCapabilityKind>(
+                ahfl::durable_store_import::ProviderSdkEnvelopeCapabilityKind::
+                    PlanHostHandoffDescriptor)) {
+        std::cerr << "unexpected unsupported-capability provider SDK envelope plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_envelope_policy_mismatch_ok() {
+    const auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_sdk_envelope_policy(*preflight);
+    policy.runtime_profile_ref = "provider-runtime-profile::wrong";
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight, policy);
+    if (envelope.has_errors() || !envelope.plan.has_value()) {
+        envelope.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (envelope.plan->envelope_status !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeStatus::Blocked ||
+        envelope.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeOperationKind::
+                NoopEnvelopePolicyMismatch ||
+        !envelope.plan->failure_attribution.has_value() ||
+        envelope.plan->failure_attribution->kind !=
+            ahfl::durable_store_import::ProviderSdkEnvelopeFailureKind::
+                EnvelopePolicyMismatch) {
+        std::cerr << "unexpected provider SDK envelope policy mismatch plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_policy_rejects_secret_material() {
+    const auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_sdk_envelope_policy(*preflight);
+    policy.credential_reference = "secret://provider-credential";
+    policy.secret_value = "plaintext-secret";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_envelope_policy(policy);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider SDK envelope policy with secrets to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain credential_reference") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain secret_value")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_policy_rejects_provider_coordinates() {
+    const auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_sdk_envelope_policy(*preflight);
+    policy.credential_free = false;
+    policy.provider_endpoint_uri = "https://provider.example.invalid";
+    policy.object_path = "bucket/receipt.json";
+    policy.database_table = "receipt-table";
+    policy.sdk_request_payload = "{\"unsafe\":true}";
+    policy.sdk_response_payload = "{\"unsafe\":true}";
+    policy.host_command = "/usr/bin/provider-sdk";
+    policy.network_endpoint_uri = "https://network.example.invalid";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_envelope_policy(policy);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider SDK envelope policy with provider coordinates to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "must be credential_free") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain provider_endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain object_path") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain database_table") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_request_payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_response_payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain host_command") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain network_endpoint_uri")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_envelope_rejects_side_effects() {
+    auto plan = make_valid_provider_sdk_request_envelope_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->materializes_sdk_request_payload = true;
+    plan->starts_host_process = true;
+    plan->opens_network_connection = true;
+    plan->invokes_provider_sdk = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_request_envelope_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider SDK request envelope with side effects to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot materialize SDK request payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot start host process") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot open network connection") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot invoke provider SDK")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_envelope_rejects_ready_without_handoff() {
+    auto plan = make_valid_provider_sdk_request_envelope_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->host_handoff_descriptor_identity.reset();
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_request_envelope_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected ready provider SDK request envelope without handoff to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics,
+               "ready status requires request envelope and host handoff descriptor identities")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_sdk_envelope_ready_preflight() {
+    const auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight);
+    if (envelope.has_errors() || !envelope.plan.has_value()) {
+        envelope.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (envelope.plan->durable_store_import_provider_sdk_request_envelope_identity !=
+            "durable-store-import-provider-sdk-request-envelope::run-partial-001::ready" ||
+        envelope.plan->provider_sdk_request_envelope_identity !=
+            std::optional<std::string>(
+                "provider-sdk-request-envelope::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted") ||
+        envelope.plan->host_handoff_descriptor_identity !=
+            std::optional<std::string>(
+                "provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted")) {
+        std::cerr << "unexpected ready provider SDK request envelope bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_envelope_rejects_invalid_preflight() {
+    auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    preflight->format_version =
+        "ahfl.durable-store-import-provider-runtime-preflight-plan.v999";
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight);
+    if (!envelope.has_errors()) {
+        std::cerr << "expected invalid runtime preflight to fail SDK envelope\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               envelope.diagnostics,
+               "durable store import provider runtime preflight plan format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_handoff_readiness_ok() {
+    const auto review = make_valid_provider_sdk_handoff_readiness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_handoff_readiness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderSdkHandoffReadinessNextActionKind::
+                ReadyForHostExecutionPrototype ||
+        !review->provider_sdk_request_envelope_identity.has_value() ||
+        !review->host_handoff_descriptor_identity.has_value() ||
+        review->materializes_sdk_request_payload || review->starts_host_process ||
+        review->opens_network_connection || review->invokes_provider_sdk ||
+        review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK handoff readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_handoff_readiness_unsupported_capability_ok() {
+    const auto preflight = make_valid_provider_runtime_preflight_plan();
+    if (!preflight.has_value()) {
+        return 1;
+    }
+
+    auto policy =
+        ahfl::durable_store_import::build_default_provider_sdk_envelope_policy(*preflight);
+    policy.supports_secret_free_request_envelope_planning = false;
+    const auto envelope =
+        ahfl::durable_store_import::build_provider_sdk_request_envelope_plan(*preflight, policy);
+    if (envelope.has_errors() || !envelope.plan.has_value()) {
+        envelope.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_handoff_readiness_review(*envelope.plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review.review->next_action !=
+            ahfl::durable_store_import::ProviderSdkHandoffReadinessNextActionKind::
+                WaitForEnvelopeCapability ||
+        review.review->provider_sdk_request_envelope_identity.has_value() ||
+        !review.review->failure_attribution.has_value()) {
+        std::cerr << "unexpected unsupported provider SDK handoff readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_handoff_readiness_rejects_invalid_envelope() {
+    auto envelope = make_valid_provider_sdk_request_envelope_plan();
+    if (!envelope.has_value()) {
+        return 1;
+    }
+
+    envelope->format_version =
+        "ahfl.durable-store-import-provider-sdk-request-envelope-plan.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_handoff_readiness_review(*envelope);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid provider SDK envelope to fail handoff readiness\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider SDK request envelope plan format_version must be")
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -4305,6 +4743,67 @@ int main(int argc, char **argv) {
     if (command ==
         "build-durable-store-import-provider-runtime-readiness-rejects-invalid-preflight") {
         return build_durable_store_import_provider_runtime_readiness_rejects_invalid_preflight();
+    }
+
+    // V0.24: Provider SDK Envelope and Handoff Readiness tests
+    if (command == "validate-durable-store-import-provider-sdk-envelope-ok") {
+        return validate_durable_store_import_provider_sdk_envelope_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-envelope-blocked-ok") {
+        return validate_durable_store_import_provider_sdk_envelope_blocked_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-envelope-unsupported-capability-ok") {
+        return build_durable_store_import_provider_sdk_envelope_unsupported_capability_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-sdk-envelope-policy-mismatch-ok") {
+        return build_durable_store_import_provider_sdk_envelope_policy_mismatch_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-policy-rejects-secret-material") {
+        return validate_durable_store_import_provider_sdk_policy_rejects_secret_material();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-policy-rejects-provider-coordinates") {
+        return validate_durable_store_import_provider_sdk_policy_rejects_provider_coordinates();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-envelope-rejects-side-effects") {
+        return validate_durable_store_import_provider_sdk_envelope_rejects_side_effects();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-envelope-rejects-ready-without-handoff") {
+        return validate_durable_store_import_provider_sdk_envelope_rejects_ready_without_handoff();
+    }
+
+    if (command == "build-durable-store-import-provider-sdk-envelope-ready-preflight") {
+        return build_durable_store_import_provider_sdk_envelope_ready_preflight();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-envelope-rejects-invalid-preflight") {
+        return build_durable_store_import_provider_sdk_envelope_rejects_invalid_preflight();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-handoff-readiness-ok") {
+        return validate_durable_store_import_provider_sdk_handoff_readiness_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-handoff-readiness-unsupported-capability-ok") {
+        return build_durable_store_import_provider_sdk_handoff_readiness_unsupported_capability_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-handoff-readiness-rejects-invalid-envelope") {
+        return build_durable_store_import_provider_sdk_handoff_readiness_rejects_invalid_envelope();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

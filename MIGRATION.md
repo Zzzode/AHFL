@@ -469,3 +469,93 @@ ctest --preset test-dev --output-on-failure -L 'v0.23-durable-store-import-provi
 - `docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md`
 - `docs/reference/native-consumer-matrix-v0.23.zh.md`
 - `docs/reference/contributor-guide-v0.23.zh.md`
+
+## V0.23 to V0.24
+
+V0.24 extends the V0.23 provider runtime preflight boundary with a provider SDK
+request envelope boundary. It keeps consuming the V0.23
+`ProviderRuntimePreflightPlan` as the first machine-facing source of SDK
+invocation envelope state and does not introduce a real provider SDK, runtime
+config loader, secret manager, credential, endpoint URI, object storage writer,
+database writer, host process, network connection, retry token, or resume token.
+
+### New Artifact Boundary
+
+The V0.24 artifact chain is:
+
+```text
+ProviderRuntimePreflightPlan
+-> ProviderSdkRequestEnvelopePlan
+-> ProviderSdkHandoffReadinessReview
+```
+
+The machine-facing provider SDK request envelope format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-request-envelope-plan.v1
+```
+
+The reviewer-facing provider SDK handoff readiness format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-handoff-readiness-review.v1
+```
+
+### New CLI Commands
+
+Use the new V0.24 commands when you need the SDK request envelope / host
+handoff boundary after a V0.23 provider runtime preflight:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-envelope \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-handoff-readiness \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### SDK Envelope Outcomes
+
+V0.24 validates these provider SDK envelope paths:
+
+- `ready`: ready runtime preflight plus matching secret-free envelope policy
+  generates `PlanProviderSdkRequestEnvelope`, deterministic
+  `provider-sdk-request-envelope::<provider-sdk-invocation-envelope-id>`
+  identity, deterministic
+  `provider-sdk-host-handoff::<provider-sdk-invocation-envelope-id>` identity,
+  and side-effect flags all set to `false`.
+- `blocked`: runtime-preflight-not-ready, envelope policy mismatch, or envelope
+  capability-gap paths stay non-SDK and preserve SDK envelope failure
+  attribution.
+
+V0.24 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, runtime config loader output, provider
+payloads, SDK payloads, object paths, database tables, credentials, endpoint
+URI, host commands, network endpoints, or private scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.24 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.24
+ctest --preset test-dev --output-on-failure -L 'v0.24-durable-store-import-provider-sdk-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.24.zh.md`
+- `docs/plan/issue-backlog-v0.24.zh.md`
+- `docs/design/native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md`
+- `docs/reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md`
+- `docs/reference/native-consumer-matrix-v0.24.zh.md`
+- `docs/reference/contributor-guide-v0.24.zh.md`

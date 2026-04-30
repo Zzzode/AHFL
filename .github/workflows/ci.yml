@@ -151,6 +151,9 @@ jobs:
       - name: Run V0.23 Durable Provider Runtime Prototype Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.23'
 
+      - name: Run V0.24 Durable Provider SDK Envelope Prototype Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.24'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -219,6 +222,9 @@ jobs:
 
       - name: Run V0.23 Durable Provider Runtime Prototype Regression
         run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.23'
+
+      - name: Run V0.24 Durable Provider SDK Envelope Prototype Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.24'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

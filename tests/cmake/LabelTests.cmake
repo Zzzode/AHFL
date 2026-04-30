@@ -1183,3 +1183,58 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_runtime_readiness.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_runtime_readiness.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-policy-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_policy.model.fail_secret_material
+        ahfl.durable_store_import_provider_sdk_policy.model.fail_provider_coordinates
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-envelope-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_envelope.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_envelope.model.validate_blocked_ok
+        ahfl.durable_store_import_provider_sdk_envelope.model.unsupported_capability
+        ahfl.durable_store_import_provider_sdk_envelope.model.policy_mismatch
+        ahfl.durable_store_import_provider_sdk_envelope.model.fail_side_effects
+        ahfl.durable_store_import_provider_sdk_envelope.model.fail_ready_without_handoff
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-envelope-bootstrap
+    TESTS
+        ahfl.durable_store_import_provider_sdk_envelope.bootstrap.ready_preflight
+        ahfl.durable_store_import_provider_sdk_envelope.bootstrap.fail_invalid_preflight
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-handoff-readiness-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_handoff_readiness.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_handoff_readiness.bootstrap.unsupported_capability
+        ahfl.durable_store_import_provider_sdk_handoff_readiness.bootstrap.fail_invalid_envelope
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_sdk_envelope.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_envelope.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_envelope.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.24 v0.24-durable-store-import-provider-sdk-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_sdk_envelope.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_envelope.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_envelope.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workspace.workflow_value_flow.partial.with_package
+)

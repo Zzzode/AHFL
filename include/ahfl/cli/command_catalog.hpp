@@ -50,6 +50,8 @@ enum class CommandKind {
     EmitDurableStoreImportProviderDriverReadiness,
     EmitDurableStoreImportProviderRuntimePreflight,
     EmitDurableStoreImportProviderRuntimeReadiness,
+    EmitDurableStoreImportProviderSdkEnvelope,
+    EmitDurableStoreImportProviderSdkHandoffReadiness,
     EmitSchedulerReview,
     EmitRuntimeSession,
     EmitDryRunTrace,
