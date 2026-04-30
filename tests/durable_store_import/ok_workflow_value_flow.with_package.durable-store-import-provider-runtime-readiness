@@ -1,0 +1,21 @@
+ahfl.durable-store-import-provider-runtime-readiness-review.v1
+source_provider_runtime_preflight_plan_format ahfl.durable-store-import-provider-runtime-preflight-plan.v1
+source_provider_driver_binding_plan_format ahfl.durable-store-import-provider-driver-binding-plan.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+durable_store_import_provider_driver_binding_identity durable-store-import-provider-driver-binding::run-001::planned
+durable_store_import_provider_runtime_preflight_identity durable-store-import-provider-runtime-preflight::run-001::ready
+preflight_status ready
+operation_kind plan_provider_sdk_invocation_envelope
+sdk_invocation_envelope_identity provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-001::accepted
+loads_runtime_config false
+resolves_secret_handles false
+invokes_provider_sdk false
+next_action ready_for_sdk_adapter_implementation
+runtime_boundary provider runtime preflight planned an SDK invocation envelope without loading runtime config, resolving secrets, or invoking a provider SDK
+next_step ready for future SDK adapter implementation; no runtime config, secret, or SDK call was used
+failure_attribution {
+  value none
+}

@@ -390,6 +390,22 @@ add_test(NAME ahflc.emit_durable_store_import_provider_driver_readiness.workflow
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_durable_store_import_provider_runtime_preflight.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-preflight --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-runtime-preflight.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_provider_runtime_readiness.workflow_value_flow.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-runtime-readiness"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_durable_store_import_decision_review.workflow_value_flow.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"

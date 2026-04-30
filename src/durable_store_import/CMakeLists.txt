@@ -9,6 +9,7 @@ add_library(ahfl_durable_store_import STATIC
     receipt_persistence_review.cpp
     provider_adapter.cpp
     provider_driver.cpp
+    provider_runtime.cpp
     recovery_preview.cpp
     receipt_review.cpp
     request.cpp

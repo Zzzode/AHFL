@@ -1128,3 +1128,58 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_driver_readiness.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_driver_readiness.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-profile-model
+    TESTS
+        ahfl.durable_store_import_provider_runtime_profile.model.fail_secret_material
+        ahfl.durable_store_import_provider_runtime_profile.model.fail_provider_coordinates
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-preflight-model
+    TESTS
+        ahfl.durable_store_import_provider_runtime_preflight.model.validate_ok
+        ahfl.durable_store_import_provider_runtime_preflight.model.validate_blocked_ok
+        ahfl.durable_store_import_provider_runtime_preflight.model.unsupported_capability
+        ahfl.durable_store_import_provider_runtime_preflight.model.profile_mismatch
+        ahfl.durable_store_import_provider_runtime_preflight.model.fail_side_effects
+        ahfl.durable_store_import_provider_runtime_preflight.model.fail_ready_without_envelope
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-preflight-bootstrap
+    TESTS
+        ahfl.durable_store_import_provider_runtime_preflight.bootstrap.ready_binding
+        ahfl.durable_store_import_provider_runtime_preflight.bootstrap.fail_invalid_driver_binding
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-readiness-model
+    TESTS
+        ahfl.durable_store_import_provider_runtime_readiness.model.validate_ok
+        ahfl.durable_store_import_provider_runtime_readiness.bootstrap.unsupported_capability
+        ahfl.durable_store_import_provider_runtime_readiness.bootstrap.fail_invalid_preflight
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_runtime_preflight.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_runtime_preflight.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_preflight.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.23 v0.23-durable-store-import-provider-runtime-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_runtime_preflight.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_runtime_preflight.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_preflight.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_runtime_readiness.workspace.workflow_value_flow.partial.with_package
+)

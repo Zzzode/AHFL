@@ -156,6 +156,8 @@ Backend outputs:
 | `emit-durable-store-import-provider-recovery-handoff` | reviewer-facing provider recovery handoff preview over provider write attempt |
 | `emit-durable-store-import-provider-driver-binding` | provider driver binding plan over provider write attempt |
 | `emit-durable-store-import-provider-driver-readiness` | reviewer-facing provider driver readiness review over driver binding plan |
+| `emit-durable-store-import-provider-runtime-preflight` | provider runtime preflight plan over driver binding plan |
+| `emit-durable-store-import-provider-runtime-readiness` | reviewer-facing provider runtime readiness review over runtime preflight plan |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -206,6 +208,7 @@ ctest --preset test-dev -L ahfl-v0.19
 ctest --preset test-dev -L ahfl-v0.20
 ctest --preset test-dev -L ahfl-v0.21
 ctest --preset test-dev -L ahfl-v0.22
+ctest --preset test-dev -L ahfl-v0.23
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -242,9 +245,16 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.23.zh.md`](docs/plan/roadmap-v0.23.zh.md)
+  - [`docs/plan/issue-backlog-v0.23.zh.md`](docs/plan/issue-backlog-v0.23.zh.md)
+- Current provider-runtime boundary
+  - [`docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md`](docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md)
+  - [`docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md`](docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.23.zh.md`](docs/reference/native-consumer-matrix-v0.23.zh.md)
+  - [`docs/reference/contributor-guide-v0.23.zh.md`](docs/reference/contributor-guide-v0.23.zh.md)
+- Completed provider-driver baseline
   - [`docs/plan/roadmap-v0.22.zh.md`](docs/plan/roadmap-v0.22.zh.md)
   - [`docs/plan/issue-backlog-v0.22.zh.md`](docs/plan/issue-backlog-v0.22.zh.md)
-- Current provider-driver boundary
   - [`docs/design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md`](docs/design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md)
   - [`docs/reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md`](docs/reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md)
   - [`docs/reference/native-consumer-matrix-v0.22.zh.md`](docs/reference/native-consumer-matrix-v0.22.zh.md)
@@ -310,5 +320,5 @@ semantics. Its current boundary is documented in
 CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
 project / IR / backend / scheduler / checkpoint / persistence / export-package /
 durable-adapter-decision / durable-adapter-receipt / durable-adapter-receipt-persistence /
-durable-adapter-receipt-persistence-response / provider-driver regression slices, and then runs the full
+durable-adapter-receipt-persistence-response / provider-driver / provider-runtime regression slices, and then runs the full
 `ctest` suite.

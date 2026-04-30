@@ -1,0 +1,23 @@
+ahfl.durable-store-import-provider-runtime-readiness-review.v1
+source_provider_runtime_preflight_plan_format ahfl.durable-store-import-provider-runtime-preflight-plan.v1
+source_provider_driver_binding_plan_format ahfl.durable-store-import-provider-driver-binding-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_provider_driver_binding_identity durable-store-import-provider-driver-binding::run-failed-001::not-planned
+durable_store_import_provider_runtime_preflight_identity durable-store-import-provider-runtime-preflight::run-failed-001::blocked
+preflight_status blocked
+operation_kind noop_driver_binding_not_ready
+sdk_invocation_envelope_identity none
+loads_runtime_config false
+resolves_secret_handles false
+invokes_provider_sdk false
+next_action manual_review_required
+runtime_boundary provider runtime preflight skipped because provider driver binding is not ready
+next_step manual review required before provider runtime preflight can proceed
+failure_attribution {
+  kind driver_binding_not_ready
+  missing_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

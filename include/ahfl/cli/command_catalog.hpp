@@ -48,6 +48,8 @@ enum class CommandKind {
     EmitDurableStoreImportProviderRecoveryHandoff,
     EmitDurableStoreImportProviderDriverBinding,
     EmitDurableStoreImportProviderDriverReadiness,
+    EmitDurableStoreImportProviderRuntimePreflight,
+    EmitDurableStoreImportProviderRuntimeReadiness,
     EmitSchedulerReview,
     EmitRuntimeSession,
     EmitDryRunTrace,

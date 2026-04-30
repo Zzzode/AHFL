@@ -1614,6 +1614,71 @@ add_test(NAME ahfl.durable_store_import_provider_driver_readiness.bootstrap.fail
             build-durable-store-import-provider-driver-readiness-rejects-invalid-binding-plan
 )
 
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-preflight-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.validate_blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-preflight-blocked-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.unsupported_capability
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-runtime-preflight-unsupported-capability-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.profile_mismatch
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-runtime-preflight-profile-mismatch-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_profile.model.fail_secret_material
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-profile-rejects-secret-material
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_profile.model.fail_provider_coordinates
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-profile-rejects-provider-coordinates
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.fail_side_effects
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-preflight-rejects-side-effects
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.fail_ready_without_envelope
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-preflight-rejects-ready-without-envelope
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.bootstrap.ready_binding
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-runtime-preflight-ready-binding
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.bootstrap.fail_invalid_driver_binding
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-runtime-preflight-rejects-invalid-driver-binding
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_readiness.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-runtime-readiness-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_readiness.bootstrap.unsupported_capability
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-runtime-readiness-unsupported-capability-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_runtime_readiness.bootstrap.fail_invalid_preflight
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-runtime-readiness-rejects-invalid-preflight
+)
+
 add_test(NAME ahfl.durable_store_import_receipt_review.model.validate_ok
     COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-ok
@@ -2096,6 +2161,22 @@ add_test(NAME ahflc.emit_durable_store_import_provider_driver_readiness.project_
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+add_test(NAME ahflc.emit_durable_store_import_provider_runtime_preflight.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-preflight --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-provider-runtime-preflight.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_provider_runtime_readiness.project_manifest.workflow_value_flow.failed.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-readiness --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-provider-runtime-readiness"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
 add_test(NAME ahflc.emit_durable_store_import_decision_review.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -2397,6 +2478,22 @@ add_test(NAME ahflc.emit_durable_store_import_provider_driver_readiness.workspac
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DAHFLC_ARGS=emit-durable-store-import-provider-driver-readiness --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-provider-driver-readiness"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_provider_runtime_preflight.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-preflight --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-provider-runtime-preflight.json"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+add_test(NAME ahflc.emit_durable_store_import_provider_runtime_readiness.workspace.workflow_value_flow.partial.with_package
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-readiness --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-provider-runtime-readiness"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 

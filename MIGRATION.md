@@ -381,3 +381,91 @@ ctest --preset test-dev --output-on-failure -L 'v0.22-durable-store-import-provi
 - `docs/reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md`
 - `docs/reference/native-consumer-matrix-v0.22.zh.md`
 - `docs/reference/contributor-guide-v0.22.zh.md`
+
+## V0.22 to V0.23
+
+V0.23 extends the V0.22 provider driver binding boundary with a provider runtime
+preflight boundary. It keeps consuming the V0.22 `ProviderDriverBindingPlan` as
+the first machine-facing source of provider driver operation state and does not
+introduce a real provider SDK, runtime config loader, secret manager, credential,
+endpoint URI, object storage writer, database writer, recovery daemon, retry
+token, or resume token.
+
+### New Artifact Boundary
+
+The V0.23 artifact chain is:
+
+```text
+ProviderDriverBindingPlan
+-> ProviderRuntimePreflightPlan
+-> ProviderRuntimeReadinessReview
+```
+
+The machine-facing provider runtime preflight format is:
+
+```text
+ahfl.durable-store-import-provider-runtime-preflight-plan.v1
+```
+
+The reviewer-facing provider runtime readiness format is:
+
+```text
+ahfl.durable-store-import-provider-runtime-readiness-review.v1
+```
+
+### New CLI Commands
+
+Use the new V0.23 commands when you need the runtime / SDK adapter preflight
+boundary after a V0.22 provider driver binding:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-runtime-preflight \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-runtime-readiness \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Runtime Preflight Outcomes
+
+V0.23 validates these provider runtime paths:
+
+- `ready`: bound provider driver binding plus matching secret-free runtime
+  profile generates `PlanProviderSdkInvocationEnvelope`, deterministic
+  `provider-sdk-invocation-envelope::<provider-driver-operation-id>` identity,
+  and side-effect flags all set to `false`.
+- `blocked`: driver-binding-not-ready, runtime profile mismatch, or runtime
+  capability-gap paths stay non-SDK and preserve runtime preflight failure
+  attribution.
+
+V0.23 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, runtime config loader output, provider
+payloads, object paths, database tables, credentials, endpoint URI, or private
+scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.23 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.23
+ctest --preset test-dev --output-on-failure -L 'v0.23-durable-store-import-provider-runtime-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.23.zh.md`
+- `docs/plan/issue-backlog-v0.23.zh.md`
+- `docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md`
+- `docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md`
+- `docs/reference/native-consumer-matrix-v0.23.zh.md`
+- `docs/reference/contributor-guide-v0.23.zh.md`

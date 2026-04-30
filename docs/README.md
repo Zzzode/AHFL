@@ -74,6 +74,7 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md](./design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md)
 - [native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md](./design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md)
 - [native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md](./design/native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md)
 - [native-durable-store-adapter-execution-prototype-bootstrap-v0.20.zh.md](./design/native-durable-store-adapter-execution-prototype-bootstrap-v0.20.zh.md)
@@ -102,8 +103,10 @@ Avoid:
 
 ### Plan
 
-- [roadmap-v0.22.zh.md](./plan/roadmap-v0.22.zh.md) - current execution plan
-- [issue-backlog-v0.22.zh.md](./plan/issue-backlog-v0.22.zh.md) - current execution backlog
+- [roadmap-v0.23.zh.md](./plan/roadmap-v0.23.zh.md) - current execution plan
+- [issue-backlog-v0.23.zh.md](./plan/issue-backlog-v0.23.zh.md) - current execution backlog
+- [roadmap-v0.22.zh.md](./plan/roadmap-v0.22.zh.md) - completed baseline
+- [issue-backlog-v0.22.zh.md](./plan/issue-backlog-v0.22.zh.md) - completed baseline
 - [roadmap-v0.21.zh.md](./plan/roadmap-v0.21.zh.md) - completed baseline
 - [issue-backlog-v0.21.zh.md](./plan/issue-backlog-v0.21.zh.md) - completed baseline
 - [roadmap-v0.20.zh.md](./plan/roadmap-v0.20.zh.md) - completed baseline
@@ -149,6 +152,9 @@ Avoid:
 
 ### Reference
 
+- [durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md](./reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md)
+- [native-consumer-matrix-v0.23.zh.md](./reference/native-consumer-matrix-v0.23.zh.md)
+- [contributor-guide-v0.23.zh.md](./reference/contributor-guide-v0.23.zh.md)
 - [durable-store-provider-driver-prototype-compatibility-v0.22.zh.md](./reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md)
 - [native-consumer-matrix-v0.22.zh.md](./reference/native-consumer-matrix-v0.22.zh.md)
 - [contributor-guide-v0.22.zh.md](./reference/contributor-guide-v0.22.zh.md)
