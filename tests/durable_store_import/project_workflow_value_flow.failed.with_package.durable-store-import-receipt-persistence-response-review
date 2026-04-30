@@ -1,0 +1,28 @@
+ahfl.durable-store-import-decision-receipt-persistence-response-review.v1
+source_response_format ahfl.durable-store-import-decision-receipt-persistence-response.v1
+source_persistence_request_format ahfl.durable-store-import-decision-receipt-persistence-request.v1
+source_receipt_format ahfl.durable-store-import-decision-receipt.v1
+source_decision_format ahfl.durable-store-import-decision.v1
+source_request_format ahfl.durable-store-import-request.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_decision_identity durable-store-import-decision::workflow-value-flow::run-failed-001::rejected
+durable_store_import_receipt_identity durable-store-import-receipt::workflow-value-flow::run-failed-001::rejected
+durable_store_import_receipt_persistence_request_identity durable-store-import-receipt-persistence-request::workflow-value-flow::run-failed-001::rejected
+durable_store_import_receipt_persistence_response_identity durable-store-import-receipt-persistence-response::workflow-value-flow::run-failed-001::rejected
+response_status rejected
+response_outcome reject_failed_request
+response_boundary_kind local_contract_only
+acknowledged_for_response false
+next_action review_failure
+next_required_adapter_capability none
+adapter_response_contract rejected due to failure
+response_preview durable-store-import-receipt-persistence-response::workflow-value-flow::run-failed-001::rejected
+next_step review failure and determine recovery path
+response_blocker {
+  kind persistence_workflow_failure
+  required_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

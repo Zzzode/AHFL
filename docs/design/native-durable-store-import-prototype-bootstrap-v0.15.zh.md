@@ -1,6 +1,6 @@
 # AHFL Native Durable Store Import Prototype Bootstrap V0.15
 
-本文冻结 AHFL V0.15 中 durable-store-import prototype、`DurableStoreImportRequest` / requested artifact set，以及 future durable store adapter 可稳定消费的 durable-store-import-facing local state 最小边界。它承接 V0.14 已完成的 `StoreImportDescriptor`、`StoreImportReviewSummary`、compatibility / consumer matrix / contributor guide 闭环，目标是把仓库推进到“可稳定表达 durable-store-import-facing machine artifact”的下一层边界，但仍不进入真实 durable store import executor、object uploader、database writer、resume protocol、crash recovery 或 operator payload 领域。
+本文冻结 AHFL V0.15 中 durable-store-import prototype、`Request` / requested artifact set，以及 future durable store adapter 可稳定消费的 durable-store-import-facing local state 最小边界。它承接 V0.14 已完成的 `StoreImportDescriptor`、`StoreImportReviewSummary`、compatibility / consumer matrix / contributor guide 闭环，目标是把仓库推进到“可稳定表达 durable-store-import-facing machine artifact”的下一层边界，但仍不进入真实 durable store import executor、object uploader、database writer、resume protocol、crash recovery 或 operator payload 领域。
 
 关联文档：
 
@@ -14,7 +14,7 @@
 本文主要回答六个问题：
 
 1. V0.15 为什么要在 `StoreImportDescriptor` 之后引入新的 durable-store-import-facing machine artifact。
-2. `DurableStoreImportRequest` 的第一落点在哪里。
+2. `Request` 的第一落点在哪里。
 3. `StoreImportDescriptor`、durable store import request、review 与 future durable store adapter / recovery ABI 各自如何分层。
 4. 当前最小 requested artifact set 应稳定表达什么，而不应偷偷承诺什么。
 5. reviewer-facing durable store import summary 当前只应回答什么。
@@ -38,8 +38,8 @@ V0.14 已经把 `StoreImportDescriptor` 与 `StoreImportReviewSummary` 做成稳
 
 ```text
 StoreImportDescriptor
-  -> DurableStoreImportRequest
-  -> DurableStoreImportReviewSummary
+  -> Request
+  -> ReviewSummary
 ```
 
 这一层 machine-facing / reviewer-facing 边界正式冻结下来。
@@ -48,7 +48,7 @@ StoreImportDescriptor
 
 V0.15 当前成功标准是：
 
-1. 当前仓库能稳定表达 machine-facing `DurableStoreImportRequest`
+1. 当前仓库能稳定表达 machine-facing `Request`
 2. durable store import request 能回答“当前 future durable store adapter 最小可稳定消费的 requested artifact set 是什么”
 3. durable store import request 能回答“当前 adapter 是否 ready；若未 ready，adapter blocker 是什么”
 4. durable store import review 能把 machine-facing durable store import 语义转成 contributor / reviewer 可读摘要
@@ -77,21 +77,21 @@ ExecutionPlan
   -> CheckpointPersistenceDescriptor
   -> PersistenceExportManifest
   -> StoreImportDescriptor
-  -> DurableStoreImportRequest
-  -> DurableStoreImportReviewSummary
+  -> Request
+  -> ReviewSummary
 ```
 
 这表示：
 
-1. durable-store-import-facing state 的第一落点不是 AST、trace、checkpoint review、persistence review、export review、store import review 或 host log，而是正式 `DurableStoreImportRequest`
+1. durable-store-import-facing state 的第一落点不是 AST、trace、checkpoint review、persistence review、export review、store import review 或 host log，而是正式 `Request`
 2. `StoreImportDescriptor` 仍是 durable store import request 的直接 machine-facing 上游
 3. durable store import prototype 应沿着 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor -> durable store import request` 前进，而不是回退扫描 source、descriptor 文件、review 文本或 host log
 4. `StoreImportReviewSummary` 仍只是 readable projection，不是 durable store import request ABI 的第一输入
 5. future real durable store adapter / recovery protocol 只能在 durable store import request compatibility 冻结后继续规划
 
-## DurableStoreImportRequest 的第一边界
+## Request 的第一边界
 
-V0.15 当前建议 `DurableStoreImportRequest` 至少回答下面六类问题：
+V0.15 当前建议 `Request` 至少回答下面六类问题：
 
 1. 当前 adapter-facing request 是为哪个 package / workflow / session / run / store import candidate 生成的
 2. 当前 requested artifact set 中应包含哪些 adapter-facing logical entry
@@ -124,10 +124,10 @@ V0.15 当前冻结的分层关系是：
 2. `StoreImportDescriptor`
    - store-import-facing machine artifact
    - 提供 store import candidate identity、staging artifact set、import readiness 与 staging blocker
-3. `DurableStoreImportRequest`
+3. `Request`
    - durable-store-import-facing machine artifact
    - 提供 adapter request identity、requested artifact set、adapter readiness 与 adapter blocker
-4. `DurableStoreImportReviewSummary`
+4. `ReviewSummary`
    - reviewer-facing durable store import summary
    - 只归档 durable store import request 的可读视图，不重新创造私有 durable store / recovery 状态机
 5. future real durable store adapter / recovery protocol
@@ -145,23 +145,23 @@ V0.15 当前冻结的分层关系是：
 V0.15 当前还必须额外冻结下面四条 layering-sensitive 规则：
 
 1. `StoreImportDescriptor` 仍然是 durable store import request 的直接 machine-facing 上游
-   - `DurableStoreImportRequest` 可以消费 store import descriptor
+   - `Request` 可以消费 store import descriptor
    - 但不应回退让 `StoreImportReviewSummary` 变成 machine-facing 第一输入
-2. `DurableStoreImportReviewSummary` 仍然只是 projection
+2. `ReviewSummary` 仍然只是 projection
    - 它可以总结 requested artifact preview / adapter boundary / next-step recommendation
    - 但不应承担 durable mutation、import receipt synthesis、resume token 派发或 recovery command synthesis
 3. future real durable store adapter / recovery protocol 仍然是下一层
    - 它可以复用 durable store import request 的 stable fields
    - 但不应反向要求当前版本先携带 store URI、object path、database key、recovery handle、import receipt 或 operator payload
-4. `StoreImportDescriptor` 与 `DurableStoreImportRequest` 的职责不能合并
+4. `StoreImportDescriptor` 与 `Request` 的职责不能合并
    - store import descriptor 负责 staging handoff 边界
    - durable store import request 负责 adapter-facing request 边界
 
 若后续变化触碰下面任一方向，通常就不再只是“补字段”而是分层变化：
 
 1. 让 `StoreImportReviewSummary`、`PersistenceExportReviewSummary`、`PersistenceReviewSummary`、`CheckpointReviewSummary`、`SchedulerDecisionSummary`、`AuditReport` 或 `DryRunTrace` 反向成为 durable store import request 的第一输入
-2. 让 `DurableStoreImportRequest` 承担真实 object uploader、database writer、transaction commit protocol 或 recovery launcher ABI
-3. 让 `DurableStoreImportReviewSummary` 承担独立 machine-facing taxonomy
+2. 让 `Request` 承担真实 object uploader、database writer、transaction commit protocol 或 recovery launcher ABI
+3. 让 `ReviewSummary` 承担独立 machine-facing taxonomy
 4. 让 trace / audit / host log 成为 durable-store-import-facing 第一事实来源
 
 ## Durable Store Import Review 的当前边界
@@ -171,17 +171,17 @@ V0.15 当前明确区分三类与 durable store import 相关的输出：
 1. `StoreImportDescriptor`
    - 回答“当前 stable store import handoff 到底长什么样”
    - 第一输入是 `PersistenceExportManifest`
-2. future `DurableStoreImportRequest`
+2. future `Request`
    - 回答“当前 future durable store adapter 最小可稳定消费的 request 到底长什么样”
    - 第一输入是 `StoreImportDescriptor`
-3. future `DurableStoreImportReviewSummary`
+3. future `ReviewSummary`
    - 回答“当前 reviewer 应如何理解 requested artifact set、adapter boundary 与 next step”
-   - 第一输入是 `DurableStoreImportRequest`
+   - 第一输入是 `Request`
 
 因此：
 
-1. 不允许用 `StoreImportReviewSummary` 倒推 `DurableStoreImportRequest`
-2. 不允许用 `DurableStoreImportReviewSummary` 倒推真实 durable adapter / recovery protocol
+1. 不允许用 `StoreImportReviewSummary` 倒推 `Request`
+2. 不允许用 `ReviewSummary` 倒推真实 durable adapter / recovery protocol
 3. 不允许用 `AuditReport` / `DryRunTrace` 替代 durable-store-import-facing 第一事实来源
 
 ## V0.15 Scope 冻结结论
@@ -203,7 +203,7 @@ V0.15 当前明确不包括：
 
 V0.15 当前冻结的升级关系是：
 
-1. `DurableStoreImportRequest`
+1. `Request`
    - local / offline machine artifact
    - 只回答“当前 future adapter handoff 是否已准备好”
 2. future real durable store adapter / recovery protocol
@@ -212,6 +212,6 @@ V0.15 当前冻结的升级关系是：
 
 这意味着：
 
-1. future real adapter / recovery protocol 可以复用 `DurableStoreImportRequest` 的 request identity、requested artifact set、adapter boundary 与 adapter blocker
+1. future real adapter / recovery protocol 可以复用 `Request` 的 request identity、requested artifact set、adapter boundary 与 adapter blocker
 2. future real adapter / recovery protocol 不应要求 V0.15 当前就携带 durable checkpoint id、resume token、store URI、object path、database key 或 import receipt
-3. 若未来需要把这些 durable 字段提升为稳定输入，应通过新的 compatibility contract 明确演进，而不是静默塞回 `DurableStoreImportRequest` / `DurableStoreImportReviewSummary`
+3. 若未来需要把这些 durable 字段提升为稳定输入，应通过新的 compatibility contract 明确演进，而不是静默塞回 `Request` / `DecisionReviewSummary`

@@ -99,17 +99,17 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string request_status_name(
-    durable_store_import::DurableStoreImportRequestStatus status) {
+    durable_store_import::RequestStatus status) {
     switch (status) {
-    case durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter:
+    case durable_store_import::RequestStatus::ReadyForAdapter:
         return "ready_for_adapter";
-    case durable_store_import::DurableStoreImportRequestStatus::Blocked:
+    case durable_store_import::RequestStatus::Blocked:
         return "blocked";
-    case durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted:
+    case durable_store_import::RequestStatus::TerminalCompleted:
         return "terminal_completed";
-    case durable_store_import::DurableStoreImportRequestStatus::TerminalFailed:
+    case durable_store_import::RequestStatus::TerminalFailed:
         return "terminal_failed";
-    case durable_store_import::DurableStoreImportRequestStatus::TerminalPartial:
+    case durable_store_import::RequestStatus::TerminalPartial:
         return "terminal_partial";
     }
 
@@ -146,17 +146,17 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
     return "invalid";
 }
 
-[[nodiscard]] std::string blocker_kind_name(durable_store_import::AdapterBlockerKind kind) {
+[[nodiscard]] std::string blocker_kind_name(durable_store_import::RequestBlockerKind kind) {
     switch (kind) {
-    case durable_store_import::AdapterBlockerKind::WaitingOnRequestedArtifact:
+    case durable_store_import::RequestBlockerKind::WaitingOnRequestedArtifact:
         return "waiting_on_requested_artifact";
-    case durable_store_import::AdapterBlockerKind::MissingDurableStoreImportRequestIdentity:
+    case durable_store_import::RequestBlockerKind::MissingRequestIdentity:
         return "missing_durable_store_import_request_identity";
-    case durable_store_import::AdapterBlockerKind::MissingRequestedArtifactSet:
+    case durable_store_import::RequestBlockerKind::MissingRequestedArtifactSet:
         return "missing_requested_artifact_set";
-    case durable_store_import::AdapterBlockerKind::WorkflowFailure:
+    case durable_store_import::RequestBlockerKind::WorkflowFailure:
         return "workflow_failure";
-    case durable_store_import::AdapterBlockerKind::WorkflowPartial:
+    case durable_store_import::RequestBlockerKind::WorkflowPartial:
         return "workflow_partial";
     }
 
@@ -164,21 +164,21 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string
-next_action_name(durable_store_import::DurableStoreImportReviewNextActionKind action) {
+next_action_name(durable_store_import::ReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::DurableStoreImportReviewNextActionKind::
+    case durable_store_import::ReviewNextActionKind::
         HandoffDurableStoreImportRequest:
         return "handoff_durable_store_import_request";
-    case durable_store_import::DurableStoreImportReviewNextActionKind::
+    case durable_store_import::ReviewNextActionKind::
         AwaitAdapterReadiness:
         return "await_adapter_readiness";
-    case durable_store_import::DurableStoreImportReviewNextActionKind::
+    case durable_store_import::ReviewNextActionKind::
         ArchiveCompletedDurableStoreImportState:
         return "archive_completed_durable_store_import_state";
-    case durable_store_import::DurableStoreImportReviewNextActionKind::
+    case durable_store_import::ReviewNextActionKind::
         InvestigateDurableStoreImportFailure:
         return "investigate_durable_store_import_failure";
-    case durable_store_import::DurableStoreImportReviewNextActionKind::
+    case durable_store_import::ReviewNextActionKind::
         PreservePartialDurableStoreImportState:
         return "preserve_partial_durable_store_import_state";
     }
@@ -220,7 +220,7 @@ void print_failure_summary(std::ostream &out,
 
 void print_adapter_blocker(std::ostream &out,
                            int indent_level,
-                           const std::optional<durable_store_import::AdapterBlocker> &blocker) {
+                           const std::optional<durable_store_import::RequestBlocker> &blocker) {
     line(out, indent_level, "adapter_blocker {");
     if (!blocker.has_value()) {
         line(out, indent_level + 1, "value none");
@@ -257,7 +257,7 @@ void print_string_list(std::ostream &out,
 } // namespace
 
 void print_durable_store_import_review(
-    const durable_store_import::DurableStoreImportReviewSummary &summary,
+    const durable_store_import::ReviewSummary &summary,
     std::ostream &out) {
     out << summary.format_version << '\n';
     line(out,

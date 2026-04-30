@@ -1,0 +1,26 @@
+ahfl.durable-store-import-decision-receipt-persistence-response-review.v1
+source_response_format ahfl.durable-store-import-decision-receipt-persistence-response.v1
+source_persistence_request_format ahfl.durable-store-import-decision-receipt-persistence-request.v1
+source_receipt_format ahfl.durable-store-import-decision-receipt.v1
+source_decision_format ahfl.durable-store-import-decision.v1
+source_request_format ahfl.durable-store-import-request.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+run_id run-partial-001
+input_fixture fixture.request.partial
+durable_store_import_decision_identity durable-store-import-decision::workflow-value-flow::run-partial-001::accepted
+durable_store_import_receipt_identity durable-store-import-receipt::workflow-value-flow::run-partial-001::archive-ready
+durable_store_import_receipt_persistence_request_identity durable-store-import-receipt-persistence-request::workflow-value-flow::run-partial-001::persistence-ready
+durable_store_import_receipt_persistence_response_identity durable-store-import-receipt-persistence-response::workflow-value-flow::run-partial-001::accepted
+response_status accepted
+response_outcome accept_persistence_request
+response_boundary_kind adapter_response_consumable
+acknowledged_for_response true
+next_action acknowledge_response
+next_required_adapter_capability none
+adapter_response_contract accepted for persistence response
+response_preview durable-store-import-receipt-persistence-response::workflow-value-flow::run-partial-001::accepted
+next_step response acknowledged; ready for next persistence phase
+response_blocker {
+  value none
+}

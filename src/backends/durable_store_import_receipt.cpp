@@ -15,7 +15,7 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
   public:
     explicit DurableStoreImportDecisionReceiptJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
 
-    void print(const durable_store_import::DurableStoreImportDecisionReceipt &receipt) {
+    void print(const durable_store_import::Receipt &receipt) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(receipt.format_version); });
             field("source_durable_store_import_decision_format_version",
@@ -252,38 +252,38 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
         }
     }
 
-    void print_request_status(durable_store_import::DurableStoreImportRequestStatus status) {
+    void print_request_status(durable_store_import::RequestStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter:
+        case durable_store_import::RequestStatus::ReadyForAdapter:
             write_string("ready_for_adapter");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::Blocked:
+        case durable_store_import::RequestStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted:
+        case durable_store_import::RequestStatus::TerminalCompleted:
             write_string("terminal_completed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalFailed:
+        case durable_store_import::RequestStatus::TerminalFailed:
             write_string("terminal_failed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalPartial:
+        case durable_store_import::RequestStatus::TerminalPartial:
             write_string("terminal_partial");
             return;
         }
     }
 
-    void print_decision_status(durable_store_import::DurableStoreImportDecisionStatus status) {
+    void print_decision_status(durable_store_import::DecisionStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportDecisionStatus::Accepted:
+        case durable_store_import::DecisionStatus::Accepted:
             write_string("accepted");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Blocked:
+        case durable_store_import::DecisionStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Deferred:
+        case durable_store_import::DecisionStatus::Deferred:
             write_string("deferred");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Rejected:
+        case durable_store_import::DecisionStatus::Rejected:
             write_string("rejected");
             return;
         }
@@ -311,36 +311,36 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
         }
     }
 
-    void print_receipt_status(durable_store_import::DurableStoreImportDecisionReceiptStatus status) {
+    void print_receipt_status(durable_store_import::ReceiptStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
+        case durable_store_import::ReceiptStatus::ReadyForArchive:
             write_string("ready_for_archive");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::Blocked:
+        case durable_store_import::ReceiptStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::Deferred:
+        case durable_store_import::ReceiptStatus::Deferred:
             write_string("deferred");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::Rejected:
+        case durable_store_import::ReceiptStatus::Rejected:
             write_string("rejected");
             return;
         }
     }
 
     void print_receipt_outcome(
-        durable_store_import::DurableStoreImportDecisionReceiptOutcome outcome) {
+        durable_store_import::ReceiptOutcome outcome) {
         switch (outcome) {
-        case durable_store_import::DurableStoreImportDecisionReceiptOutcome::ArchiveAcceptedDecision:
+        case durable_store_import::ReceiptOutcome::ArchiveAcceptedDecision:
             write_string("archive_accepted_decision");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptOutcome::BlockBlockedDecision:
+        case durable_store_import::ReceiptOutcome::BlockBlockedDecision:
             write_string("block_blocked_decision");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptOutcome::DeferPartialDecision:
+        case durable_store_import::ReceiptOutcome::DeferPartialDecision:
             write_string("defer_partial_decision");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptOutcome::RejectFailedDecision:
+        case durable_store_import::ReceiptOutcome::RejectFailedDecision:
             write_string("reject_failed_decision");
             return;
         }
@@ -403,7 +403,7 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
 } // namespace
 
 void print_durable_store_import_receipt_json(
-    const durable_store_import::DurableStoreImportDecisionReceipt &receipt,
+    const durable_store_import::Receipt &receipt,
     std::ostream &out) {
     DurableStoreImportDecisionReceiptJsonPrinter(out).print(receipt);
 }

@@ -7,7 +7,7 @@
 namespace ahfl {
 
 void print_durable_store_import_receipt_persistence_review(
-    const durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewSummary &summary,
+    const durable_store_import::PersistenceReviewSummary &summary,
     std::ostream &out);
 
 } // namespace ahfl

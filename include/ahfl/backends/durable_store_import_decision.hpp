@@ -7,7 +7,7 @@
 namespace ahfl {
 
 void print_durable_store_import_decision_json(
-    const durable_store_import::DurableStoreImportDecision &decision,
+    const durable_store_import::Decision &decision,
     std::ostream &out);
 
 } // namespace ahfl

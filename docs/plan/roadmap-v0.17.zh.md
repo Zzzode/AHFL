@@ -1,6 +1,6 @@
 # AHFL V0.17 Roadmap
 
-本文给出 AHFL 在 V0.16 durable adapter decision / review 闭环完成之后的下一阶段实施路线。V0.17 的重点不是直接交付真实 durable store adapter executor、object uploader、database writer、receipt persistence、resume token 或 production recovery，而是把已经稳定的 `DurableStoreImportDecision` 推进为“可表达 future adapter receipt contract、可冻结 receipt blocker / capability gap、可被 future real durable store adapter 稳定消费”的下一层边界。
+本文给出 AHFL 在 V0.16 durable adapter decision / review 闭环完成之后的下一阶段实施路线。V0.17 的重点不是直接交付真实 durable store adapter executor、object uploader、database writer、receipt persistence、resume token 或 production recovery，而是把已经稳定的 `Decision` 推进为“可表达 future adapter receipt contract、可冻结 receipt blocker / capability gap、可被 future real durable store adapter 稳定消费”的下一层边界。
 
 基线输入：
 
@@ -19,7 +19,7 @@
 
 1. V0.16 已完成 durable adapter decision / review 的模型、validation、bootstrap、CLI/backend 输出、golden regression、compatibility、consumer matrix、contributor guide 与 CI 闭环。
 2. 当前仓库已经能稳定跑通 `package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint record -> persistence descriptor -> export manifest -> store import descriptor -> durable store import request -> durable store import decision -> durable store import decision receipt -> durable store import decision receipt review` 的本地 deterministic 路径。
-3. 当前仓库已提供 `DurableStoreImportDecisionReceipt` / `DurableStoreImportDecisionReceiptReviewSummary` 的 direct model、validation、bootstrap、CLI/backend 输出与 golden regression。
+3. 当前仓库已提供 `Receipt` / `ReceiptReviewSummary` 的 direct model、validation、bootstrap、CLI/backend 输出与 golden regression。
 4. 当前阶段仍明确停留在 local/offline durable adapter receipt contract handoff，不进入真实 object storage、database write、receipt persistence、retry token、host telemetry、provider connector、retention/GC 或 crash recovery runtime 领域。
 
 执行状态约定：
@@ -31,8 +31,8 @@
 
 V0.17 的交付目标是：
 
-1. 冻结 future real durable store adapter 对 V0.16 `DurableStoreImportDecision` 的最小 receipt 边界，使其能稳定表达“可归档 / 阻塞 / 延后 / 拒绝”这一层 machine contract。
-2. 引入最小 `DurableStoreImportDecisionReceipt` 语义，稳定表达 receipt identity、receipt outcome、capability gap 与 receipt blocker。
+1. 冻结 future real durable store adapter 对 V0.16 `Decision` 的最小 receipt 边界，使其能稳定表达“可归档 / 阻塞 / 延后 / 拒绝”这一层 machine contract。
+2. 引入最小 `Receipt` 语义，稳定表达 receipt identity、receipt outcome、capability gap 与 receipt blocker。
 3. 让 single-file、project、workspace 与 `--package` 路径都能生成 deterministic durable-adapter-receipt-facing prototype 输出。
 4. 冻结 durable receipt / review 的 compatibility、consumer matrix 与 contributor guidance，明确 durable decision、durable receipt、receipt review 与 future real adapter / receipt persistence 的职责边界。
 5. 保持 V0.17 仍然是 local/offline durable adapter receipt prototype，而不是 production durable store adapter / recovery 平台。
@@ -131,7 +131,7 @@ V0.17 仍然不直接承诺：
 
 ## 当前状态
 
-V0.16 已完成并成为 V0.17 的正式上游基线；当前 `Issue 01-12` 已完成。仓库当前已具备 durable receipt / receipt review 的 direct model、validation、bootstrap、CLI/backend 输出、single-file/project/workspace golden、compatibility contract、consumer matrix、contributor guide 与 CI 标签切片。V0.17 当前建议目标链路保持为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> DurableStoreImportRequest -> DurableStoreImportDecision -> DurableStoreImportDecisionReceipt -> DurableStoreImportDecisionReceiptReviewSummary`，并继续维持 local/offline durable adapter receipt prototype 的边界，不提前承诺真实 durable store adapter / receipt persistence / recovery ABI。
+V0.16 已完成并成为 V0.17 的正式上游基线；当前 `Issue 01-12` 已完成。仓库当前已具备 durable receipt / receipt review 的 direct model、validation、bootstrap、CLI/backend 输出、single-file/project/workspace golden、compatibility contract、consumer matrix、contributor guide 与 CI 标签切片。V0.17 当前建议目标链路保持为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> Request -> Decision -> Receipt -> ReceiptReviewSummary`，并继续维持 local/offline durable adapter receipt prototype 的边界，不提前承诺真实 durable store adapter / receipt persistence / recovery ABI。
 
 ## 对应 backlog
 

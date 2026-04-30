@@ -1,6 +1,6 @@
 # AHFL Durable Store Adapter Decision Prototype Compatibility Contract V0.16
 
-本文正式冻结 AHFL V0.16 中 `DurableStoreImportDecision` 与 `DurableStoreImportDecisionReviewSummary` 的 compatibility / versioning contract。它承接 V0.15 已冻结的 `DurableStoreImportRequest` / `DurableStoreImportReviewSummary` 边界，以及 V0.16 Issue 01-03 已落地的 durable adapter decision prototype scope、decision / review model 边界与 layering 规则，明确 future real durable store adapter、receipt explorer 与 reviewer tooling 当前可以稳定依赖哪些版本入口、source artifact 关系、最小稳定字段边界与 breaking-change 规则。
+本文正式冻结 AHFL V0.16 中 `Decision` 与 `DecisionReviewSummary` 的 compatibility / versioning contract。它承接 V0.15 已冻结的 `Request` / `ReviewSummary` 边界，以及 V0.16 Issue 01-03 已落地的 durable adapter decision prototype scope、decision / review model 边界与 layering 规则，明确 future real durable store adapter、receipt explorer 与 reviewer tooling 当前可以稳定依赖哪些版本入口、source artifact 关系、最小稳定字段边界与 breaking-change 规则。
 
 关联文档：
 
@@ -13,7 +13,7 @@
 本文主要回答六个问题：
 
 1. V0.16 adapter-decision-facing artifact 的正式版本入口冻结为什么。
-2. `DurableStoreImportDecision` 与 `DurableStoreImportDecisionReviewSummary` 分别稳定承诺哪些 source artifact 关系。
+2. `Decision` 与 `DecisionReviewSummary` 分别稳定承诺哪些 source artifact 关系。
 3. consumer 应如何校验版本，而不是靠字段集合猜测语义。
 4. 哪些字段已可作为 adapter-decision-facing 最小稳定输入。
 5. future real durable store adapter / receipt / recovery explorer 可以依赖到哪一层，不能跨过哪些边界。
@@ -33,34 +33,34 @@ ExecutionPlan
   -> CheckpointPersistenceDescriptor
   -> PersistenceExportManifest
   -> StoreImportDescriptor
-  -> DurableStoreImportRequest
-  -> DurableStoreImportDecision
-  -> DurableStoreImportDecisionReviewSummary
+  -> Request
+  -> Decision
+  -> DecisionReviewSummary
 ```
 
 其中：
 
-1. `DurableStoreImportRequest`
+1. `Request`
    - adapter-facing request identity、requested artifact set、adapter readiness / blocker 的第一事实来源
-2. `DurableStoreImportDecision`
+2. `Decision`
    - adapter contract 对 request 的 machine-facing decision、capability gap、decision boundary 的第一事实来源
-3. `DurableStoreImportDecisionReviewSummary`
+3. `DecisionReviewSummary`
    - reviewer-facing projection，不是 durable adapter state 第一事实来源
 4. future real durable store adapter / receipt / recovery protocol
    - 只能建立在 durable decision / review 边界之上，不能倒推新的 machine-facing state
 
 这意味着：
 
-1. `DurableStoreImportReviewSummary` 不得跳过 decision 自创私有 adapter decision state machine
-2. `DurableStoreImportDecisionReviewSummary` 不得跳过 decision 自创 durable adapter / receipt 状态机
+1. `ReviewSummary` 不得跳过 decision 自创私有 adapter decision state machine
+2. `DecisionReviewSummary` 不得跳过 decision 自创 durable adapter / receipt 状态机
 3. future prototype 不得回退依赖 AST、trace、host log、request review、store import review、checkpoint review、export review、audit report 或 provider payload
 4. 真实 import receipt、resume token、store URI、object path、database key 与 executor payload 仍不属于当前版本
 
-## Artifact 1: DurableStoreImportDecision
+## Artifact 1: Decision
 
 ### 正式版本入口
 
-`DurableStoreImportDecision` 当前唯一稳定版本入口是：
+`Decision` 当前唯一稳定版本入口是：
 
 - `format_version = "ahfl.durable-store-import-decision.v1"`
 
@@ -110,11 +110,11 @@ consumer 的最小版本检查顺序是：
 4. host telemetry、deployment metadata、provider payload、connector credential
 5. transaction commit protocol、operator command ABI、distributed restart plan 或 recovery daemon state
 
-## Artifact 2: DurableStoreImportDecisionReviewSummary
+## Artifact 2: DecisionReviewSummary
 
 ### 正式版本入口
 
-`DurableStoreImportDecisionReviewSummary` 当前唯一稳定版本入口是：
+`DecisionReviewSummary` 当前唯一稳定版本入口是：
 
 - `format_version = "ahfl.durable-store-import-decision-review.v1"`
 
@@ -127,7 +127,7 @@ consumer 的最小版本检查顺序是：
 
 这意味着：
 
-1. `DurableStoreImportDecisionReviewSummary` 不是独立于 decision 的另一套 durable adapter taxonomy
+1. `DecisionReviewSummary` 不是独立于 decision 的另一套 durable adapter taxonomy
 2. review consumer 若不支持 `ahfl.durable-store-import-decision.v1`，也不应宣称支持 `ahfl.durable-store-import-decision-review.v1`
 3. future reviewer tooling 不允许通过文本布局或字段组合反推隐含版本
 
@@ -187,17 +187,17 @@ future consumer 目前应采用下列迁移原则：
 
 当前 V0.16 最可能触发 version bump 的变化包括：
 
-1. `DurableStoreImportDecision` 新增真实 import receipt id / store location / resume token / executor payload 语义
-2. `DurableStoreImportDecisionReviewSummary` 从 projection 改成独立 durable adapter / recovery 状态机
+1. `Decision` 新增真实 import receipt id / store location / resume token / executor payload 语义
+2. `DecisionReviewSummary` 从 projection 改成独立 durable adapter / recovery 状态机
 3. 更改 source artifact 版本依赖方向
-4. 让 `DurableStoreImportRequest` 不再是 durable decision 的直接上游 machine artifact
+4. 让 `Request` 不再是 durable decision 的直接上游 machine artifact
 
 ## 当前冻结结论
 
 截至 V0.16 当前 M0：
 
-1. `DurableStoreImportDecision` 的正式版本入口为 `ahfl.durable-store-import-decision.v1`
-2. `DurableStoreImportDecisionReviewSummary` 的正式版本入口为 `ahfl.durable-store-import-decision-review.v1`
-3. `DurableStoreImportRequest` 仍是 durable adapter decision 的直接 machine-facing 上游
+1. `Decision` 的正式版本入口为 `ahfl.durable-store-import-decision.v1`
+2. `DecisionReviewSummary` 的正式版本入口为 `ahfl.durable-store-import-decision-review.v1`
+3. `Request` 仍是 durable adapter decision 的直接 machine-facing 上游
 4. review 仍然只是 projection，不得承接真实 durable store adapter / receipt / recovery ABI
 5. future durable adapter / reviewer tooling 必须先显式过版本检查，再消费 adapter-decision-facing artifact

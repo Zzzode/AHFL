@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.16
 
-本文给出面向新贡献者的 V0.16 上手路径，重点覆盖 `DurableStoreImportDecision`、`DurableStoreImportDecisionReviewSummary`、compatibility contract、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.15 durable-request-facing artifact 的协作边界。
+本文给出面向新贡献者的 V0.16 上手路径，重点覆盖 `Decision`、`DecisionReviewSummary`、compatibility contract、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.15 durable-request-facing artifact 的协作边界。
 
 关联文档：
 
@@ -119,27 +119,27 @@ V0.16 当前推荐的 durable-adapter-decision-facing 扩展顺序是：
 9. 若扩 machine-facing store import candidate identity / staging artifact set / descriptor blocker
    - 再改 `StoreImportDescriptor`
 10. 若扩 machine-facing durable request identity / requested artifact set / adapter blocker
-   - 再改 `DurableStoreImportRequest`
+   - 再改 `Request`
 11. 若扩 machine-facing durable decision identity / status / outcome / capability gap / blocker
-   - 再改 `DurableStoreImportDecision`
+   - 再改 `Decision`
 12. 若扩 reviewer-facing decision preview / adapter contract / next action / next-step recommendation
-   - 最后改 `DurableStoreImportDecisionReviewSummary`
+   - 最后改 `DecisionReviewSummary`
 
 这表示：
 
-1. `DurableStoreImportRequest` 仍是 decision 的直接上游 machine artifact
-2. `DurableStoreImportDecision` 是 future real durable adapter 语义的第一事实来源
-3. `DurableStoreImportDecisionReviewSummary` 是 reviewer-facing projection，不是独立 durable adapter / recovery 状态机
+1. `Request` 仍是 decision 的直接上游 machine artifact
+2. `Decision` 是 future real durable adapter 语义的第一事实来源
+3. `DecisionReviewSummary` 是 reviewer-facing projection，不是独立 durable adapter / recovery 状态机
 
 ## Future Real Durable Store Boundary Guidance
 
 V0.16 当前 future real durable store adapter / receipt / recovery explorer guidance 是：
 
-1. 允许 future explorer 依赖 `DurableStoreImportDecision` 的 decision identity、decision status / outcome、decision boundary、accepted-for-future-execution、next required adapter capability、decision blocker 与 source version chain
-2. 允许 reviewer tooling 依赖 `DurableStoreImportDecisionReviewSummary` 的 decision preview、adapter contract summary、next action 与 next-step recommendation
+1. 允许 future explorer 依赖 `Decision` 的 decision identity、decision status / outcome、decision boundary、accepted-for-future-execution、next required adapter capability、decision blocker 与 source version chain
+2. 允许 reviewer tooling 依赖 `DecisionReviewSummary` 的 decision preview、adapter contract summary、next action 与 next-step recommendation
 3. 不允许在当前版本中引入 import receipt id、resume token、retry token、store URI、object path、database key、credential 或 operator payload
 4. 不允许把 host telemetry、provider payload、deployment metadata 塞入 decision / review
-5. 不允许绕过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `DurableStoreImportRequest` / `DurableStoreImportDecision` 直接从 AST、trace、脚本推导 durable decision state
+5. 不允许绕过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `Request` / `Decision` 直接从 AST、trace、脚本推导 durable decision state
 
 推荐依赖顺序：
 
@@ -152,9 +152,9 @@ V0.16 当前 future real durable store adapter / receipt / recovery explorer gui
 7. `CheckpointPersistenceDescriptor`
 8. `PersistenceExportManifest`
 9. `StoreImportDescriptor`
-10. `DurableStoreImportRequest`
-11. `DurableStoreImportDecision`
-12. `DurableStoreImportDecisionReviewSummary`
+10. `Request`
+11. `Decision`
+12. `DecisionReviewSummary`
 
 ## 最小验证清单
 
@@ -183,10 +183,10 @@ ctest --preset test-dev --output-on-failure -L ahfl-v0.16
 
 V0.16 当前明确不建议：
 
-1. 跳过 `DurableStoreImportDecision`，直接在 `emit-durable-store-import-decision-review` / 外部脚本里私造 decision preview state machine
-2. 把 `DurableStoreImportDecisionReviewSummary` 当 durable adapter decision 的第一输入
+1. 跳过 `Decision`，直接在 `emit-durable-store-import-decision-review` / 外部脚本里私造 decision preview state machine
+2. 把 `DecisionReviewSummary` 当 durable adapter decision 的第一输入
 3. 把 `DryRunTrace` 当 durable adapter decision prototype / recovery explorer 的正式第一输入
-4. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `DurableStoreImportRequest` / `DurableStoreImportDecision`，直接从 AST、source、trace 重建 decision identity / capability gap / blocker
+4. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `Request` / `Decision`，直接从 AST、source、trace 重建 decision identity / capability gap / blocker
 5. 在 decision / review 中塞入 import receipt id、resume token、store URI、object path、credential、host telemetry 或 provider payload
 6. 在未更新 compatibility / matrix / contributor docs / golden / labels / CI 的情况下静默扩张 durable-adapter-decision-facing 稳定边界
 
@@ -194,8 +194,8 @@ V0.16 当前明确不建议：
 
 V0.16 当前要求文档、测试和实现保持同步：
 
-1. 改 `DurableStoreImportDecision` 稳定字段时，要同步更新 durable adapter decision compatibility 文档与 `tests/durable_store_import/*.durable-store-import-decision.json`
-2. 改 `DurableStoreImportDecisionReviewSummary` 稳定字段时，要同步更新 durable adapter decision compatibility 文档与 `tests/durable_store_import/*.durable-store-import-decision-review`
+1. 改 `Decision` 稳定字段时，要同步更新 durable adapter decision compatibility 文档与 `tests/durable_store_import/*.durable-store-import-decision.json`
+2. 改 `DecisionReviewSummary` 稳定字段时，要同步更新 durable adapter decision compatibility 文档与 `tests/durable_store_import/*.durable-store-import-decision-review`
 3. 改 durable-adapter-decision-facing layering / consumer 依赖顺序时，要同步更新 consumer matrix
 4. 改 contributor-facing 扩展路径时，要同步更新 `docs/README.md`、`README.md`、roadmap 与 backlog
 5. 改 V0.16 标签切片时，要同步更新 `tests/cmake/LabelTests.cmake` 与 `.github/workflows/ci.yml`

@@ -10,10 +10,15 @@
 
 namespace ahfl::durable_store_import {
 
-inline constexpr std::string_view kDurableStoreImportReviewSummaryFormatVersion =
+// Format version - stable contract, DO NOT CHANGE
+inline constexpr std::string_view kReviewSummaryFormatVersion =
     "ahfl.durable-store-import-review.v1";
 
-enum class DurableStoreImportReviewNextActionKind {
+// Legacy alias for backward compatibility
+inline constexpr std::string_view kDurableStoreImportReviewSummaryFormatVersion =
+    kReviewSummaryFormatVersion;
+
+enum class ReviewNextActionKind {
     HandoffDurableStoreImportRequest,
     AwaitAdapterReadiness,
     ArchiveCompletedDurableStoreImportState,
@@ -21,10 +26,14 @@ enum class DurableStoreImportReviewNextActionKind {
     PreservePartialDurableStoreImportState,
 };
 
-struct DurableStoreImportReviewSummary {
-    std::string format_version{std::string(kDurableStoreImportReviewSummaryFormatVersion)};
+// Legacy alias
+using DurableStoreImportReviewNextActionKind
+    [[deprecated("Use ReviewNextActionKind")]] = ReviewNextActionKind;
+
+struct ReviewSummary {
+    std::string format_version{std::string(kReviewSummaryFormatVersion)};
     std::string source_durable_store_import_request_format_version{
-        std::string(kDurableStoreImportRequestFormatVersion)};
+        std::string(kRequestFormatVersion)};
     std::string source_store_import_descriptor_format_version{
         std::string(store_import::kStoreImportDescriptorFormatVersion)};
     std::string source_export_manifest_format_version{
@@ -43,7 +52,7 @@ struct DurableStoreImportReviewSummary {
         persistence_export::PersistenceExportManifestStatus::Blocked};
     store_import::StoreImportDescriptorStatus descriptor_status{
         store_import::StoreImportDescriptorStatus::Blocked};
-    DurableStoreImportRequestStatus request_status{DurableStoreImportRequestStatus::Blocked};
+    RequestStatus request_status{RequestStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
@@ -54,15 +63,19 @@ struct DurableStoreImportReviewSummary {
     std::vector<std::string> requested_artifact_preview;
     bool adapter_ready{false};
     std::optional<RequestedArtifactKind> next_required_adapter_artifact_kind;
-    std::optional<AdapterBlocker> adapter_blocker;
-    DurableStoreImportReviewNextActionKind next_action{
-        DurableStoreImportReviewNextActionKind::AwaitAdapterReadiness};
+    std::optional<RequestBlocker> adapter_blocker;  // Keep field name for JSON compatibility
+    ReviewNextActionKind next_action{
+        ReviewNextActionKind::AwaitAdapterReadiness};
     std::string adapter_boundary_summary;
     std::string request_preview;
     std::string next_step_recommendation;
 };
 
-struct DurableStoreImportReviewSummaryValidationResult {
+// Legacy alias for backward compatibility
+using DurableStoreImportReviewSummary
+    [[deprecated("Use ReviewSummary")]] = ReviewSummary;
+
+struct ReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -70,8 +83,12 @@ struct DurableStoreImportReviewSummaryValidationResult {
     }
 };
 
-struct DurableStoreImportReviewSummaryResult {
-    std::optional<DurableStoreImportReviewSummary> summary;
+// Legacy alias
+using DurableStoreImportReviewSummaryValidationResult
+    [[deprecated("Use ReviewSummaryValidationResult")]] = ReviewSummaryValidationResult;
+
+struct ReviewSummaryResult {
+    std::optional<ReviewSummary> summary;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -79,11 +96,25 @@ struct DurableStoreImportReviewSummaryResult {
     }
 };
 
-[[nodiscard]] DurableStoreImportReviewSummaryValidationResult
-validate_durable_store_import_review_summary(
-    const DurableStoreImportReviewSummary &summary);
+// Legacy alias
+using DurableStoreImportReviewSummaryResult
+    [[deprecated("Use ReviewSummaryResult")]] = ReviewSummaryResult;
 
-[[nodiscard]] DurableStoreImportReviewSummaryResult
-build_durable_store_import_review_summary(const DurableStoreImportRequest &request);
+[[nodiscard]] ReviewSummaryValidationResult
+validate_review_summary(const ReviewSummary &summary);
+
+[[nodiscard]] ReviewSummaryResult
+build_review_summary(const Request &request);
+
+// Legacy function names - delegate to new functions
+[[nodiscard]] inline ReviewSummaryValidationResult
+validate_durable_store_import_review_summary(const ReviewSummary &summary) {
+    return validate_review_summary(summary);
+}
+
+[[nodiscard]] inline ReviewSummaryResult
+build_durable_store_import_review_summary(const Request &request) {
+    return build_review_summary(request);
+}
 
 } // namespace ahfl::durable_store_import

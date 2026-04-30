@@ -1,6 +1,6 @@
 # AHFL Native Consumer Matrix V0.15
 
-本文冻结 AHFL V0.15 中 durable-store-import-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`DurableStoreImportRequest`、`DurableStoreImportReviewSummary`、`AuditReport` 与 `DryRunTrace` 各自稳定依赖什么，以及 future real durable store adapter / recovery explorer 当前应落在哪一层。
+本文冻结 AHFL V0.15 中 durable-store-import-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`Request`、`ReviewSummary`、`AuditReport` 与 `DryRunTrace` 各自稳定依赖什么，以及 future real durable store adapter / recovery explorer 当前应落在哪一层。
 
 关联文档：
 
@@ -150,15 +150,15 @@ V0.15 当前 durable-store-import-facing consumer 共享入口是：
 9. 若要做 machine-facing store import handoff
    - 再消费 `StoreImportDescriptor`
 10. 若要做 machine-facing durable adapter request handoff
-   - 再消费 `DurableStoreImportRequest`
+   - 再消费 `Request`
 11. 若要做 reviewer-facing durable request guidance
-   - 最后消费 `DurableStoreImportReviewSummary`
+   - 最后消费 `ReviewSummary`
 
 换句话说：
 
 - `StoreImportDescriptor` 适合回答“当前 stable store import handoff 到底长什么样”；
-- `DurableStoreImportRequest` 适合回答“future real durable store adapter 当前最小能稳定依赖什么 request contract”；
-- `DurableStoreImportReviewSummary` 适合回答“reviewer 现在应该如何理解 request boundary / requested artifact preview / next step”；
+- `Request` 适合回答“future real durable store adapter 当前最小能稳定依赖什么 request contract”；
+- `ReviewSummary` 适合回答“reviewer 现在应该如何理解 request boundary / requested artifact preview / next step”；
 - `AuditReport` 仍适合回答“这次运行应如何被 review / CI / archive 归档”；
 - `DryRunTrace` 仍适合“看懂本地 mock dry-run 做了什么”，但不是正式 durable store import ABI。
 
@@ -182,25 +182,25 @@ V0.15 当前 durable-store-import-facing consumer 共享入口是：
 9. 若需要 machine-facing store import handoff
    - 再消费 `StoreImportDescriptor`
 10. 若需要 machine-facing durable adapter request
-   - 再消费 `DurableStoreImportRequest`
+   - 再消费 `Request`
 11. 若需要 reviewer-facing guidance
-   - 最后消费 `DurableStoreImportReviewSummary`
+   - 最后消费 `ReviewSummary`
 
 这意味着：
 
 1. future real durable store adapter 不应直接从 `ReplayView` / `AuditReport` 倒推 durable store import state
 2. future real durable store adapter 不应直接从 `DryRunTrace` 推导 requested artifact set、durable request identity 或 adapter blocker
-3. `DurableStoreImportReviewSummary` 是 projection，不是 durable store / recovery protocol
+3. `ReviewSummary` 是 projection，不是 durable store / recovery protocol
 4. 若以后需要 durable checkpoint id / resume token / store location / import ABI，应先扩 durable store import compatibility contract，而不是把字段塞进 review 输出
 
 ## 当前反模式
 
 当前明确不建议：
 
-1. 跳过 `DurableStoreImportRequest`，直接在 `emit-durable-store-import-review` / 外部脚本里私造 request preview state machine
+1. 跳过 `Request`，直接在 `emit-durable-store-import-review` / 外部脚本里私造 request preview state machine
 2. 把 `StoreImportReviewSummary` 当 durable store import request 的第一事实来源
 3. 把 `DryRunTrace` 当 durable store import prototype / recovery explorer 的正式第一输入
-4. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `DurableStoreImportRequest`，直接从 AST、source、trace 重建 durable store import request identity / requested artifact set / blocker
+4. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `Request`，直接从 AST、source、trace 重建 durable store import request identity / requested artifact set / blocker
 5. 在 request / review 中塞入 durable checkpoint id、resume token、store URI、object path、database key、credential、host telemetry、provider payload 或 import receipt
 6. 在未更新 compatibility / matrix / contributor docs / golden / labels / CI 的情况下静默扩张 durable-store-import-facing 稳定边界
 
@@ -209,6 +209,6 @@ V0.15 当前 durable-store-import-facing consumer 共享入口是：
 截至当前实现：
 
 1. 当前推荐消费顺序已正式冻结为 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence -> export-manifest -> store-import-descriptor -> durable-store-import-request -> durable-store-import-review`
-2. `DurableStoreImportRequest` 已成为 durable request identity / requested artifact set / adapter readiness / blocker 的第一正式事实来源
-3. `DurableStoreImportReviewSummary` 已成为 reviewer-facing request preview / requested artifact preview / next-step recommendation 的正式 projection
+2. `Request` 已成为 durable request identity / requested artifact set / adapter readiness / blocker 的第一正式事实来源
+3. `ReviewSummary` 已成为 reviewer-facing request preview / requested artifact preview / next-step recommendation 的正式 projection
 4. `v0.15-durable-store-import-golden` 与 `ahfl-v0.15` 已作为 V0.15 consumer matrix 的最小 golden / aggregate 回归锚点

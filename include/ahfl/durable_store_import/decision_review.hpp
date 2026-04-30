@@ -8,10 +8,15 @@
 
 namespace ahfl::durable_store_import {
 
-inline constexpr std::string_view kDurableStoreImportDecisionReviewSummaryFormatVersion =
+// Format version - stable contract, DO NOT CHANGE
+inline constexpr std::string_view kDecisionReviewFormatVersion =
     "ahfl.durable-store-import-decision-review.v1";
 
-enum class DurableStoreImportDecisionReviewNextActionKind {
+// Legacy alias for backward compatibility
+inline constexpr std::string_view kDurableStoreImportDecisionReviewSummaryFormatVersion =
+    kDecisionReviewFormatVersion;
+
+enum class DecisionReviewNextActionKind {
     HandoffDurableStoreImportDecision,
     ResolveRequiredAdapterCapability,
     ArchiveCompletedDurableStoreImportDecision,
@@ -19,13 +24,16 @@ enum class DurableStoreImportDecisionReviewNextActionKind {
     InvestigateDurableStoreImportDecisionRejection,
 };
 
-struct DurableStoreImportDecisionReviewSummary {
-    std::string format_version{
-        std::string(kDurableStoreImportDecisionReviewSummaryFormatVersion)};
+// Legacy alias
+using DurableStoreImportDecisionReviewNextActionKind
+    [[deprecated("Use DecisionReviewNextActionKind")]] = DecisionReviewNextActionKind;
+
+struct DecisionReviewSummary {
+    std::string format_version{std::string(kDecisionReviewFormatVersion)};
     std::string source_durable_store_import_decision_format_version{
-        std::string(kDurableStoreImportDecisionFormatVersion)};
+        std::string(kDecisionFormatVersion)};
     std::string source_durable_store_import_request_format_version{
-        std::string(kDurableStoreImportRequestFormatVersion)};
+        std::string(kRequestFormatVersion)};
     std::string source_store_import_descriptor_format_version{
         std::string(store_import::kStoreImportDescriptorFormatVersion)};
     std::string workflow_canonical_name;
@@ -42,9 +50,8 @@ struct DurableStoreImportDecisionReviewSummary {
         persistence_export::PersistenceExportManifestStatus::Blocked};
     store_import::StoreImportDescriptorStatus descriptor_status{
         store_import::StoreImportDescriptorStatus::Blocked};
-    DurableStoreImportRequestStatus request_status{DurableStoreImportRequestStatus::Blocked};
-    DurableStoreImportDecisionStatus decision_status{
-        DurableStoreImportDecisionStatus::Blocked};
+    RequestStatus request_status{RequestStatus::Blocked};
+    DecisionStatus decision_status{DecisionStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
@@ -52,19 +59,22 @@ struct DurableStoreImportDecisionReviewSummary {
     std::string durable_store_import_decision_identity;
     std::string planned_durable_identity;
     DecisionBoundaryKind decision_boundary_kind{DecisionBoundaryKind::LocalContractOnly};
-    DurableStoreImportDecisionOutcome decision_outcome{
-        DurableStoreImportDecisionOutcome::BlockRequest};
+    DecisionOutcome decision_outcome{DecisionOutcome::BlockRequest};
     bool accepted_for_future_execution{false};
     std::optional<AdapterCapabilityKind> next_required_adapter_capability;
     std::optional<DecisionBlocker> decision_blocker;
-    DurableStoreImportDecisionReviewNextActionKind next_action{
-        DurableStoreImportDecisionReviewNextActionKind::ResolveRequiredAdapterCapability};
+    DecisionReviewNextActionKind next_action{
+        DecisionReviewNextActionKind::ResolveRequiredAdapterCapability};
     std::string adapter_contract_summary;
     std::string decision_preview;
     std::string next_step_recommendation;
 };
 
-struct DurableStoreImportDecisionReviewSummaryValidationResult {
+// Legacy alias for backward compatibility
+using DurableStoreImportDecisionReviewSummary
+    [[deprecated("Use DecisionReviewSummary")]] = DecisionReviewSummary;
+
+struct DecisionReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -72,8 +82,12 @@ struct DurableStoreImportDecisionReviewSummaryValidationResult {
     }
 };
 
-struct DurableStoreImportDecisionReviewSummaryResult {
-    std::optional<DurableStoreImportDecisionReviewSummary> summary;
+// Legacy alias
+using DurableStoreImportDecisionReviewSummaryValidationResult
+    [[deprecated("Use DecisionReviewSummaryValidationResult")]] = DecisionReviewSummaryValidationResult;
+
+struct DecisionReviewSummaryResult {
+    std::optional<DecisionReviewSummary> summary;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -81,12 +95,25 @@ struct DurableStoreImportDecisionReviewSummaryResult {
     }
 };
 
-[[nodiscard]] DurableStoreImportDecisionReviewSummaryValidationResult
-validate_durable_store_import_decision_review_summary(
-    const DurableStoreImportDecisionReviewSummary &summary);
+// Legacy alias
+using DurableStoreImportDecisionReviewSummaryResult
+    [[deprecated("Use DecisionReviewSummaryResult")]] = DecisionReviewSummaryResult;
 
-[[nodiscard]] DurableStoreImportDecisionReviewSummaryResult
-build_durable_store_import_decision_review_summary(
-    const DurableStoreImportDecision &decision);
+[[nodiscard]] DecisionReviewSummaryValidationResult
+validate_decision_review_summary(const DecisionReviewSummary &summary);
+
+[[nodiscard]] DecisionReviewSummaryResult
+build_decision_review_summary(const Decision &decision);
+
+// Legacy function names - delegate to new functions
+[[nodiscard]] inline DecisionReviewSummaryValidationResult
+validate_durable_store_import_decision_review_summary(const DecisionReviewSummary &summary) {
+    return validate_decision_review_summary(summary);
+}
+
+[[nodiscard]] inline DecisionReviewSummaryResult
+build_durable_store_import_decision_review_summary(const Decision &decision) {
+    return build_decision_review_summary(decision);
+}
 
 } // namespace ahfl::durable_store_import

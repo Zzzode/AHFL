@@ -28,7 +28,7 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
         summary, diagnostics, "durable store import request");
 }
 
-[[nodiscard]] std::string build_durable_store_import_request_identity(
+[[nodiscard]] std::string build_request_identity(
     const std::optional<handoff::PackageIdentity> &source_package_identity,
     std::string_view workflow_canonical_name,
     std::string_view session_id,
@@ -73,21 +73,21 @@ to_requested_artifact_kind(store_import::StagingArtifactKind kind) {
     return RequestedArtifactAdapterRole::RequestAnchor;
 }
 
-[[nodiscard]] AdapterBlockerKind to_adapter_blocker_kind(store_import::StagingBlockerKind kind) {
+[[nodiscard]] RequestBlockerKind to_request_blocker_kind(store_import::StagingBlockerKind kind) {
     switch (kind) {
     case store_import::StagingBlockerKind::WaitingOnExportManifest:
-        return AdapterBlockerKind::WaitingOnRequestedArtifact;
+        return RequestBlockerKind::WaitingOnRequestedArtifact;
     case store_import::StagingBlockerKind::MissingStoreImportCandidateIdentity:
-        return AdapterBlockerKind::MissingDurableStoreImportRequestIdentity;
+        return RequestBlockerKind::MissingRequestIdentity;
     case store_import::StagingBlockerKind::MissingStagingArtifactSet:
-        return AdapterBlockerKind::MissingRequestedArtifactSet;
+        return RequestBlockerKind::MissingRequestedArtifactSet;
     case store_import::StagingBlockerKind::WorkflowFailure:
-        return AdapterBlockerKind::WorkflowFailure;
+        return RequestBlockerKind::WorkflowFailure;
     case store_import::StagingBlockerKind::WorkflowPartial:
-        return AdapterBlockerKind::WorkflowPartial;
+        return RequestBlockerKind::WorkflowPartial;
     }
 
-    return AdapterBlockerKind::WaitingOnRequestedArtifact;
+    return RequestBlockerKind::WaitingOnRequestedArtifact;
 }
 
 [[nodiscard]] RequestedArtifactSet
@@ -118,73 +118,73 @@ build_requested_artifact_set(const store_import::StoreImportDescriptor &descript
 
 } // namespace
 
-DurableStoreImportRequestValidationResult
-validate_durable_store_import_request(const DurableStoreImportRequest &request) {
-    DurableStoreImportRequestValidationResult result;
+RequestValidationResult validate_request(const Request &request) {
+    RequestValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    if (request.format_version != kDurableStoreImportRequestFormatVersion) {
+    // Format version must match stable contract
+    if (request.format_version != kRequestFormatVersion) {
         emit_validation_error(diagnostics, "durable store import request format_version must be '" +
-                          std::string(kDurableStoreImportRequestFormatVersion) + "'");
+                          std::string(kRequestFormatVersion) + "'");
     }
 
     if (request.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_store_import_descriptor_format_version must be '" +
             std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
     }
 
     if (request.source_execution_plan_format_version != handoff::kExecutionPlanFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_execution_plan_format_version must be '" +
             std::string(handoff::kExecutionPlanFormatVersion) + "'");
     }
 
     if (request.source_runtime_session_format_version !=
         runtime_session::kRuntimeSessionFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_runtime_session_format_version must be '" +
             std::string(runtime_session::kRuntimeSessionFormatVersion) + "'");
     }
 
     if (request.source_execution_journal_format_version !=
         execution_journal::kExecutionJournalFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_execution_journal_format_version must be '" +
             std::string(execution_journal::kExecutionJournalFormatVersion) + "'");
     }
 
     if (request.source_replay_view_format_version != replay_view::kReplayViewFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_replay_view_format_version must be '" +
             std::string(replay_view::kReplayViewFormatVersion) + "'");
     }
 
     if (request.source_scheduler_snapshot_format_version !=
         scheduler_snapshot::kSchedulerSnapshotFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_scheduler_snapshot_format_version must be '" +
             std::string(scheduler_snapshot::kSchedulerSnapshotFormatVersion) + "'");
     }
 
     if (request.source_checkpoint_record_format_version !=
         checkpoint_record::kCheckpointRecordFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_checkpoint_record_format_version must be '" +
             std::string(checkpoint_record::kCheckpointRecordFormatVersion) + "'");
     }
 
     if (request.source_persistence_descriptor_format_version !=
         persistence_descriptor::kPersistenceDescriptorFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_persistence_descriptor_format_version must be '" +
             std::string(persistence_descriptor::kPersistenceDescriptorFormatVersion) + "'");
     }
 
     if (request.source_export_manifest_format_version !=
         persistence_export::kPersistenceExportManifestFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request source_export_manifest_format_version must be '" +
             std::string(persistence_export::kPersistenceExportManifestFormatVersion) + "'");
     }
@@ -210,17 +210,18 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
     }
 
     if (request.store_import_candidate_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request store_import_candidate_identity must not be empty");
     }
 
+    // Note: using durable_store_import_request_identity field name for JSON compatibility
     if (request.durable_store_import_request_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request durable_store_import_request_identity must not be empty");
     }
 
     if (request.planned_durable_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request planned_durable_identity must not be empty");
     }
 
@@ -239,7 +240,7 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
     }
 
     if (request.adapter_ready && request.requested_artifact_set.entries.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request adapter_ready requires non-empty requested_artifact_set");
     }
 
@@ -261,7 +262,7 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
 
         if (entry.artifact_kind == RequestedArtifactKind::StoreImportDescriptor &&
             entry.source_format_version != request.source_store_import_descriptor_format_version) {
-            emit_validation_error(diagnostics, 
+            emit_validation_error(diagnostics,
                 "durable store import request store import descriptor entry source_format_version "
                 "must match source_store_import_descriptor_format_version");
         }
@@ -278,7 +279,7 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
     }
 
     if (!request.adapter_ready &&
-        request.request_status != DurableStoreImportRequestStatus::TerminalCompleted &&
+        request.request_status != RequestStatus::TerminalCompleted &&
         !request.adapter_blocker.has_value()) {
         emit_validation_error(diagnostics, "durable store import request must contain adapter_blocker when "
                           "adapter_ready is false");
@@ -286,7 +287,7 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
 
     if (request.adapter_blocker.has_value()) {
         if (request.adapter_blocker->message.empty()) {
-            emit_validation_error(diagnostics, 
+            emit_validation_error(diagnostics,
                 "durable store import request adapter_blocker message must not be empty");
         }
 
@@ -297,103 +298,103 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
         }
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::ReadyForAdapter &&
+    if (request.request_status == RequestStatus::ReadyForAdapter &&
         !request.adapter_ready) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request ReadyForAdapter status requires adapter_ready");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::ReadyForAdapter &&
+    if (request.request_status == RequestStatus::ReadyForAdapter &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::ReadyToImport) {
         emit_validation_error(diagnostics, "durable store import request ReadyForAdapter status requires "
                           "ReadyToImport descriptor_status");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::Blocked &&
+    if (request.request_status == RequestStatus::Blocked &&
         request.adapter_ready) {
         emit_validation_error(diagnostics, "durable store import request Blocked status cannot be adapter_ready");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::Blocked &&
+    if (request.request_status == RequestStatus::Blocked &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::Blocked) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request Blocked status requires Blocked descriptor_status");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::TerminalCompleted &&
+    if (request.request_status == RequestStatus::TerminalCompleted &&
         !request.adapter_ready) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request TerminalCompleted status requires adapter_ready");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::TerminalCompleted &&
+    if (request.request_status == RequestStatus::TerminalCompleted &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::TerminalCompleted) {
         emit_validation_error(diagnostics, "durable store import request TerminalCompleted status requires "
                           "TerminalCompleted descriptor_status");
     }
 
-    if ((request.request_status == DurableStoreImportRequestStatus::TerminalFailed ||
-         request.request_status == DurableStoreImportRequestStatus::TerminalPartial) &&
+    if ((request.request_status == RequestStatus::TerminalFailed ||
+         request.request_status == RequestStatus::TerminalPartial) &&
         !request.adapter_blocker.has_value()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request terminal blocked status requires adapter_blocker");
     }
 
-    if ((request.request_status == DurableStoreImportRequestStatus::TerminalFailed ||
-         request.request_status == DurableStoreImportRequestStatus::TerminalPartial) &&
+    if ((request.request_status == RequestStatus::TerminalFailed ||
+         request.request_status == RequestStatus::TerminalPartial) &&
         request.adapter_ready) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request terminal blocked status cannot be adapter_ready");
     }
 
-    if ((request.request_status == DurableStoreImportRequestStatus::TerminalFailed ||
-         request.request_status == DurableStoreImportRequestStatus::TerminalPartial) &&
+    if ((request.request_status == RequestStatus::TerminalFailed ||
+         request.request_status == RequestStatus::TerminalPartial) &&
         request.next_required_adapter_artifact_kind.has_value()) {
         emit_validation_error(diagnostics, "durable store import request terminal blocked status cannot have "
                           "next_required_adapter_artifact_kind");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::TerminalFailed &&
+    if (request.request_status == RequestStatus::TerminalFailed &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::TerminalFailed) {
         emit_validation_error(diagnostics, "durable store import request TerminalFailed status requires "
                           "TerminalFailed descriptor_status");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::TerminalPartial &&
+    if (request.request_status == RequestStatus::TerminalPartial &&
         request.descriptor_status != store_import::StoreImportDescriptorStatus::TerminalPartial) {
         emit_validation_error(diagnostics, "durable store import request TerminalPartial status requires "
                           "TerminalPartial descriptor_status");
     }
 
-    if (request.request_status == DurableStoreImportRequestStatus::TerminalFailed &&
+    if (request.request_status == RequestStatus::TerminalFailed &&
         !request.workflow_failure_summary.has_value()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import request TerminalFailed status requires workflow_failure_summary");
     }
 
     if (request.request_boundary_kind == RequestBoundaryKind::AdapterContractConsumable &&
         !request.adapter_ready &&
-        request.request_status != DurableStoreImportRequestStatus::TerminalCompleted) {
+        request.request_status != RequestStatus::TerminalCompleted) {
         emit_validation_error(diagnostics, "durable store import request adapter-contract-consumable boundary "
                           "requires ready or completed request_status");
     }
 
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Completed &&
-        request.request_status != DurableStoreImportRequestStatus::TerminalCompleted) {
+        request.request_status != RequestStatus::TerminalCompleted) {
         emit_validation_error(diagnostics, "durable store import request completed workflow_status requires "
                           "TerminalCompleted request_status");
     }
 
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Failed &&
-        request.request_status != DurableStoreImportRequestStatus::TerminalFailed) {
+        request.request_status != RequestStatus::TerminalFailed) {
         emit_validation_error(diagnostics, "durable store import request failed workflow_status requires "
                           "TerminalFailed request_status");
     }
 
     if (request.workflow_status == runtime_session::WorkflowSessionStatus::Partial &&
-        request.request_status != DurableStoreImportRequestStatus::ReadyForAdapter &&
-        request.request_status != DurableStoreImportRequestStatus::Blocked &&
-        request.request_status != DurableStoreImportRequestStatus::TerminalPartial) {
+        request.request_status != RequestStatus::ReadyForAdapter &&
+        request.request_status != RequestStatus::Blocked &&
+        request.request_status != RequestStatus::TerminalPartial) {
         emit_validation_error(diagnostics, "durable store import request partial workflow_status must map to "
                           "ReadyForAdapter, Blocked, or TerminalPartial request_status");
     }
@@ -401,9 +402,8 @@ validate_durable_store_import_request(const DurableStoreImportRequest &request) 
     return result;
 }
 
-DurableStoreImportRequestResult
-build_durable_store_import_request(const store_import::StoreImportDescriptor &descriptor) {
-    DurableStoreImportRequestResult result{
+RequestResult build_request(const store_import::StoreImportDescriptor &descriptor) {
+    RequestResult result{
         .request = std::nullopt,
         .diagnostics = {},
     };
@@ -415,8 +415,8 @@ build_durable_store_import_request(const store_import::StoreImportDescriptor &de
     }
 
     auto requested_artifact_set = build_requested_artifact_set(descriptor);
-    DurableStoreImportRequest request{
-        .format_version = std::string(kDurableStoreImportRequestFormatVersion),
+    Request request{
+        .format_version = std::string(kRequestFormatVersion),
         .source_store_import_descriptor_format_version = descriptor.format_version,
         .source_execution_plan_format_version = descriptor.source_execution_plan_format_version,
         .source_runtime_session_format_version = descriptor.source_runtime_session_format_version,
@@ -444,7 +444,7 @@ build_durable_store_import_request(const store_import::StoreImportDescriptor &de
         .export_package_identity = descriptor.export_package_identity,
         .store_import_candidate_identity = descriptor.store_import_candidate_identity,
         .durable_store_import_request_identity =
-            build_durable_store_import_request_identity(descriptor.source_package_identity,
+            build_request_identity(descriptor.source_package_identity,
                                                         descriptor.workflow_canonical_name,
                                                         descriptor.session_id,
                                                         requested_artifact_set.entry_count),
@@ -453,50 +453,50 @@ build_durable_store_import_request(const store_import::StoreImportDescriptor &de
         .requested_artifact_set = std::move(requested_artifact_set),
         .adapter_ready = false,
         .next_required_adapter_artifact_kind = std::nullopt,
-        .request_status = DurableStoreImportRequestStatus::Blocked,
+        .request_status = RequestStatus::Blocked,
         .adapter_blocker = std::nullopt,
     };
 
     switch (descriptor.descriptor_status) {
     case store_import::StoreImportDescriptorStatus::ReadyToImport:
-        request.request_status = DurableStoreImportRequestStatus::ReadyForAdapter;
+        request.request_status = RequestStatus::ReadyForAdapter;
         request.adapter_ready = true;
         request.request_boundary_kind = RequestBoundaryKind::AdapterContractConsumable;
         break;
     case store_import::StoreImportDescriptorStatus::Blocked:
-        request.request_status = DurableStoreImportRequestStatus::Blocked;
+        request.request_status = RequestStatus::Blocked;
         if (descriptor.next_required_staging_artifact_kind.has_value()) {
             request.next_required_adapter_artifact_kind =
                 to_requested_artifact_kind(*descriptor.next_required_staging_artifact_kind);
         }
         if (descriptor.staging_blocker.has_value()) {
-            request.adapter_blocker = AdapterBlocker{
-                .kind = to_adapter_blocker_kind(descriptor.staging_blocker->kind),
+            request.adapter_blocker = RequestBlocker{
+                .kind = to_request_blocker_kind(descriptor.staging_blocker->kind),
                 .message = descriptor.staging_blocker->message,
                 .logical_artifact_name = descriptor.staging_blocker->logical_artifact_name,
             };
         }
         break;
     case store_import::StoreImportDescriptorStatus::TerminalCompleted:
-        request.request_status = DurableStoreImportRequestStatus::TerminalCompleted;
+        request.request_status = RequestStatus::TerminalCompleted;
         request.adapter_ready = true;
         request.request_boundary_kind = RequestBoundaryKind::AdapterContractConsumable;
         break;
     case store_import::StoreImportDescriptorStatus::TerminalFailed:
-        request.request_status = DurableStoreImportRequestStatus::TerminalFailed;
+        request.request_status = RequestStatus::TerminalFailed;
         if (descriptor.staging_blocker.has_value()) {
-            request.adapter_blocker = AdapterBlocker{
-                .kind = to_adapter_blocker_kind(descriptor.staging_blocker->kind),
+            request.adapter_blocker = RequestBlocker{
+                .kind = to_request_blocker_kind(descriptor.staging_blocker->kind),
                 .message = descriptor.staging_blocker->message,
                 .logical_artifact_name = descriptor.staging_blocker->logical_artifact_name,
             };
         }
         break;
     case store_import::StoreImportDescriptorStatus::TerminalPartial:
-        request.request_status = DurableStoreImportRequestStatus::TerminalPartial;
+        request.request_status = RequestStatus::TerminalPartial;
         if (descriptor.staging_blocker.has_value()) {
-            request.adapter_blocker = AdapterBlocker{
-                .kind = to_adapter_blocker_kind(descriptor.staging_blocker->kind),
+            request.adapter_blocker = RequestBlocker{
+                .kind = to_request_blocker_kind(descriptor.staging_blocker->kind),
                 .message = descriptor.staging_blocker->message,
                 .logical_artifact_name = descriptor.staging_blocker->logical_artifact_name,
             };
@@ -504,7 +504,7 @@ build_durable_store_import_request(const store_import::StoreImportDescriptor &de
         break;
     }
 
-    const auto validation = validate_durable_store_import_request(request);
+    const auto validation = validate_request(request);
     result.diagnostics.append(validation.diagnostics);
     if (result.has_errors()) {
         return result;

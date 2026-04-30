@@ -1,6 +1,6 @@
 # AHFL Durable Store Adapter Receipt Persistence Prototype Compatibility Contract V0.18
 
-本文正式冻结 AHFL V0.18 中 `DurableStoreImportDecisionReceiptPersistenceRequest` 与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 compatibility / versioning contract。它承接 V0.17 已冻结的 `DurableStoreImportDecisionReceipt` / `DurableStoreImportDecisionReceiptReviewSummary` 边界，以及 V0.18 Issue 01-03 已落地的 durable adapter receipt persistence prototype scope、persistence request / review model 边界与 layering 规则，明确 future real durable store adapter、receipt persistence explorer 与 reviewer tooling 当前可以稳定依赖哪些版本入口、source artifact 关系、最小稳定字段边界与 breaking-change 规则。
+本文正式冻结 AHFL V0.18 中 `PersistenceRequest` 与 `PersistenceReviewSummary` 的 compatibility / versioning contract。它承接 V0.17 已冻结的 `Receipt` / `ReceiptReviewSummary` 边界，以及 V0.18 Issue 01-03 已落地的 durable adapter receipt persistence prototype scope、persistence request / review model 边界与 layering 规则，明确 future real durable store adapter、receipt persistence explorer 与 reviewer tooling 当前可以稳定依赖哪些版本入口、source artifact 关系、最小稳定字段边界与 breaking-change 规则。
 
 关联文档：
 
@@ -13,7 +13,7 @@
 本文主要回答六个问题：
 
 1. V0.18 adapter-receipt-persistence-facing artifact 的正式版本入口冻结为什么。
-2. `DurableStoreImportDecisionReceiptPersistenceRequest` 与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 分别稳定承诺哪些 source artifact 关系。
+2. `PersistenceRequest` 与 `PersistenceReviewSummary` 分别稳定承诺哪些 source artifact 关系。
 3. consumer 应如何校验版本，而不是靠字段集合猜测语义。
 4. 哪些字段已可作为 adapter-receipt-persistence-facing 最小稳定输入。
 5. future real durable store adapter / receipt persistence / recovery explorer 可以依赖到哪一层，不能跨过哪些边界。
@@ -33,36 +33,36 @@ ExecutionPlan
   -> CheckpointPersistenceDescriptor
   -> PersistenceExportManifest
   -> StoreImportDescriptor
-  -> DurableStoreImportRequest
-  -> DurableStoreImportDecision
-  -> DurableStoreImportDecisionReceipt
-  -> DurableStoreImportDecisionReceiptPersistenceRequest
-  -> DurableStoreImportDecisionReceiptPersistenceReviewSummary
+  -> Request
+  -> Decision
+  -> Receipt
+  -> PersistenceRequest
+  -> PersistenceReviewSummary
 ```
 
 其中：
 
-1. `DurableStoreImportDecisionReceipt`
+1. `Receipt`
    - adapter receipt identity、receipt outcome、capability gap / blocker 的第一事实来源
-2. `DurableStoreImportDecisionReceiptPersistenceRequest`
+2. `PersistenceRequest`
    - adapter receipt persistence 对 receipt 的 machine-facing request、persistence blocker、persistence boundary 的第一事实来源
-3. `DurableStoreImportDecisionReceiptPersistenceReviewSummary`
+3. `PersistenceReviewSummary`
    - reviewer-facing projection，不是 durable adapter receipt persistence state 第一事实来源
 4. future real durable store adapter / receipt persistence / recovery protocol
    - 只能建立在 receipt persistence request / review 边界之上，不能倒推新的 machine-facing state
 
 这意味着：
 
-1. `DurableStoreImportDecisionReceiptReviewSummary` 不得跳过 persistence request 自创私有 adapter receipt persistence state machine
-2. `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 不得跳过 persistence request 自创 durable adapter / receipt persistence 状态机
+1. `ReceiptReviewSummary` 不得跳过 persistence request 自创私有 adapter receipt persistence state machine
+2. `PersistenceReviewSummary` 不得跳过 persistence request 自创 durable adapter / receipt persistence 状态机
 3. future prototype 不得回退依赖 AST、trace、host log、receipt review、decision review、request review、store import review、checkpoint review、export review、audit report 或 provider payload
 4. 真实 import receipt persistence id、resume token、store URI、object path、database key 与 executor payload 仍不属于当前版本
 
-## Artifact 1: DurableStoreImportDecisionReceiptPersistenceRequest
+## Artifact 1: PersistenceRequest
 
 ### 正式版本入口
 
-`DurableStoreImportDecisionReceiptPersistenceRequest` 当前唯一稳定版本入口是：
+`PersistenceRequest` 当前唯一稳定版本入口是：
 
 - `format_version = "ahfl.durable-store-import-decision-receipt-persistence-request.v1"`
 
@@ -115,11 +115,11 @@ consumer 的最小版本检查顺序是：
 4. host telemetry、deployment metadata、provider payload、connector credential
 5. transaction commit protocol、operator command ABI、distributed restart plan 或 recovery daemon state
 
-## Artifact 2: DurableStoreImportDecisionReceiptPersistenceReviewSummary
+## Artifact 2: PersistenceReviewSummary
 
 ### 正式版本入口
 
-`DurableStoreImportDecisionReceiptPersistenceReviewSummary` 当前唯一稳定版本入口是：
+`PersistenceReviewSummary` 当前唯一稳定版本入口是：
 
 - `format_version = "ahfl.durable-store-import-decision-receipt-persistence-review.v1"`
 
@@ -134,7 +134,7 @@ consumer 的最小版本检查顺序是：
 
 这意味着：
 
-1. `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 不是独立于 persistence request 的另一套 durable adapter taxonomy
+1. `PersistenceReviewSummary` 不是独立于 persistence request 的另一套 durable adapter taxonomy
 2. review consumer 若不支持 `ahfl.durable-store-import-decision-receipt-persistence-request.v1`，也不应宣称支持 `ahfl.durable-store-import-decision-receipt-persistence-review.v1`
 3. future reviewer tooling 不允许通过文本布局或字段组合反推隐含版本
 
@@ -195,21 +195,21 @@ future consumer 目前应采用下列迁移原则：
 
 当前 V0.18 最可能触发 version bump 的变化包括：
 
-1. `DurableStoreImportDecisionReceiptPersistenceRequest` 新增真实 import receipt persistence id / store location / resume token / executor payload 语义
-2. `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 从 projection 改成独立 durable adapter / recovery 状态机
+1. `PersistenceRequest` 新增真实 import receipt persistence id / store location / resume token / executor payload 语义
+2. `PersistenceReviewSummary` 从 projection 改成独立 durable adapter / recovery 状态机
 3. 更改 source artifact 版本依赖方向
-4. 让 `DurableStoreImportDecisionReceipt` 不再是 durable receipt persistence request 的直接上游 machine artifact
+4. 让 `Receipt` 不再是 durable receipt persistence request 的直接上游 machine artifact
 
 ## Docs / Code / Golden / Tests 同步流程
 
 为了避免 compatibility contract 与实现漂移，当前 V0.18 要求以下联动约束：
 
-1. 改 `DurableStoreImportDecisionReceiptPersistenceRequest` 的稳定字段或语义时
+1. 改 `PersistenceRequest` 的稳定字段或语义时
    - 同步更新 `include/ahfl/durable_store_import/` 与 `src/durable_store_import/` 对应实现
    - 同步更新 `tests/durable_store_import/decision.cpp`
    - 同步更新 `tests/durable_store_import/*.durable-store-import-receipt-persistence-request.json`
    - 同步更新本文对应 artifact 章节
-2. 改 `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的稳定字段或语义时
+2. 改 `PersistenceReviewSummary` 的稳定字段或语义时
    - 同步更新 `include/ahfl/durable_store_import/` 与 `src/durable_store_import/` 对应实现
    - 同步更新 `tests/durable_store_import/decision.cpp`
    - 同步更新 `tests/durable_store_import/*.durable-store-import-receipt-persistence-review`
@@ -227,8 +227,8 @@ future consumer 目前应采用下列迁移原则：
 
 截至 V0.18 当前实现：
 
-1. `DurableStoreImportDecisionReceiptPersistenceRequest` 的正式版本入口为 `ahfl.durable-store-import-decision-receipt-persistence-request.v1`
-2. `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的正式版本入口为 `ahfl.durable-store-import-decision-receipt-persistence-review.v1`
-3. `DurableStoreImportDecisionReceipt` 仍是 durable adapter receipt persistence request 的直接 machine-facing 上游
+1. `PersistenceRequest` 的正式版本入口为 `ahfl.durable-store-import-decision-receipt-persistence-request.v1`
+2. `PersistenceReviewSummary` 的正式版本入口为 `ahfl.durable-store-import-decision-receipt-persistence-review.v1`
+3. `Receipt` 仍是 durable adapter receipt persistence request 的直接 machine-facing 上游
 4. review 仍然只是 projection，不得承接真实 durable store adapter / receipt persistence / recovery ABI
 5. future durable adapter / reviewer tooling 必须先显式过版本检查，再消费 adapter-receipt-persistence-facing artifact

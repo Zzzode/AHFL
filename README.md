@@ -142,6 +142,14 @@ Backend outputs:
 | `emit-store-import-review` | reviewer-facing store-import summary over store-import descriptor |
 | `emit-durable-store-import-request` | durable-store-import request artifact for adapter-facing handoff |
 | `emit-durable-store-import-review` | reviewer-facing durable-store-import summary over durable request |
+| `emit-durable-store-import-decision` | durable adapter decision artifact over durable request |
+| `emit-durable-store-import-receipt` | durable adapter receipt artifact over durable decision |
+| `emit-durable-store-import-receipt-persistence-request` | durable receipt persistence request artifact over durable receipt |
+| `emit-durable-store-import-decision-review` | reviewer-facing durable adapter decision summary |
+| `emit-durable-store-import-receipt-review` | reviewer-facing durable adapter receipt summary |
+| `emit-durable-store-import-receipt-persistence-review` | reviewer-facing durable receipt persistence summary |
+| `emit-durable-store-import-receipt-persistence-response` | durable receipt persistence response artifact over persistence request |
+| `emit-durable-store-import-receipt-persistence-response-review` | reviewer-facing durable receipt persistence response summary |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -188,6 +196,7 @@ ctest --preset test-dev
 ctest --preset test-dev -L ahfl-v0.3
 ctest --preset test-dev -L ahfl-v0.15
 ctest --preset test-dev -L ahfl-v0.16
+ctest --preset test-dev -L ahfl-v0.19
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -224,14 +233,20 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.19.zh.md`](docs/plan/roadmap-v0.19.zh.md)
+  - [`docs/plan/issue-backlog-v0.19.zh.md`](docs/plan/issue-backlog-v0.19.zh.md)
+- Current durable-adapter-receipt-persistence-response boundary
+  - [`docs/design/native-durable-store-adapter-receipt-persistence-response-prototype-bootstrap-v0.19.zh.md`](docs/design/native-durable-store-adapter-receipt-persistence-response-prototype-bootstrap-v0.19.zh.md)
+  - [`docs/reference/durable-store-adapter-receipt-persistence-response-prototype-compatibility-v0.19.zh.md`](docs/reference/durable-store-adapter-receipt-persistence-response-prototype-compatibility-v0.19.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.19.zh.md`](docs/reference/native-consumer-matrix-v0.19.zh.md)
+  - [`docs/reference/contributor-guide-v0.19.zh.md`](docs/reference/contributor-guide-v0.19.zh.md)
+- Previous completed baseline
   - [`docs/plan/roadmap-v0.18.zh.md`](docs/plan/roadmap-v0.18.zh.md)
   - [`docs/plan/issue-backlog-v0.18.zh.md`](docs/plan/issue-backlog-v0.18.zh.md)
-- Current durable-adapter-receipt-persistence boundary
   - [`docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md`](docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md)
   - [`docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md`](docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md)
   - [`docs/reference/native-consumer-matrix-v0.18.zh.md`](docs/reference/native-consumer-matrix-v0.18.zh.md)
   - [`docs/reference/contributor-guide-v0.18.zh.md`](docs/reference/contributor-guide-v0.18.zh.md)
-- Previous completed baseline
   - [`docs/plan/roadmap-v0.17.zh.md`](docs/plan/roadmap-v0.17.zh.md)
   - [`docs/plan/issue-backlog-v0.17.zh.md`](docs/plan/issue-backlog-v0.17.zh.md)
   - [`docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md`](docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md)
@@ -278,5 +293,6 @@ semantics. Its current boundary is documented in
 
 CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
 project / IR / backend / scheduler / checkpoint / persistence / export-package /
-durable-adapter-decision / durable-adapter-receipt / durable-adapter-receipt-persistence
-regression slices, and then runs the full `ctest` suite.
+durable-adapter-decision / durable-adapter-receipt / durable-adapter-receipt-persistence /
+durable-adapter-receipt-persistence-response regression slices, and then runs the full
+`ctest` suite.

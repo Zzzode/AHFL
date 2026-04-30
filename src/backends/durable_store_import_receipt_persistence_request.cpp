@@ -17,7 +17,7 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
         : PrettyJsonWriter(out) {}
 
     void print(
-        const durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequest &request) {
+        const durable_store_import::PersistenceRequest &request) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(request.format_version); });
             field("source_durable_store_import_decision_receipt_format_version",
@@ -273,55 +273,55 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
         }
     }
 
-    void print_request_status(durable_store_import::DurableStoreImportRequestStatus status) {
+    void print_request_status(durable_store_import::RequestStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter:
+        case durable_store_import::RequestStatus::ReadyForAdapter:
             write_string("ready_for_adapter");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::Blocked:
+        case durable_store_import::RequestStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted:
+        case durable_store_import::RequestStatus::TerminalCompleted:
             write_string("terminal_completed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalFailed:
+        case durable_store_import::RequestStatus::TerminalFailed:
             write_string("terminal_failed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalPartial:
+        case durable_store_import::RequestStatus::TerminalPartial:
             write_string("terminal_partial");
             return;
         }
     }
 
-    void print_decision_status(durable_store_import::DurableStoreImportDecisionStatus status) {
+    void print_decision_status(durable_store_import::DecisionStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportDecisionStatus::Accepted:
+        case durable_store_import::DecisionStatus::Accepted:
             write_string("accepted");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Blocked:
+        case durable_store_import::DecisionStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Deferred:
+        case durable_store_import::DecisionStatus::Deferred:
             write_string("deferred");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Rejected:
+        case durable_store_import::DecisionStatus::Rejected:
             write_string("rejected");
             return;
         }
     }
 
-    void print_receipt_status(durable_store_import::DurableStoreImportDecisionReceiptStatus status) {
+    void print_receipt_status(durable_store_import::ReceiptStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
+        case durable_store_import::ReceiptStatus::ReadyForArchive:
             write_string("ready_for_archive");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::Blocked:
+        case durable_store_import::ReceiptStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::Deferred:
+        case durable_store_import::ReceiptStatus::Deferred:
             write_string("deferred");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptStatus::Rejected:
+        case durable_store_import::ReceiptStatus::Rejected:
             write_string("rejected");
             return;
         }
@@ -339,12 +339,12 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
     }
 
     void print_receipt_persistence_boundary_kind(
-        durable_store_import::ReceiptPersistenceBoundaryKind kind) {
+        durable_store_import::PersistenceBoundaryKind kind) {
         switch (kind) {
-        case durable_store_import::ReceiptPersistenceBoundaryKind::LocalContractOnly:
+        case durable_store_import::PersistenceBoundaryKind::LocalContractOnly:
             write_string("local_contract_only");
             return;
-        case durable_store_import::ReceiptPersistenceBoundaryKind::
+        case durable_store_import::PersistenceBoundaryKind::
             AdapterReceiptPersistenceConsumable:
             write_string("adapter_receipt_persistence_consumable");
             return;
@@ -352,40 +352,40 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
     }
 
     void print_receipt_persistence_request_status(
-        durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus status) {
+        durable_store_import::PersistenceRequestStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::
+        case durable_store_import::PersistenceRequestStatus::
             ReadyToPersist:
             write_string("ready_to_persist");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::Blocked:
+        case durable_store_import::PersistenceRequestStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::Deferred:
+        case durable_store_import::PersistenceRequestStatus::Deferred:
             write_string("deferred");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected:
+        case durable_store_import::PersistenceRequestStatus::Rejected:
             write_string("rejected");
             return;
         }
     }
 
     void print_receipt_persistence_request_outcome(
-        durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome outcome) {
+        durable_store_import::PersistenceRequestOutcome outcome) {
         switch (outcome) {
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+        case durable_store_import::PersistenceRequestOutcome::
             PersistReadyReceipt:
             write_string("persist_ready_receipt");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+        case durable_store_import::PersistenceRequestOutcome::
             BlockBlockedReceipt:
             write_string("block_blocked_receipt");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+        case durable_store_import::PersistenceRequestOutcome::
             DeferPartialReceipt:
             write_string("defer_partial_receipt");
             return;
-        case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+        case durable_store_import::PersistenceRequestOutcome::
             RejectFailedReceipt:
             write_string("reject_failed_receipt");
             return;
@@ -416,22 +416,22 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
     }
 
     void print_receipt_persistence_blocker(
-        const durable_store_import::ReceiptPersistenceBlocker &blocker,
+        const durable_store_import::PersistenceBlocker &blocker,
         int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() {
                 switch (blocker.kind) {
-                case durable_store_import::ReceiptPersistenceBlockerKind::SourceReceiptBlocked:
+                case durable_store_import::PersistenceBlockerKind::SourceReceiptBlocked:
                     write_string("source_receipt_blocked");
                     return;
-                case durable_store_import::ReceiptPersistenceBlockerKind::
+                case durable_store_import::PersistenceBlockerKind::
                     MissingRequiredAdapterCapability:
                     write_string("missing_required_adapter_capability");
                     return;
-                case durable_store_import::ReceiptPersistenceBlockerKind::PartialWorkflowState:
+                case durable_store_import::PersistenceBlockerKind::PartialWorkflowState:
                     write_string("partial_workflow_state");
                     return;
-                case durable_store_import::ReceiptPersistenceBlockerKind::WorkflowFailure:
+                case durable_store_import::PersistenceBlockerKind::WorkflowFailure:
                     write_string("workflow_failure");
                     return;
                 }
@@ -451,7 +451,7 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final : pri
 } // namespace
 
 void print_durable_store_import_receipt_persistence_request_json(
-    const durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequest &request,
+    const durable_store_import::PersistenceRequest &request,
     std::ostream &out) {
     DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter(out).print(request);
 }

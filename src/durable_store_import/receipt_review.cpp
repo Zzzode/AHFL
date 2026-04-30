@@ -48,32 +48,32 @@ void validate_receipt_blocker(const ReceiptBlocker &blocker, DiagnosticBag &diag
     return "invalid";
 }
 
-[[nodiscard]] DurableStoreImportDecisionReceiptReviewNextActionKind
-next_action_for_receipt(const DurableStoreImportDecisionReceipt &receipt) {
+[[nodiscard]] ReceiptReviewNextActionKind
+next_action_for_receipt(const Receipt &receipt) {
     switch (receipt.receipt_status) {
-    case DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
-        return receipt.request_status == DurableStoreImportRequestStatus::TerminalCompleted
-                   ? DurableStoreImportDecisionReceiptReviewNextActionKind::
+    case ReceiptStatus::ReadyForArchive:
+        return receipt.request_status == RequestStatus::TerminalCompleted
+                   ? ReceiptReviewNextActionKind::
                          ArchiveCompletedDurableStoreImportDecisionReceipt
-                   : DurableStoreImportDecisionReceiptReviewNextActionKind::
+                   : ReceiptReviewNextActionKind::
                          HandoffDurableStoreImportDecisionReceipt;
-    case DurableStoreImportDecisionReceiptStatus::Blocked:
-        return DurableStoreImportDecisionReceiptReviewNextActionKind::
+    case ReceiptStatus::Blocked:
+        return ReceiptReviewNextActionKind::
             ResolveRequiredAdapterCapability;
-    case DurableStoreImportDecisionReceiptStatus::Deferred:
-        return DurableStoreImportDecisionReceiptReviewNextActionKind::
+    case ReceiptStatus::Deferred:
+        return ReceiptReviewNextActionKind::
             PreservePartialDurableStoreImportDecisionReceipt;
-    case DurableStoreImportDecisionReceiptStatus::Rejected:
-        return DurableStoreImportDecisionReceiptReviewNextActionKind::
+    case ReceiptStatus::Rejected:
+        return ReceiptReviewNextActionKind::
             InvestigateDurableStoreImportDecisionReceiptRejection;
     }
 
-    return DurableStoreImportDecisionReceiptReviewNextActionKind::
+    return ReceiptReviewNextActionKind::
         ResolveRequiredAdapterCapability;
 }
 
 [[nodiscard]] std::string adapter_receipt_contract_summary_for_receipt(
-    const DurableStoreImportDecisionReceipt &receipt) {
+    const Receipt &receipt) {
     switch (receipt.receipt_boundary_kind) {
     case ReceiptBoundaryKind::LocalContractOnly:
         return "local durable adapter receipt contract reasoning only; real receipt persistence and executor ABI not yet promised";
@@ -85,23 +85,23 @@ next_action_for_receipt(const DurableStoreImportDecisionReceipt &receipt) {
 }
 
 [[nodiscard]] std::string receipt_preview_for_receipt(
-    const DurableStoreImportDecisionReceipt &receipt) {
+    const Receipt &receipt) {
     switch (receipt.receipt_status) {
-    case DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
-        if (receipt.request_status == DurableStoreImportRequestStatus::TerminalCompleted) {
+    case ReceiptStatus::ReadyForArchive:
+        if (receipt.request_status == RequestStatus::TerminalCompleted) {
             return "workflow already completed; durable adapter receipt is retained for archival review";
         }
         return "durable adapter receipt '" + receipt.durable_store_import_receipt_identity +
                "' is ready for future adapter archive handoff";
-    case DurableStoreImportDecisionReceiptStatus::Blocked:
+    case ReceiptStatus::Blocked:
         return "durable adapter receipt remains blocked until required capability '" +
                (receipt.next_required_adapter_capability.has_value()
                     ? capability_name(*receipt.next_required_adapter_capability)
                     : std::string("unknown")) +
                "' is available";
-    case DurableStoreImportDecisionReceiptStatus::Deferred:
+    case ReceiptStatus::Deferred:
         return "partial workflow durable adapter receipt is deferred until partial state preservation is available";
-    case DurableStoreImportDecisionReceiptStatus::Rejected:
+    case ReceiptStatus::Rejected:
         return receipt.workflow_failure_summary.has_value() &&
                        receipt.workflow_failure_summary->node_name.has_value()
                    ? "workflow failed at node '" +
@@ -114,18 +114,18 @@ next_action_for_receipt(const DurableStoreImportDecisionReceipt &receipt) {
 }
 
 [[nodiscard]] std::string next_step_recommendation_for_receipt(
-    const DurableStoreImportDecisionReceipt &receipt) {
+    const Receipt &receipt) {
     switch (receipt.receipt_status) {
-    case DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
-        if (receipt.request_status == DurableStoreImportRequestStatus::TerminalCompleted) {
+    case ReceiptStatus::ReadyForArchive:
+        if (receipt.request_status == RequestStatus::TerminalCompleted) {
             return "archive completed durable adapter receipt; no further adapter action";
         }
         return "handoff current durable adapter receipt before real adapter implementation work";
-    case DurableStoreImportDecisionReceiptStatus::Blocked:
+    case ReceiptStatus::Blocked:
         return "add required adapter capability before claiming durable adapter receipt archive readiness";
-    case DurableStoreImportDecisionReceiptStatus::Deferred:
+    case ReceiptStatus::Deferred:
         return "preserve partial workflow state before durable adapter receipt archive planning";
-    case DurableStoreImportDecisionReceiptStatus::Rejected:
+    case ReceiptStatus::Rejected:
         return "inspect workflow failure before planning durable adapter receipt archive";
     }
 
@@ -134,37 +134,37 @@ next_action_for_receipt(const DurableStoreImportDecisionReceipt &receipt) {
 
 } // namespace
 
-DurableStoreImportDecisionReceiptReviewSummaryValidationResult
-validate_durable_store_import_decision_receipt_review_summary(
-    const DurableStoreImportDecisionReceiptReviewSummary &summary) {
-    DurableStoreImportDecisionReceiptReviewSummaryValidationResult result;
+ReceiptReviewSummaryValidationResult
+validate_receipt_review_summary(
+    const ReceiptReviewSummary &summary) {
+    ReceiptReviewSummaryValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    if (summary.format_version != kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion) {
+    if (summary.format_version != kReceiptReviewFormatVersion) {
         emit_validation_error(diagnostics, "durable store import receipt review summary format_version must be '" +
-                          std::string(kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion) +
+                          std::string(kReceiptReviewFormatVersion) +
                           "'");
     }
 
     if (summary.source_durable_store_import_decision_receipt_format_version !=
-        kDurableStoreImportDecisionReceiptFormatVersion) {
+        kReceiptFormatVersion) {
         emit_validation_error(diagnostics, 
             "durable store import receipt review summary source_durable_store_import_decision_receipt_format_version must be '" +
-            std::string(kDurableStoreImportDecisionReceiptFormatVersion) + "'");
+            std::string(kReceiptFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_decision_format_version !=
-        kDurableStoreImportDecisionFormatVersion) {
+        kDecisionFormatVersion) {
         emit_validation_error(diagnostics, 
             "durable store import receipt review summary source_durable_store_import_decision_format_version must be '" +
-            std::string(kDurableStoreImportDecisionFormatVersion) + "'");
+            std::string(kDecisionFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_request_format_version !=
-        kDurableStoreImportRequestFormatVersion) {
+        kRequestFormatVersion) {
         emit_validation_error(diagnostics, 
             "durable store import receipt review summary source_durable_store_import_request_format_version must be '" +
-            std::string(kDurableStoreImportRequestFormatVersion) + "'");
+            std::string(kRequestFormatVersion) + "'");
     }
 
     if (summary.source_store_import_descriptor_format_version !=
@@ -272,22 +272,22 @@ validate_durable_store_import_decision_receipt_review_summary(
     }
 
     switch (summary.receipt_status) {
-    case DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
+    case ReceiptStatus::ReadyForArchive:
         if (summary.receipt_outcome !=
-            DurableStoreImportDecisionReceiptOutcome::ArchiveAcceptedDecision) {
+            ReceiptOutcome::ArchiveAcceptedDecision) {
             emit_validation_error(diagnostics, "durable store import receipt review summary ReadyForArchive "
                               "receipt_status requires "
                               "ArchiveAcceptedDecision receipt_outcome");
         }
-        if (summary.request_status == DurableStoreImportRequestStatus::TerminalCompleted) {
+        if (summary.request_status == RequestStatus::TerminalCompleted) {
             if (summary.next_action !=
-                DurableStoreImportDecisionReceiptReviewNextActionKind::
+                ReceiptReviewNextActionKind::
                     ArchiveCompletedDurableStoreImportDecisionReceipt) {
                 emit_validation_error(diagnostics, 
                     "durable store import receipt review summary completed ReadyForArchive receipt requires next_action archive_completed_durable_store_import_decision_receipt");
             }
         } else if (summary.next_action !=
-                   DurableStoreImportDecisionReceiptReviewNextActionKind::
+                   ReceiptReviewNextActionKind::
                        HandoffDurableStoreImportDecisionReceipt) {
             emit_validation_error(diagnostics, 
                 "durable store import receipt review summary ReadyForArchive receipt requires next_action handoff_durable_store_import_decision_receipt");
@@ -296,19 +296,19 @@ validate_durable_store_import_decision_receipt_review_summary(
             emit_validation_error(diagnostics, "durable store import receipt review summary ReadyForArchive receipt "
                               "requires accepted_for_receipt_archive");
         }
-        if (summary.decision_status != DurableStoreImportDecisionStatus::Accepted) {
+        if (summary.decision_status != DecisionStatus::Accepted) {
             emit_validation_error(diagnostics, "durable store import receipt review summary ReadyForArchive receipt "
                               "requires Accepted decision_status");
         }
         break;
-    case DurableStoreImportDecisionReceiptStatus::Blocked:
+    case ReceiptStatus::Blocked:
         if (summary.receipt_outcome !=
-            DurableStoreImportDecisionReceiptOutcome::BlockBlockedDecision) {
+            ReceiptOutcome::BlockBlockedDecision) {
             emit_validation_error(diagnostics, "durable store import receipt review summary Blocked receipt_status "
                               "requires BlockBlockedDecision receipt_outcome");
         }
         if (summary.next_action !=
-            DurableStoreImportDecisionReceiptReviewNextActionKind::
+            ReceiptReviewNextActionKind::
                 ResolveRequiredAdapterCapability) {
             emit_validation_error(diagnostics, 
                 "durable store import receipt review summary Blocked receipt requires next_action resolve_required_adapter_capability");
@@ -318,14 +318,14 @@ validate_durable_store_import_decision_receipt_review_summary(
                               "requires receipt_blocker");
         }
         break;
-    case DurableStoreImportDecisionReceiptStatus::Deferred:
+    case ReceiptStatus::Deferred:
         if (summary.receipt_outcome !=
-            DurableStoreImportDecisionReceiptOutcome::DeferPartialDecision) {
+            ReceiptOutcome::DeferPartialDecision) {
             emit_validation_error(diagnostics, "durable store import receipt review summary Deferred receipt_status "
                               "requires DeferPartialDecision receipt_outcome");
         }
         if (summary.next_action !=
-            DurableStoreImportDecisionReceiptReviewNextActionKind::
+            ReceiptReviewNextActionKind::
                 PreservePartialDurableStoreImportDecisionReceipt) {
             emit_validation_error(diagnostics, 
                 "durable store import receipt review summary Deferred receipt requires next_action preserve_partial_durable_store_import_decision_receipt");
@@ -335,14 +335,14 @@ validate_durable_store_import_decision_receipt_review_summary(
                               "requires receipt_blocker");
         }
         break;
-    case DurableStoreImportDecisionReceiptStatus::Rejected:
+    case ReceiptStatus::Rejected:
         if (summary.receipt_outcome !=
-            DurableStoreImportDecisionReceiptOutcome::RejectFailedDecision) {
+            ReceiptOutcome::RejectFailedDecision) {
             emit_validation_error(diagnostics, "durable store import receipt review summary Rejected receipt_status "
                               "requires RejectFailedDecision receipt_outcome");
         }
         if (summary.next_action !=
-            DurableStoreImportDecisionReceiptReviewNextActionKind::
+            ReceiptReviewNextActionKind::
                 InvestigateDurableStoreImportDecisionReceiptRejection) {
             emit_validation_error(diagnostics, 
                 "durable store import receipt review summary Rejected receipt requires next_action investigate_durable_store_import_decision_receipt_rejection");
@@ -357,23 +357,23 @@ validate_durable_store_import_decision_receipt_review_summary(
     return result;
 }
 
-DurableStoreImportDecisionReceiptReviewSummaryResult
-build_durable_store_import_decision_receipt_review_summary(
-    const DurableStoreImportDecisionReceipt &receipt) {
-    DurableStoreImportDecisionReceiptReviewSummaryResult result{
+ReceiptReviewSummaryResult
+build_receipt_review_summary(
+    const Receipt &receipt) {
+    ReceiptReviewSummaryResult result{
         .summary = std::nullopt,
         .diagnostics = {},
     };
 
-    const auto validation = validate_durable_store_import_decision_receipt(receipt);
+    const auto validation = validate_receipt(receipt);
     result.diagnostics.append(validation.diagnostics);
     if (result.has_errors()) {
         return result;
     }
 
-    DurableStoreImportDecisionReceiptReviewSummary summary{
+    ReceiptReviewSummary summary{
         .format_version =
-            std::string(kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion),
+            std::string(kReceiptReviewFormatVersion),
         .source_durable_store_import_decision_receipt_format_version = receipt.format_version,
         .source_durable_store_import_decision_format_version =
             receipt.source_durable_store_import_decision_format_version,
@@ -416,7 +416,7 @@ build_durable_store_import_decision_receipt_review_summary(
     };
 
     const auto summary_validation =
-        validate_durable_store_import_decision_receipt_review_summary(summary);
+        validate_receipt_review_summary(summary);
     result.diagnostics.append(summary_validation.diagnostics);
     if (result.has_errors()) {
         return result;

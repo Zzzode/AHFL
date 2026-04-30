@@ -15,7 +15,7 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
   public:
     explicit DurableStoreImportDecisionJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
 
-    void print(const durable_store_import::DurableStoreImportDecision &decision) {
+    void print(const durable_store_import::Decision &decision) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(decision.format_version); });
             field("source_durable_store_import_request_format_version",
@@ -244,21 +244,21 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
         }
     }
 
-    void print_request_status(durable_store_import::DurableStoreImportRequestStatus status) {
+    void print_request_status(durable_store_import::RequestStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter:
+        case durable_store_import::RequestStatus::ReadyForAdapter:
             write_string("ready_for_adapter");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::Blocked:
+        case durable_store_import::RequestStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted:
+        case durable_store_import::RequestStatus::TerminalCompleted:
             write_string("terminal_completed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalFailed:
+        case durable_store_import::RequestStatus::TerminalFailed:
             write_string("terminal_failed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalPartial:
+        case durable_store_import::RequestStatus::TerminalPartial:
             write_string("terminal_partial");
             return;
         }
@@ -286,35 +286,35 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
         }
     }
 
-    void print_decision_status(durable_store_import::DurableStoreImportDecisionStatus status) {
+    void print_decision_status(durable_store_import::DecisionStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportDecisionStatus::Accepted:
+        case durable_store_import::DecisionStatus::Accepted:
             write_string("accepted");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Blocked:
+        case durable_store_import::DecisionStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Deferred:
+        case durable_store_import::DecisionStatus::Deferred:
             write_string("deferred");
             return;
-        case durable_store_import::DurableStoreImportDecisionStatus::Rejected:
+        case durable_store_import::DecisionStatus::Rejected:
             write_string("rejected");
             return;
         }
     }
 
-    void print_decision_outcome(durable_store_import::DurableStoreImportDecisionOutcome outcome) {
+    void print_decision_outcome(durable_store_import::DecisionOutcome outcome) {
         switch (outcome) {
-        case durable_store_import::DurableStoreImportDecisionOutcome::AcceptRequest:
+        case durable_store_import::DecisionOutcome::AcceptRequest:
             write_string("accept_request");
             return;
-        case durable_store_import::DurableStoreImportDecisionOutcome::BlockRequest:
+        case durable_store_import::DecisionOutcome::BlockRequest:
             write_string("block_request");
             return;
-        case durable_store_import::DurableStoreImportDecisionOutcome::DeferPartialRequest:
+        case durable_store_import::DecisionOutcome::DeferPartialRequest:
             write_string("defer_partial_request");
             return;
-        case durable_store_import::DurableStoreImportDecisionOutcome::RejectFailedRequest:
+        case durable_store_import::DecisionOutcome::RejectFailedRequest:
             write_string("reject_failed_request");
             return;
         }
@@ -377,7 +377,7 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
 } // namespace
 
 void print_durable_store_import_decision_json(
-    const durable_store_import::DurableStoreImportDecision &decision,
+    const durable_store_import::Decision &decision,
     std::ostream &out) {
     DurableStoreImportDecisionJsonPrinter(out).print(decision);
 }

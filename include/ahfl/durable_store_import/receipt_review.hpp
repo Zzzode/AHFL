@@ -8,10 +8,15 @@
 
 namespace ahfl::durable_store_import {
 
-inline constexpr std::string_view kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion =
+// Format version - stable contract, DO NOT CHANGE
+inline constexpr std::string_view kReceiptReviewFormatVersion =
     "ahfl.durable-store-import-decision-receipt-review.v1";
 
-enum class DurableStoreImportDecisionReceiptReviewNextActionKind {
+// Legacy alias for backward compatibility
+inline constexpr std::string_view kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion =
+    kReceiptReviewFormatVersion;
+
+enum class ReceiptReviewNextActionKind {
     HandoffDurableStoreImportDecisionReceipt,
     ResolveRequiredAdapterCapability,
     ArchiveCompletedDurableStoreImportDecisionReceipt,
@@ -19,15 +24,18 @@ enum class DurableStoreImportDecisionReceiptReviewNextActionKind {
     InvestigateDurableStoreImportDecisionReceiptRejection,
 };
 
-struct DurableStoreImportDecisionReceiptReviewSummary {
-    std::string format_version{
-        std::string(kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion)};
+// Legacy alias
+using DurableStoreImportDecisionReceiptReviewNextActionKind
+    [[deprecated("Use ReceiptReviewNextActionKind")]] = ReceiptReviewNextActionKind;
+
+struct ReceiptReviewSummary {
+    std::string format_version{std::string(kReceiptReviewFormatVersion)};
     std::string source_durable_store_import_decision_receipt_format_version{
-        std::string(kDurableStoreImportDecisionReceiptFormatVersion)};
+        std::string(kReceiptFormatVersion)};
     std::string source_durable_store_import_decision_format_version{
-        std::string(kDurableStoreImportDecisionFormatVersion)};
+        std::string(kDecisionFormatVersion)};
     std::string source_durable_store_import_request_format_version{
-        std::string(kDurableStoreImportRequestFormatVersion)};
+        std::string(kRequestFormatVersion)};
     std::string source_store_import_descriptor_format_version{
         std::string(store_import::kStoreImportDescriptorFormatVersion)};
     std::string workflow_canonical_name;
@@ -44,11 +52,9 @@ struct DurableStoreImportDecisionReceiptReviewSummary {
         persistence_export::PersistenceExportManifestStatus::Blocked};
     store_import::StoreImportDescriptorStatus descriptor_status{
         store_import::StoreImportDescriptorStatus::Blocked};
-    DurableStoreImportRequestStatus request_status{DurableStoreImportRequestStatus::Blocked};
-    DurableStoreImportDecisionStatus decision_status{
-        DurableStoreImportDecisionStatus::Blocked};
-    DurableStoreImportDecisionReceiptStatus receipt_status{
-        DurableStoreImportDecisionReceiptStatus::Blocked};
+    RequestStatus request_status{RequestStatus::Blocked};
+    DecisionStatus decision_status{DecisionStatus::Blocked};
+    ReceiptStatus receipt_status{ReceiptStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
@@ -57,20 +63,22 @@ struct DurableStoreImportDecisionReceiptReviewSummary {
     std::string durable_store_import_receipt_identity;
     std::string planned_durable_identity;
     ReceiptBoundaryKind receipt_boundary_kind{ReceiptBoundaryKind::LocalContractOnly};
-    DurableStoreImportDecisionReceiptOutcome receipt_outcome{
-        DurableStoreImportDecisionReceiptOutcome::BlockBlockedDecision};
+    ReceiptOutcome receipt_outcome{ReceiptOutcome::BlockBlockedDecision};
     bool accepted_for_receipt_archive{false};
     std::optional<AdapterCapabilityKind> next_required_adapter_capability;
     std::optional<ReceiptBlocker> receipt_blocker;
-    DurableStoreImportDecisionReceiptReviewNextActionKind next_action{
-        DurableStoreImportDecisionReceiptReviewNextActionKind::
-            ResolveRequiredAdapterCapability};
+    ReceiptReviewNextActionKind next_action{
+        ReceiptReviewNextActionKind::ResolveRequiredAdapterCapability};
     std::string adapter_receipt_contract_summary;
     std::string receipt_preview;
     std::string next_step_recommendation;
 };
 
-struct DurableStoreImportDecisionReceiptReviewSummaryValidationResult {
+// Legacy alias for backward compatibility
+using DurableStoreImportDecisionReceiptReviewSummary
+    [[deprecated("Use ReceiptReviewSummary")]] = ReceiptReviewSummary;
+
+struct ReceiptReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -78,8 +86,12 @@ struct DurableStoreImportDecisionReceiptReviewSummaryValidationResult {
     }
 };
 
-struct DurableStoreImportDecisionReceiptReviewSummaryResult {
-    std::optional<DurableStoreImportDecisionReceiptReviewSummary> summary;
+// Legacy alias
+using DurableStoreImportDecisionReceiptReviewSummaryValidationResult
+    [[deprecated("Use ReceiptReviewSummaryValidationResult")]] = ReceiptReviewSummaryValidationResult;
+
+struct ReceiptReviewSummaryResult {
+    std::optional<ReceiptReviewSummary> summary;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -87,12 +99,25 @@ struct DurableStoreImportDecisionReceiptReviewSummaryResult {
     }
 };
 
-[[nodiscard]] DurableStoreImportDecisionReceiptReviewSummaryValidationResult
-validate_durable_store_import_decision_receipt_review_summary(
-    const DurableStoreImportDecisionReceiptReviewSummary &summary);
+// Legacy alias
+using DurableStoreImportDecisionReceiptReviewSummaryResult
+    [[deprecated("Use ReceiptReviewSummaryResult")]] = ReceiptReviewSummaryResult;
 
-[[nodiscard]] DurableStoreImportDecisionReceiptReviewSummaryResult
-build_durable_store_import_decision_receipt_review_summary(
-    const DurableStoreImportDecisionReceipt &receipt);
+[[nodiscard]] ReceiptReviewSummaryValidationResult
+validate_receipt_review_summary(const ReceiptReviewSummary &summary);
+
+[[nodiscard]] ReceiptReviewSummaryResult
+build_receipt_review_summary(const Receipt &receipt);
+
+// Legacy function names - delegate to new functions
+[[nodiscard]] inline ReceiptReviewSummaryValidationResult
+validate_durable_store_import_decision_receipt_review_summary(const ReceiptReviewSummary &summary) {
+    return validate_receipt_review_summary(summary);
+}
+
+[[nodiscard]] inline ReceiptReviewSummaryResult
+build_durable_store_import_decision_receipt_review_summary(const Receipt &receipt) {
+    return build_receipt_review_summary(receipt);
+}
 
 } // namespace ahfl::durable_store_import

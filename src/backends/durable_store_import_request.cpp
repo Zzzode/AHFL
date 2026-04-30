@@ -14,7 +14,7 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
   public:
     explicit DurableStoreImportRequestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
 
-    void print(const durable_store_import::DurableStoreImportRequest &request) {
+    void print(const durable_store_import::Request &request) {
         print_object(0, [&](const auto &field) {
             field("format_version", [&]() { write_string(request.format_version); });
             field("source_store_import_descriptor_format_version", [&]() {
@@ -94,7 +94,7 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
             field("request_status", [&]() { print_request_status(request.request_status); });
             field("adapter_blocker", [&]() {
                 if (request.adapter_blocker.has_value()) {
-                    print_adapter_blocker(*request.adapter_blocker, 1);
+                    print_request_blocker(*request.adapter_blocker, 1);
                     return;
                 }
                 out_ << "null";
@@ -285,41 +285,41 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
         }
     }
 
-    void print_request_status(durable_store_import::DurableStoreImportRequestStatus status) {
+    void print_request_status(durable_store_import::RequestStatus status) {
         switch (status) {
-        case durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter:
+        case durable_store_import::RequestStatus::ReadyForAdapter:
             write_string("ready_for_adapter");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::Blocked:
+        case durable_store_import::RequestStatus::Blocked:
             write_string("blocked");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted:
+        case durable_store_import::RequestStatus::TerminalCompleted:
             write_string("terminal_completed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalFailed:
+        case durable_store_import::RequestStatus::TerminalFailed:
             write_string("terminal_failed");
             return;
-        case durable_store_import::DurableStoreImportRequestStatus::TerminalPartial:
+        case durable_store_import::RequestStatus::TerminalPartial:
             write_string("terminal_partial");
             return;
         }
     }
 
-    void print_adapter_blocker_kind(durable_store_import::AdapterBlockerKind kind) {
+    void print_request_blocker_kind(durable_store_import::RequestBlockerKind kind) {
         switch (kind) {
-        case durable_store_import::AdapterBlockerKind::WaitingOnRequestedArtifact:
+        case durable_store_import::RequestBlockerKind::WaitingOnRequestedArtifact:
             write_string("waiting_on_requested_artifact");
             return;
-        case durable_store_import::AdapterBlockerKind::MissingDurableStoreImportRequestIdentity:
+        case durable_store_import::RequestBlockerKind::MissingRequestIdentity:
             write_string("missing_durable_store_import_request_identity");
             return;
-        case durable_store_import::AdapterBlockerKind::MissingRequestedArtifactSet:
+        case durable_store_import::RequestBlockerKind::MissingRequestedArtifactSet:
             write_string("missing_requested_artifact_set");
             return;
-        case durable_store_import::AdapterBlockerKind::WorkflowFailure:
+        case durable_store_import::RequestBlockerKind::WorkflowFailure:
             write_string("workflow_failure");
             return;
-        case durable_store_import::AdapterBlockerKind::WorkflowPartial:
+        case durable_store_import::RequestBlockerKind::WorkflowPartial:
             write_string("workflow_partial");
             return;
         }
@@ -354,10 +354,10 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
         });
     }
 
-    void print_adapter_blocker(const durable_store_import::AdapterBlocker &blocker,
+    void print_request_blocker(const durable_store_import::RequestBlocker &blocker,
                                int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() { print_adapter_blocker_kind(blocker.kind); });
+            field("kind", [&]() { print_request_blocker_kind(blocker.kind); });
             field("logical_artifact_name", [&]() {
                 if (blocker.logical_artifact_name.has_value()) {
                     write_string(*blocker.logical_artifact_name);
@@ -373,7 +373,7 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
 } // namespace
 
 void print_durable_store_import_request_json(
-    const durable_store_import::DurableStoreImportRequest &request,
+    const durable_store_import::Request &request,
     std::ostream &out) {
     DurableStoreImportRequestJsonPrinter(out).print(request);
 }

@@ -1,6 +1,6 @@
 # AHFL V0.18 Roadmap
 
-本文给出 AHFL 在 V0.17 durable adapter receipt / review 闭环完成之后的下一阶段实施路线。V0.18 的重点不是直接交付真实 receipt persistence writer、object uploader、database writer、resume token 或 production recovery，而是把已经稳定的 `DurableStoreImportDecisionReceipt` 推进为“可表达 future adapter receipt persistence contract、可冻结 persistence blocker / capability gap、可被 future real durable store adapter 稳定消费”的下一层边界。
+本文给出 AHFL 在 V0.17 durable adapter receipt / review 闭环完成之后的下一阶段实施路线。V0.18 的重点不是直接交付真实 receipt persistence writer、object uploader、database writer、resume token 或 production recovery，而是把已经稳定的 `Receipt` 推进为“可表达 future adapter receipt persistence contract、可冻结 persistence blocker / capability gap、可被 future real durable store adapter 稳定消费”的下一层边界。
 
 基线输入：
 
@@ -19,7 +19,7 @@
 
 1. V0.17 已完成 durable adapter receipt / review 的模型、validation、bootstrap、CLI/backend 输出、golden regression、compatibility、consumer matrix、contributor guide 与 CI 闭环。
 2. 当前仓库已经能稳定跑通 `package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint record -> persistence descriptor -> export manifest -> store import descriptor -> durable store import request -> durable store import decision -> durable store import decision receipt -> durable store import decision receipt review` 的本地 deterministic 路径。
-3. 当前仓库已提供 `DurableStoreImportDecisionReceiptPersistenceRequest` 与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 direct model、validation、bootstrap、CLI/backend 输出与 single-file / project / workspace golden regression。
+3. 当前仓库已提供 `PersistenceRequest` 与 `PersistenceReviewSummary` 的 direct model、validation、bootstrap、CLI/backend 输出与 single-file / project / workspace golden regression。
 4. 当前阶段仍明确停留在 local/offline durable adapter receipt persistence contract handoff，不进入真实 object storage、database write、receipt persistence id、retry token、host telemetry、provider connector、retention/GC 或 crash recovery runtime 领域。
 
 执行状态约定：
@@ -31,8 +31,8 @@
 
 V0.18 的交付目标是：
 
-1. 冻结 future real durable store adapter 对 V0.17 `DurableStoreImportDecisionReceipt` 的最小 receipt persistence 边界，使其能稳定表达“可持久化 / 阻塞 / 延后 / 拒绝”这一层 machine contract。
-2. 引入最小 `DurableStoreImportDecisionReceiptPersistenceRequest` 语义，稳定表达 persistence request identity、persistence outcome、capability gap 与 persistence blocker。
+1. 冻结 future real durable store adapter 对 V0.17 `Receipt` 的最小 receipt persistence 边界，使其能稳定表达“可持久化 / 阻塞 / 延后 / 拒绝”这一层 machine contract。
+2. 引入最小 `PersistenceRequest` 语义，稳定表达 persistence request identity、persistence outcome、capability gap 与 persistence blocker。
 3. 让 single-file、project、workspace 与 `--package` 路径都能生成 deterministic durable-adapter-receipt-persistence-facing prototype 输出。
 4. 冻结 durable receipt persistence request / review 的 compatibility、consumer matrix 与 contributor guidance，明确 durable receipt、durable receipt persistence request、persistence review 与 future real adapter / receipt persistence 的职责边界。
 5. 保持 V0.18 仍然是 local/offline durable adapter receipt persistence prototype，而不是 production durable store adapter / recovery 平台。
@@ -131,7 +131,7 @@ V0.18 仍然不直接承诺：
 
 ## 当前状态
 
-V0.17 已完成并成为 V0.18 的正式上游基线；当前 `Issue 01-12` 已全部完成。仓库现已完成 V0.18 scope、compatibility、consumer matrix、contributor guide、direct model、validation、bootstrap、CLI/backend 输出、single-file/project/workspace golden、`ahfl-v0.18` 标签回归与 CI 切片收口。V0.18 当前建议目标链路为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> DurableStoreImportRequest -> DurableStoreImportDecision -> DurableStoreImportDecisionReceipt -> DurableStoreImportDecisionReceiptPersistenceRequest -> DurableStoreImportDecisionReceiptPersistenceReviewSummary`。
+V0.17 已完成并成为 V0.18 的正式上游基线；当前 `Issue 01-12` 已全部完成。仓库现已完成 V0.18 scope、compatibility、consumer matrix、contributor guide、direct model、validation、bootstrap、CLI/backend 输出、single-file/project/workspace golden、`ahfl-v0.18` 标签回归与 CI 切片收口。V0.18 当前建议目标链路为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> Request -> Decision -> Receipt -> PersistenceRequest -> PersistenceReviewSummary`。
 
 ## 对应 backlog
 

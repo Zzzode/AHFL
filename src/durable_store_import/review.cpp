@@ -23,7 +23,7 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
         summary, owner_name, diagnostics, "durable store import review summary");
 }
 
-void validate_adapter_blocker(const AdapterBlocker &blocker, DiagnosticBag &diagnostics) {
+void validate_adapter_blocker(const RequestBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
         emit_validation_error(diagnostics, 
             "durable store import review summary adapter_blocker message must not be empty");
@@ -69,26 +69,26 @@ void validate_adapter_blocker(const AdapterBlocker &blocker, DiagnosticBag &diag
     return "invalid";
 }
 
-[[nodiscard]] DurableStoreImportReviewNextActionKind
-next_action_for_request(const DurableStoreImportRequest &request) {
+[[nodiscard]] ReviewNextActionKind
+next_action_for_request(const Request &request) {
     switch (request.request_status) {
-    case DurableStoreImportRequestStatus::ReadyForAdapter:
-        return DurableStoreImportReviewNextActionKind::HandoffDurableStoreImportRequest;
-    case DurableStoreImportRequestStatus::Blocked:
-        return DurableStoreImportReviewNextActionKind::AwaitAdapterReadiness;
-    case DurableStoreImportRequestStatus::TerminalCompleted:
-        return DurableStoreImportReviewNextActionKind::ArchiveCompletedDurableStoreImportState;
-    case DurableStoreImportRequestStatus::TerminalFailed:
-        return DurableStoreImportReviewNextActionKind::InvestigateDurableStoreImportFailure;
-    case DurableStoreImportRequestStatus::TerminalPartial:
-        return DurableStoreImportReviewNextActionKind::PreservePartialDurableStoreImportState;
+    case RequestStatus::ReadyForAdapter:
+        return ReviewNextActionKind::HandoffDurableStoreImportRequest;
+    case RequestStatus::Blocked:
+        return ReviewNextActionKind::AwaitAdapterReadiness;
+    case RequestStatus::TerminalCompleted:
+        return ReviewNextActionKind::ArchiveCompletedDurableStoreImportState;
+    case RequestStatus::TerminalFailed:
+        return ReviewNextActionKind::InvestigateDurableStoreImportFailure;
+    case RequestStatus::TerminalPartial:
+        return ReviewNextActionKind::PreservePartialDurableStoreImportState;
     }
 
-    return DurableStoreImportReviewNextActionKind::AwaitAdapterReadiness;
+    return ReviewNextActionKind::AwaitAdapterReadiness;
 }
 
 [[nodiscard]] std::string adapter_boundary_summary_for_request(
-    const DurableStoreImportRequest &request) {
+    const Request &request) {
     switch (request.request_boundary_kind) {
     case RequestBoundaryKind::LocalIntentOnly:
         return "local durable store import intent only; real adapter ABI not yet promised";
@@ -100,13 +100,13 @@ next_action_for_request(const DurableStoreImportRequest &request) {
 }
 
 [[nodiscard]] std::string request_preview_for_request(
-    const DurableStoreImportRequest &request) {
+    const Request &request) {
     switch (request.request_status) {
-    case DurableStoreImportRequestStatus::ReadyForAdapter:
+    case RequestStatus::ReadyForAdapter:
         return "durable store import request '" +
                request.durable_store_import_request_identity +
                "' can be handed off with current requested artifact set";
-    case DurableStoreImportRequestStatus::Blocked:
+    case RequestStatus::Blocked:
         if (request.adapter_blocker.has_value() &&
             request.adapter_blocker->logical_artifact_name.has_value()) {
             return "durable store import request is waiting on adapter artifact '" +
@@ -117,9 +117,9 @@ next_action_for_request(const DurableStoreImportRequest &request) {
                    artifact_kind_name(*request.next_required_adapter_artifact_kind) + "'";
         }
         return "durable store import request is waiting on adapter blockers";
-    case DurableStoreImportRequestStatus::TerminalCompleted:
+    case RequestStatus::TerminalCompleted:
         return "workflow already completed; durable store import request is retained for archival review";
-    case DurableStoreImportRequestStatus::TerminalFailed:
+    case RequestStatus::TerminalFailed:
         if (request.workflow_failure_summary.has_value() &&
             request.workflow_failure_summary->node_name.has_value()) {
             return "workflow failed at node '" +
@@ -127,7 +127,7 @@ next_action_for_request(const DurableStoreImportRequest &request) {
                    "'; durable store import request handoff is closed";
         }
         return "workflow failed; durable store import request handoff is closed";
-    case DurableStoreImportRequestStatus::TerminalPartial:
+    case RequestStatus::TerminalPartial:
         return "partial workflow is retained as local durable store import request without adapter handoff";
     }
 
@@ -135,22 +135,22 @@ next_action_for_request(const DurableStoreImportRequest &request) {
 }
 
 [[nodiscard]] std::string next_step_recommendation_for_request(
-    const DurableStoreImportRequest &request) {
+    const Request &request) {
     switch (request.request_status) {
-    case DurableStoreImportRequestStatus::ReadyForAdapter:
+    case RequestStatus::ReadyForAdapter:
         return "handoff current durable store import request before real adapter implementation work";
-    case DurableStoreImportRequestStatus::Blocked:
+    case RequestStatus::Blocked:
         if (request.next_required_adapter_artifact_kind.has_value()) {
             return "materialize required adapter artifact kind '" +
                    artifact_kind_name(*request.next_required_adapter_artifact_kind) +
                    "' before advertising durable store adapter handoff";
         }
         return "stabilize adapter blockers before advertising durable store adapter handoff";
-    case DurableStoreImportRequestStatus::TerminalCompleted:
+    case RequestStatus::TerminalCompleted:
         return "archive completed durable store import request; no further import action";
-    case DurableStoreImportRequestStatus::TerminalFailed:
+    case RequestStatus::TerminalFailed:
         return "inspect workflow failure before planning durable store adapter handoff";
-    case DurableStoreImportRequestStatus::TerminalPartial:
+    case RequestStatus::TerminalPartial:
         return "preserve partial durable store import request for inspection; do not advertise adapter handoff";
     }
 
@@ -158,7 +158,7 @@ next_action_for_request(const DurableStoreImportRequest &request) {
 }
 
 [[nodiscard]] std::vector<std::string> requested_artifact_preview_for_request(
-    const DurableStoreImportRequest &request) {
+    const Request &request) {
     std::vector<std::string> preview;
     preview.reserve(request.requested_artifact_set.entries.size());
     for (const auto &entry : request.requested_artifact_set.entries) {
@@ -172,22 +172,22 @@ next_action_for_request(const DurableStoreImportRequest &request) {
 
 } // namespace
 
-DurableStoreImportReviewSummaryValidationResult
-validate_durable_store_import_review_summary(
-    const DurableStoreImportReviewSummary &summary) {
-    DurableStoreImportReviewSummaryValidationResult result;
+ReviewSummaryValidationResult
+validate_review_summary(
+    const ReviewSummary &summary) {
+    ReviewSummaryValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    if (summary.format_version != kDurableStoreImportReviewSummaryFormatVersion) {
+    if (summary.format_version != kReviewSummaryFormatVersion) {
         emit_validation_error(diagnostics, "durable store import review summary format_version must be '" +
-                          std::string(kDurableStoreImportReviewSummaryFormatVersion) + "'");
+                          std::string(kReviewSummaryFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_request_format_version !=
-        kDurableStoreImportRequestFormatVersion) {
+        kRequestFormatVersion) {
         emit_validation_error(diagnostics, 
             "durable store import review summary source_durable_store_import_request_format_version must be '" +
-            std::string(kDurableStoreImportRequestFormatVersion) + "'");
+            std::string(kRequestFormatVersion) + "'");
     }
 
     if (summary.source_store_import_descriptor_format_version !=
@@ -289,9 +289,9 @@ validate_durable_store_import_review_summary(
     }
 
     switch (summary.request_status) {
-    case DurableStoreImportRequestStatus::ReadyForAdapter:
+    case RequestStatus::ReadyForAdapter:
         if (summary.next_action !=
-            DurableStoreImportReviewNextActionKind::HandoffDurableStoreImportRequest) {
+            ReviewNextActionKind::HandoffDurableStoreImportRequest) {
             emit_validation_error(diagnostics, "durable store import review summary ReadyForAdapter request_status "
                               "requires next_action handoff_durable_store_import_request");
         }
@@ -300,9 +300,9 @@ validate_durable_store_import_review_summary(
                               "requires adapter_ready");
         }
         break;
-    case DurableStoreImportRequestStatus::Blocked:
+    case RequestStatus::Blocked:
         if (summary.next_action !=
-            DurableStoreImportReviewNextActionKind::AwaitAdapterReadiness) {
+            ReviewNextActionKind::AwaitAdapterReadiness) {
             emit_validation_error(diagnostics, "durable store import review summary Blocked request_status requires "
                               "next_action await_adapter_readiness");
         }
@@ -315,9 +315,9 @@ validate_durable_store_import_review_summary(
                               "adapter_blocker");
         }
         break;
-    case DurableStoreImportRequestStatus::TerminalCompleted:
+    case RequestStatus::TerminalCompleted:
         if (summary.next_action !=
-            DurableStoreImportReviewNextActionKind::ArchiveCompletedDurableStoreImportState) {
+            ReviewNextActionKind::ArchiveCompletedDurableStoreImportState) {
             emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalCompleted request_status requires next_action archive_completed_durable_store_import_state");
         }
@@ -334,9 +334,9 @@ validate_durable_store_import_review_summary(
                 "durable store import review summary TerminalCompleted request_status cannot contain next_required_adapter_artifact_kind");
         }
         break;
-    case DurableStoreImportRequestStatus::TerminalFailed:
+    case RequestStatus::TerminalFailed:
         if (summary.next_action !=
-            DurableStoreImportReviewNextActionKind::InvestigateDurableStoreImportFailure) {
+            ReviewNextActionKind::InvestigateDurableStoreImportFailure) {
             emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalFailed request_status requires next_action investigate_durable_store_import_failure");
         }
@@ -345,9 +345,9 @@ validate_durable_store_import_review_summary(
                               "requires adapter_blocker");
         }
         break;
-    case DurableStoreImportRequestStatus::TerminalPartial:
+    case RequestStatus::TerminalPartial:
         if (summary.next_action !=
-            DurableStoreImportReviewNextActionKind::PreservePartialDurableStoreImportState) {
+            ReviewNextActionKind::PreservePartialDurableStoreImportState) {
             emit_validation_error(diagnostics, 
                 "durable store import review summary TerminalPartial request_status requires next_action preserve_partial_durable_store_import_state");
         }
@@ -361,21 +361,21 @@ validate_durable_store_import_review_summary(
     return result;
 }
 
-DurableStoreImportReviewSummaryResult
-build_durable_store_import_review_summary(const DurableStoreImportRequest &request) {
-    DurableStoreImportReviewSummaryResult result{
+ReviewSummaryResult
+build_review_summary(const Request &request) {
+    ReviewSummaryResult result{
         .summary = std::nullopt,
         .diagnostics = {},
     };
 
-    const auto validation = validate_durable_store_import_request(request);
+    const auto validation = validate_request(request);
     result.diagnostics.append(validation.diagnostics);
     if (result.has_errors()) {
         return result;
     }
 
-    DurableStoreImportReviewSummary summary{
-        .format_version = std::string(kDurableStoreImportReviewSummaryFormatVersion),
+    ReviewSummary summary{
+        .format_version = std::string(kReviewSummaryFormatVersion),
         .source_durable_store_import_request_format_version = request.format_version,
         .source_store_import_descriptor_format_version =
             request.source_store_import_descriptor_format_version,
@@ -409,7 +409,7 @@ build_durable_store_import_review_summary(const DurableStoreImportRequest &reque
         .next_step_recommendation = next_step_recommendation_for_request(request),
     };
 
-    const auto summary_validation = validate_durable_store_import_review_summary(summary);
+    const auto summary_validation = validate_review_summary(summary);
     result.diagnostics.append(summary_validation.diagnostics);
     if (result.has_errors()) {
         return result;

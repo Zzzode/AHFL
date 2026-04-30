@@ -917,3 +917,53 @@ ahfl_label_tests(
         ahflc.emit_persistence_review.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_persistence_review.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-model
+    TESTS
+        ahfl.durable_store_import_receipt_persistence_response.model.validate_ok
+        ahfl.durable_store_import_receipt_persistence_response.model.validate_blocked_ok
+        ahfl.durable_store_import_receipt_persistence_response.model.validate_deferred_ok
+        ahfl.durable_store_import_receipt_persistence_response.model.validate_rejected_ok
+        ahfl.durable_store_import_receipt_persistence_response.model.fail_missing_response_identity
+        ahfl.durable_store_import_receipt_persistence_response.model.fail_unsupported_source_request_format
+        ahfl.durable_store_import_receipt_persistence_response.model.fail_accepted_with_blocker
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-bootstrap
+    TESTS
+        ahfl.durable_store_import_receipt_persistence_response.bootstrap.ready_request
+        ahfl.durable_store_import_receipt_persistence_response.bootstrap.fail_invalid_request
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-review-model
+    TESTS
+        ahfl.durable_store_import_receipt_persistence_response_review.model.validate_ok
+        ahfl.durable_store_import_receipt_persistence_response_review.bootstrap.ready_response
+        ahfl.durable_store_import_receipt_persistence_response_review.bootstrap.rejected_response
+        ahfl.durable_store_import_receipt_persistence_response_review.bootstrap.fail_invalid_response
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-emission
+    TESTS
+        ahflc.emit_durable_store_import_receipt_persistence_response.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.19 v0.19-durable-store-import-receipt-persistence-response-golden
+    TESTS
+        ahflc.emit_durable_store_import_receipt_persistence_response.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_receipt_persistence_response_review.workspace.workflow_value_flow.partial.with_package
+)

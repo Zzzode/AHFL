@@ -39,7 +39,7 @@ V0.15 已经把 durable request / review 做成正式 artifact；如果下一阶
 冻结 durable adapter decision / capability gap 的最小模型与 adapter 边界
 
 背景：
-当前仓库虽已有 `DurableStoreImportRequest` / `DurableStoreImportReviewSummary`，但还没有正式的 durable-adapter-decision-facing 状态对象；future real durable store adapter 很容易私造 adapter decision、capability gap、accept / defer / reject 语义。
+当前仓库虽已有 `Request` / `ReviewSummary`，但还没有正式的 durable-adapter-decision-facing 状态对象；future real durable store adapter 很容易私造 adapter decision、capability gap、accept / defer / reject 语义。
 
 目标：
 
@@ -60,7 +60,7 @@ V0.15 已经把 durable request / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 已新增 `docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md`，给出 `DurableStoreImportDecision` 的 `ahfl.durable-store-import-decision.v1` 与 future `DurableStoreImportDecisionReviewSummary` 的 `ahfl.durable-store-import-decision-review.v1` 版本入口基线，同时明确 adapter-decision-facing artifact 只能建立在 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor -> durable request -> durable decision` 链路之上
+1. 已新增 `docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md`，给出 `Decision` 的 `ahfl.durable-store-import-decision.v1` 与 future `DecisionReviewSummary` 的 `ahfl.durable-store-import-decision-review.v1` 版本入口基线，同时明确 adapter-decision-facing artifact 只能建立在 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor -> durable request -> durable decision` 链路之上
 2. 同一 reference 文档已列出当前最小稳定输入边界：durable decision identity、decision outcome、decision boundary、capability gap、decision blocker 与 source artifact version chain，并明确真实 import receipt id、resume token、store URI、object path、database key、executor payload 仍不属于当前版本稳定承诺
 3. `docs/plan/roadmap-v0.16.zh.md` 当前已同步收口 M0，并把 V0.16 的 next step 切到 `Issue 04-06`，确保后续进入 direct model、validation 与 bootstrap 实现，而不是在 versioning 入口未冻结前扩张私有 adapter 语义
 
@@ -91,7 +91,7 @@ V0.15 已经把 durable request / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. `docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md` 已补充 layering-sensitive compatibility 规则，明确 `DurableStoreImportRequest` 仍是 durable decision 的直接 machine-facing 上游，而 future `DurableStoreImportDecisionReviewSummary` 仍只是 projection，不得承接真实 import receipt synthesis、resume token 派发、store mutation execution 或 recovery command synthesis
+1. `docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md` 已补充 layering-sensitive compatibility 规则，明确 `Request` 仍是 durable decision 的直接 machine-facing 上游，而 future `DecisionReviewSummary` 仍只是 projection，不得承接真实 import receipt synthesis、resume token 派发、store mutation execution 或 recovery command synthesis
 2. `docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md` 已补充 layering-sensitive breaking-change 规则，明确只要让 durable request review、store import review、export review、persistence review、checkpoint review、scheduler review、audit / trace 反向成为 durable decision 的第一输入，或让 decision / review 提前承诺真实 durable store adapter / receipt / recovery ABI，通常就应视为 versioning 事件
 3. `docs/plan/roadmap-v0.16.zh.md` 当前已同步把 V0.16 的 next step 切到 `Issue 04-06`，确保后续先进入 durable adapter decision 的 direct model、validation 与 bootstrap，而不是继续在 layering 未冻结前扩张私有 adapter 语义
 
@@ -123,9 +123,9 @@ V0.15 已经把 durable request / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 已新增 `include/ahfl/durable_store_import/decision.hpp`，冻结 `DurableStoreImportDecision` direct model、`ahfl.durable-store-import-decision.v1` 版本入口、source artifact version chain、decision identity、decision boundary、decision status、decision outcome、accepted-for-future-execution、next required adapter capability 与 decision blocker 字段
-2. 已新增 `src/durable_store_import/decision.cpp`，把 durable adapter decision 作为 `ahfl_durable_store_import` 模块的一部分接入，并保持第一输入为 V0.15 `DurableStoreImportRequest`
-3. direct model 当前显式保留 `DurableStoreImportRequest` 的 source version chain、workflow / checkpoint / persistence / manifest / descriptor / request status 上游信息，不回退依赖 review、trace、audit 或 CLI 文本
+1. 已新增 `include/ahfl/durable_store_import/decision.hpp`，冻结 `Decision` direct model、`ahfl.durable-store-import-decision.v1` 版本入口、source artifact version chain、decision identity、decision boundary、decision status、decision outcome、accepted-for-future-execution、next required adapter capability 与 decision blocker 字段
+2. 已新增 `src/durable_store_import/decision.cpp`，把 durable adapter decision 作为 `ahfl_durable_store_import` 模块的一部分接入，并保持第一输入为 V0.15 `Request`
+3. direct model 当前显式保留 `Request` 的 source version chain、workflow / checkpoint / persistence / manifest / descriptor / request status 上游信息，不回退依赖 review、trace、audit 或 CLI 文本
 
 ## [x] Issue 05
 
@@ -164,7 +164,7 @@ V0.15 已经把 durable request / review 做成正式 artifact；如果下一阶
 增加 deterministic durable adapter decision bootstrap
 
 背景：
-只有 model / validation 还不够；仓库需要最小 bootstrap 把 `DurableStoreImportRequest` 及其上游 artifact 投影为 durable-adapter-decision-facing decision。
+只有 model / validation 还不够；仓库需要最小 bootstrap 把 `Request` 及其上游 artifact 投影为 durable-adapter-decision-facing decision。
 
 目标：
 
@@ -185,7 +185,7 @@ V0.15 已经把 durable request / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 已实现 `build_durable_store_import_decision(const DurableStoreImportRequest&)`，在 bootstrap 前先校验上游 request，并从正式 `DurableStoreImportRequest` deterministic 投影 decision identity、decision outcome、decision boundary、next required adapter capability 与 decision blocker
+1. 已实现 `build_durable_store_import_decision(const DurableStoreImportRequest&)`，在 bootstrap 前先校验上游 request，并从正式 `Request` deterministic 投影 decision identity、decision outcome、decision boundary、next required adapter capability 与 decision blocker
 2. 已覆盖 ready request、terminal completed request 与 invalid request bootstrap 回归；blocked、failed、partial 分支也通过 direct model 构造路径验证 capability gap 与 decision status 映射
 3. 已新增 `ahfl.durable_store_import_decision.bootstrap.*` 测试并打上 `ahfl-v0.16` / `v0.16-durable-store-import-decision-bootstrap` 标签，当前 focused regression 使用 `ctest --preset test-dev -L ahfl-v0.16 --output-on-failure` 通过
 
@@ -294,7 +294,7 @@ durable adapter decision prototype 若只有 machine-facing decision，而没有
 
 目标：
 
-1. 冻结 `DurableStoreImportDecision` 与 durable adapter decision review summary 的正式版本入口
+1. 冻结 `Decision` 与 durable adapter decision review summary 的正式版本入口
 2. 冻结 source artifact 校验顺序、稳定字段边界与 breaking-change 基线
 3. 明确 docs / code / golden / tests 的同步流程
 
@@ -311,7 +311,7 @@ durable adapter decision prototype 若只有 machine-facing decision，而没有
 
 当前实现备注：
 
-1. `docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md` 已按 artifact 分节冻结 `DurableStoreImportDecision` 与 `DurableStoreImportDecisionReviewSummary` 的正式版本入口、source version 检查顺序、稳定字段边界与 breaking-change 候选
+1. `docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md` 已按 artifact 分节冻结 `Decision` 与 `DecisionReviewSummary` 的正式版本入口、source version 检查顺序、稳定字段边界与 breaking-change 候选
 2. compatibility 文档已明确 consumer 需先检查 `format_version` 与 source version chain，再消费 decision / review 语义，禁止通过字段集合猜测版本
 3. 文档已补齐 compatibility 与实现联动边界，明确哪些变化应触发 version bump，满足 Issue 10 验收标准
 

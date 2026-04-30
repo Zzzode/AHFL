@@ -138,10 +138,10 @@ namespace {
     return descriptor;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportRequest>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Request>
 make_valid_request() {
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_ready_descriptor());
+        ahfl::durable_store_import::build_request(make_ready_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return std::nullopt;
@@ -150,7 +150,7 @@ make_valid_request() {
     return *request.request;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportReviewSummary>
+[[nodiscard]] std::optional<ahfl::durable_store_import::ReviewSummary>
 make_valid_review_summary() {
     const auto request = make_valid_request();
     if (!request.has_value()) {
@@ -167,14 +167,14 @@ make_valid_review_summary() {
     return *summary.summary;
 }
 
-int validate_durable_store_import_request_ok() {
+int validate_request_ok() {
     const auto request = make_valid_request();
     if (!request.has_value()) {
         return 1;
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request);
+        ahfl::durable_store_import::validate_request(*request);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
@@ -183,9 +183,9 @@ int validate_durable_store_import_request_ok() {
     return 0;
 }
 
-int validate_durable_store_import_request_blocked_ok() {
+int validate_request_blocked_ok() {
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_blocked_descriptor());
+        ahfl::durable_store_import::build_request(make_blocked_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -193,7 +193,7 @@ int validate_durable_store_import_request_blocked_ok() {
 
     const auto &value = *request.request;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::Blocked ||
+            ahfl::durable_store_import::RequestStatus::Blocked ||
         value.adapter_ready || !value.adapter_blocker.has_value() ||
         value.next_required_adapter_artifact_kind !=
             ahfl::durable_store_import::RequestedArtifactKind::PersistenceReview) {
@@ -204,9 +204,9 @@ int validate_durable_store_import_request_blocked_ok() {
     return 0;
 }
 
-int validate_durable_store_import_request_terminal_failed_ok() {
+int validate_request_terminal_failed_ok() {
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_failed_descriptor());
+        ahfl::durable_store_import::build_request(make_failed_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -214,10 +214,10 @@ int validate_durable_store_import_request_terminal_failed_ok() {
 
     const auto &value = *request.request;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::TerminalFailed ||
+            ahfl::durable_store_import::RequestStatus::TerminalFailed ||
         value.adapter_ready || !value.adapter_blocker.has_value() ||
         value.adapter_blocker->kind !=
-            ahfl::durable_store_import::AdapterBlockerKind::WorkflowFailure) {
+            ahfl::durable_store_import::RequestBlockerKind::WorkflowFailure) {
         std::cerr << "unexpected failed durable store import request\n";
         return 1;
     }
@@ -225,8 +225,8 @@ int validate_durable_store_import_request_terminal_failed_ok() {
     return 0;
 }
 
-int validate_durable_store_import_request_terminal_partial_ok() {
-    const auto request = ahfl::durable_store_import::build_durable_store_import_request(
+int validate_request_terminal_partial_ok() {
+    const auto request = ahfl::durable_store_import::build_request(
         make_partial_terminal_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
@@ -235,10 +235,10 @@ int validate_durable_store_import_request_terminal_partial_ok() {
 
     const auto &value = *request.request;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::TerminalPartial ||
+            ahfl::durable_store_import::RequestStatus::TerminalPartial ||
         value.adapter_ready || !value.adapter_blocker.has_value() ||
         value.adapter_blocker->kind !=
-            ahfl::durable_store_import::AdapterBlockerKind::WorkflowPartial) {
+            ahfl::durable_store_import::RequestBlockerKind::WorkflowPartial) {
         std::cerr << "unexpected partial durable store import request\n";
         return 1;
     }
@@ -246,7 +246,7 @@ int validate_durable_store_import_request_terminal_partial_ok() {
     return 0;
 }
 
-int validate_durable_store_import_request_rejects_missing_request_identity() {
+int validate_request_rejects_missing_request_identity() {
     auto request = make_valid_request();
     if (!request.has_value()) {
         return 1;
@@ -254,7 +254,7 @@ int validate_durable_store_import_request_rejects_missing_request_identity() {
 
     request->durable_store_import_request_identity.clear();
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request);
+        ahfl::durable_store_import::validate_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected missing durable store import request identity to fail\n";
         return 1;
@@ -266,7 +266,7 @@ int validate_durable_store_import_request_rejects_missing_request_identity() {
                : 1;
 }
 
-int validate_durable_store_import_request_rejects_duplicate_artifact_name() {
+int validate_request_rejects_duplicate_artifact_name() {
     auto request = make_valid_request();
     if (!request.has_value()) {
         return 1;
@@ -275,7 +275,7 @@ int validate_durable_store_import_request_rejects_duplicate_artifact_name() {
     request->requested_artifact_set.entries[1].logical_artifact_name =
         "store-import-descriptor.json";
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request);
+        ahfl::durable_store_import::validate_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected duplicate requested artifact name to fail\n";
         return 1;
@@ -286,19 +286,19 @@ int validate_durable_store_import_request_rejects_duplicate_artifact_name() {
                : 1;
 }
 
-int validate_durable_store_import_request_rejects_ready_with_blocker() {
+int validate_request_rejects_ready_with_blocker() {
     auto request = make_valid_request();
     if (!request.has_value()) {
         return 1;
     }
 
-    request->adapter_blocker = ahfl::durable_store_import::AdapterBlocker{
-        .kind = ahfl::durable_store_import::AdapterBlockerKind::MissingRequestedArtifactSet,
+    request->adapter_blocker = ahfl::durable_store_import::RequestBlocker{
+        .kind = ahfl::durable_store_import::RequestBlockerKind::MissingRequestedArtifactSet,
         .message = "unexpected adapter blocker",
         .logical_artifact_name = std::nullopt,
     };
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request);
+        ahfl::durable_store_import::validate_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected adapter_ready with blocker to fail\n";
         return 1;
@@ -310,7 +310,7 @@ int validate_durable_store_import_request_rejects_ready_with_blocker() {
                : 1;
 }
 
-int validate_durable_store_import_request_rejects_unsupported_source_descriptor_format() {
+int validate_request_rejects_unsupported_source_descriptor_format() {
     auto request = make_valid_request();
     if (!request.has_value()) {
         return 1;
@@ -318,7 +318,7 @@ int validate_durable_store_import_request_rejects_unsupported_source_descriptor_
 
     request->source_store_import_descriptor_format_version = "ahfl.store-import-descriptor.v999";
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request);
+        ahfl::durable_store_import::validate_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source descriptor format to fail\n";
         return 1;
@@ -330,9 +330,9 @@ int validate_durable_store_import_request_rejects_unsupported_source_descriptor_
                : 1;
 }
 
-int validate_durable_store_import_request_rejects_adapter_contract_blocked() {
+int validate_request_rejects_adapter_contract_blocked() {
     auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_blocked_descriptor());
+        ahfl::durable_store_import::build_request(make_blocked_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -341,7 +341,7 @@ int validate_durable_store_import_request_rejects_adapter_contract_blocked() {
     request.request->request_boundary_kind =
         ahfl::durable_store_import::RequestBoundaryKind::AdapterContractConsumable;
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request.request);
+        ahfl::durable_store_import::validate_request(*request.request);
     if (!validation.has_errors()) {
         std::cerr << "expected blocked adapter-contract-consumable request to fail\n";
         return 1;
@@ -354,9 +354,9 @@ int validate_durable_store_import_request_rejects_adapter_contract_blocked() {
                : 1;
 }
 
-int validate_durable_store_import_request_rejects_terminal_failed_without_failure_summary() {
+int validate_request_rejects_terminal_failed_without_failure_summary() {
     auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_failed_descriptor());
+        ahfl::durable_store_import::build_request(make_failed_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -364,7 +364,7 @@ int validate_durable_store_import_request_rejects_terminal_failed_without_failur
 
     request.request->workflow_failure_summary.reset();
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_request(*request.request);
+        ahfl::durable_store_import::validate_request(*request.request);
     if (!validation.has_errors()) {
         std::cerr << "expected terminal failed without failure summary to fail\n";
         return 1;
@@ -376,9 +376,9 @@ int validate_durable_store_import_request_rejects_terminal_failed_without_failur
                : 1;
 }
 
-int build_durable_store_import_request_ready_descriptor() {
+int build_request_ready_descriptor() {
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_ready_descriptor());
+        ahfl::durable_store_import::build_request(make_ready_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -386,7 +386,7 @@ int build_durable_store_import_request_ready_descriptor() {
 
     const auto &value = *request.request;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter ||
+            ahfl::durable_store_import::RequestStatus::ReadyForAdapter ||
         !value.adapter_ready || value.adapter_blocker.has_value() ||
         value.requested_artifact_set.entry_count != 4 ||
         value.requested_artifact_set.entries.front().artifact_kind !=
@@ -402,9 +402,9 @@ int build_durable_store_import_request_ready_descriptor() {
     return 0;
 }
 
-int build_durable_store_import_request_completed_descriptor() {
+int build_request_completed_descriptor() {
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_completed_descriptor());
+        ahfl::durable_store_import::build_request(make_completed_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -412,7 +412,7 @@ int build_durable_store_import_request_completed_descriptor() {
 
     const auto &value = *request.request;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted ||
+            ahfl::durable_store_import::RequestStatus::TerminalCompleted ||
         !value.adapter_ready || value.adapter_blocker.has_value() ||
         value.request_boundary_kind !=
             ahfl::durable_store_import::RequestBoundaryKind::AdapterContractConsumable) {
@@ -423,11 +423,11 @@ int build_durable_store_import_request_completed_descriptor() {
     return 0;
 }
 
-int build_durable_store_import_request_rejects_invalid_descriptor() {
+int build_request_rejects_invalid_descriptor() {
     auto descriptor = make_ready_descriptor();
     descriptor.format_version = "ahfl.store-import-descriptor.v999";
 
-    const auto request = ahfl::durable_store_import::build_durable_store_import_request(descriptor);
+    const auto request = ahfl::durable_store_import::build_request(descriptor);
     if (!request.has_errors()) {
         std::cerr << "expected invalid store import descriptor to fail\n";
         return 1;
@@ -491,10 +491,10 @@ int build_durable_store_import_review_ready_request() {
 
     const auto &value = *summary.summary;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter ||
+            ahfl::durable_store_import::RequestStatus::ReadyForAdapter ||
         !value.adapter_ready || value.adapter_blocker.has_value() ||
         value.next_action !=
-            ahfl::durable_store_import::DurableStoreImportReviewNextActionKind::
+            ahfl::durable_store_import::ReviewNextActionKind::
                 HandoffDurableStoreImportRequest ||
         value.requested_artifact_entry_count != 4 ||
         value.durable_store_import_request_identity !=
@@ -508,7 +508,7 @@ int build_durable_store_import_review_ready_request() {
 
 int build_durable_store_import_review_failed_request() {
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_request(make_failed_descriptor());
+        ahfl::durable_store_import::build_request(make_failed_descriptor());
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -523,12 +523,12 @@ int build_durable_store_import_review_failed_request() {
 
     const auto &value = *summary.summary;
     if (value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::TerminalFailed ||
+            ahfl::durable_store_import::RequestStatus::TerminalFailed ||
         value.adapter_ready || !value.adapter_blocker.has_value() ||
         value.adapter_blocker->kind !=
-            ahfl::durable_store_import::AdapterBlockerKind::WorkflowFailure ||
+            ahfl::durable_store_import::RequestBlockerKind::WorkflowFailure ||
         value.next_action !=
-            ahfl::durable_store_import::DurableStoreImportReviewNextActionKind::
+            ahfl::durable_store_import::ReviewNextActionKind::
                 InvestigateDurableStoreImportFailure) {
         std::cerr << "unexpected failed durable store import review result\n";
         return 1;
@@ -568,57 +568,57 @@ int main(int argc, char **argv) {
     const std::string_view command = argv[1];
 
     if (command == "validate-durable-store-import-request-ok") {
-        return validate_durable_store_import_request_ok();
+        return validate_request_ok();
     }
 
     if (command == "validate-durable-store-import-request-blocked-ok") {
-        return validate_durable_store_import_request_blocked_ok();
+        return validate_request_blocked_ok();
     }
 
     if (command == "validate-durable-store-import-request-terminal-failed-ok") {
-        return validate_durable_store_import_request_terminal_failed_ok();
+        return validate_request_terminal_failed_ok();
     }
 
     if (command == "validate-durable-store-import-request-terminal-partial-ok") {
-        return validate_durable_store_import_request_terminal_partial_ok();
+        return validate_request_terminal_partial_ok();
     }
 
     if (command == "validate-durable-store-import-request-rejects-missing-request-identity") {
-        return validate_durable_store_import_request_rejects_missing_request_identity();
+        return validate_request_rejects_missing_request_identity();
     }
 
     if (command == "validate-durable-store-import-request-rejects-duplicate-artifact-name") {
-        return validate_durable_store_import_request_rejects_duplicate_artifact_name();
+        return validate_request_rejects_duplicate_artifact_name();
     }
 
     if (command == "validate-durable-store-import-request-rejects-ready-with-blocker") {
-        return validate_durable_store_import_request_rejects_ready_with_blocker();
+        return validate_request_rejects_ready_with_blocker();
     }
 
     if (command ==
         "validate-durable-store-import-request-rejects-unsupported-source-descriptor-format") {
-        return validate_durable_store_import_request_rejects_unsupported_source_descriptor_format();
+        return validate_request_rejects_unsupported_source_descriptor_format();
     }
 
     if (command == "validate-durable-store-import-request-rejects-adapter-contract-blocked") {
-        return validate_durable_store_import_request_rejects_adapter_contract_blocked();
+        return validate_request_rejects_adapter_contract_blocked();
     }
 
     if (command ==
         "validate-durable-store-import-request-rejects-terminal-failed-without-failure-summary") {
-        return validate_durable_store_import_request_rejects_terminal_failed_without_failure_summary();
+        return validate_request_rejects_terminal_failed_without_failure_summary();
     }
 
     if (command == "build-durable-store-import-request-ready-descriptor") {
-        return build_durable_store_import_request_ready_descriptor();
+        return build_request_ready_descriptor();
     }
 
     if (command == "build-durable-store-import-request-completed-descriptor") {
-        return build_durable_store_import_request_completed_descriptor();
+        return build_request_completed_descriptor();
     }
 
     if (command == "build-durable-store-import-request-rejects-invalid-descriptor") {
-        return build_durable_store_import_request_rejects_invalid_descriptor();
+        return build_request_rejects_invalid_descriptor();
     }
 
     if (command == "validate-durable-store-import-review-ok") {

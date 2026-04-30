@@ -1,6 +1,6 @@
 # AHFL Durable Store Import Prototype Compatibility Contract V0.15
 
-本文正式冻结 AHFL V0.15 中 `DurableStoreImportRequest` 与 `DurableStoreImportReviewSummary` 的 compatibility / versioning contract。它承接 V0.14 已冻结的 `StoreImportDescriptor` / `StoreImportReviewSummary` 边界，以及 V0.15 Issue 01-03 已落地的 durable store import prototype scope、request / review model 边界与 layering 规则，明确 future real durable store adapter、durable-store-import-facing explorer 与 reviewer tooling 当前可以稳定依赖哪些版本入口、source artifact 关系、最小稳定字段边界与 breaking-change 规则。
+本文正式冻结 AHFL V0.15 中 `Request` 与 `ReviewSummary` 的 compatibility / versioning contract。它承接 V0.14 已冻结的 `StoreImportDescriptor` / `StoreImportReviewSummary` 边界，以及 V0.15 Issue 01-03 已落地的 durable store import prototype scope、request / review model 边界与 layering 规则，明确 future real durable store adapter、durable-store-import-facing explorer 与 reviewer tooling 当前可以稳定依赖哪些版本入口、source artifact 关系、最小稳定字段边界与 breaking-change 规则。
 
 关联文档：
 
@@ -13,7 +13,7 @@
 本文主要回答六个问题：
 
 1. V0.15 durable-store-import-facing artifact 的正式版本入口冻结为什么。
-2. `DurableStoreImportRequest` 与 `DurableStoreImportReviewSummary` 分别稳定承诺哪些 source artifact 关系。
+2. `Request` 与 `ReviewSummary` 分别稳定承诺哪些 source artifact 关系。
 3. consumer 应如何校验版本，而不是靠字段集合猜测语义。
 4. 哪些字段已可作为 durable-store-import-facing 最小稳定输入。
 5. future real durable store adapter / recovery explorer 可以依赖到哪一层，不能跨过哪些边界。
@@ -33,17 +33,17 @@ ExecutionPlan
   -> CheckpointPersistenceDescriptor
   -> PersistenceExportManifest
   -> StoreImportDescriptor
-  -> DurableStoreImportRequest
-  -> DurableStoreImportReviewSummary
+  -> Request
+  -> ReviewSummary
 ```
 
 其中：
 
 1. `StoreImportDescriptor`
    - store import candidate identity、staging artifact set、import readiness / blocker、adapter-facing staging boundary 的第一事实来源
-2. `DurableStoreImportRequest`
+2. `Request`
    - durable adapter request identity、requested artifact set、adapter readiness / blocker、adapter-facing request boundary 的第一事实来源
-3. `DurableStoreImportReviewSummary`
+3. `ReviewSummary`
    - reviewer-facing projection，不是 durable store import state 第一事实来源
 4. future real durable store adapter / recovery protocol
    - 只能建立在 durable store import request / review 边界之上，不能倒推新的 machine-facing state
@@ -51,15 +51,15 @@ ExecutionPlan
 这意味着：
 
 1. `StoreImportReviewSummary` 不得跳过 request 自创私有 durable store import state machine
-2. `DurableStoreImportReviewSummary` 不得跳过 request 自创 durable store / recovery 状态机
+2. `ReviewSummary` 不得跳过 request 自创 durable store / recovery 状态机
 3. future prototype 不得回退依赖 AST、trace、host log、checkpoint review、persistence review、export review、store import review、audit report 或 provider payload
 4. durable checkpoint id、resume token、store URI、object path、database key 与 import receipt 仍不属于当前版本
 
-## Artifact 1: DurableStoreImportRequest
+## Artifact 1: Request
 
 ### 正式版本入口
 
-`DurableStoreImportRequest` 当前唯一稳定版本入口是：
+`Request` 当前唯一稳定版本入口是：
 
 - `format_version = "ahfl.durable-store-import-request.v1"`
 
@@ -115,11 +115,11 @@ consumer 的最小版本检查顺序是：
 4. host telemetry、deployment metadata、provider payload、connector credential
 5. transaction commit protocol、operator command ABI、distributed restart plan 或 recovery daemon state
 
-## Artifact 2: DurableStoreImportReviewSummary
+## Artifact 2: ReviewSummary
 
 ### 正式版本入口
 
-`DurableStoreImportReviewSummary` 当前唯一稳定版本入口是：
+`ReviewSummary` 当前唯一稳定版本入口是：
 
 - `format_version = "ahfl.durable-store-import-review.v1"`
 
@@ -132,7 +132,7 @@ consumer 的最小版本检查顺序是：
 
 这意味着：
 
-1. `DurableStoreImportReviewSummary` 不是独立于 request 的另一套 durable store taxonomy
+1. `ReviewSummary` 不是独立于 request 的另一套 durable store taxonomy
 2. review consumer 若不支持 `ahfl.durable-store-import-request.v1`，也不应宣称支持 `ahfl.durable-store-import-review.v1`
 3. future reviewer tooling 不允许通过文本布局或字段组合反推隐含版本
 
@@ -196,8 +196,8 @@ future consumer 目前应采用下列迁移原则：
 
 当前 V0.15 最可能触发 version bump 的变化包括：
 
-1. `DurableStoreImportRequest` 新增 durable checkpoint id / resume token / store location / import receipt 语义
-2. `DurableStoreImportReviewSummary` 从 projection 改成独立 durable store / recovery 状态机
+1. `Request` 新增 durable checkpoint id / resume token / store location / import receipt 语义
+2. `ReviewSummary` 从 projection 改成独立 durable store / recovery 状态机
 3. 更改 source artifact 版本依赖方向
 4. 让 `StoreImportDescriptor` 不再是 durable store import request 的直接上游 machine artifact
 
@@ -267,8 +267,8 @@ ctest --preset test-dev --output-on-failure -L ahfl-v0.15
 
 截至 V0.15 当前 M3：
 
-1. `DurableStoreImportRequest` 的正式版本入口为 `ahfl.durable-store-import-request.v1`
-2. `DurableStoreImportReviewSummary` 的正式版本入口为 `ahfl.durable-store-import-review.v1`
+1. `Request` 的正式版本入口为 `ahfl.durable-store-import-request.v1`
+2. `ReviewSummary` 的正式版本入口为 `ahfl.durable-store-import-review.v1`
 3. `StoreImportDescriptor` 仍是 durable store import request 的直接 machine-facing 上游
 4. review 仍然只是 projection，不得承接真实 durable store / recovery ABI
 5. `emit-durable-store-import-request` 与 `emit-durable-store-import-review` 已成为当前正式 CLI 输出入口

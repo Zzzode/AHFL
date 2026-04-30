@@ -39,7 +39,7 @@ V0.17 已经把 durable receipt / review 做成正式 artifact；如果下一阶
 冻结 durable adapter receipt persistence / capability gap 的最小模型与 adapter 边界
 
 背景：
-当前仓库虽已有 `DurableStoreImportDecisionReceipt` / `DurableStoreImportDecisionReceiptReviewSummary`，但还没有正式的 durable-adapter-receipt-persistence-facing 状态对象；future real durable store adapter 很容易私造 persistence request、capability gap、persist / defer / reject 语义。
+当前仓库虽已有 `Receipt` / `ReceiptReviewSummary`，但还没有正式的 durable-adapter-receipt-persistence-facing 状态对象；future real durable store adapter 很容易私造 persistence request、capability gap、persist / defer / reject 语义。
 
 目标：
 
@@ -60,7 +60,7 @@ V0.17 已经把 durable receipt / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 已新增 `docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md`，给出 `DurableStoreImportDecisionReceiptPersistenceRequest` 的 `ahfl.durable-store-import-decision-receipt-persistence-request.v1` 与 future `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 的 `ahfl.durable-store-import-decision-receipt-persistence-review.v1` 版本入口基线，同时明确 adapter-receipt-persistence-facing artifact 只能建立在 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor -> durable request -> durable decision -> durable receipt -> durable receipt persistence request` 链路之上
+1. 已新增 `docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md`，给出 `PersistenceRequest` 的 `ahfl.durable-store-import-decision-receipt-persistence-request.v1` 与 future `PersistenceReviewSummary` 的 `ahfl.durable-store-import-decision-receipt-persistence-review.v1` 版本入口基线，同时明确 adapter-receipt-persistence-facing artifact 只能建立在 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence descriptor -> export manifest -> store import descriptor -> durable request -> durable decision -> durable receipt -> durable receipt persistence request` 链路之上
 2. 同一 reference 文档已列出当前最小稳定输入边界：durable receipt persistence request identity、persistence outcome、persistence boundary、capability gap、persistence blocker 与 source artifact version chain，并明确真实 import receipt persistence id、resume token、store URI、object path、database key、executor payload 仍不属于当前版本稳定承诺
 3. 该版本入口与边界冻结已作为后续 `Issue 04-12` 的兼容约束，防止在实现阶段静默扩张私有 adapter 语义
 
@@ -91,7 +91,7 @@ V0.17 已经把 durable receipt / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. `docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md` 已补充 layering-sensitive compatibility 规则，明确 `DurableStoreImportDecisionReceipt` 仍是 durable receipt persistence request 的直接 machine-facing 上游，而 future `DurableStoreImportDecisionReceiptPersistenceReviewSummary` 仍只是 projection，不得承接真实 import receipt persistence、resume token 派发、store mutation execution 或 recovery command synthesis
+1. `docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md` 已补充 layering-sensitive compatibility 规则，明确 `Receipt` 仍是 durable receipt persistence request 的直接 machine-facing 上游，而 future `PersistenceReviewSummary` 仍只是 projection，不得承接真实 import receipt persistence、resume token 派发、store mutation execution 或 recovery command synthesis
 2. `docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md` 已补充 layering-sensitive breaking-change 规则，明确只要让 durable receipt review、durable decision review、durable request review、store import review、export review、persistence review、checkpoint review、scheduler review、audit / trace 反向成为 durable receipt persistence request 的第一输入，或让 persistence request / review 提前承诺真实 durable store adapter / receipt persistence / recovery ABI，通常就应视为 versioning 事件
 3. layering 约束已作为后续 `Issue 04-12` 的工程基线，确保实现阶段不绕过 durable receipt / receipt persistence request 的正式分层
 
@@ -123,7 +123,7 @@ V0.17 已经把 durable receipt / review 做成正式 artifact；如果下一阶
 
 当前实现备注：
 
-1. 已新增 `DurableStoreImportDecisionReceiptPersistenceRequest` 模型头文件与实现：`include/ahfl/durable_store_import/receipt_persistence.hpp`、`src/durable_store_import/receipt_persistence.cpp`，并冻结 `ahfl.durable-store-import-decision-receipt-persistence-request.v1` 版本入口
+1. 已新增 `PersistenceRequest` 模型头文件与实现：`include/ahfl/durable_store_import/receipt_persistence.hpp`、`src/durable_store_import/receipt_persistence.cpp`，并冻结 `ahfl.durable-store-import-decision-receipt-persistence-request.v1` 版本入口
 2. 该模型已覆盖 persistence request identity、source version chain、persistence status / outcome、accepted-for-receipt-persistence、persistence boundary、next required capability 与 persistence blocker
 3. 已通过 `tests/durable_store_import/decision.cpp` 接入 direct model regression，并在 `tests/cmake/ProjectTests.cmake` 中注册模型测试入口
 
@@ -164,7 +164,7 @@ V0.17 已经把 durable receipt / review 做成正式 artifact；如果下一阶
 增加 deterministic durable adapter receipt persistence bootstrap
 
 背景：
-只有 model / validation 还不够；仓库需要最小 bootstrap 把 `DurableStoreImportDecisionReceipt` 及其上游 artifact 投影为 durable-adapter-receipt-persistence-facing request。
+只有 model / validation 还不够；仓库需要最小 bootstrap 把 `Receipt` 及其上游 artifact 投影为 durable-adapter-receipt-persistence-facing request。
 
 目标：
 
@@ -187,7 +187,7 @@ V0.17 已经把 durable receipt / review 做成正式 artifact；如果下一阶
 
 1. 已新增 deterministic bootstrap：`build_durable_store_import_decision_receipt_persistence_request(const DurableStoreImportDecisionReceipt&)`
 2. bootstrap direct 回归已覆盖 `ready / blocked / deferred / rejected` 与 `invalid receipt` 失败归因
-3. bootstrap 逻辑严格消费 `DurableStoreImportDecisionReceipt` 与其 source version chain，不回退读取 review / trace / CLI 文本
+3. bootstrap 逻辑严格消费 `Receipt` 与其 source version chain，不回退读取 review / trace / CLI 文本
 
 ## [x] Issue 07
 
@@ -250,7 +250,7 @@ durable adapter receipt persistence prototype 若只有 machine-facing persisten
 当前实现备注：
 
 1. 已新增 direct reviewer model：`include/ahfl/durable_store_import/receipt_persistence_review.hpp` 与 `src/durable_store_import/receipt_persistence_review.cpp`，并冻结 `ahfl.durable-store-import-decision-receipt-persistence-review.v1`
-2. review summary 仅消费 `DurableStoreImportDecisionReceiptPersistenceRequest`，覆盖 next_action、persistence_preview、next_step_recommendation、contract summary 与 blocker/failure 透传，不回退依赖 review/trace/host payload
+2. review summary 仅消费 `PersistenceRequest`，覆盖 next_action、persistence_preview、next_step_recommendation、contract summary 与 blocker/failure 透传，不回退依赖 review/trace/host payload
 3. 已新增 reviewer 输出 backend：`include/ahfl/backends/durable_store_import_receipt_persistence_review.hpp` 与 `src/backends/durable_store_import_receipt_persistence_review.cpp`，并在 CLI 增加 `emit-durable-store-import-receipt-persistence-review` 子命令
 4. direct regression 已覆盖 `validate_ok / unsupported_source_request_format / ready_request / rejected_request / invalid_request`
 
@@ -295,7 +295,7 @@ durable adapter receipt persistence prototype 若只有 machine-facing persisten
 
 目标：
 
-1. 冻结 `DurableStoreImportDecisionReceiptPersistenceRequest` 与 durable adapter receipt persistence review summary 的正式版本入口
+1. 冻结 `PersistenceRequest` 与 durable adapter receipt persistence review summary 的正式版本入口
 2. 冻结 source artifact 校验顺序、稳定字段边界与 breaking-change 基线
 3. 明确 docs / code / golden / tests 的同步流程
 
@@ -312,7 +312,7 @@ durable adapter receipt persistence prototype 若只有 machine-facing persisten
 
 当前实现备注：
 
-1. `docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md` 已按 artifact 分节冻结 `DurableStoreImportDecisionReceiptPersistenceRequest`（`ahfl.durable-store-import-decision-receipt-persistence-request.v1`）与 `DurableStoreImportDecisionReceiptPersistenceReviewSummary`（`ahfl.durable-store-import-decision-receipt-persistence-review.v1`）的版本入口
+1. `docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md` 已按 artifact 分节冻结 `PersistenceRequest`（`ahfl.durable-store-import-decision-receipt-persistence-request.v1`）与 `PersistenceReviewSummary`（`ahfl.durable-store-import-decision-receipt-persistence-review.v1`）的版本入口
 2. 同一文档已冻结 source artifact version chain 与稳定字段边界，并明确 request/review 不可承诺 import receipt persistence id、resume token、store URI、object path、database key、credential 等 future real adapter 字段
 3. 文档已补齐 layering-sensitive breaking-change 规则，明确哪些变化必须 bump version，并要求 docs / code / golden / tests 同步演进
 

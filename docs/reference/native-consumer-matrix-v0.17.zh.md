@@ -1,6 +1,6 @@
 # AHFL Native Consumer Matrix V0.17
 
-本文冻结 AHFL V0.17 中 durable-adapter-receipt-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`DurableStoreImportRequest`、`DurableStoreImportDecision`、`DurableStoreImportDecisionReceipt`、`DurableStoreImportDecisionReceiptReviewSummary` 各自稳定依赖什么，以及 future real durable store adapter / receipt persistence / recovery explorer 当前应落在哪一层。
+本文冻结 AHFL V0.17 中 durable-adapter-receipt-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`Request`、`Decision`、`Receipt`、`ReceiptReviewSummary` 各自稳定依赖什么，以及 future real durable store adapter / receipt persistence / recovery explorer 当前应落在哪一层。
 
 关联文档：
 
@@ -61,10 +61,10 @@ V0.17 当前 durable-adapter-receipt-facing consumer 共享入口是：
 7. `CheckpointPersistenceDescriptor`
 8. `PersistenceExportManifest`
 9. `StoreImportDescriptor`
-10. `DurableStoreImportRequest`
-11. `DurableStoreImportDecision`
-12. `DurableStoreImportDecisionReceipt`
-13. `DurableStoreImportDecisionReceiptReviewSummary`
+10. `Request`
+11. `Decision`
+12. `Receipt`
+13. `ReceiptReviewSummary`
 
 ## Future Real Durable Store Adapter 应落在哪里
 
@@ -79,24 +79,24 @@ V0.17 当前 durable-adapter-receipt-facing consumer 共享入口是：
 7. `CheckpointPersistenceDescriptor`
 8. `PersistenceExportManifest`
 9. `StoreImportDescriptor`
-10. `DurableStoreImportRequest`
-11. `DurableStoreImportDecision`
-12. `DurableStoreImportDecisionReceipt`
-13. `DurableStoreImportDecisionReceiptReviewSummary`
+10. `Request`
+11. `Decision`
+12. `Receipt`
+13. `ReceiptReviewSummary`
 
 这意味着：
 
-1. `DurableStoreImportDecisionReceipt` 是 future real adapter 可稳定消费的 machine-facing receipt 边界
-2. `DurableStoreImportDecisionReceiptReviewSummary` 是 projection，不是 durable mutation / recovery ABI
+1. `Receipt` 是 future real adapter 可稳定消费的 machine-facing receipt 边界
+2. `ReceiptReviewSummary` 是 projection，不是 durable mutation / recovery ABI
 3. receipt persistence id、resume token、store URI、object path、database key 仍不属于 V0.17 稳定承诺
 
 ## 当前反模式
 
 当前明确不建议：
 
-1. 跳过 `DurableStoreImportDecisionReceipt`，直接在 review / 外部脚本中私造 receipt preview 状态机
-2. 把 `DurableStoreImportDecisionReceiptReviewSummary` 当 durable adapter receipt 的第一事实来源
-3. 跳过 `DurableStoreImportDecision`，直接从 request / review / trace 反推 receipt identity 或 receipt blocker
+1. 跳过 `Receipt`，直接在 review / 外部脚本中私造 receipt preview 状态机
+2. 把 `ReceiptReviewSummary` 当 durable adapter receipt 的第一事实来源
+3. 跳过 `Decision`，直接从 request / review / trace 反推 receipt identity 或 receipt blocker
 4. 在 receipt / review 中塞入 import receipt persistence id、resume token、store URI、object path、database key、credential、host telemetry 或 provider payload
 5. 在未同步 compatibility / matrix / contributor docs / golden / labels / CI 的情况下静默扩张 durable-adapter-receipt-facing 稳定边界
 

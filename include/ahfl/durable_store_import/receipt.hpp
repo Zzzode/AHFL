@@ -4,26 +4,38 @@
 #include <string>
 #include <string_view>
 
+#include "ahfl/durable_store_import/common.hpp"
 #include "ahfl/durable_store_import/decision.hpp"
 
 namespace ahfl::durable_store_import {
 
-inline constexpr std::string_view kDurableStoreImportDecisionReceiptFormatVersion =
+// Format version - stable contract, DO NOT CHANGE
+inline constexpr std::string_view kReceiptFormatVersion =
     "ahfl.durable-store-import-decision-receipt.v1";
 
-enum class DurableStoreImportDecisionReceiptStatus {
+// Legacy alias for backward compatibility
+inline constexpr std::string_view kDurableStoreImportDecisionReceiptFormatVersion =
+    kReceiptFormatVersion;
+
+enum class ReceiptStatus {
     ReadyForArchive,
     Blocked,
     Deferred,
     Rejected,
 };
 
-enum class DurableStoreImportDecisionReceiptOutcome {
+// Legacy alias
+using DurableStoreImportDecisionReceiptStatus [[deprecated("Use ReceiptStatus")]] = ReceiptStatus;
+
+enum class ReceiptOutcome {
     ArchiveAcceptedDecision,
     BlockBlockedDecision,
     DeferPartialDecision,
     RejectFailedDecision,
 };
+
+// Legacy alias
+using DurableStoreImportDecisionReceiptOutcome [[deprecated("Use ReceiptOutcome")]] = ReceiptOutcome;
 
 enum class ReceiptBoundaryKind {
     LocalContractOnly,
@@ -43,12 +55,12 @@ struct ReceiptBlocker {
     std::optional<AdapterCapabilityKind> required_capability;
 };
 
-struct DurableStoreImportDecisionReceipt {
-    std::string format_version{std::string(kDurableStoreImportDecisionReceiptFormatVersion)};
+struct Receipt {
+    std::string format_version{std::string(kReceiptFormatVersion)};
     std::string source_durable_store_import_decision_format_version{
-        std::string(kDurableStoreImportDecisionFormatVersion)};
+        std::string(kDecisionFormatVersion)};
     std::string source_durable_store_import_request_format_version{
-        std::string(kDurableStoreImportRequestFormatVersion)};
+        std::string(kRequestFormatVersion)};
     std::string source_store_import_descriptor_format_version{
         std::string(store_import::kStoreImportDescriptorFormatVersion)};
     std::string source_execution_plan_format_version{
@@ -82,9 +94,8 @@ struct DurableStoreImportDecisionReceipt {
         persistence_export::PersistenceExportManifestStatus::Blocked};
     store_import::StoreImportDescriptorStatus descriptor_status{
         store_import::StoreImportDescriptorStatus::Blocked};
-    DurableStoreImportRequestStatus request_status{DurableStoreImportRequestStatus::Blocked};
-    DurableStoreImportDecisionStatus decision_status{
-        DurableStoreImportDecisionStatus::Blocked};
+    RequestStatus request_status{RequestStatus::Blocked};
+    DecisionStatus decision_status{DecisionStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
@@ -94,16 +105,17 @@ struct DurableStoreImportDecisionReceipt {
     std::string planned_durable_identity;
     DecisionBoundaryKind decision_boundary_kind{DecisionBoundaryKind::LocalContractOnly};
     ReceiptBoundaryKind receipt_boundary_kind{ReceiptBoundaryKind::LocalContractOnly};
-    DurableStoreImportDecisionReceiptStatus receipt_status{
-        DurableStoreImportDecisionReceiptStatus::Blocked};
-    DurableStoreImportDecisionReceiptOutcome receipt_outcome{
-        DurableStoreImportDecisionReceiptOutcome::BlockBlockedDecision};
+    ReceiptStatus receipt_status{ReceiptStatus::Blocked};
+    ReceiptOutcome receipt_outcome{ReceiptOutcome::BlockBlockedDecision};
     bool accepted_for_receipt_archive{false};
     std::optional<AdapterCapabilityKind> next_required_adapter_capability;
     std::optional<ReceiptBlocker> receipt_blocker;
 };
 
-struct DurableStoreImportDecisionReceiptValidationResult {
+// Legacy alias for backward compatibility
+using DurableStoreImportDecisionReceipt [[deprecated("Use Receipt")]] = Receipt;
+
+struct ReceiptValidationResult {
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -111,8 +123,11 @@ struct DurableStoreImportDecisionReceiptValidationResult {
     }
 };
 
-struct DurableStoreImportDecisionReceiptResult {
-    std::optional<DurableStoreImportDecisionReceipt> receipt;
+// Legacy alias
+using DurableStoreImportDecisionReceiptValidationResult [[deprecated("Use ReceiptValidationResult")]] = ReceiptValidationResult;
+
+struct ReceiptResult {
+    std::optional<Receipt> receipt;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -120,11 +135,21 @@ struct DurableStoreImportDecisionReceiptResult {
     }
 };
 
-[[nodiscard]] DurableStoreImportDecisionReceiptValidationResult
-validate_durable_store_import_decision_receipt(
-    const DurableStoreImportDecisionReceipt &receipt);
+// Legacy alias
+using DurableStoreImportDecisionReceiptResult [[deprecated("Use ReceiptResult")]] = ReceiptResult;
 
-[[nodiscard]] DurableStoreImportDecisionReceiptResult
-build_durable_store_import_decision_receipt(const DurableStoreImportDecision &decision);
+[[nodiscard]] ReceiptValidationResult validate_receipt(const Receipt &receipt);
+[[nodiscard]] ReceiptResult build_receipt(const Decision &decision);
+
+// Legacy function names - delegate to new functions
+[[nodiscard]] inline ReceiptValidationResult
+validate_durable_store_import_decision_receipt(const Receipt &receipt) {
+    return validate_receipt(receipt);
+}
+
+[[nodiscard]] inline ReceiptResult
+build_durable_store_import_decision_receipt(const Decision &decision) {
+    return build_receipt(decision);
+}
 
 } // namespace ahfl::durable_store_import

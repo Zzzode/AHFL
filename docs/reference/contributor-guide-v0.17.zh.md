@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.17
 
-本文给出面向新贡献者的 V0.17 上手路径，重点覆盖 `DurableStoreImportDecisionReceipt`、`DurableStoreImportDecisionReceiptReviewSummary`、compatibility contract、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.16 durable-decision-facing artifact 的协作边界。
+本文给出面向新贡献者的 V0.17 上手路径，重点覆盖 `Receipt`、`ReceiptReviewSummary`、compatibility contract、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.16 durable-decision-facing artifact 的协作边界。
 
 关联文档：
 
@@ -118,19 +118,19 @@ V0.17 当前推荐的 durable-adapter-receipt-facing 扩展顺序是：
 9. 若扩 machine-facing store import candidate identity / staging artifact set / descriptor blocker
    - 再改 `StoreImportDescriptor`
 10. 若扩 machine-facing durable request identity / adapter blocker
-    - 再改 `DurableStoreImportRequest`
+    - 再改 `Request`
 11. 若扩 machine-facing durable decision identity / status / outcome / capability gap / blocker
-    - 再改 `DurableStoreImportDecision`
+    - 再改 `Decision`
 12. 若扩 machine-facing durable receipt identity / status / outcome / blocker / boundary
-    - 再改 `DurableStoreImportDecisionReceipt`
+    - 再改 `Receipt`
 13. 若扩 reviewer-facing receipt preview / contract summary / next-step recommendation
-    - 最后改 `DurableStoreImportDecisionReceiptReviewSummary`
+    - 最后改 `ReceiptReviewSummary`
 
 这表示：
 
-1. `DurableStoreImportDecision` 仍是 receipt 的直接 machine-facing 上游
-2. `DurableStoreImportDecisionReceipt` 是 future real adapter 稳定消费边界
-3. `DurableStoreImportDecisionReceiptReviewSummary` 是 projection，不是独立 recovery 状态机
+1. `Decision` 仍是 receipt 的直接 machine-facing 上游
+2. `Receipt` 是 future real adapter 稳定消费边界
+3. `ReceiptReviewSummary` 是 projection，不是独立 recovery 状态机
 
 ## Future Real Durable Store Boundary Guidance
 
@@ -140,7 +140,7 @@ V0.17 当前 future real durable store adapter / receipt persistence / recovery 
 2. 允许 reviewer tooling 依赖 receipt review 的 `receipt_preview`、`adapter_receipt_contract_summary`、`next_action` 与 `next_step_recommendation`
 3. 不允许在当前版本中引入 import receipt persistence id、resume token、retry token、store URI、object path、database key、credential 或 operator payload
 4. 不允许把 host telemetry、provider payload、deployment metadata 塞入 receipt / review
-5. 不允许绕过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `DurableStoreImportRequest` / `DurableStoreImportDecision` / `DurableStoreImportDecisionReceipt`，直接从 AST、trace、脚本推导 durable receipt state
+5. 不允许绕过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `Request` / `Decision` / `Receipt`，直接从 AST、trace、脚本推导 durable receipt state
 
 ## 最小验证清单
 
@@ -169,8 +169,8 @@ ctest --preset test-dev --output-on-failure -L ahfl-v0.17
 
 V0.17 当前要求文档、测试和实现保持同步：
 
-1. 改 `DurableStoreImportDecisionReceipt` 稳定字段时，要同步更新 compatibility 文档与 `tests/durable_store_import/*.durable-store-import-receipt.json`
-2. 改 `DurableStoreImportDecisionReceiptReviewSummary` 稳定字段时，要同步更新 compatibility 文档与 `tests/durable_store_import/*.durable-store-import-receipt-review`
+1. 改 `Receipt` 稳定字段时，要同步更新 compatibility 文档与 `tests/durable_store_import/*.durable-store-import-receipt.json`
+2. 改 `ReceiptReviewSummary` 稳定字段时，要同步更新 compatibility 文档与 `tests/durable_store_import/*.durable-store-import-receipt-review`
 3. 改 durable-adapter-receipt-facing layering / consumer 依赖顺序时，要同步更新 consumer matrix
 4. 改 contributor-facing 扩展路径时，要同步更新 `docs/README.md`、`README.md`、roadmap 与 backlog
 5. 改 V0.17 标签切片时，要同步更新 `tests/cmake/LabelTests.cmake` 与 `.github/workflows/ci.yml`

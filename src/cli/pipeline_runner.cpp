@@ -9,6 +9,8 @@
 #include "ahfl/backends/durable_store_import_decision_review.hpp"
 #include "ahfl/backends/durable_store_import_receipt.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_request.hpp"
+#include "ahfl/backends/durable_store_import_receipt_persistence_response.hpp"
+#include "ahfl/backends/durable_store_import_receipt_persistence_response_review.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_review.hpp"
 #include "ahfl/backends/durable_store_import_receipt_review.hpp"
 #include "ahfl/backends/durable_store_import_request.hpp"
@@ -32,6 +34,8 @@
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
+#include "ahfl/durable_store_import/receipt_persistence_response.hpp"
+#include "ahfl/durable_store_import/receipt_persistence_response_review.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_review.hpp"
 #include "ahfl/durable_store_import/receipt_review.hpp"
 #include "ahfl/durable_store_import/request.hpp"
@@ -827,7 +831,7 @@ class CliPipelineArtifacts final {
     return 0;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportRequest>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Request>
 build_durable_store_import_request_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -856,7 +860,7 @@ build_durable_store_import_request_for_cli(
     return *request_result.request;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportDecision>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Decision>
 build_durable_store_import_decision_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -878,7 +882,7 @@ build_durable_store_import_decision_for_cli(
     return *decision.decision;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportDecisionReceipt>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Receipt>
 build_durable_store_import_receipt_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -902,7 +906,7 @@ build_durable_store_import_receipt_for_cli(
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequest>
+    ahfl::durable_store_import::PersistenceRequest>
 build_durable_store_import_receipt_persistence_request_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1012,7 +1016,7 @@ build_durable_store_import_receipt_persistence_request_for_cli(
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptReviewSummary>
+    ahfl::durable_store_import::ReceiptReviewSummary>
 build_durable_store_import_receipt_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1056,7 +1060,7 @@ build_durable_store_import_receipt_review_for_cli(
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewSummary>
+    ahfl::durable_store_import::PersistenceReviewSummary>
 build_durable_store_import_receipt_persistence_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1071,7 +1075,7 @@ build_durable_store_import_receipt_persistence_review_for_cli(
 
     const auto review =
         ahfl::durable_store_import::
-            build_durable_store_import_decision_receipt_persistence_review_summary(*request);
+            build_persistence_review_summary(*request);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
         return std::nullopt;
@@ -1096,6 +1100,92 @@ build_durable_store_import_receipt_persistence_review_for_cli(
     }
 
     ahfl::print_durable_store_import_receipt_persistence_review(*review, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::PersistenceResponse>
+build_durable_store_import_receipt_persistence_response_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto request = build_durable_store_import_receipt_persistence_request_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!request.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto response = ahfl::durable_store_import::
+        build_durable_store_import_decision_receipt_persistence_response(*request);
+    response.diagnostics.render(std::cerr);
+    if (response.has_errors() || !response.response.has_value()) {
+        return std::nullopt;
+    }
+
+    return *response.response;
+}
+
+[[nodiscard]] int emit_durable_store_import_receipt_persistence_response_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto response = build_durable_store_import_receipt_persistence_response_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-receipt-persistence-response");
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_receipt_persistence_response_json(*response, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::PersistenceResponseReviewSummary>
+build_durable_store_import_receipt_persistence_response_review_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto response = build_durable_store_import_receipt_persistence_response_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!response.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::
+        build_durable_store_import_decision_receipt_persistence_response_review(*response);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_receipt_persistence_response_review_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_receipt_persistence_response_review_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-receipt-persistence-response-review");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_receipt_persistence_response_review(*review, std::cout);
     return 0;
 }
 
@@ -1192,6 +1282,10 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
      invoke_package_command<emit_durable_store_import_receipt_review_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
      invoke_package_command<emit_durable_store_import_receipt_persistence_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReceiptPersistenceResponse,
+     invoke_package_command<emit_durable_store_import_receipt_persistence_response_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportReceiptPersistenceResponseReview,
+     invoke_package_command<emit_durable_store_import_receipt_persistence_response_review_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,

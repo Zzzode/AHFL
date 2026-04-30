@@ -24,7 +24,7 @@ void validate_failure_summary(const runtime_session::RuntimeFailureSummary &summ
 
 void validate_decision_blocker(const DecisionBlocker &blocker, DiagnosticBag &diagnostics) {
     if (blocker.message.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary decision_blocker message must not be empty");
     }
 }
@@ -48,32 +48,26 @@ void validate_decision_blocker(const DecisionBlocker &blocker, DiagnosticBag &di
     return "invalid";
 }
 
-[[nodiscard]] DurableStoreImportDecisionReviewNextActionKind
-next_action_for_decision(const DurableStoreImportDecision &decision) {
+[[nodiscard]] DecisionReviewNextActionKind
+next_action_for_decision(const Decision &decision) {
     switch (decision.decision_status) {
-    case DurableStoreImportDecisionStatus::Accepted:
-        return decision.request_status == DurableStoreImportRequestStatus::TerminalCompleted
-                   ? DurableStoreImportDecisionReviewNextActionKind::
-                         ArchiveCompletedDurableStoreImportDecision
-                   : DurableStoreImportDecisionReviewNextActionKind::
-                         HandoffDurableStoreImportDecision;
-    case DurableStoreImportDecisionStatus::Blocked:
-        return DurableStoreImportDecisionReviewNextActionKind::
-            ResolveRequiredAdapterCapability;
-    case DurableStoreImportDecisionStatus::Deferred:
-        return DurableStoreImportDecisionReviewNextActionKind::
-            PreservePartialDurableStoreImportDecision;
-    case DurableStoreImportDecisionStatus::Rejected:
-        return DurableStoreImportDecisionReviewNextActionKind::
-            InvestigateDurableStoreImportDecisionRejection;
+    case DecisionStatus::Accepted:
+        return decision.request_status == RequestStatus::TerminalCompleted
+                   ? DecisionReviewNextActionKind::ArchiveCompletedDurableStoreImportDecision
+                   : DecisionReviewNextActionKind::HandoffDurableStoreImportDecision;
+    case DecisionStatus::Blocked:
+        return DecisionReviewNextActionKind::ResolveRequiredAdapterCapability;
+    case DecisionStatus::Deferred:
+        return DecisionReviewNextActionKind::PreservePartialDurableStoreImportDecision;
+    case DecisionStatus::Rejected:
+        return DecisionReviewNextActionKind::InvestigateDurableStoreImportDecisionRejection;
     }
 
-    return DurableStoreImportDecisionReviewNextActionKind::
-        ResolveRequiredAdapterCapability;
+    return DecisionReviewNextActionKind::ResolveRequiredAdapterCapability;
 }
 
 [[nodiscard]] std::string adapter_contract_summary_for_decision(
-    const DurableStoreImportDecision &decision) {
+    const Decision &decision) {
     switch (decision.decision_boundary_kind) {
     case DecisionBoundaryKind::LocalContractOnly:
         return "local durable adapter contract reasoning only; real receipt and executor ABI not yet promised";
@@ -85,23 +79,23 @@ next_action_for_decision(const DurableStoreImportDecision &decision) {
 }
 
 [[nodiscard]] std::string decision_preview_for_decision(
-    const DurableStoreImportDecision &decision) {
+    const Decision &decision) {
     switch (decision.decision_status) {
-    case DurableStoreImportDecisionStatus::Accepted:
-        if (decision.request_status == DurableStoreImportRequestStatus::TerminalCompleted) {
+    case DecisionStatus::Accepted:
+        if (decision.request_status == RequestStatus::TerminalCompleted) {
             return "workflow already completed; durable adapter decision is retained for archival review";
         }
         return "durable adapter decision '" + decision.durable_store_import_decision_identity +
                "' accepts current request for future adapter execution";
-    case DurableStoreImportDecisionStatus::Blocked:
+    case DecisionStatus::Blocked:
         return "durable adapter decision remains blocked until required capability '" +
                (decision.next_required_adapter_capability.has_value()
                     ? capability_name(*decision.next_required_adapter_capability)
                     : std::string("unknown")) +
                "' is available";
-    case DurableStoreImportDecisionStatus::Deferred:
+    case DecisionStatus::Deferred:
         return "partial workflow durable adapter decision is deferred until partial state preservation is available";
-    case DurableStoreImportDecisionStatus::Rejected:
+    case DecisionStatus::Rejected:
         return decision.workflow_failure_summary.has_value() &&
                        decision.workflow_failure_summary->node_name.has_value()
                    ? "workflow failed at node '" +
@@ -114,18 +108,18 @@ next_action_for_decision(const DurableStoreImportDecision &decision) {
 }
 
 [[nodiscard]] std::string next_step_recommendation_for_decision(
-    const DurableStoreImportDecision &decision) {
+    const Decision &decision) {
     switch (decision.decision_status) {
-    case DurableStoreImportDecisionStatus::Accepted:
-        if (decision.request_status == DurableStoreImportRequestStatus::TerminalCompleted) {
+    case DecisionStatus::Accepted:
+        if (decision.request_status == RequestStatus::TerminalCompleted) {
             return "archive completed durable adapter decision; no further adapter action";
         }
         return "handoff current durable adapter decision before real adapter implementation work";
-    case DurableStoreImportDecisionStatus::Blocked:
+    case DecisionStatus::Blocked:
         return "add required adapter capability before claiming durable adapter contract acceptance";
-    case DurableStoreImportDecisionStatus::Deferred:
+    case DecisionStatus::Deferred:
         return "preserve partial workflow state before future adapter execution planning";
-    case DurableStoreImportDecisionStatus::Rejected:
+    case DecisionStatus::Rejected:
         return "inspect workflow failure before planning future durable adapter execution";
     }
 
@@ -134,34 +128,33 @@ next_action_for_decision(const DurableStoreImportDecision &decision) {
 
 } // namespace
 
-DurableStoreImportDecisionReviewSummaryValidationResult
-validate_durable_store_import_decision_review_summary(
-    const DurableStoreImportDecisionReviewSummary &summary) {
-    DurableStoreImportDecisionReviewSummaryValidationResult result;
+DecisionReviewSummaryValidationResult
+validate_decision_review_summary(const DecisionReviewSummary &summary) {
+    DecisionReviewSummaryValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    if (summary.format_version != kDurableStoreImportDecisionReviewSummaryFormatVersion) {
+    if (summary.format_version != kDecisionReviewFormatVersion) {
         emit_validation_error(diagnostics, "durable store import decision review summary format_version must be '" +
-                          std::string(kDurableStoreImportDecisionReviewSummaryFormatVersion) + "'");
+                          std::string(kDecisionReviewFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_decision_format_version !=
-        kDurableStoreImportDecisionFormatVersion) {
-        emit_validation_error(diagnostics, 
+        kDecisionFormatVersion) {
+        emit_validation_error(diagnostics,
             "durable store import decision review summary source_durable_store_import_decision_format_version must be '" +
-            std::string(kDurableStoreImportDecisionFormatVersion) + "'");
+            std::string(kDecisionFormatVersion) + "'");
     }
 
     if (summary.source_durable_store_import_request_format_version !=
-        kDurableStoreImportRequestFormatVersion) {
-        emit_validation_error(diagnostics, 
+        kRequestFormatVersion) {
+        emit_validation_error(diagnostics,
             "durable store import decision review summary source_durable_store_import_request_format_version must be '" +
-            std::string(kDurableStoreImportRequestFormatVersion) + "'");
+            std::string(kRequestFormatVersion) + "'");
     }
 
     if (summary.source_store_import_descriptor_format_version !=
         store_import::kStoreImportDescriptorFormatVersion) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary source_store_import_descriptor_format_version must be '" +
             std::string(store_import::kStoreImportDescriptorFormatVersion) + "'");
     }
@@ -172,7 +165,7 @@ validate_durable_store_import_decision_review_summary(
     }
 
     if (summary.session_id.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary session_id must not be empty");
     }
 
@@ -182,7 +175,7 @@ validate_durable_store_import_decision_review_summary(
     }
 
     if (summary.input_fixture.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary input_fixture must not be empty");
     }
 
@@ -192,22 +185,22 @@ validate_durable_store_import_decision_review_summary(
     }
 
     if (summary.store_import_candidate_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary store_import_candidate_identity must not be empty");
     }
 
     if (summary.durable_store_import_request_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary durable_store_import_request_identity must not be empty");
     }
 
     if (summary.durable_store_import_decision_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary durable_store_import_decision_identity must not be empty");
     }
 
     if (summary.planned_durable_identity.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary planned_durable_identity must not be empty");
     }
 
@@ -237,7 +230,7 @@ validate_durable_store_import_decision_review_summary(
     }
 
     if (summary.decision_preview.empty()) {
-        emit_validation_error(diagnostics, 
+        emit_validation_error(diagnostics,
             "durable store import decision review summary decision_preview must not be empty");
     }
 
@@ -247,18 +240,16 @@ validate_durable_store_import_decision_review_summary(
     }
 
     switch (summary.decision_status) {
-    case DurableStoreImportDecisionStatus::Accepted:
-        if (summary.request_status == DurableStoreImportRequestStatus::TerminalCompleted) {
+    case DecisionStatus::Accepted:
+        if (summary.request_status == RequestStatus::TerminalCompleted) {
             if (summary.next_action !=
-                DurableStoreImportDecisionReviewNextActionKind::
-                    ArchiveCompletedDurableStoreImportDecision) {
-                emit_validation_error(diagnostics, 
+                DecisionReviewNextActionKind::ArchiveCompletedDurableStoreImportDecision) {
+                emit_validation_error(diagnostics,
                     "durable store import decision review summary Accepted completed decision requires next_action archive_completed_durable_store_import_decision");
             }
         } else if (summary.next_action !=
-                   DurableStoreImportDecisionReviewNextActionKind::
-                       HandoffDurableStoreImportDecision) {
-            emit_validation_error(diagnostics, 
+                   DecisionReviewNextActionKind::HandoffDurableStoreImportDecision) {
+            emit_validation_error(diagnostics,
                 "durable store import decision review summary Accepted decision requires next_action handoff_durable_store_import_decision");
         }
         if (!summary.accepted_for_future_execution) {
@@ -266,11 +257,10 @@ validate_durable_store_import_decision_review_summary(
                               "requires accepted_for_future_execution");
         }
         break;
-    case DurableStoreImportDecisionStatus::Blocked:
+    case DecisionStatus::Blocked:
         if (summary.next_action !=
-            DurableStoreImportDecisionReviewNextActionKind::
-                ResolveRequiredAdapterCapability) {
-            emit_validation_error(diagnostics, 
+            DecisionReviewNextActionKind::ResolveRequiredAdapterCapability) {
+            emit_validation_error(diagnostics,
                 "durable store import decision review summary Blocked decision requires next_action resolve_required_adapter_capability");
         }
         if (summary.accepted_for_future_execution) {
@@ -282,11 +272,10 @@ validate_durable_store_import_decision_review_summary(
                               "requires decision_blocker");
         }
         break;
-    case DurableStoreImportDecisionStatus::Deferred:
+    case DecisionStatus::Deferred:
         if (summary.next_action !=
-            DurableStoreImportDecisionReviewNextActionKind::
-                PreservePartialDurableStoreImportDecision) {
-            emit_validation_error(diagnostics, 
+            DecisionReviewNextActionKind::PreservePartialDurableStoreImportDecision) {
+            emit_validation_error(diagnostics,
                 "durable store import decision review summary Deferred decision requires next_action preserve_partial_durable_store_import_decision");
         }
         if (!summary.decision_blocker.has_value()) {
@@ -294,11 +283,10 @@ validate_durable_store_import_decision_review_summary(
                               "requires decision_blocker");
         }
         break;
-    case DurableStoreImportDecisionStatus::Rejected:
+    case DecisionStatus::Rejected:
         if (summary.next_action !=
-            DurableStoreImportDecisionReviewNextActionKind::
-                InvestigateDurableStoreImportDecisionRejection) {
-            emit_validation_error(diagnostics, 
+            DecisionReviewNextActionKind::InvestigateDurableStoreImportDecisionRejection) {
+            emit_validation_error(diagnostics,
                 "durable store import decision review summary Rejected decision requires next_action investigate_durable_store_import_decision_rejection");
         }
         if (!summary.decision_blocker.has_value()) {
@@ -311,23 +299,21 @@ validate_durable_store_import_decision_review_summary(
     return result;
 }
 
-DurableStoreImportDecisionReviewSummaryResult
-build_durable_store_import_decision_review_summary(
-    const DurableStoreImportDecision &decision) {
-    DurableStoreImportDecisionReviewSummaryResult result{
+DecisionReviewSummaryResult
+build_decision_review_summary(const Decision &decision) {
+    DecisionReviewSummaryResult result{
         .summary = std::nullopt,
         .diagnostics = {},
     };
 
-    const auto validation = validate_durable_store_import_decision(decision);
+    const auto validation = validate_decision(decision);
     result.diagnostics.append(validation.diagnostics);
     if (result.has_errors()) {
         return result;
     }
 
-    DurableStoreImportDecisionReviewSummary summary{
-        .format_version =
-            std::string(kDurableStoreImportDecisionReviewSummaryFormatVersion),
+    DecisionReviewSummary summary{
+        .format_version = std::string(kDecisionReviewFormatVersion),
         .source_durable_store_import_decision_format_version = decision.format_version,
         .source_durable_store_import_request_format_version =
             decision.source_durable_store_import_request_format_version,
@@ -364,8 +350,7 @@ build_durable_store_import_decision_review_summary(
         .next_step_recommendation = next_step_recommendation_for_decision(decision),
     };
 
-    const auto summary_validation =
-        validate_durable_store_import_decision_review_summary(summary);
+    const auto summary_validation = validate_decision_review_summary(summary);
     result.diagnostics.append(summary_validation.diagnostics);
     if (result.has_errors()) {
         return result;

@@ -2,6 +2,8 @@
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
+#include "ahfl/durable_store_import/receipt_persistence_response.hpp"
+#include "ahfl/durable_store_import/receipt_persistence_response_review.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_review.hpp"
 #include "ahfl/durable_store_import/receipt_review.hpp"
 #include "ahfl/durable_store_import/request.hpp"
@@ -143,9 +145,9 @@ namespace {
     return descriptor;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportRequest>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Request>
 make_request(const ahfl::store_import::StoreImportDescriptor &descriptor) {
-    const auto request = ahfl::durable_store_import::build_durable_store_import_request(descriptor);
+    const auto request = ahfl::durable_store_import::build_request(descriptor);
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return std::nullopt;
@@ -154,14 +156,14 @@ make_request(const ahfl::store_import::StoreImportDescriptor &descriptor) {
     return *request.request;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportDecision>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Decision>
 make_valid_decision() {
     const auto request = make_request(make_ready_descriptor());
     if (!request.has_value()) {
         return std::nullopt;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return std::nullopt;
@@ -170,11 +172,11 @@ make_valid_decision() {
     return *decision.decision;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportDecisionReceipt>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Receipt>
 make_receipt_from_decision(
-    const ahfl::durable_store_import::DurableStoreImportDecision &decision) {
+    const ahfl::durable_store_import::Decision &decision) {
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(decision);
+        ahfl::durable_store_import::build_receipt(decision);
     if (receipt.has_errors() || !receipt.receipt.has_value()) {
         receipt.diagnostics.render(std::cout);
         return std::nullopt;
@@ -183,7 +185,7 @@ make_receipt_from_decision(
     return *receipt.receipt;
 }
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::DurableStoreImportDecisionReceipt>
+[[nodiscard]] std::optional<ahfl::durable_store_import::Receipt>
 make_valid_receipt() {
     const auto decision = make_valid_decision();
     if (!decision.has_value()) {
@@ -194,7 +196,7 @@ make_valid_receipt() {
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptReviewSummary>
+    ahfl::durable_store_import::ReceiptReviewSummary>
 make_valid_receipt_review_summary() {
     const auto receipt = make_valid_receipt();
     if (!receipt.has_value()) {
@@ -202,7 +204,7 @@ make_valid_receipt_review_summary() {
     }
 
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_review_summary(*receipt);
+        build_receipt_review_summary(*receipt);
     if (summary.has_errors() || !summary.summary.has_value()) {
         summary.diagnostics.render(std::cout);
         return std::nullopt;
@@ -212,11 +214,11 @@ make_valid_receipt_review_summary() {
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequest>
+    ahfl::durable_store_import::PersistenceRequest>
 make_persistence_request_from_receipt(
-    const ahfl::durable_store_import::DurableStoreImportDecisionReceipt &receipt) {
+    const ahfl::durable_store_import::Receipt &receipt) {
     const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(receipt);
+        build_persistence_request(receipt);
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return std::nullopt;
@@ -226,7 +228,7 @@ make_persistence_request_from_receipt(
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequest>
+    ahfl::durable_store_import::PersistenceRequest>
 make_valid_receipt_persistence_request() {
     const auto receipt = make_valid_receipt();
     if (!receipt.has_value()) {
@@ -237,7 +239,7 @@ make_valid_receipt_persistence_request() {
 }
 
 [[nodiscard]] std::optional<
-    ahfl::durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewSummary>
+    ahfl::durable_store_import::PersistenceReviewSummary>
 make_valid_receipt_persistence_review_summary() {
     const auto request = make_valid_receipt_persistence_request();
     if (!request.has_value()) {
@@ -245,7 +247,7 @@ make_valid_receipt_persistence_review_summary() {
     }
 
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_review_summary(*request);
+        build_persistence_review_summary(*request);
     if (summary.has_errors() || !summary.summary.has_value()) {
         summary.diagnostics.render(std::cout);
         return std::nullopt;
@@ -254,14 +256,14 @@ make_valid_receipt_persistence_review_summary() {
     return *summary.summary;
 }
 
-int validate_durable_store_import_decision_ok() {
+int validate_decision_ok() {
     const auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision(*decision);
+        ahfl::durable_store_import::validate_decision(*decision);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
@@ -270,13 +272,13 @@ int validate_durable_store_import_decision_ok() {
     return 0;
 }
 
-int validate_durable_store_import_decision_blocked_ok() {
+int validate_decision_blocked_ok() {
     const auto request = make_request(make_blocked_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -284,7 +286,7 @@ int validate_durable_store_import_decision_blocked_ok() {
 
     const auto &value = *decision.decision;
     if (value.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Blocked ||
+            ahfl::durable_store_import::DecisionStatus::Blocked ||
         value.accepted_for_future_execution || !value.decision_blocker.has_value() ||
         value.decision_blocker->kind !=
             ahfl::durable_store_import::DecisionBlockerKind::MissingRequiredAdapterCapability ||
@@ -297,13 +299,13 @@ int validate_durable_store_import_decision_blocked_ok() {
     return 0;
 }
 
-int validate_durable_store_import_decision_deferred_ok() {
+int validate_decision_deferred_ok() {
     const auto request = make_request(make_partial_terminal_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -311,7 +313,7 @@ int validate_durable_store_import_decision_deferred_ok() {
 
     const auto &value = *decision.decision;
     if (value.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Deferred ||
+            ahfl::durable_store_import::DecisionStatus::Deferred ||
         value.accepted_for_future_execution || !value.decision_blocker.has_value() ||
         value.decision_blocker->kind !=
             ahfl::durable_store_import::DecisionBlockerKind::PartialWorkflowState ||
@@ -324,13 +326,13 @@ int validate_durable_store_import_decision_deferred_ok() {
     return 0;
 }
 
-int validate_durable_store_import_decision_rejected_ok() {
+int validate_decision_rejected_ok() {
     const auto request = make_request(make_failed_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -338,7 +340,7 @@ int validate_durable_store_import_decision_rejected_ok() {
 
     const auto &value = *decision.decision;
     if (value.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Rejected ||
+            ahfl::durable_store_import::DecisionStatus::Rejected ||
         value.accepted_for_future_execution || !value.decision_blocker.has_value() ||
         value.decision_blocker->kind !=
             ahfl::durable_store_import::DecisionBlockerKind::WorkflowFailure) {
@@ -349,7 +351,7 @@ int validate_durable_store_import_decision_rejected_ok() {
     return 0;
 }
 
-int validate_durable_store_import_decision_rejects_missing_decision_identity() {
+int validate_decision_rejects_missing_decision_identity() {
     auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
@@ -357,7 +359,7 @@ int validate_durable_store_import_decision_rejects_missing_decision_identity() {
 
     decision->durable_store_import_decision_identity.clear();
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision(*decision);
+        ahfl::durable_store_import::validate_decision(*decision);
     if (!validation.has_errors()) {
         std::cerr << "expected missing durable store import decision identity to fail\n";
         return 1;
@@ -369,7 +371,7 @@ int validate_durable_store_import_decision_rejects_missing_decision_identity() {
                : 1;
 }
 
-int validate_durable_store_import_decision_rejects_accepted_with_blocker() {
+int validate_decision_rejects_accepted_with_blocker() {
     auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
@@ -381,7 +383,7 @@ int validate_durable_store_import_decision_rejects_accepted_with_blocker() {
         .required_capability = std::nullopt,
     };
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision(*decision);
+        ahfl::durable_store_import::validate_decision(*decision);
     if (!validation.has_errors()) {
         std::cerr << "expected accepted decision with blocker to fail\n";
         return 1;
@@ -394,7 +396,7 @@ int validate_durable_store_import_decision_rejects_accepted_with_blocker() {
                : 1;
 }
 
-int validate_durable_store_import_decision_rejects_unsupported_source_request_format() {
+int validate_decision_rejects_unsupported_source_request_format() {
     auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
@@ -403,7 +405,7 @@ int validate_durable_store_import_decision_rejects_unsupported_source_request_fo
     decision->source_durable_store_import_request_format_version =
         "ahfl.durable-store-import-request.v999";
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision(*decision);
+        ahfl::durable_store_import::validate_decision(*decision);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source request format to fail\n";
         return 1;
@@ -415,14 +417,14 @@ int validate_durable_store_import_decision_rejects_unsupported_source_request_fo
                : 1;
 }
 
-int validate_durable_store_import_decision_rejects_adapter_decision_consumable_blocked() {
+int validate_decision_rejects_adapter_decision_consumable_blocked() {
     const auto request = make_request(make_blocked_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
     const auto built =
-        ahfl::durable_store_import::build_durable_store_import_decision(*request);
+        ahfl::durable_store_import::build_decision(*request);
     if (built.has_errors() || !built.decision.has_value()) {
         built.diagnostics.render(std::cout);
         return 1;
@@ -432,7 +434,7 @@ int validate_durable_store_import_decision_rejects_adapter_decision_consumable_b
     decision.decision_boundary_kind =
         ahfl::durable_store_import::DecisionBoundaryKind::AdapterDecisionConsumable;
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision(decision);
+        ahfl::durable_store_import::validate_decision(decision);
     if (!validation.has_errors()) {
         std::cerr << "expected blocked adapter-decision-consumable decision to fail\n";
         return 1;
@@ -445,14 +447,14 @@ int validate_durable_store_import_decision_rejects_adapter_decision_consumable_b
                : 1;
 }
 
-int validate_durable_store_import_decision_rejects_rejected_without_failure_summary() {
+int validate_decision_rejects_rejected_without_failure_summary() {
     const auto request = make_request(make_failed_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
     const auto built =
-        ahfl::durable_store_import::build_durable_store_import_decision(*request);
+        ahfl::durable_store_import::build_decision(*request);
     if (built.has_errors() || !built.decision.has_value()) {
         built.diagnostics.render(std::cout);
         return 1;
@@ -461,7 +463,7 @@ int validate_durable_store_import_decision_rejects_rejected_without_failure_summ
     auto decision = *built.decision;
     decision.workflow_failure_summary.reset();
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision(decision);
+        ahfl::durable_store_import::validate_decision(decision);
     if (!validation.has_errors()) {
         std::cerr << "expected rejected decision without failure summary to fail\n";
         return 1;
@@ -473,13 +475,13 @@ int validate_durable_store_import_decision_rejects_rejected_without_failure_summ
                : 1;
 }
 
-int build_durable_store_import_decision_ready_request() {
+int build_decision_ready_request() {
     const auto request = make_request(make_ready_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -487,7 +489,7 @@ int build_durable_store_import_decision_ready_request() {
 
     const auto &value = *decision.decision;
     if (value.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Accepted ||
+            ahfl::durable_store_import::DecisionStatus::Accepted ||
         !value.accepted_for_future_execution || value.decision_blocker.has_value() ||
         value.decision_boundary_kind !=
             ahfl::durable_store_import::DecisionBoundaryKind::AdapterDecisionConsumable ||
@@ -500,13 +502,13 @@ int build_durable_store_import_decision_ready_request() {
     return 0;
 }
 
-int build_durable_store_import_decision_completed_request() {
+int build_decision_completed_request() {
     const auto request = make_request(make_completed_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -514,10 +516,10 @@ int build_durable_store_import_decision_completed_request() {
 
     const auto &value = *decision.decision;
     if (value.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Accepted ||
+            ahfl::durable_store_import::DecisionStatus::Accepted ||
         !value.accepted_for_future_execution || value.decision_blocker.has_value() ||
         value.request_status !=
-            ahfl::durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted) {
+            ahfl::durable_store_import::RequestStatus::TerminalCompleted) {
         std::cerr << "unexpected completed durable store import decision bootstrap result\n";
         return 1;
     }
@@ -525,7 +527,7 @@ int build_durable_store_import_decision_completed_request() {
     return 0;
 }
 
-int build_durable_store_import_decision_rejects_invalid_request() {
+int build_decision_rejects_invalid_request() {
     const auto request = make_request(make_ready_descriptor());
     if (!request.has_value()) {
         return 1;
@@ -534,7 +536,7 @@ int build_durable_store_import_decision_rejects_invalid_request() {
     auto invalid_request = *request;
     invalid_request.format_version = "ahfl.durable-store-import-request.v999";
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(invalid_request);
+        ahfl::durable_store_import::build_decision(invalid_request);
     if (!decision.has_errors()) {
         std::cerr << "expected invalid durable store import request to fail\n";
         return 1;
@@ -553,14 +555,14 @@ int validate_durable_store_import_receipt_ok() {
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (receipt->receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::ReadyForArchive ||
+            ahfl::durable_store_import::ReceiptStatus::ReadyForArchive ||
         !receipt->accepted_for_receipt_archive || receipt->receipt_blocker.has_value()) {
         std::cerr << "unexpected durable store import decision receipt\n";
         return 1;
@@ -575,7 +577,7 @@ int validate_durable_store_import_receipt_blocked_ok() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -587,14 +589,14 @@ int validate_durable_store_import_receipt_blocked_ok() {
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (receipt->receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Blocked ||
+            ahfl::durable_store_import::ReceiptStatus::Blocked ||
         receipt->accepted_for_receipt_archive || !receipt->receipt_blocker.has_value() ||
         receipt->receipt_blocker->kind !=
             ahfl::durable_store_import::ReceiptBlockerKind::MissingRequiredAdapterCapability ||
@@ -613,7 +615,7 @@ int validate_durable_store_import_receipt_deferred_ok() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -625,14 +627,14 @@ int validate_durable_store_import_receipt_deferred_ok() {
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (receipt->receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Deferred ||
+            ahfl::durable_store_import::ReceiptStatus::Deferred ||
         receipt->accepted_for_receipt_archive || !receipt->receipt_blocker.has_value() ||
         receipt->receipt_blocker->kind !=
             ahfl::durable_store_import::ReceiptBlockerKind::PartialWorkflowState ||
@@ -651,7 +653,7 @@ int validate_durable_store_import_receipt_rejected_ok() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -663,14 +665,14 @@ int validate_durable_store_import_receipt_rejected_ok() {
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (receipt->receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Rejected ||
+            ahfl::durable_store_import::ReceiptStatus::Rejected ||
         receipt->accepted_for_receipt_archive || !receipt->receipt_blocker.has_value() ||
         receipt->receipt_blocker->kind !=
             ahfl::durable_store_import::ReceiptBlockerKind::WorkflowFailure) {
@@ -689,7 +691,7 @@ int validate_durable_store_import_receipt_rejects_missing_receipt_identity() {
 
     receipt->durable_store_import_receipt_identity.clear();
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (!validation.has_errors()) {
         std::cerr << "expected missing durable store import receipt identity to fail\n";
         return 1;
@@ -710,7 +712,7 @@ int validate_durable_store_import_receipt_rejects_unsupported_source_decision_fo
     receipt->source_durable_store_import_decision_format_version =
         "ahfl.durable-store-import-decision.v999";
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source decision format to fail\n";
         return 1;
@@ -734,7 +736,7 @@ int validate_durable_store_import_receipt_rejects_ready_with_blocker() {
         .required_capability = std::nullopt,
     };
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_receipt(*receipt);
+        ahfl::durable_store_import::validate_receipt(*receipt);
     if (!validation.has_errors()) {
         std::cerr << "expected ready durable store import receipt with blocker to fail\n";
         return 1;
@@ -754,7 +756,7 @@ int build_durable_store_import_receipt_ready_decision() {
     }
 
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(*decision);
+        ahfl::durable_store_import::build_receipt(*decision);
     if (receipt.has_errors() || !receipt.receipt.has_value()) {
         receipt.diagnostics.render(std::cout);
         return 1;
@@ -762,7 +764,7 @@ int build_durable_store_import_receipt_ready_decision() {
 
     const auto &value = *receipt.receipt;
     if (value.receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::ReadyForArchive ||
+            ahfl::durable_store_import::ReceiptStatus::ReadyForArchive ||
         !value.accepted_for_receipt_archive || value.receipt_blocker.has_value() ||
         value.receipt_boundary_kind !=
             ahfl::durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable ||
@@ -781,14 +783,14 @@ int build_durable_store_import_receipt_blocked_decision() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
     }
 
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(*decision.decision);
+        ahfl::durable_store_import::build_receipt(*decision.decision);
     if (receipt.has_errors() || !receipt.receipt.has_value()) {
         receipt.diagnostics.render(std::cout);
         return 1;
@@ -796,7 +798,7 @@ int build_durable_store_import_receipt_blocked_decision() {
 
     const auto &value = *receipt.receipt;
     if (value.receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Blocked ||
+            ahfl::durable_store_import::ReceiptStatus::Blocked ||
         value.accepted_for_receipt_archive || !value.receipt_blocker.has_value()) {
         std::cerr << "unexpected blocked durable store import receipt bootstrap result\n";
         return 1;
@@ -811,14 +813,14 @@ int build_durable_store_import_receipt_deferred_decision() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
     }
 
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(*decision.decision);
+        ahfl::durable_store_import::build_receipt(*decision.decision);
     if (receipt.has_errors() || !receipt.receipt.has_value()) {
         receipt.diagnostics.render(std::cout);
         return 1;
@@ -826,7 +828,7 @@ int build_durable_store_import_receipt_deferred_decision() {
 
     const auto &value = *receipt.receipt;
     if (value.receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Deferred ||
+            ahfl::durable_store_import::ReceiptStatus::Deferred ||
         value.accepted_for_receipt_archive || !value.receipt_blocker.has_value()) {
         std::cerr << "unexpected deferred durable store import receipt bootstrap result\n";
         return 1;
@@ -841,14 +843,14 @@ int build_durable_store_import_receipt_rejected_decision() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
     }
 
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(*decision.decision);
+        ahfl::durable_store_import::build_receipt(*decision.decision);
     if (receipt.has_errors() || !receipt.receipt.has_value()) {
         receipt.diagnostics.render(std::cout);
         return 1;
@@ -856,7 +858,7 @@ int build_durable_store_import_receipt_rejected_decision() {
 
     const auto &value = *receipt.receipt;
     if (value.receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Rejected ||
+            ahfl::durable_store_import::ReceiptStatus::Rejected ||
         value.accepted_for_receipt_archive || !value.receipt_blocker.has_value()) {
         std::cerr << "unexpected rejected durable store import receipt bootstrap result\n";
         return 1;
@@ -874,7 +876,7 @@ int build_durable_store_import_receipt_rejects_invalid_decision() {
     auto invalid_decision = *decision;
     invalid_decision.format_version = "ahfl.durable-store-import-decision.v999";
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(invalid_decision);
+        ahfl::durable_store_import::build_receipt(invalid_decision);
     if (!receipt.has_errors()) {
         std::cerr << "expected invalid durable store import decision to fail\n";
         return 1;
@@ -893,14 +895,14 @@ int validate_durable_store_import_receipt_persistence_request_ok() {
     }
 
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (request->receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::ReadyToPersist ||
+            PersistenceRequestStatus::ReadyToPersist ||
         !request->accepted_for_receipt_persistence ||
         request->receipt_persistence_blocker.has_value()) {
         std::cerr << "unexpected durable store import receipt persistence request\n";
@@ -917,7 +919,7 @@ int validate_durable_store_import_receipt_persistence_request_blocked_ok() {
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -934,18 +936,18 @@ int validate_durable_store_import_receipt_persistence_request_blocked_ok() {
     }
 
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (request->receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Blocked ||
+            PersistenceRequestStatus::Blocked ||
         request->accepted_for_receipt_persistence ||
         !request->receipt_persistence_blocker.has_value() ||
         request->receipt_persistence_blocker->kind != ahfl::durable_store_import::
-            ReceiptPersistenceBlockerKind::MissingRequiredAdapterCapability ||
+            PersistenceBlockerKind::MissingRequiredAdapterCapability ||
         request->next_required_adapter_capability !=
             ahfl::durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext) {
         std::cerr << "unexpected blocked durable store import receipt persistence request\n";
@@ -962,7 +964,7 @@ int validate_durable_store_import_receipt_persistence_request_deferred_ok() {
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -979,18 +981,18 @@ int validate_durable_store_import_receipt_persistence_request_deferred_ok() {
     }
 
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (request->receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Deferred ||
+            PersistenceRequestStatus::Deferred ||
         request->accepted_for_receipt_persistence ||
         !request->receipt_persistence_blocker.has_value() ||
         request->receipt_persistence_blocker->kind != ahfl::durable_store_import::
-            ReceiptPersistenceBlockerKind::PartialWorkflowState ||
+            PersistenceBlockerKind::PartialWorkflowState ||
         request->next_required_adapter_capability !=
             ahfl::durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState) {
         std::cerr << "unexpected deferred durable store import receipt persistence request\n";
@@ -1007,7 +1009,7 @@ int validate_durable_store_import_receipt_persistence_request_rejected_ok() {
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -1024,18 +1026,18 @@ int validate_durable_store_import_receipt_persistence_request_rejected_ok() {
     }
 
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (request->receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected ||
+            PersistenceRequestStatus::Rejected ||
         request->accepted_for_receipt_persistence ||
         !request->receipt_persistence_blocker.has_value() ||
         request->receipt_persistence_blocker->kind != ahfl::durable_store_import::
-            ReceiptPersistenceBlockerKind::WorkflowFailure) {
+            PersistenceBlockerKind::WorkflowFailure) {
         std::cerr << "unexpected rejected durable store import receipt persistence request\n";
         return 1;
     }
@@ -1051,7 +1053,7 @@ int validate_durable_store_import_receipt_persistence_request_rejects_missing_re
 
     request->durable_store_import_receipt_persistence_request_identity.clear();
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected missing durable store import receipt persistence request identity "
                      "to fail\n";
@@ -1073,7 +1075,7 @@ int validate_durable_store_import_receipt_persistence_request_rejects_unsupporte
     request->source_durable_store_import_decision_receipt_format_version =
         "ahfl.durable-store-import-decision-receipt.v999";
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source receipt format to fail\n";
         return 1;
@@ -1093,14 +1095,14 @@ int validate_durable_store_import_receipt_persistence_request_rejects_ready_with
     }
 
     request->receipt_persistence_blocker =
-        ahfl::durable_store_import::ReceiptPersistenceBlocker{
+        ahfl::durable_store_import::PersistenceBlocker{
             .kind =
-                ahfl::durable_store_import::ReceiptPersistenceBlockerKind::SourceReceiptBlocked,
+                ahfl::durable_store_import::PersistenceBlockerKind::SourceReceiptBlocked,
             .message = "unexpected persistence blocker",
             .required_capability = std::nullopt,
         };
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_request(*request);
+        validate_persistence_request(*request);
     if (!validation.has_errors()) {
         std::cerr << "expected ready durable store import receipt persistence request with blocker "
                      "to fail\n";
@@ -1121,7 +1123,7 @@ int build_durable_store_import_receipt_persistence_request_ready_receipt() {
     }
 
     const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(*receipt);
+        build_persistence_request(*receipt);
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -1129,11 +1131,11 @@ int build_durable_store_import_receipt_persistence_request_ready_receipt() {
 
     const auto &value = *request.request;
     if (value.receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::ReadyToPersist ||
+            PersistenceRequestStatus::ReadyToPersist ||
         !value.accepted_for_receipt_persistence ||
         value.receipt_persistence_blocker.has_value() ||
         value.receipt_persistence_boundary_kind != ahfl::durable_store_import::
-            ReceiptPersistenceBoundaryKind::AdapterReceiptPersistenceConsumable ||
+            PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable ||
         value.durable_store_import_receipt_persistence_request_identity !=
             "durable-store-import-receipt-persistence-request::workflow-value-flow::run-partial-001::persistence-ready") {
         std::cerr << "unexpected ready durable store import receipt persistence request bootstrap "
@@ -1151,7 +1153,7 @@ int build_durable_store_import_receipt_persistence_request_blocked_receipt() {
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -1163,7 +1165,7 @@ int build_durable_store_import_receipt_persistence_request_blocked_receipt() {
     }
 
     const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(*receipt);
+        build_persistence_request(*receipt);
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -1171,7 +1173,7 @@ int build_durable_store_import_receipt_persistence_request_blocked_receipt() {
 
     const auto &value = *request.request;
     if (value.receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Blocked ||
+            PersistenceRequestStatus::Blocked ||
         value.accepted_for_receipt_persistence ||
         !value.receipt_persistence_blocker.has_value()) {
         std::cerr << "unexpected blocked durable store import receipt persistence request bootstrap "
@@ -1189,7 +1191,7 @@ int build_durable_store_import_receipt_persistence_request_deferred_receipt() {
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -1201,7 +1203,7 @@ int build_durable_store_import_receipt_persistence_request_deferred_receipt() {
     }
 
     const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(*receipt);
+        build_persistence_request(*receipt);
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -1209,7 +1211,7 @@ int build_durable_store_import_receipt_persistence_request_deferred_receipt() {
 
     const auto &value = *request.request;
     if (value.receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Deferred ||
+            PersistenceRequestStatus::Deferred ||
         value.accepted_for_receipt_persistence ||
         !value.receipt_persistence_blocker.has_value()) {
         std::cerr << "unexpected deferred durable store import receipt persistence request bootstrap "
@@ -1227,7 +1229,7 @@ int build_durable_store_import_receipt_persistence_request_rejected_receipt() {
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -1239,7 +1241,7 @@ int build_durable_store_import_receipt_persistence_request_rejected_receipt() {
     }
 
     const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(*receipt);
+        build_persistence_request(*receipt);
     if (request.has_errors() || !request.request.has_value()) {
         request.diagnostics.render(std::cout);
         return 1;
@@ -1247,7 +1249,7 @@ int build_durable_store_import_receipt_persistence_request_rejected_receipt() {
 
     const auto &value = *request.request;
     if (value.receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected ||
+            PersistenceRequestStatus::Rejected ||
         value.accepted_for_receipt_persistence ||
         !value.receipt_persistence_blocker.has_value()) {
         std::cerr << "unexpected rejected durable store import receipt persistence request "
@@ -1267,7 +1269,7 @@ int build_durable_store_import_receipt_persistence_request_rejects_invalid_recei
     auto invalid_receipt = *receipt;
     invalid_receipt.format_version = "ahfl.durable-store-import-decision-receipt.v999";
     const auto request = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_request(invalid_receipt);
+        build_persistence_request(invalid_receipt);
     if (!request.has_errors()) {
         std::cerr << "expected invalid durable store import receipt to fail\n";
         return 1;
@@ -1287,14 +1289,14 @@ int validate_durable_store_import_receipt_persistence_review_ok() {
     }
 
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_review_summary(*summary);
+        validate_persistence_review_summary(*summary);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
     }
 
     if (summary->receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::ReadyToPersist ||
+            PersistenceRequestStatus::ReadyToPersist ||
         !summary->accepted_for_receipt_persistence ||
         summary->receipt_persistence_blocker.has_value()) {
         std::cerr << "unexpected durable store import receipt persistence review summary\n";
@@ -1313,7 +1315,7 @@ int validate_durable_store_import_receipt_persistence_review_rejects_unsupported
     summary->source_durable_store_import_decision_receipt_persistence_request_format_version =
         "ahfl.durable-store-import-decision-receipt-persistence-request.v999";
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_persistence_review_summary(*summary);
+        validate_persistence_review_summary(*summary);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source persistence request format to fail\n";
         return 1;
@@ -1333,7 +1335,7 @@ int build_durable_store_import_receipt_persistence_review_ready_request_ok() {
     }
 
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_review_summary(*request);
+        build_persistence_review_summary(*request);
     if (summary.has_errors() || !summary.summary.has_value()) {
         summary.diagnostics.render(std::cout);
         return 1;
@@ -1341,10 +1343,10 @@ int build_durable_store_import_receipt_persistence_review_ready_request_ok() {
 
     const auto &value = *summary.summary;
     if (value.receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::ReadyToPersist ||
+            PersistenceRequestStatus::ReadyToPersist ||
         !value.accepted_for_receipt_persistence || value.receipt_persistence_blocker.has_value() ||
         value.next_action != ahfl::durable_store_import::
-                                 DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+                                 PersistenceReviewNextActionKind::
                                      HandoffDurableStoreImportDecisionReceiptPersistenceRequest) {
         std::cerr << "unexpected ready durable store import receipt persistence review summary\n";
         return 1;
@@ -1360,7 +1362,7 @@ int build_durable_store_import_receipt_persistence_review_rejected_request_ok() 
     }
 
     const auto decision =
-        ahfl::durable_store_import::build_durable_store_import_decision(*source_request);
+        ahfl::durable_store_import::build_decision(*source_request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -1377,7 +1379,7 @@ int build_durable_store_import_receipt_persistence_review_rejected_request_ok() 
     }
 
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_review_summary(*request);
+        build_persistence_review_summary(*request);
     if (summary.has_errors() || !summary.summary.has_value()) {
         summary.diagnostics.render(std::cout);
         return 1;
@@ -1385,10 +1387,10 @@ int build_durable_store_import_receipt_persistence_review_rejected_request_ok() 
 
     const auto &value = *summary.summary;
     if (value.receipt_persistence_request_status != ahfl::durable_store_import::
-            DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected ||
+            PersistenceRequestStatus::Rejected ||
         value.accepted_for_receipt_persistence || !value.receipt_persistence_blocker.has_value() ||
         value.next_action != ahfl::durable_store_import::
-                                 DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+                                 PersistenceReviewNextActionKind::
                                      InvestigateDurableStoreImportDecisionReceiptPersistenceRejection) {
         std::cerr << "unexpected rejected durable store import receipt persistence review summary\n";
         return 1;
@@ -1407,7 +1409,7 @@ int build_durable_store_import_receipt_persistence_review_rejects_invalid_reques
     invalid_request.format_version =
         "ahfl.durable-store-import-decision-receipt-persistence-request.v999";
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_review_summary(invalid_request);
+        build_persistence_review_summary(invalid_request);
     if (!summary.has_errors()) {
         std::cerr << "expected invalid durable store import receipt persistence request to fail\n";
         return 1;
@@ -1427,7 +1429,7 @@ int validate_durable_store_import_receipt_review_ok() {
     }
 
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_review_summary(*summary);
+        validate_receipt_review_summary(*summary);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
         return 1;
@@ -1446,7 +1448,7 @@ int validate_durable_store_import_receipt_review_rejects_unsupported_source_rece
     invalid_summary.source_durable_store_import_decision_receipt_format_version =
         "ahfl.durable-store-import-decision-receipt.v999";
     const auto validation = ahfl::durable_store_import::
-        validate_durable_store_import_decision_receipt_review_summary(invalid_summary);
+        validate_receipt_review_summary(invalid_summary);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source receipt format to fail\n";
         return 1;
@@ -1466,7 +1468,7 @@ int build_durable_store_import_receipt_review_ready_receipt_ok() {
     }
 
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_review_summary(*receipt);
+        build_receipt_review_summary(*receipt);
     if (summary.has_errors() || !summary.summary.has_value()) {
         summary.diagnostics.render(std::cout);
         return 1;
@@ -1474,10 +1476,10 @@ int build_durable_store_import_receipt_review_ready_receipt_ok() {
 
     const auto &value = *summary.summary;
     if (value.receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::ReadyForArchive ||
+            ahfl::durable_store_import::ReceiptStatus::ReadyForArchive ||
         !value.accepted_for_receipt_archive || value.receipt_blocker.has_value() ||
         value.next_action != ahfl::durable_store_import::
-                                 DurableStoreImportDecisionReceiptReviewNextActionKind::
+                                 ReceiptReviewNextActionKind::
                                      HandoffDurableStoreImportDecisionReceipt) {
         std::cerr << "unexpected ready durable store import receipt review summary\n";
         return 1;
@@ -1492,7 +1494,7 @@ int build_durable_store_import_receipt_review_rejected_receipt_ok() {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
@@ -1504,7 +1506,7 @@ int build_durable_store_import_receipt_review_rejected_receipt_ok() {
     }
 
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_review_summary(*receipt);
+        build_receipt_review_summary(*receipt);
     if (summary.has_errors() || !summary.summary.has_value()) {
         summary.diagnostics.render(std::cout);
         return 1;
@@ -1512,10 +1514,10 @@ int build_durable_store_import_receipt_review_rejected_receipt_ok() {
 
     const auto &value = *summary.summary;
     if (value.receipt_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionReceiptStatus::Rejected ||
+            ahfl::durable_store_import::ReceiptStatus::Rejected ||
         value.accepted_for_receipt_archive || !value.receipt_blocker.has_value() ||
         value.next_action != ahfl::durable_store_import::
-                                 DurableStoreImportDecisionReceiptReviewNextActionKind::
+                                 ReceiptReviewNextActionKind::
                                      InvestigateDurableStoreImportDecisionReceiptRejection) {
         std::cerr << "unexpected rejected durable store import receipt review summary\n";
         return 1;
@@ -1533,7 +1535,7 @@ int build_durable_store_import_receipt_review_rejects_invalid_receipt() {
     auto invalid_receipt = *receipt;
     invalid_receipt.format_version = "ahfl.durable-store-import-decision-receipt.v999";
     const auto summary = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_review_summary(invalid_receipt);
+        build_receipt_review_summary(invalid_receipt);
     if (!summary.has_errors()) {
         std::cerr << "expected invalid durable store import receipt to fail\n";
         return 1;
@@ -1545,21 +1547,21 @@ int build_durable_store_import_receipt_review_rejects_invalid_receipt() {
                : 1;
 }
 
-int validate_durable_store_import_decision_review_ok() {
+int validate_decision_review_ok() {
     const auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
     }
 
     const auto review =
-        ahfl::durable_store_import::build_durable_store_import_decision_review_summary(*decision);
+        ahfl::durable_store_import::build_decision_review_summary(*decision);
     if (review.has_errors() || !review.summary.has_value()) {
         review.diagnostics.render(std::cout);
         return 1;
     }
 
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_review_summary(
+        ahfl::durable_store_import::validate_decision_review_summary(
             *review.summary);
     if (validation.has_errors()) {
         validation.diagnostics.render(std::cout);
@@ -1569,14 +1571,14 @@ int validate_durable_store_import_decision_review_ok() {
     return 0;
 }
 
-int validate_durable_store_import_decision_review_rejects_unsupported_source_decision_format() {
+int validate_decision_review_rejects_unsupported_source_decision_format() {
     const auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
     }
 
     const auto built =
-        ahfl::durable_store_import::build_durable_store_import_decision_review_summary(*decision);
+        ahfl::durable_store_import::build_decision_review_summary(*decision);
     if (built.has_errors() || !built.summary.has_value()) {
         built.diagnostics.render(std::cout);
         return 1;
@@ -1586,7 +1588,7 @@ int validate_durable_store_import_decision_review_rejects_unsupported_source_dec
     summary.source_durable_store_import_decision_format_version =
         "ahfl.durable-store-import-decision.v999";
     const auto validation =
-        ahfl::durable_store_import::validate_durable_store_import_decision_review_summary(summary);
+        ahfl::durable_store_import::validate_decision_review_summary(summary);
     if (!validation.has_errors()) {
         std::cerr << "expected unsupported source decision format to fail\n";
         return 1;
@@ -1598,14 +1600,14 @@ int validate_durable_store_import_decision_review_rejects_unsupported_source_dec
                : 1;
 }
 
-int build_durable_store_import_decision_review_accepted_ok() {
+int build_decision_review_accepted_ok() {
     const auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
     }
 
     const auto review =
-        ahfl::durable_store_import::build_durable_store_import_decision_review_summary(*decision);
+        ahfl::durable_store_import::build_decision_review_summary(*decision);
     if (review.has_errors() || !review.summary.has_value()) {
         review.diagnostics.render(std::cout);
         return 1;
@@ -1613,10 +1615,10 @@ int build_durable_store_import_decision_review_accepted_ok() {
 
     const auto &summary = *review.summary;
     if (summary.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Accepted ||
+            ahfl::durable_store_import::DecisionStatus::Accepted ||
         !summary.accepted_for_future_execution || summary.decision_blocker.has_value() ||
         summary.next_action != ahfl::durable_store_import::
-                                   DurableStoreImportDecisionReviewNextActionKind::
+                                   DecisionReviewNextActionKind::
                                        HandoffDurableStoreImportDecision) {
         std::cerr << "unexpected accepted durable store import decision review\n";
         return 1;
@@ -1625,19 +1627,19 @@ int build_durable_store_import_decision_review_accepted_ok() {
     return 0;
 }
 
-int build_durable_store_import_decision_review_rejected_ok() {
+int build_decision_review_rejected_ok() {
     const auto request = make_request(make_failed_descriptor());
     if (!request.has_value()) {
         return 1;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     if (decision.has_errors() || !decision.decision.has_value()) {
         decision.diagnostics.render(std::cout);
         return 1;
     }
 
-    const auto review = ahfl::durable_store_import::build_durable_store_import_decision_review_summary(
+    const auto review = ahfl::durable_store_import::build_decision_review_summary(
         *decision.decision);
     if (review.has_errors() || !review.summary.has_value()) {
         review.diagnostics.render(std::cout);
@@ -1646,10 +1648,10 @@ int build_durable_store_import_decision_review_rejected_ok() {
 
     const auto &summary = *review.summary;
     if (summary.decision_status !=
-            ahfl::durable_store_import::DurableStoreImportDecisionStatus::Rejected ||
+            ahfl::durable_store_import::DecisionStatus::Rejected ||
         summary.accepted_for_future_execution || !summary.decision_blocker.has_value() ||
         summary.next_action != ahfl::durable_store_import::
-                                   DurableStoreImportDecisionReviewNextActionKind::
+                                   DecisionReviewNextActionKind::
                                        InvestigateDurableStoreImportDecisionRejection) {
         std::cerr << "unexpected rejected durable store import decision review\n";
         return 1;
@@ -1658,7 +1660,7 @@ int build_durable_store_import_decision_review_rejected_ok() {
     return 0;
 }
 
-int build_durable_store_import_decision_review_rejects_invalid_decision() {
+int build_decision_review_rejects_invalid_decision() {
     const auto decision = make_valid_decision();
     if (!decision.has_value()) {
         return 1;
@@ -1666,7 +1668,7 @@ int build_durable_store_import_decision_review_rejects_invalid_decision() {
 
     auto invalid_decision = *decision;
     invalid_decision.format_version = "ahfl.durable-store-import-decision.v999";
-    const auto review = ahfl::durable_store_import::build_durable_store_import_decision_review_summary(
+    const auto review = ahfl::durable_store_import::build_decision_review_summary(
         invalid_decision);
     if (!review.has_errors()) {
         std::cerr << "expected invalid durable store import decision to fail\n";
@@ -1675,6 +1677,461 @@ int build_durable_store_import_decision_review_rejects_invalid_decision() {
 
     return ahfl::test_support::diagnostics_contain(review.diagnostics,
                                "durable store import decision format_version must be")
+               ? 0
+               : 1;
+}
+
+// V0.19: Receipt Persistence Response tests
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::PersistenceResponse>
+make_response_from_persistence_request(
+    const ahfl::durable_store_import::PersistenceRequest &request) {
+    const auto response = ahfl::durable_store_import::
+        build_persistence_response(request);
+    if (response.has_errors() || !response.response.has_value()) {
+        response.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *response.response;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::PersistenceResponse>
+make_valid_receipt_persistence_response() {
+    const auto request = make_valid_receipt_persistence_request();
+    if (!request.has_value()) {
+        return std::nullopt;
+    }
+
+    return make_response_from_persistence_request(*request);
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::PersistenceResponseReviewSummary>
+make_valid_receipt_persistence_response_review_summary() {
+    const auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto summary = ahfl::durable_store_import::
+        build_persistence_response_review(*response);
+    if (summary.has_errors() || !summary.review.has_value()) {
+        summary.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *summary.review;
+}
+
+int validate_durable_store_import_receipt_persistence_response_ok() {
+    const auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (response->response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Accepted ||
+        !response->acknowledged_for_response ||
+        response->response_blocker.has_value()) {
+        std::cerr << "unexpected durable store import receipt persistence response\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_receipt_persistence_response_blocked_ok() {
+    const auto source_request = make_request(make_blocked_descriptor());
+    if (!source_request.has_value()) {
+        return 1;
+    }
+
+    const auto decision =
+        ahfl::durable_store_import::build_decision(*source_request);
+    if (decision.has_errors() || !decision.decision.has_value()) {
+        decision.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto receipt = make_receipt_from_decision(*decision.decision);
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    const auto request = make_persistence_request_from_receipt(*receipt);
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const auto response = make_response_from_persistence_request(*request);
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (response->response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Blocked ||
+        response->acknowledged_for_response ||
+        !response->response_blocker.has_value() ||
+        response->response_blocker->kind != ahfl::durable_store_import::
+            PersistenceResponseBlockerKind::MissingRequiredAdapterCapability) {
+        std::cerr << "unexpected blocked durable store import receipt persistence response\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_receipt_persistence_response_deferred_ok() {
+    const auto source_request = make_request(make_partial_terminal_descriptor());
+    if (!source_request.has_value()) {
+        return 1;
+    }
+
+    const auto decision =
+        ahfl::durable_store_import::build_decision(*source_request);
+    if (decision.has_errors() || !decision.decision.has_value()) {
+        decision.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto receipt = make_receipt_from_decision(*decision.decision);
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    const auto request = make_persistence_request_from_receipt(*receipt);
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const auto response = make_response_from_persistence_request(*request);
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (response->response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Deferred ||
+        response->acknowledged_for_response ||
+        !response->response_blocker.has_value() ||
+        response->response_blocker->kind != ahfl::durable_store_import::
+            PersistenceResponseBlockerKind::PartialPersistenceState) {
+        std::cerr << "unexpected deferred durable store import receipt persistence response\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_receipt_persistence_response_rejected_ok() {
+    const auto source_request = make_request(make_failed_descriptor());
+    if (!source_request.has_value()) {
+        return 1;
+    }
+
+    const auto decision =
+        ahfl::durable_store_import::build_decision(*source_request);
+    if (decision.has_errors() || !decision.decision.has_value()) {
+        decision.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto receipt = make_receipt_from_decision(*decision.decision);
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    const auto request = make_persistence_request_from_receipt(*receipt);
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const auto response = make_response_from_persistence_request(*request);
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (response->response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Rejected ||
+        response->acknowledged_for_response ||
+        !response->response_blocker.has_value() ||
+        response->response_blocker->kind != ahfl::durable_store_import::
+            PersistenceResponseBlockerKind::PersistenceWorkflowFailure) {
+        std::cerr << "unexpected rejected durable store import receipt persistence response\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_receipt_persistence_response_rejects_missing_response_identity() {
+    auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    response->durable_store_import_receipt_persistence_response_identity.clear();
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (!validation.has_errors()) {
+        std::cerr << "expected missing durable store import receipt persistence response identity "
+                     "to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                               "durable_store_import_receipt_persistence_response_identity must not be empty")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_receipt_persistence_response_rejects_unsupported_source_request_format() {
+    auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    response->source_durable_store_import_decision_receipt_persistence_request_format_version =
+        "ahfl.durable-store-import-decision-receipt-persistence-request.v999";
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (!validation.has_errors()) {
+        std::cerr << "expected unsupported source persistence request format to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics,
+               "source_durable_store_import_decision_receipt_persistence_request_format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_receipt_persistence_response_rejects_accepted_with_blocker() {
+    auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    response->response_blocker = ahfl::durable_store_import::PersistenceResponseBlocker{
+        .kind = ahfl::durable_store_import::PersistenceResponseBlockerKind::SourcePersistenceRequestBlocked,
+        .message = "unexpected response blocker",
+        .required_capability = std::nullopt,
+    };
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response(*response);
+    if (!validation.has_errors()) {
+        std::cerr << "expected accepted response with blocker to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics,
+               "cannot contain response_blocker when acknowledged_for_response is true")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_receipt_persistence_response_ready_request() {
+    const auto request = make_valid_receipt_persistence_request();
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const auto response = ahfl::durable_store_import::
+        build_persistence_response(*request);
+    if (response.has_errors() || !response.response.has_value()) {
+        response.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto &value = *response.response;
+    if (value.response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Accepted ||
+        !value.acknowledged_for_response ||
+        value.response_blocker.has_value() ||
+        value.receipt_persistence_response_boundary_kind != ahfl::durable_store_import::
+            PersistenceResponseBoundaryKind::AdapterResponseConsumable ||
+        value.durable_store_import_receipt_persistence_response_identity !=
+            "durable-store-import-receipt-persistence-response::workflow-value-flow::run-partial-001::accepted") {
+        std::cerr << "unexpected ready durable store import receipt persistence response bootstrap "
+                     "result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_receipt_persistence_response_rejects_invalid_request() {
+    const auto request = make_valid_receipt_persistence_request();
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    auto invalid_request = *request;
+    invalid_request.format_version =
+        "ahfl.durable-store-import-decision-receipt-persistence-request.v999";
+    const auto response = ahfl::durable_store_import::
+        build_persistence_response(invalid_request);
+    if (!response.has_errors()) {
+        std::cerr << "expected invalid durable store import receipt persistence request to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               response.diagnostics,
+               "durable store import receipt persistence request format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_receipt_persistence_response_review_ok() {
+    const auto summary = make_valid_receipt_persistence_response_review_summary();
+    if (!summary.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::
+        validate_persistence_response_review(*summary);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (summary->response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Accepted ||
+        !summary->acknowledged_for_response ||
+        summary->response_blocker.has_value()) {
+        std::cerr << "unexpected durable store import receipt persistence response review summary\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_receipt_persistence_response_review_ready_response_ok() {
+    const auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto summary = ahfl::durable_store_import::
+        build_persistence_response_review(*response);
+    if (summary.has_errors() || !summary.review.has_value()) {
+        summary.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto &value = *summary.review;
+    if (value.response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Accepted ||
+        !value.acknowledged_for_response || value.response_blocker.has_value() ||
+        value.next_action != ahfl::durable_store_import::
+                                 PersistenceResponseReviewNextActionKind::AcknowledgeResponse) {
+        std::cerr << "unexpected ready durable store import receipt persistence response review summary\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_receipt_persistence_response_review_rejected_response_ok() {
+    const auto source_request = make_request(make_failed_descriptor());
+    if (!source_request.has_value()) {
+        return 1;
+    }
+
+    const auto decision =
+        ahfl::durable_store_import::build_decision(*source_request);
+    if (decision.has_errors() || !decision.decision.has_value()) {
+        decision.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto receipt = make_receipt_from_decision(*decision.decision);
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    const auto request = make_persistence_request_from_receipt(*receipt);
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const auto response = make_response_from_persistence_request(*request);
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto summary = ahfl::durable_store_import::
+        build_persistence_response_review(*response);
+    if (summary.has_errors() || !summary.review.has_value()) {
+        summary.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto &value = *summary.review;
+    if (value.response_status != ahfl::durable_store_import::
+            PersistenceResponseStatus::Rejected ||
+        value.acknowledged_for_response || !value.response_blocker.has_value() ||
+        value.next_action != ahfl::durable_store_import::
+                                 PersistenceResponseReviewNextActionKind::ReviewFailure) {
+        std::cerr << "unexpected rejected durable store import receipt persistence response review summary\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_receipt_persistence_response_review_rejects_invalid_response() {
+    const auto response = make_valid_receipt_persistence_response();
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    auto invalid_response = *response;
+    invalid_response.format_version =
+        "ahfl.durable-store-import-decision-receipt-persistence-response.v999";
+    const auto summary = ahfl::durable_store_import::
+        build_persistence_response_review(invalid_response);
+    if (!summary.has_errors()) {
+        std::cerr << "expected invalid durable store import receipt persistence response to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               summary.diagnostics,
+               "durable store import receipt persistence response format_version must be")
                ? 0
                : 1;
 }
@@ -1690,54 +2147,54 @@ int main(int argc, char **argv) {
     const std::string_view command = argv[1];
 
     if (command == "validate-durable-store-import-decision-ok") {
-        return validate_durable_store_import_decision_ok();
+        return validate_decision_ok();
     }
 
     if (command == "validate-durable-store-import-decision-blocked-ok") {
-        return validate_durable_store_import_decision_blocked_ok();
+        return validate_decision_blocked_ok();
     }
 
     if (command == "validate-durable-store-import-decision-deferred-ok") {
-        return validate_durable_store_import_decision_deferred_ok();
+        return validate_decision_deferred_ok();
     }
 
     if (command == "validate-durable-store-import-decision-rejected-ok") {
-        return validate_durable_store_import_decision_rejected_ok();
+        return validate_decision_rejected_ok();
     }
 
     if (command == "validate-durable-store-import-decision-rejects-missing-decision-identity") {
-        return validate_durable_store_import_decision_rejects_missing_decision_identity();
+        return validate_decision_rejects_missing_decision_identity();
     }
 
     if (command == "validate-durable-store-import-decision-rejects-accepted-with-blocker") {
-        return validate_durable_store_import_decision_rejects_accepted_with_blocker();
+        return validate_decision_rejects_accepted_with_blocker();
     }
 
     if (command ==
         "validate-durable-store-import-decision-rejects-unsupported-source-request-format") {
-        return validate_durable_store_import_decision_rejects_unsupported_source_request_format();
+        return validate_decision_rejects_unsupported_source_request_format();
     }
 
     if (command ==
         "validate-durable-store-import-decision-rejects-adapter-decision-consumable-blocked") {
-        return validate_durable_store_import_decision_rejects_adapter_decision_consumable_blocked();
+        return validate_decision_rejects_adapter_decision_consumable_blocked();
     }
 
     if (command ==
         "validate-durable-store-import-decision-rejects-rejected-without-failure-summary") {
-        return validate_durable_store_import_decision_rejects_rejected_without_failure_summary();
+        return validate_decision_rejects_rejected_without_failure_summary();
     }
 
     if (command == "build-durable-store-import-decision-ready-request") {
-        return build_durable_store_import_decision_ready_request();
+        return build_decision_ready_request();
     }
 
     if (command == "build-durable-store-import-decision-completed-request") {
-        return build_durable_store_import_decision_completed_request();
+        return build_decision_completed_request();
     }
 
     if (command == "build-durable-store-import-decision-rejects-invalid-request") {
-        return build_durable_store_import_decision_rejects_invalid_request();
+        return build_decision_rejects_invalid_request();
     }
 
     if (command == "validate-durable-store-import-receipt-ok") {
@@ -1886,24 +2343,84 @@ int main(int argc, char **argv) {
     }
 
     if (command == "validate-durable-store-import-decision-review-ok") {
-        return validate_durable_store_import_decision_review_ok();
+        return validate_decision_review_ok();
     }
 
     if (command ==
         "validate-durable-store-import-decision-review-rejects-unsupported-source-decision-format") {
-        return validate_durable_store_import_decision_review_rejects_unsupported_source_decision_format();
+        return validate_decision_review_rejects_unsupported_source_decision_format();
     }
 
     if (command == "build-durable-store-import-decision-review-accepted-ok") {
-        return build_durable_store_import_decision_review_accepted_ok();
+        return build_decision_review_accepted_ok();
     }
 
     if (command == "build-durable-store-import-decision-review-rejected-ok") {
-        return build_durable_store_import_decision_review_rejected_ok();
+        return build_decision_review_rejected_ok();
     }
 
     if (command == "build-durable-store-import-decision-review-rejects-invalid-decision") {
-        return build_durable_store_import_decision_review_rejects_invalid_decision();
+        return build_decision_review_rejects_invalid_decision();
+    }
+
+    // V0.19: Receipt Persistence Response tests
+    if (command == "validate-durable-store-import-receipt-persistence-response-ok") {
+        return validate_durable_store_import_receipt_persistence_response_ok();
+    }
+
+    if (command == "validate-durable-store-import-receipt-persistence-response-blocked-ok") {
+        return validate_durable_store_import_receipt_persistence_response_blocked_ok();
+    }
+
+    if (command == "validate-durable-store-import-receipt-persistence-response-deferred-ok") {
+        return validate_durable_store_import_receipt_persistence_response_deferred_ok();
+    }
+
+    if (command == "validate-durable-store-import-receipt-persistence-response-rejected-ok") {
+        return validate_durable_store_import_receipt_persistence_response_rejected_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-receipt-persistence-response-rejects-missing-response-identity") {
+        return validate_durable_store_import_receipt_persistence_response_rejects_missing_response_identity();
+    }
+
+    if (command ==
+        "validate-durable-store-import-receipt-persistence-response-rejects-unsupported-source-request-format") {
+        return validate_durable_store_import_receipt_persistence_response_rejects_unsupported_source_request_format();
+    }
+
+    if (command ==
+        "validate-durable-store-import-receipt-persistence-response-rejects-accepted-with-blocker") {
+        return validate_durable_store_import_receipt_persistence_response_rejects_accepted_with_blocker();
+    }
+
+    if (command == "build-durable-store-import-receipt-persistence-response-ready-request") {
+        return build_durable_store_import_receipt_persistence_response_ready_request();
+    }
+
+    if (command ==
+        "build-durable-store-import-receipt-persistence-response-rejects-invalid-request") {
+        return build_durable_store_import_receipt_persistence_response_rejects_invalid_request();
+    }
+
+    if (command == "validate-durable-store-import-receipt-persistence-response-review-ok") {
+        return validate_durable_store_import_receipt_persistence_response_review_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-receipt-persistence-response-review-ready-response-ok") {
+        return build_durable_store_import_receipt_persistence_response_review_ready_response_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-receipt-persistence-response-review-rejected-response-ok") {
+        return build_durable_store_import_receipt_persistence_response_review_rejected_response_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-receipt-persistence-response-review-rejects-invalid-response") {
+        return build_durable_store_import_receipt_persistence_response_review_rejects_invalid_response();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

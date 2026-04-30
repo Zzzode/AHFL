@@ -4,39 +4,42 @@
 #include <string>
 #include <string_view>
 
+#include "ahfl/durable_store_import/common.hpp"
 #include "ahfl/durable_store_import/request.hpp"
 
 namespace ahfl::durable_store_import {
 
-inline constexpr std::string_view kDurableStoreImportDecisionFormatVersion =
+// Format version - stable contract, DO NOT CHANGE
+inline constexpr std::string_view kDecisionFormatVersion =
     "ahfl.durable-store-import-decision.v1";
 
-enum class DurableStoreImportDecisionStatus {
+// Legacy alias for backward compatibility
+inline constexpr std::string_view kDurableStoreImportDecisionFormatVersion =
+    kDecisionFormatVersion;
+
+enum class DecisionStatus {
     Accepted,
     Blocked,
     Deferred,
     Rejected,
 };
 
-enum class DurableStoreImportDecisionOutcome {
+// Legacy alias
+using DurableStoreImportDecisionStatus [[deprecated("Use DecisionStatus")]] = DecisionStatus;
+
+enum class DecisionOutcome {
     AcceptRequest,
     BlockRequest,
     DeferPartialRequest,
     RejectFailedRequest,
 };
 
+// Legacy alias
+using DurableStoreImportDecisionOutcome [[deprecated("Use DecisionOutcome")]] = DecisionOutcome;
+
 enum class DecisionBoundaryKind {
     LocalContractOnly,
     AdapterDecisionConsumable,
-};
-
-enum class AdapterCapabilityKind {
-    ConsumeStoreImportDescriptor,
-    ConsumeExportManifest,
-    ConsumePersistenceDescriptor,
-    ConsumeHumanReviewContext,
-    ConsumeCheckpointRecord,
-    PreservePartialWorkflowState,
 };
 
 enum class DecisionBlockerKind {
@@ -52,10 +55,10 @@ struct DecisionBlocker {
     std::optional<AdapterCapabilityKind> required_capability;
 };
 
-struct DurableStoreImportDecision {
-    std::string format_version{std::string(kDurableStoreImportDecisionFormatVersion)};
+struct Decision {
+    std::string format_version{std::string(kDecisionFormatVersion)};
     std::string source_durable_store_import_request_format_version{
-        std::string(kDurableStoreImportRequestFormatVersion)};
+        std::string(kRequestFormatVersion)};
     std::string source_store_import_descriptor_format_version{
         std::string(store_import::kStoreImportDescriptorFormatVersion)};
     std::string source_execution_plan_format_version{
@@ -89,7 +92,7 @@ struct DurableStoreImportDecision {
         persistence_export::PersistenceExportManifestStatus::Blocked};
     store_import::StoreImportDescriptorStatus descriptor_status{
         store_import::StoreImportDescriptorStatus::Blocked};
-    DurableStoreImportRequestStatus request_status{DurableStoreImportRequestStatus::Blocked};
+    RequestStatus request_status{RequestStatus::Blocked};
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
@@ -98,16 +101,17 @@ struct DurableStoreImportDecision {
     std::string planned_durable_identity;
     RequestBoundaryKind request_boundary_kind{RequestBoundaryKind::LocalIntentOnly};
     DecisionBoundaryKind decision_boundary_kind{DecisionBoundaryKind::LocalContractOnly};
-    DurableStoreImportDecisionStatus decision_status{
-        DurableStoreImportDecisionStatus::Blocked};
-    DurableStoreImportDecisionOutcome decision_outcome{
-        DurableStoreImportDecisionOutcome::BlockRequest};
+    DecisionStatus decision_status{DecisionStatus::Blocked};
+    DecisionOutcome decision_outcome{DecisionOutcome::BlockRequest};
     bool accepted_for_future_execution{false};
     std::optional<AdapterCapabilityKind> next_required_adapter_capability;
     std::optional<DecisionBlocker> decision_blocker;
 };
 
-struct DurableStoreImportDecisionValidationResult {
+// Legacy alias for backward compatibility
+using DurableStoreImportDecision [[deprecated("Use Decision")]] = Decision;
+
+struct DecisionValidationResult {
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -115,8 +119,11 @@ struct DurableStoreImportDecisionValidationResult {
     }
 };
 
-struct DurableStoreImportDecisionResult {
-    std::optional<DurableStoreImportDecision> decision;
+// Legacy alias
+using DurableStoreImportDecisionValidationResult [[deprecated("Use DecisionValidationResult")]] = DecisionValidationResult;
+
+struct DecisionResult {
+    std::optional<Decision> decision;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -124,10 +131,21 @@ struct DurableStoreImportDecisionResult {
     }
 };
 
-[[nodiscard]] DurableStoreImportDecisionValidationResult
-validate_durable_store_import_decision(const DurableStoreImportDecision &decision);
+// Legacy alias
+using DurableStoreImportDecisionResult [[deprecated("Use DecisionResult")]] = DecisionResult;
 
-[[nodiscard]] DurableStoreImportDecisionResult
-build_durable_store_import_decision(const DurableStoreImportRequest &request);
+[[nodiscard]] DecisionValidationResult validate_decision(const Decision &decision);
+[[nodiscard]] DecisionResult build_decision(const Request &request);
+
+// Legacy function names - delegate to new functions
+[[nodiscard]] inline DecisionValidationResult
+validate_durable_store_import_decision(const Decision &decision) {
+    return validate_decision(decision);
+}
+
+[[nodiscard]] inline DecisionResult
+build_durable_store_import_decision(const Request &request) {
+    return build_decision(request);
+}
 
 } // namespace ahfl::durable_store_import

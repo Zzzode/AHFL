@@ -1,6 +1,6 @@
 # AHFL V0.16 Roadmap
 
-本文给出 AHFL 在 V0.15 durable store import request / review 闭环完成之后的下一阶段实施路线。V0.16 的重点不是直接交付真实 durable store adapter、object uploader、database writer、resume token、import receipt 或 production recovery，而是把已经稳定的 `DurableStoreImportRequest` 推进为“可表达 future adapter contract decision、可冻结 capability gap / decision blocker、可被 future real durable store adapter 稳定消费”的下一层边界。
+本文给出 AHFL 在 V0.15 durable store import request / review 闭环完成之后的下一阶段实施路线。V0.16 的重点不是直接交付真实 durable store adapter、object uploader、database writer、resume token、import receipt 或 production recovery，而是把已经稳定的 `Request` 推进为“可表达 future adapter contract decision、可冻结 capability gap / decision blocker、可被 future real durable store adapter 稳定消费”的下一层边界。
 
 基线输入：
 
@@ -19,7 +19,7 @@
 
 1. V0.15 已完成 durable store import request / review 的模型、validation、bootstrap、CLI/backend 输出、golden regression、compatibility、consumer matrix、contributor guide 与 CI 闭环。
 2. 当前仓库已经能稳定跑通 `package -> execution plan -> runtime session -> execution journal -> replay -> scheduler snapshot -> checkpoint record -> persistence descriptor -> export manifest -> store import descriptor -> durable store import request -> durable store import review` 的本地 deterministic 路径。
-3. 当前仓库已提供 `DurableStoreImportDecision` / `DurableStoreImportDecisionReviewSummary` 的 direct model、validation、deterministic bootstrap、CLI/backend 输出与 single-file / project / workspace golden regression；其中 end-to-end CLI golden 当前稳定覆盖 accepted-completed、accepted-ready 与 rejected 三类正式 fixture，blocked / deferred 仍由 direct model regression 固定。
+3. 当前仓库已提供 `Decision` / `DecisionReviewSummary` 的 direct model、validation、deterministic bootstrap、CLI/backend 输出与 single-file / project / workspace golden regression；其中 end-to-end CLI golden 当前稳定覆盖 accepted-completed、accepted-ready 与 rejected 三类正式 fixture，blocked / deferred 仍由 direct model regression 固定。
 4. 当前阶段仍明确停留在 local/offline durable adapter contract decision handoff，不进入真实 object storage、database write、import receipt、retry token、host telemetry、provider connector、retention/GC 或 crash recovery runtime 领域。
 
 执行状态约定：
@@ -31,8 +31,8 @@
 
 V0.16 的交付目标是：
 
-1. 冻结 future real durable store adapter 对 V0.15 `DurableStoreImportRequest` 的最小 decision 边界，使其能稳定表达“接受 / 暂缓 / 阻塞 / 拒绝”这一层 machine contract。
-2. 引入最小 `DurableStoreImportDecision` 语义，稳定表达 decision identity、decision outcome、capability gap 与 decision blocker。
+1. 冻结 future real durable store adapter 对 V0.15 `Request` 的最小 decision 边界，使其能稳定表达“接受 / 暂缓 / 阻塞 / 拒绝”这一层 machine contract。
+2. 引入最小 `Decision` 语义，稳定表达 decision identity、decision outcome、capability gap 与 decision blocker。
 3. 让 single-file、project、workspace 与 `--package` 路径都能生成 deterministic durable-adapter-decision-facing prototype 输出。
 4. 冻结 durable decision / review 的 compatibility、consumer matrix 与 contributor guidance，明确 durable request、durable decision、decision review 与 future real adapter / receipt 的职责边界。
 5. 保持 V0.16 仍然是 local/offline durable adapter decision prototype，而不是 production durable store adapter / recovery 平台。
@@ -131,7 +131,7 @@ V0.16 仍然不直接承诺：
 
 ## 当前状态
 
-V0.15 已完成并成为 V0.16 的正式上游基线；当前 `Issue 01-12` 已完成。仓库现已新增 V0.16 scope 文档、decision compatibility 契约、`DurableStoreImportDecision` / `DurableStoreImportDecisionReviewSummary` direct model / validation / bootstrap、CLI/backend 输出、single-file / project / workspace golden、`native-consumer-matrix-v0.16.zh.md`、`contributor-guide-v0.16.zh.md`，并在 CI 中显式执行 `ahfl-v0.16` 切片。V0.16 当前目标链路已稳定为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> DurableStoreImportRequest -> DurableStoreImportDecision -> DurableStoreImportDecisionReviewSummary`。
+V0.15 已完成并成为 V0.16 的正式上游基线；当前 `Issue 01-12` 已完成。仓库现已新增 V0.16 scope 文档、decision compatibility 契约、`Decision` / `DecisionReviewSummary` direct model / validation / bootstrap、CLI/backend 输出、single-file / project / workspace golden、`native-consumer-matrix-v0.16.zh.md`、`contributor-guide-v0.16.zh.md`，并在 CI 中显式执行 `ahfl-v0.16` 切片。V0.16 当前目标链路已稳定为 `ExecutionPlan -> RuntimeSession -> ExecutionJournal -> ReplayView -> SchedulerSnapshot -> CheckpointRecord -> CheckpointPersistenceDescriptor -> PersistenceExportManifest -> StoreImportDescriptor -> Request -> Decision -> DecisionReviewSummary`。
 
 ## 对应 backlog
 

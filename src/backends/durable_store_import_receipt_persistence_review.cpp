@@ -99,17 +99,17 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string request_status_name(
-    durable_store_import::DurableStoreImportRequestStatus status) {
+    durable_store_import::RequestStatus status) {
     switch (status) {
-    case durable_store_import::DurableStoreImportRequestStatus::ReadyForAdapter:
+    case durable_store_import::RequestStatus::ReadyForAdapter:
         return "ready_for_adapter";
-    case durable_store_import::DurableStoreImportRequestStatus::Blocked:
+    case durable_store_import::RequestStatus::Blocked:
         return "blocked";
-    case durable_store_import::DurableStoreImportRequestStatus::TerminalCompleted:
+    case durable_store_import::RequestStatus::TerminalCompleted:
         return "terminal_completed";
-    case durable_store_import::DurableStoreImportRequestStatus::TerminalFailed:
+    case durable_store_import::RequestStatus::TerminalFailed:
         return "terminal_failed";
-    case durable_store_import::DurableStoreImportRequestStatus::TerminalPartial:
+    case durable_store_import::RequestStatus::TerminalPartial:
         return "terminal_partial";
     }
 
@@ -117,15 +117,15 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string decision_status_name(
-    durable_store_import::DurableStoreImportDecisionStatus status) {
+    durable_store_import::DecisionStatus status) {
     switch (status) {
-    case durable_store_import::DurableStoreImportDecisionStatus::Accepted:
+    case durable_store_import::DecisionStatus::Accepted:
         return "accepted";
-    case durable_store_import::DurableStoreImportDecisionStatus::Blocked:
+    case durable_store_import::DecisionStatus::Blocked:
         return "blocked";
-    case durable_store_import::DurableStoreImportDecisionStatus::Deferred:
+    case durable_store_import::DecisionStatus::Deferred:
         return "deferred";
-    case durable_store_import::DurableStoreImportDecisionStatus::Rejected:
+    case durable_store_import::DecisionStatus::Rejected:
         return "rejected";
     }
 
@@ -133,15 +133,15 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string receipt_status_name(
-    durable_store_import::DurableStoreImportDecisionReceiptStatus status) {
+    durable_store_import::ReceiptStatus status) {
     switch (status) {
-    case durable_store_import::DurableStoreImportDecisionReceiptStatus::ReadyForArchive:
+    case durable_store_import::ReceiptStatus::ReadyForArchive:
         return "ready_for_archive";
-    case durable_store_import::DurableStoreImportDecisionReceiptStatus::Blocked:
+    case durable_store_import::ReceiptStatus::Blocked:
         return "blocked";
-    case durable_store_import::DurableStoreImportDecisionReceiptStatus::Deferred:
+    case durable_store_import::ReceiptStatus::Deferred:
         return "deferred";
-    case durable_store_import::DurableStoreImportDecisionReceiptStatus::Rejected:
+    case durable_store_import::ReceiptStatus::Rejected:
         return "rejected";
     }
 
@@ -149,16 +149,16 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string receipt_persistence_request_status_name(
-    durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus status) {
+    durable_store_import::PersistenceRequestStatus status) {
     switch (status) {
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::
+    case durable_store_import::PersistenceRequestStatus::
         ReadyToPersist:
         return "ready_to_persist";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::Blocked:
+    case durable_store_import::PersistenceRequestStatus::Blocked:
         return "blocked";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::Deferred:
+    case durable_store_import::PersistenceRequestStatus::Deferred:
         return "deferred";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestStatus::Rejected:
+    case durable_store_import::PersistenceRequestStatus::Rejected:
         return "rejected";
     }
 
@@ -178,11 +178,11 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string receipt_persistence_boundary_kind_name(
-    durable_store_import::ReceiptPersistenceBoundaryKind kind) {
+    durable_store_import::PersistenceBoundaryKind kind) {
     switch (kind) {
-    case durable_store_import::ReceiptPersistenceBoundaryKind::LocalContractOnly:
+    case durable_store_import::PersistenceBoundaryKind::LocalContractOnly:
         return "local_contract_only";
-    case durable_store_import::ReceiptPersistenceBoundaryKind::
+    case durable_store_import::PersistenceBoundaryKind::
         AdapterReceiptPersistenceConsumable:
         return "adapter_receipt_persistence_consumable";
     }
@@ -191,18 +191,18 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string receipt_persistence_request_outcome_name(
-    durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome outcome) {
+    durable_store_import::PersistenceRequestOutcome outcome) {
     switch (outcome) {
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+    case durable_store_import::PersistenceRequestOutcome::
         PersistReadyReceipt:
         return "persist_ready_receipt";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+    case durable_store_import::PersistenceRequestOutcome::
         BlockBlockedReceipt:
         return "block_blocked_receipt";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+    case durable_store_import::PersistenceRequestOutcome::
         DeferPartialReceipt:
         return "defer_partial_receipt";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceRequestOutcome::
+    case durable_store_import::PersistenceRequestOutcome::
         RejectFailedReceipt:
         return "reject_failed_receipt";
     }
@@ -211,22 +211,22 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string next_action_name(
-    durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind
+    durable_store_import::PersistenceReviewNextActionKind
         action) {
     switch (action) {
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+    case durable_store_import::PersistenceReviewNextActionKind::
         HandoffDurableStoreImportDecisionReceiptPersistenceRequest:
         return "handoff_durable_store_import_decision_receipt_persistence_request";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+    case durable_store_import::PersistenceReviewNextActionKind::
         ResolveRequiredAdapterCapability:
         return "resolve_required_adapter_capability";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+    case durable_store_import::PersistenceReviewNextActionKind::
         PersistCompletedDurableStoreImportDecisionReceipt:
         return "persist_completed_durable_store_import_decision_receipt";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+    case durable_store_import::PersistenceReviewNextActionKind::
         PreservePartialDurableStoreImportDecisionReceipt:
         return "preserve_partial_durable_store_import_decision_receipt";
-    case durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind::
+    case durable_store_import::PersistenceReviewNextActionKind::
         InvestigateDurableStoreImportDecisionReceiptPersistenceRejection:
         return "investigate_durable_store_import_decision_receipt_persistence_rejection";
     }
@@ -254,15 +254,15 @@ void line(std::ostream &out, int indent_level, std::string_view text) {
 }
 
 [[nodiscard]] std::string blocker_kind_name(
-    durable_store_import::ReceiptPersistenceBlockerKind kind) {
+    durable_store_import::PersistenceBlockerKind kind) {
     switch (kind) {
-    case durable_store_import::ReceiptPersistenceBlockerKind::SourceReceiptBlocked:
+    case durable_store_import::PersistenceBlockerKind::SourceReceiptBlocked:
         return "source_receipt_blocked";
-    case durable_store_import::ReceiptPersistenceBlockerKind::MissingRequiredAdapterCapability:
+    case durable_store_import::PersistenceBlockerKind::MissingRequiredAdapterCapability:
         return "missing_required_adapter_capability";
-    case durable_store_import::ReceiptPersistenceBlockerKind::PartialWorkflowState:
+    case durable_store_import::PersistenceBlockerKind::PartialWorkflowState:
         return "partial_workflow_state";
-    case durable_store_import::ReceiptPersistenceBlockerKind::WorkflowFailure:
+    case durable_store_import::PersistenceBlockerKind::WorkflowFailure:
         return "workflow_failure";
     }
 
@@ -304,7 +304,7 @@ void print_failure_summary(std::ostream &out,
 void print_receipt_persistence_blocker(
     std::ostream &out,
     int indent_level,
-    const std::optional<durable_store_import::ReceiptPersistenceBlocker> &blocker) {
+    const std::optional<durable_store_import::PersistenceBlocker> &blocker) {
     line(out, indent_level, "receipt_persistence_blocker {");
     if (!blocker.has_value()) {
         line(out, indent_level + 1, "value none");
@@ -326,7 +326,7 @@ void print_receipt_persistence_blocker(
 } // namespace
 
 void print_durable_store_import_receipt_persistence_review(
-    const durable_store_import::DurableStoreImportDecisionReceiptPersistenceReviewSummary &summary,
+    const durable_store_import::PersistenceReviewSummary &summary,
     std::ostream &out) {
     out << summary.format_version << '\n';
     line(out, 0, "source_persistence_request_format " +

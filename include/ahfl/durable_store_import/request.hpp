@@ -11,16 +11,24 @@
 
 namespace ahfl::durable_store_import {
 
-inline constexpr std::string_view kDurableStoreImportRequestFormatVersion =
+// Format version - stable contract, DO NOT CHANGE
+inline constexpr std::string_view kRequestFormatVersion =
     "ahfl.durable-store-import-request.v1";
 
-enum class DurableStoreImportRequestStatus {
+// Legacy alias for backward compatibility
+inline constexpr std::string_view kDurableStoreImportRequestFormatVersion =
+    kRequestFormatVersion;
+
+enum class RequestStatus {
     ReadyForAdapter,
     Blocked,
     TerminalCompleted,
     TerminalFailed,
     TerminalPartial,
 };
+
+// Legacy alias
+using DurableStoreImportRequestStatus [[deprecated("Use RequestStatus")]] = RequestStatus;
 
 enum class RequestBoundaryKind {
     LocalIntentOnly,
@@ -43,13 +51,16 @@ enum class RequestedArtifactAdapterRole {
     CheckpointPayload,
 };
 
-enum class AdapterBlockerKind {
+enum class RequestBlockerKind {
     WaitingOnRequestedArtifact,
-    MissingDurableStoreImportRequestIdentity,
+    MissingRequestIdentity,
     MissingRequestedArtifactSet,
     WorkflowFailure,
     WorkflowPartial,
 };
+
+// Legacy alias
+using AdapterBlockerKind [[deprecated("Use RequestBlockerKind")]] = RequestBlockerKind;
 
 struct RequestedArtifactEntry {
     RequestedArtifactKind artifact_kind{RequestedArtifactKind::StoreImportDescriptor};
@@ -64,14 +75,17 @@ struct RequestedArtifactSet {
     std::vector<RequestedArtifactEntry> entries;
 };
 
-struct AdapterBlocker {
-    AdapterBlockerKind kind{AdapterBlockerKind::WaitingOnRequestedArtifact};
+struct RequestBlocker {
+    RequestBlockerKind kind{RequestBlockerKind::WaitingOnRequestedArtifact};
     std::string message;
     std::optional<std::string> logical_artifact_name;
 };
 
-struct DurableStoreImportRequest {
-    std::string format_version{std::string(kDurableStoreImportRequestFormatVersion)};
+// Legacy alias
+using AdapterBlocker [[deprecated("Use RequestBlocker")]] = RequestBlocker;
+
+struct Request {
+    std::string format_version{std::string(kRequestFormatVersion)};
     std::string source_store_import_descriptor_format_version{
         std::string(store_import::kStoreImportDescriptorFormatVersion)};
     std::string source_execution_plan_format_version{
@@ -108,17 +122,20 @@ struct DurableStoreImportRequest {
     std::optional<runtime_session::RuntimeFailureSummary> workflow_failure_summary;
     std::string export_package_identity;
     std::string store_import_candidate_identity;
-    std::string durable_store_import_request_identity;
+    std::string durable_store_import_request_identity;  // Keep for JSON compatibility
     std::string planned_durable_identity;
     RequestBoundaryKind request_boundary_kind{RequestBoundaryKind::LocalIntentOnly};
     RequestedArtifactSet requested_artifact_set;
     bool adapter_ready{false};
     std::optional<RequestedArtifactKind> next_required_adapter_artifact_kind;
-    DurableStoreImportRequestStatus request_status{DurableStoreImportRequestStatus::Blocked};
-    std::optional<AdapterBlocker> adapter_blocker;
+    RequestStatus request_status{RequestStatus::Blocked};
+    std::optional<RequestBlocker> adapter_blocker;  // Keep for JSON compatibility
 };
 
-struct DurableStoreImportRequestValidationResult {
+// Legacy alias for backward compatibility
+using DurableStoreImportRequest [[deprecated("Use Request")]] = Request;
+
+struct RequestValidationResult {
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -126,8 +143,11 @@ struct DurableStoreImportRequestValidationResult {
     }
 };
 
-struct DurableStoreImportRequestResult {
-    std::optional<DurableStoreImportRequest> request;
+// Legacy alias
+using DurableStoreImportRequestValidationResult [[deprecated("Use RequestValidationResult")]] = RequestValidationResult;
+
+struct RequestResult {
+    std::optional<Request> request;
     DiagnosticBag diagnostics;
 
     [[nodiscard]] bool has_errors() const noexcept {
@@ -135,10 +155,21 @@ struct DurableStoreImportRequestResult {
     }
 };
 
-[[nodiscard]] DurableStoreImportRequestValidationResult
-validate_durable_store_import_request(const DurableStoreImportRequest &request);
+// Legacy alias
+using DurableStoreImportRequestResult [[deprecated("Use RequestResult")]] = RequestResult;
 
-[[nodiscard]] DurableStoreImportRequestResult
-build_durable_store_import_request(const store_import::StoreImportDescriptor &descriptor);
+[[nodiscard]] RequestValidationResult validate_request(const Request &request);
+[[nodiscard]] RequestResult build_request(const store_import::StoreImportDescriptor &descriptor);
+
+// Legacy function names - delegate to new functions
+[[nodiscard]] inline RequestValidationResult
+validate_durable_store_import_request(const Request &request) {
+    return validate_request(request);
+}
+
+[[nodiscard]] inline RequestResult
+build_durable_store_import_request(const store_import::StoreImportDescriptor &descriptor) {
+    return build_request(descriptor);
+}
 
 } // namespace ahfl::durable_store_import

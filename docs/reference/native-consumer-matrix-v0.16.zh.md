@@ -1,6 +1,6 @@
 # AHFL Native Consumer Matrix V0.16
 
-本文冻结 AHFL V0.16 中 durable-adapter-decision-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`DurableStoreImportRequest`、`DurableStoreImportDecision`、`DurableStoreImportDecisionReviewSummary`、`AuditReport` 与 `DryRunTrace` 各自稳定依赖什么，以及 future real durable store adapter / receipt / recovery explorer 当前应落在哪一层。
+本文冻结 AHFL V0.16 中 durable-adapter-decision-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`Request`、`Decision`、`DecisionReviewSummary`、`AuditReport` 与 `DryRunTrace` 各自稳定依赖什么，以及 future real durable store adapter / receipt / recovery explorer 当前应落在哪一层。
 
 关联文档：
 
@@ -159,11 +159,11 @@ V0.16 当前 durable-adapter-decision-facing consumer 共享入口是：
 9. 若要做 machine-facing store import handoff
    - 再消费 `StoreImportDescriptor`
 10. 若要做 machine-facing durable adapter request handoff
-   - 再消费 `DurableStoreImportRequest`
+   - 再消费 `Request`
 11. 若要做 machine-facing durable adapter decision handoff
-   - 再消费 `DurableStoreImportDecision`
+   - 再消费 `Decision`
 12. 若要做 reviewer-facing durable decision guidance
-   - 最后消费 `DurableStoreImportDecisionReviewSummary`
+   - 最后消费 `DecisionReviewSummary`
 
 ## Future Real Durable Store Adapter 应落在哪里
 
@@ -178,25 +178,25 @@ V0.16 当前 durable-adapter-decision-facing consumer 共享入口是：
 7. `CheckpointPersistenceDescriptor`
 8. `PersistenceExportManifest`
 9. `StoreImportDescriptor`
-10. `DurableStoreImportRequest`
-11. `DurableStoreImportDecision`
-12. `DurableStoreImportDecisionReviewSummary`
+10. `Request`
+11. `Decision`
+12. `DecisionReviewSummary`
 
 这意味着：
 
 1. future real durable store adapter 不应直接从 `ReplayView` / `AuditReport` 倒推 durable decision state
 2. future real durable store adapter 不应直接从 `DryRunTrace` 推导 capability gap、decision blocker、decision status / outcome
-3. `DurableStoreImportDecisionReviewSummary` 是 projection，不是 durable adapter / receipt / recovery protocol
-4. 若以后需要 receipt id / resume token / store location / recovery ABI，应先扩 `DurableStoreImportDecision` compatibility contract，而不是先改 review 输出
+3. `DecisionReviewSummary` 是 projection，不是 durable adapter / receipt / recovery protocol
+4. 若以后需要 receipt id / resume token / store location / recovery ABI，应先扩 `Decision` compatibility contract，而不是先改 review 输出
 
 ## 当前反模式
 
 当前明确不建议：
 
-1. 跳过 `DurableStoreImportDecision`，直接在 `emit-durable-store-import-decision-review` 或外部脚本里私造 decision 状态机
-2. 把 `DurableStoreImportDecisionReviewSummary` 当 durable adapter decision 的第一事实来源
-3. 跳过 `DurableStoreImportRequest`，直接从 `StoreImportDescriptor` 派生 decision identity / decision blocker 并宣称稳定
-4. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `DurableStoreImportRequest` / `DurableStoreImportDecision`，直接从 AST、source、trace 或 host log 重建 adapter decision 语义
+1. 跳过 `Decision`，直接在 `emit-durable-store-import-decision-review` 或外部脚本里私造 decision 状态机
+2. 把 `DecisionReviewSummary` 当 durable adapter decision 的第一事实来源
+3. 跳过 `Request`，直接从 `StoreImportDescriptor` 派生 decision identity / decision blocker 并宣称稳定
+4. 跳过 `RuntimeSession` / `ExecutionJournal` / `ReplayView` / `SchedulerSnapshot` / `CheckpointRecord` / `CheckpointPersistenceDescriptor` / `PersistenceExportManifest` / `StoreImportDescriptor` / `Request` / `Decision`，直接从 AST、source、trace 或 host log 重建 adapter decision 语义
 5. 在 decision / review 中塞入 import receipt id、resume token、store URI、object path、database key、credential、host telemetry 或 provider payload
 6. 在未同步 compatibility / matrix / contributor docs / golden / labels / CI 的情况下静默扩张 durable-adapter-decision-facing 稳定边界
 
