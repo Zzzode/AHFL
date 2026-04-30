@@ -233,6 +233,9 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.20.zh.md`](docs/plan/roadmap-v0.20.zh.md)
+  - [`docs/plan/issue-backlog-v0.20.zh.md`](docs/plan/issue-backlog-v0.20.zh.md)
+- Completed durable-adapter-receipt-persistence-response baseline
   - [`docs/plan/roadmap-v0.19.zh.md`](docs/plan/roadmap-v0.19.zh.md)
   - [`docs/plan/issue-backlog-v0.19.zh.md`](docs/plan/issue-backlog-v0.19.zh.md)
 - Current durable-adapter-receipt-persistence-response boundary

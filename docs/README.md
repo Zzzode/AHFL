@@ -33,8 +33,8 @@ Rules:
 4. `<version>` uses the repository doc version form such as `v0.1`, `v1.0`, `v1.1`.
 5. `<lang>` uses a short language code such as `en` or `zh`.
 6. `<lang>` must reflect the dominant natural language of the prose body, not just the title.
-6. Internal document links should use relative Markdown links, not machine-local absolute paths.
-7. New docs should not be added directly under `docs/` unless they are index files like this `README.md`.
+7. Internal document links should use relative Markdown links, not machine-local absolute paths.
+8. New docs should not be added directly under `docs/` unless they are index files like this `README.md`.
 
 Examples:
 
@@ -99,8 +99,10 @@ Avoid:
 
 ### Plan
 
-- [roadmap-v0.19.zh.md](./plan/roadmap-v0.19.zh.md) - current execution plan
-- [issue-backlog-v0.19.zh.md](./plan/issue-backlog-v0.19.zh.md) - current execution backlog
+- [roadmap-v0.20.zh.md](./plan/roadmap-v0.20.zh.md) - current execution plan
+- [issue-backlog-v0.20.zh.md](./plan/issue-backlog-v0.20.zh.md) - current execution backlog
+- [roadmap-v0.19.zh.md](./plan/roadmap-v0.19.zh.md) - completed baseline
+- [issue-backlog-v0.19.zh.md](./plan/issue-backlog-v0.19.zh.md) - completed baseline
 - [roadmap-v0.18.zh.md](./plan/roadmap-v0.18.zh.md) - completed baseline
 - [issue-backlog-v0.18.zh.md](./plan/issue-backlog-v0.18.zh.md) - completed baseline
 - [roadmap-v0.17.zh.md](./plan/roadmap-v0.17.zh.md) - completed baseline
