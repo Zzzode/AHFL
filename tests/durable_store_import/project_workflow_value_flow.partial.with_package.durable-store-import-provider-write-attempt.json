@@ -1,0 +1,53 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-attempt-preview.v1",
+  "source_durable_store_import_adapter_execution_format_version": "ahfl.durable-store-import-adapter-execution.v1",
+  "source_durable_store_import_decision_receipt_persistence_response_format_version": "ahfl.durable-store-import-decision-receipt-persistence-response.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "durable_store_import_receipt_persistence_response_identity": "durable-store-import-receipt-persistence-response::workflow-value-flow::run-partial-001::accepted",
+  "durable_store_import_adapter_execution_identity": "durable-store-import-adapter-execution::workflow-value-flow::run-partial-001::accepted",
+  "durable_store_import_provider_write_attempt_identity": "durable-store-import-provider-write-attempt::workflow-value-flow::run-partial-001::accepted",
+  "response_status": "accepted",
+  "response_outcome": "accept_persistence_request",
+  "adapter_mutation_status": "persisted",
+  "source_persistence_id": "fake-persistence::workflow-value-flow::run-partial-001::accepted",
+  "provider_config": {
+    "format_version": "ahfl.durable-store-import-provider-adapter-config.v1",
+    "adapter_kind": "provider_neutral_shim",
+    "config_identity": "provider-adapter-config::workflow-value-flow::run-partial-001::provider-neutral",
+    "provider_profile_ref": "provider-neutral-default",
+    "provider_namespace": "provider-neutral::workflow-value-flow",
+    "credential_free": true,
+    "secret_material_reference": null,
+    "endpoint_secret_reference": null,
+    "object_path": null,
+    "database_key": null
+  },
+  "capability_matrix": {
+    "format_version": "ahfl.durable-store-import-provider-capability-matrix.v1",
+    "capability_matrix_identity": "provider-capability-matrix::provider-adapter-config::workflow-value-flow::run-partial-001::provider-neutral",
+    "provider_config_identity": "provider-adapter-config::workflow-value-flow::run-partial-001::provider-neutral",
+    "supports_provider_write": true,
+    "supports_retry_placeholder": true,
+    "supports_resume_placeholder": true,
+    "supports_recovery_handoff": true
+  },
+  "write_intent": {
+    "kind": "provider_persist_receipt",
+    "source_adapter_execution_identity": "durable-store-import-adapter-execution::workflow-value-flow::run-partial-001::accepted",
+    "source_persistence_id": "fake-persistence::workflow-value-flow::run-partial-001::accepted",
+    "provider_namespace": "provider-neutral::workflow-value-flow",
+    "provider_persistence_id": "provider-persistence::workflow-value-flow::run-partial-001::accepted",
+    "mutates_provider": true
+  },
+  "planning_status": "planned",
+  "retry_resume_placeholder": {
+    "retry_placeholder_available": true,
+    "resume_placeholder_available": true,
+    "retry_placeholder_identity": "retry-placeholder::workflow-value-flow::run-partial-001::provider-write",
+    "resume_placeholder_identity": "resume-placeholder::workflow-value-flow::run-partial-001::provider-write"
+  },
+  "failure_attribution": null
+}

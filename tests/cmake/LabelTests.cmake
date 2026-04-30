@@ -1017,3 +1017,57 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_recovery_preview.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_recovery_preview.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.21 v0.21-durable-store-import-provider-adapter-config-model
+    TESTS
+        ahfl.durable_store_import_provider_adapter_config.model.fail_secret_material
+        ahfl.durable_store_import_provider_adapter_config.model.fail_provider_coordinates
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.21 v0.21-durable-store-import-provider-write-attempt-model
+    TESTS
+        ahfl.durable_store_import_provider_write_attempt.model.validate_ok
+        ahfl.durable_store_import_provider_write_attempt.model.validate_rejected_ok
+        ahfl.durable_store_import_provider_write_attempt.model.unsupported_capability
+        ahfl.durable_store_import_provider_write_attempt.model.fail_planned_without_provider_id
+        ahfl.durable_store_import_provider_write_attempt.model.fail_not_planned_mutating_intent
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.21 v0.21-durable-store-import-provider-write-attempt-bootstrap
+    TESTS
+        ahfl.durable_store_import_provider_write_attempt.bootstrap.ready_execution
+        ahfl.durable_store_import_provider_write_attempt.bootstrap.fail_invalid_execution
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.21 v0.21-durable-store-import-provider-recovery-handoff-model
+    TESTS
+        ahfl.durable_store_import_provider_recovery_handoff.model.validate_ok
+        ahfl.durable_store_import_provider_recovery_handoff.bootstrap.unsupported_capability
+        ahfl.durable_store_import_provider_recovery_handoff.bootstrap.fail_invalid_write_attempt
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.21 v0.21-durable-store-import-provider-adapter-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_write_attempt.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_attempt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_attempt.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.21 v0.21-durable-store-import-provider-adapter-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_write_attempt.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_attempt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_attempt.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_recovery_handoff.workspace.workflow_value_flow.partial.with_package
+)

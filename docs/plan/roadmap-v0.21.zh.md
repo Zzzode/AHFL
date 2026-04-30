@@ -15,8 +15,8 @@
 
 1. V0.20 已完成 `Response -> AdapterExecutionReceipt -> RecoveryCommandPreview` 的 local fake durable store contract。
 2. 当前仓库有 deterministic fake persistence id、accepted / rejected / partial CLI golden，以及 accepted、blocked、deferred、rejected direct regression。
-3. 当前仓库仍没有 provider adapter config、provider capability matrix、secret-free endpoint reference、真实 object writer、database writer、retry token、resume token 或 recovery daemon ABI。
-4. V0.21 必须继续复用 V0.20 `AdapterExecutionReceipt`，不得回退读取 reviewer preview、CLI 文本、host log、provider payload 或私有脚本推导 provider adapter state。
+3. 当前仓库已新增 provider adapter config、provider capability matrix、provider write attempt preview、retry / resume placeholder 与 recovery handoff preview。
+4. V0.21 继续复用 V0.20 `AdapterExecutionReceipt`，不得回退读取 reviewer preview、CLI 文本、host log、provider payload 或私有脚本推导 provider adapter state。
 
 执行状态约定：
 
@@ -49,9 +49,9 @@ V0.21 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 01 冻结 V0.21 real provider adapter boundary 与 non-goals
-- [ ] Issue 02 冻结 fake store、provider adapter shim、provider driver 与 production writer 的职责分层
-- [ ] Issue 03 冻结 V0.20 adapter execution 与 future provider-specific adapter 的输入边界
+- [x] Issue 01 冻结 V0.21 real provider adapter boundary 与 non-goals
+- [x] Issue 02 冻结 fake store、provider adapter shim、provider driver 与 production writer 的职责分层
+- [x] Issue 03 冻结 V0.20 adapter execution 与 future provider-specific adapter 的输入边界
 
 目标：
 
@@ -63,9 +63,9 @@ V0.21 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 04 定义 secret-free provider adapter config model
-- [ ] Issue 05 定义 provider capability matrix 与 unsupported capability diagnostics
-- [ ] Issue 06 定义 provider-neutral persistence id namespace 与 write intent model
+- [x] Issue 04 定义 secret-free provider adapter config model
+- [x] Issue 05 定义 provider capability matrix 与 unsupported capability diagnostics
+- [x] Issue 06 定义 provider-neutral persistence id namespace 与 write intent model
 
 目标：
 
@@ -77,9 +77,9 @@ V0.21 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 07 定义 provider write attempt preview / dry-run handoff
-- [ ] Issue 08 定义 retry / resume placeholder 与 failure attribution 分层
-- [ ] Issue 09 定义 recovery handoff preview 与真实 recovery daemon ABI 的边界
+- [x] Issue 07 定义 provider write attempt preview / dry-run handoff
+- [x] Issue 08 定义 retry / resume placeholder 与 failure attribution 分层
+- [x] Issue 09 定义 recovery handoff preview 与真实 recovery daemon ABI 的边界
 
 目标：
 
@@ -91,9 +91,9 @@ V0.21 初始阶段仍不直接承诺：
 
 状态：
 
-- [ ] Issue 10 冻结 V0.21 compatibility contract
-- [ ] Issue 11 更新 native consumer matrix 与 contributor guide
-- [ ] Issue 12 建立 V0.21 regression、CI 与 migration docs 闭环
+- [x] Issue 10 冻结 V0.21 compatibility contract
+- [x] Issue 11 更新 native consumer matrix 与 contributor guide
+- [x] Issue 12 建立 V0.21 regression、CI 与 migration docs 闭环
 
 目标：
 
@@ -103,7 +103,7 @@ V0.21 初始阶段仍不直接承诺：
 
 ## 当前状态
 
-V0.21 当前处于规划启动状态，尚未实现 provider adapter config、provider capability matrix、provider write intent、retry / resume placeholder 或 recovery handoff preview。下一步应从 `Issue 01-03` 开始冻结 provider-neutral boundary、layering 和 V0.20 adapter execution 输入边界，再进入 secret-free provider adapter contract 的模型实现。
+V0.21 已完成 provider-neutral durable store adapter prototype：secret-free provider adapter config、provider capability matrix、provider-neutral write intent、retry / resume placeholder、provider write attempt JSON、provider recovery handoff preview、golden regression、CI 标签与迁移文档均已落地。下一步可以进入 V0.22，开始设计 provider-specific driver extension 和真实 SDK 接入前的配置加载边界。
 
 ## 对应 backlog
 

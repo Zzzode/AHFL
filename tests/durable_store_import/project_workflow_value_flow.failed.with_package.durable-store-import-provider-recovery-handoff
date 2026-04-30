@@ -1,0 +1,25 @@
+ahfl.durable-store-import-provider-recovery-handoff-preview.v1
+source_provider_write_attempt_format ahfl.durable-store-import-provider-write-attempt-preview.v1
+source_adapter_execution_format ahfl.durable-store-import-adapter-execution.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_adapter_execution_identity durable-store-import-adapter-execution::workflow-value-flow::run-failed-001::rejected
+durable_store_import_provider_write_attempt_identity durable-store-import-provider-write-attempt::workflow-value-flow::run-failed-001::rejected
+planning_status not_planned
+provider_persistence_id none
+next_action manual_review_required
+recovery_handoff_boundary provider-neutral write attempt skipped because source adapter execution is not writable
+next_step manual review required before provider recovery handoff can proceed
+retry_resume_placeholder {
+  retry_placeholder_available false
+  resume_placeholder_available false
+  retry_placeholder_identity none
+  resume_placeholder_identity none
+}
+failure_attribution {
+  kind source_execution_not_persisted
+  missing_capability none
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

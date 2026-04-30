@@ -211,3 +211,87 @@ ctest --preset test-asan --output-on-failure
 - `docs/reference/native-consumer-matrix-v0.20.zh.md`
 - `docs/reference/contributor-guide-v0.19.zh.md`
 - `docs/reference/contributor-guide-v0.20.zh.md`
+
+## V0.20 to V0.21
+
+V0.21 extends the V0.20 local fake durable store adapter execution boundary with
+a provider-neutral adapter planning boundary. It keeps consuming the V0.20
+`AdapterExecutionReceipt` as the first machine-facing source of adapter
+execution state and does not introduce a real provider SDK, credential, object
+storage writer, database writer, recovery daemon, retry token, or resume token.
+
+### New Artifact Boundary
+
+The V0.21 artifact chain is:
+
+```text
+AdapterExecutionReceipt
+-> ProviderWriteAttemptPreview
+-> ProviderRecoveryHandoffPreview
+```
+
+The machine-facing provider write attempt format is:
+
+```text
+ahfl.durable-store-import-provider-write-attempt-preview.v1
+```
+
+The reviewer-facing provider recovery handoff format is:
+
+```text
+ahfl.durable-store-import-provider-recovery-handoff-preview.v1
+```
+
+### New CLI Commands
+
+Use the new V0.21 commands when you need the provider-neutral planning boundary
+after a V0.20 adapter execution receipt:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-attempt \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-recovery-handoff \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Provider Planning Outcomes
+
+V0.21 validates these provider-neutral paths:
+
+- `planned`: accepted and persisted adapter execution generates mutating
+  `ProviderPersistReceipt`, deterministic `provider-persistence::<package>::<session>::accepted`
+  provider persistence id, and retry / resume placeholder identities.
+- `not_planned`: blocked, deferred, rejected, or capability-gap paths stay
+  non-mutating and preserve provider planning failure attribution.
+
+V0.21 artifacts must not infer state from `RecoveryCommandPreview`, review
+summaries, CLI text, traces, host logs, provider payloads, object paths,
+database keys, credentials, or private scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.21 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.21
+ctest --preset test-dev --output-on-failure -L 'v0.21-durable-store-import-provider-adapter-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.21.zh.md`
+- `docs/plan/issue-backlog-v0.21.zh.md`
+- `docs/design/native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md`
+- `docs/reference/durable-store-provider-adapter-prototype-compatibility-v0.21.zh.md`
+- `docs/reference/native-consumer-matrix-v0.21.zh.md`
+- `docs/reference/contributor-guide-v0.21.zh.md`

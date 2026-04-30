@@ -7,6 +7,7 @@ add_library(ahfl_durable_store_import STATIC
     receipt_persistence_response.cpp
     receipt_persistence_response_review.cpp
     receipt_persistence_review.cpp
+    provider_adapter.cpp
     recovery_preview.cpp
     receipt_review.cpp
     request.cpp

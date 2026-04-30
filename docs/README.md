@@ -74,6 +74,7 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md](./design/native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md)
 - [native-durable-store-adapter-execution-prototype-bootstrap-v0.20.zh.md](./design/native-durable-store-adapter-execution-prototype-bootstrap-v0.20.zh.md)
 - [native-durable-store-adapter-receipt-persistence-response-prototype-bootstrap-v0.19.zh.md](./design/native-durable-store-adapter-receipt-persistence-response-prototype-bootstrap-v0.19.zh.md)
 - [native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md](./design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md)
@@ -145,6 +146,9 @@ Avoid:
 
 ### Reference
 
+- [durable-store-provider-adapter-prototype-compatibility-v0.21.zh.md](./reference/durable-store-provider-adapter-prototype-compatibility-v0.21.zh.md)
+- [native-consumer-matrix-v0.21.zh.md](./reference/native-consumer-matrix-v0.21.zh.md)
+- [contributor-guide-v0.21.zh.md](./reference/contributor-guide-v0.21.zh.md)
 - [durable-store-adapter-receipt-persistence-response-prototype-compatibility-v0.19.zh.md](./reference/durable-store-adapter-receipt-persistence-response-prototype-compatibility-v0.19.zh.md)
 - [durable-store-adapter-execution-prototype-compatibility-v0.20.zh.md](./reference/durable-store-adapter-execution-prototype-compatibility-v0.20.zh.md)
 - [native-consumer-matrix-v0.20.zh.md](./reference/native-consumer-matrix-v0.20.zh.md)

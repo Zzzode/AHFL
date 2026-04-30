@@ -8,6 +8,8 @@
 #include "ahfl/backends/durable_store_import_adapter_execution.hpp"
 #include "ahfl/backends/durable_store_import_decision.hpp"
 #include "ahfl/backends/durable_store_import_decision_review.hpp"
+#include "ahfl/backends/durable_store_import_provider_recovery_handoff.hpp"
+#include "ahfl/backends/durable_store_import_provider_write_attempt.hpp"
 #include "ahfl/backends/durable_store_import_receipt.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_request.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_response.hpp"
@@ -35,6 +37,7 @@
 #include "ahfl/durable_store_import/adapter_execution.hpp"
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
+#include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -1251,6 +1254,86 @@ build_durable_store_import_recovery_preview_for_cli(
     return 0;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteAttemptPreview>
+build_durable_store_import_provider_write_attempt_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto execution = build_durable_store_import_adapter_execution_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!execution.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    preview.diagnostics.render(std::cerr);
+    if (preview.has_errors() || !preview.preview.has_value()) {
+        return std::nullopt;
+    }
+
+    return *preview.preview;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_write_attempt_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto preview = build_durable_store_import_provider_write_attempt_for_cli(
+        program, metadata, mock_set, options, "emit-durable-store-import-provider-write-attempt");
+    if (!preview.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_write_attempt_json(*preview, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderRecoveryHandoffPreview>
+build_durable_store_import_provider_recovery_handoff_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto write_attempt = build_durable_store_import_provider_write_attempt_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!write_attempt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto handoff =
+        ahfl::durable_store_import::build_provider_recovery_handoff_preview(*write_attempt);
+    handoff.diagnostics.render(std::cerr);
+    if (handoff.has_errors() || !handoff.preview.has_value()) {
+        return std::nullopt;
+    }
+
+    return *handoff.preview;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_recovery_handoff_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto handoff = build_durable_store_import_provider_recovery_handoff_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-recovery-handoff");
+    if (!handoff.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_recovery_handoff(*handoff, std::cout);
+    return 0;
+}
+
 [[nodiscard]] int emit_durable_store_import_decision_review_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1354,6 +1437,10 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
      invoke_package_command<emit_durable_store_import_adapter_execution_with_diagnostics>},
     {CommandKind::EmitDurableStoreImportRecoveryPreview,
      invoke_package_command<emit_durable_store_import_recovery_preview_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderWriteAttempt,
+     invoke_package_command<emit_durable_store_import_provider_write_attempt_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderRecoveryHandoff,
+     invoke_package_command<emit_durable_store_import_provider_recovery_handoff_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,

@@ -1,6 +1,7 @@
 #include "ahfl/durable_store_import/adapter_execution.hpp"
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
+#include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -2212,6 +2213,42 @@ make_valid_recovery_command_preview() {
     return *preview.preview;
 }
 
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderWriteAttemptPreview>
+make_valid_provider_write_attempt_preview() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (preview.has_errors() || !preview.preview.has_value()) {
+        preview.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *preview.preview;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderRecoveryHandoffPreview>
+make_valid_provider_recovery_handoff_preview() {
+    const auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto handoff =
+        ahfl::durable_store_import::build_provider_recovery_handoff_preview(*write_attempt);
+    if (handoff.has_errors() || !handoff.preview.has_value()) {
+        handoff.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *handoff.preview;
+}
+
 int validate_durable_store_import_adapter_execution_ok() {
     const auto execution = make_valid_adapter_execution_receipt();
     if (!execution.has_value()) {
@@ -2543,6 +2580,335 @@ int build_durable_store_import_recovery_preview_rejects_invalid_execution() {
     return ahfl::test_support::diagnostics_contain(
                preview.diagnostics,
                "durable store import adapter execution format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_write_attempt_ok() {
+    const auto preview = make_valid_provider_write_attempt_preview();
+    if (!preview.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_attempt_preview(*preview);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (preview->planning_status !=
+            ahfl::durable_store_import::ProviderWritePlanningStatus::Planned ||
+        preview->write_intent.kind !=
+            ahfl::durable_store_import::ProviderWriteIntentKind::ProviderPersistReceipt ||
+        !preview->write_intent.mutates_provider ||
+        !preview->write_intent.provider_persistence_id.has_value() ||
+        preview->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider write attempt preview\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_write_attempt_rejected_ok() {
+    const auto response = make_response_from_descriptor(make_failed_descriptor());
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto execution = make_adapter_execution_from_response(*response);
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (preview.has_errors() || !preview.preview.has_value()) {
+        preview.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (preview.preview->planning_status !=
+            ahfl::durable_store_import::ProviderWritePlanningStatus::NotPlanned ||
+        preview.preview->write_intent.kind !=
+            ahfl::durable_store_import::ProviderWriteIntentKind::NoopRejected ||
+        preview.preview->write_intent.mutates_provider ||
+        preview.preview->write_intent.provider_persistence_id.has_value() ||
+        !preview.preview->failure_attribution.has_value()) {
+        std::cerr << "unexpected rejected provider write attempt preview\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_write_attempt_unsupported_capability_ok() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto config =
+        ahfl::durable_store_import::build_default_provider_adapter_config(*execution);
+    auto matrix = ahfl::durable_store_import::build_default_provider_capability_matrix(config);
+    matrix.supports_provider_write = false;
+
+    const auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution, config, matrix);
+    if (preview.has_errors() || !preview.preview.has_value()) {
+        preview.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (preview.preview->planning_status !=
+            ahfl::durable_store_import::ProviderWritePlanningStatus::NotPlanned ||
+        preview.preview->write_intent.kind !=
+            ahfl::durable_store_import::ProviderWriteIntentKind::NoopUnsupportedCapability ||
+        !preview.preview->failure_attribution.has_value() ||
+        preview.preview->failure_attribution->kind !=
+            ahfl::durable_store_import::ProviderPlanningFailureKind::UnsupportedProviderCapability ||
+        preview.preview->failure_attribution->missing_capability !=
+            std::optional<ahfl::durable_store_import::ProviderCapabilityKind>(
+                ahfl::durable_store_import::ProviderCapabilityKind::PlanProviderWrite)) {
+        std::cerr << "unexpected unsupported-capability provider write attempt preview\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_adapter_config_rejects_secret_material() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    auto config =
+        ahfl::durable_store_import::build_default_provider_adapter_config(*execution);
+    config.secret_material_reference = "secret://provider-token";
+    const auto validation = ahfl::durable_store_import::validate_provider_adapter_config(config);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider config with secret material to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics, "cannot contain secret_material_reference")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_adapter_config_rejects_provider_coordinates() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    auto config =
+        ahfl::durable_store_import::build_default_provider_adapter_config(*execution);
+    config.credential_free = false;
+    config.object_path = "s3://real-bucket/receipt.json";
+    config.database_key = "real-table-key";
+    const auto validation = ahfl::durable_store_import::validate_provider_adapter_config(config);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider config with real provider coordinates to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "must be credential_free") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain provider object_path") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain provider database_key")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_write_attempt_rejects_planned_without_provider_id() {
+    auto preview = make_valid_provider_write_attempt_preview();
+    if (!preview.has_value()) {
+        return 1;
+    }
+
+    preview->write_intent.provider_persistence_id.reset();
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_attempt_preview(*preview);
+    if (!validation.has_errors()) {
+        std::cerr << "expected planned provider write attempt without provider id to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "planned status requires persistence ids")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_write_attempt_rejects_not_planned_mutating_intent() {
+    const auto response = make_response_from_descriptor(make_failed_descriptor());
+    if (!response.has_value()) {
+        return 1;
+    }
+
+    const auto execution = make_adapter_execution_from_response(*response);
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (preview.has_errors() || !preview.preview.has_value()) {
+        preview.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    preview.preview->write_intent.kind =
+        ahfl::durable_store_import::ProviderWriteIntentKind::ProviderPersistReceipt;
+    preview.preview->write_intent.mutates_provider = true;
+    preview.preview->write_intent.provider_persistence_id = "provider-persistence::unexpected";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_attempt_preview(*preview.preview);
+    if (!validation.has_errors()) {
+        std::cerr << "expected not-planned provider write attempt with mutating intent to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "not-planned status requires non-mutating")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_write_attempt_ready_execution() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution);
+    if (preview.has_errors() || !preview.preview.has_value()) {
+        preview.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (preview.preview->durable_store_import_provider_write_attempt_identity !=
+            "durable-store-import-provider-write-attempt::workflow-value-flow::run-partial-001::accepted" ||
+        preview.preview->write_intent.provider_persistence_id !=
+            std::optional<std::string>(
+                "provider-persistence::workflow-value-flow::run-partial-001::accepted") ||
+        !preview.preview->retry_resume_placeholder.retry_placeholder_available ||
+        !preview.preview->retry_resume_placeholder.resume_placeholder_available) {
+        std::cerr << "unexpected ready provider write attempt bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_write_attempt_rejects_invalid_execution() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    auto invalid_execution = *execution;
+    invalid_execution.format_version = "ahfl.durable-store-import-adapter-execution.v999";
+    const auto preview =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(invalid_execution);
+    if (!preview.has_errors()) {
+        std::cerr << "expected invalid adapter execution to fail provider write attempt\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               preview.diagnostics,
+               "durable store import adapter execution format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_recovery_handoff_ok() {
+    const auto handoff = make_valid_provider_recovery_handoff_preview();
+    if (!handoff.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_recovery_handoff_preview(*handoff);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (handoff->next_action !=
+            ahfl::durable_store_import::ProviderRecoveryHandoffNextActionKind::
+                NoRecoveryRequired ||
+        !handoff->provider_persistence_id.has_value() ||
+        handoff->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider recovery handoff preview\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_recovery_handoff_unsupported_capability_ok() {
+    const auto execution = make_valid_adapter_execution_receipt();
+    if (!execution.has_value()) {
+        return 1;
+    }
+
+    const auto config =
+        ahfl::durable_store_import::build_default_provider_adapter_config(*execution);
+    auto matrix = ahfl::durable_store_import::build_default_provider_capability_matrix(config);
+    matrix.supports_provider_write = false;
+    const auto write_attempt =
+        ahfl::durable_store_import::build_provider_write_attempt_preview(*execution, config, matrix);
+    if (write_attempt.has_errors() || !write_attempt.preview.has_value()) {
+        write_attempt.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto handoff = ahfl::durable_store_import::build_provider_recovery_handoff_preview(
+        *write_attempt.preview);
+    if (handoff.has_errors() || !handoff.preview.has_value()) {
+        handoff.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (handoff.preview->next_action !=
+            ahfl::durable_store_import::ProviderRecoveryHandoffNextActionKind::
+                RetryUnavailable ||
+        handoff.preview->provider_persistence_id.has_value() ||
+        !handoff.preview->failure_attribution.has_value()) {
+        std::cerr << "unexpected unsupported provider recovery handoff preview\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_recovery_handoff_rejects_invalid_write_attempt() {
+    auto write_attempt = make_valid_provider_write_attempt_preview();
+    if (!write_attempt.has_value()) {
+        return 1;
+    }
+
+    write_attempt->format_version =
+        "ahfl.durable-store-import-provider-write-attempt-preview.v999";
+    const auto handoff =
+        ahfl::durable_store_import::build_provider_recovery_handoff_preview(*write_attempt);
+    if (!handoff.has_errors()) {
+        std::cerr << "expected invalid provider write attempt to fail recovery handoff\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               handoff.diagnostics,
+               "durable store import provider write attempt preview format_version must be")
                ? 0
                : 1;
 }
@@ -2888,6 +3254,62 @@ int main(int argc, char **argv) {
 
     if (command == "build-durable-store-import-recovery-preview-rejects-invalid-execution") {
         return build_durable_store_import_recovery_preview_rejects_invalid_execution();
+    }
+
+    // V0.21: Provider Write Attempt and Recovery Handoff tests
+    if (command == "validate-durable-store-import-provider-write-attempt-ok") {
+        return validate_durable_store_import_provider_write_attempt_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-write-attempt-rejected-ok") {
+        return validate_durable_store_import_provider_write_attempt_rejected_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-write-attempt-unsupported-capability-ok") {
+        return build_durable_store_import_provider_write_attempt_unsupported_capability_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-adapter-config-rejects-secret-material") {
+        return validate_durable_store_import_provider_adapter_config_rejects_secret_material();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-adapter-config-rejects-provider-coordinates") {
+        return validate_durable_store_import_provider_adapter_config_rejects_provider_coordinates();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-write-attempt-rejects-planned-without-provider-id") {
+        return validate_durable_store_import_provider_write_attempt_rejects_planned_without_provider_id();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-write-attempt-rejects-not-planned-mutating-intent") {
+        return validate_durable_store_import_provider_write_attempt_rejects_not_planned_mutating_intent();
+    }
+
+    if (command == "build-durable-store-import-provider-write-attempt-ready-execution") {
+        return build_durable_store_import_provider_write_attempt_ready_execution();
+    }
+
+    if (command == "build-durable-store-import-provider-write-attempt-rejects-invalid-execution") {
+        return build_durable_store_import_provider_write_attempt_rejects_invalid_execution();
+    }
+
+    if (command == "validate-durable-store-import-provider-recovery-handoff-ok") {
+        return validate_durable_store_import_provider_recovery_handoff_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-recovery-handoff-unsupported-capability-ok") {
+        return build_durable_store_import_provider_recovery_handoff_unsupported_capability_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-recovery-handoff-rejects-invalid-write-attempt") {
+        return build_durable_store_import_provider_recovery_handoff_rejects_invalid_write_attempt();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

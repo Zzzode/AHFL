@@ -44,6 +44,8 @@ enum class CommandKind {
     EmitDurableStoreImportReceiptPersistenceResponseReview,
     EmitDurableStoreImportAdapterExecution,
     EmitDurableStoreImportRecoveryPreview,
+    EmitDurableStoreImportProviderWriteAttempt,
+    EmitDurableStoreImportProviderRecoveryHandoff,
     EmitSchedulerReview,
     EmitRuntimeSession,
     EmitDryRunTrace,

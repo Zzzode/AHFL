@@ -2,7 +2,7 @@
 
 本文给出与 [roadmap-v0.21.zh.md](./roadmap-v0.21.zh.md) 对齐的 issue-ready backlog。目标是把 V0.20 已冻结的 local fake durable store adapter execution 边界推进到 provider-neutral real adapter contract，而不是直接实现某个 provider SDK、生产数据库或对象存储写入器。
 
-## [ ] Issue 01
+## [x] Issue 01
 
 标题：
 冻结 V0.21 real provider adapter boundary 与 non-goals
@@ -24,7 +24,7 @@
 - `docs/plan/`
 - `docs/design/`
 
-## [ ] Issue 02
+## [x] Issue 02
 
 标题：
 冻结 fake store、provider adapter shim、provider driver 与 production writer 的职责分层
@@ -46,7 +46,7 @@
 - `docs/design/`
 - `docs/reference/`
 
-## [ ] Issue 03
+## [x] Issue 03
 
 标题：
 冻结 V0.20 adapter execution 与 future provider-specific adapter 的输入边界
@@ -68,7 +68,7 @@
 - `docs/design/`
 - `docs/reference/`
 
-## [ ] Issue 04
+## [x] Issue 04
 
 标题：
 定义 secret-free provider adapter config model
@@ -91,7 +91,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 05
+## [x] Issue 05
 
 标题：
 定义 provider capability matrix 与 unsupported capability diagnostics
@@ -113,7 +113,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 06
+## [x] Issue 06
 
 标题：
 定义 provider-neutral persistence id namespace 与 write intent model
@@ -136,7 +136,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 07
+## [x] Issue 07
 
 标题：
 定义 provider write attempt preview / dry-run handoff
@@ -159,7 +159,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 08
+## [x] Issue 08
 
 标题：
 定义 retry / resume placeholder 与 failure attribution 分层
@@ -181,7 +181,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 09
+## [x] Issue 09
 
 标题：
 定义 recovery handoff preview 与真实 recovery daemon ABI 的边界
@@ -204,7 +204,7 @@
 - `src/`
 - `tests/`
 
-## [ ] Issue 10
+## [x] Issue 10
 
 标题：
 冻结 V0.21 compatibility contract
@@ -225,7 +225,7 @@
 
 - `docs/reference/`
 
-## [ ] Issue 11
+## [x] Issue 11
 
 标题：
 更新 native consumer matrix 与 contributor guide
@@ -248,7 +248,7 @@
 - `docs/README.md`
 - `docs/reference/`
 
-## [ ] Issue 12
+## [x] Issue 12
 
 标题：
 建立 V0.21 regression、CI 与 migration docs 闭环

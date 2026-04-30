@@ -142,6 +142,9 @@ jobs:
       - name: Run V0.20 Durable Adapter Execution Prototype Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.20'
 
+      - name: Run V0.21 Durable Provider Adapter Prototype Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.21'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -201,6 +204,9 @@ jobs:
 
       - name: Run V0.20 Durable Adapter Execution Prototype Regression
         run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.20'
+
+      - name: Run V0.21 Durable Provider Adapter Prototype Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.21'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

@@ -152,6 +152,8 @@ Backend outputs:
 | `emit-durable-store-import-receipt-persistence-response-review` | reviewer-facing durable receipt persistence response summary |
 | `emit-durable-store-import-adapter-execution` | local fake durable store adapter execution receipt over persistence response |
 | `emit-durable-store-import-recovery-preview` | reviewer-facing recovery command preview over adapter execution receipt |
+| `emit-durable-store-import-provider-write-attempt` | provider-neutral durable store write attempt preview over adapter execution receipt |
+| `emit-durable-store-import-provider-recovery-handoff` | reviewer-facing provider recovery handoff preview over provider write attempt |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -199,6 +201,8 @@ ctest --preset test-dev -L ahfl-v0.3
 ctest --preset test-dev -L ahfl-v0.15
 ctest --preset test-dev -L ahfl-v0.16
 ctest --preset test-dev -L ahfl-v0.19
+ctest --preset test-dev -L ahfl-v0.20
+ctest --preset test-dev -L ahfl-v0.21
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
