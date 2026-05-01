@@ -1,0 +1,25 @@
+ahfl.durable-store-import-provider-local-host-execution-receipt-review.v1
+source_provider_local_host_execution_receipt_format ahfl.durable-store-import-provider-local-host-execution-receipt.v1
+source_provider_host_execution_plan_format ahfl.durable-store-import-provider-host-execution-plan.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+durable_store_import_provider_sdk_request_envelope_identity durable-store-import-provider-sdk-request-envelope::run-001::ready
+durable_store_import_provider_host_execution_identity durable-store-import-provider-host-execution::run-001::ready
+durable_store_import_provider_local_host_execution_receipt_identity durable-store-import-provider-local-host-execution-receipt::run-001::simulated-ready
+execution_status simulated_ready
+operation_kind simulate_provider_local_host_execution_receipt
+provider_local_host_execution_receipt_identity provider-local-host-execution-receipt::provider-host-execution-descriptor::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-001::accepted
+starts_host_process false
+reads_host_environment false
+opens_network_connection false
+materializes_sdk_request_payload false
+invokes_provider_sdk false
+writes_host_filesystem false
+next_action ready_for_provider_sdk_adapter_prototype
+local_host_execution_boundary provider local host execution receipt was simulated without starting a host process, reading host environment, opening network, materializing SDK payload, invoking a provider SDK, or writing host filesystem
+next_step ready for future provider SDK adapter prototype; local host execution remains simulated and side-effect free
+failure_attribution {
+  value none
+}

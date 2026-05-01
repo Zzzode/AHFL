@@ -651,3 +651,92 @@ ctest --preset test-dev --output-on-failure -L 'v0.25-durable-store-import-provi
 - `docs/reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md`
 - `docs/reference/native-consumer-matrix-v0.25.zh.md`
 - `docs/reference/contributor-guide-v0.25.zh.md`
+
+## V0.25 to V0.26
+
+V0.26 extends the V0.25 provider host execution planning boundary with a
+provider local host execution receipt boundary. It keeps consuming the V0.25
+`ProviderHostExecutionPlan` as the first machine-facing source of host execution
+state and does not introduce a real provider SDK, runtime config loader, secret
+manager, credential, endpoint URI, object storage writer, database writer, host
+process, host environment read, network connection, filesystem write, retry
+token, or resume token.
+
+### New Artifact Boundary
+
+The V0.26 artifact chain is:
+
+```text
+ProviderHostExecutionPlan
+-> ProviderLocalHostExecutionReceipt
+-> ProviderLocalHostExecutionReceiptReview
+```
+
+The machine-facing provider local host execution receipt format is:
+
+```text
+ahfl.durable-store-import-provider-local-host-execution-receipt.v1
+```
+
+The reviewer-facing provider local host execution receipt review format is:
+
+```text
+ahfl.durable-store-import-provider-local-host-execution-receipt-review.v1
+```
+
+### New CLI Commands
+
+Use the new V0.26 commands when you need the simulated local host execution
+receipt boundary after a V0.25 provider host execution plan:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-execution-receipt \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-execution-receipt-review \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Local Host Execution Receipt Outcomes
+
+V0.26 validates these provider local host execution receipt paths:
+
+- `simulated_ready`: ready provider host execution plan generates
+  `SimulateProviderLocalHostExecutionReceipt`, deterministic
+  `provider-local-host-execution-receipt::<provider-host-execution-descriptor-id>`
+  identity, and side-effect flags all set to `false`.
+- `blocked`: host-execution-not-ready paths stay non-executing and preserve
+  failure attribution.
+
+V0.26 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, runtime config loader output, provider
+payloads, SDK payloads, object paths, database tables, credentials, endpoint
+URI, host commands, host environment, network endpoints, filesystem output, or
+private scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.26 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.26
+ctest --preset test-dev --output-on-failure -L 'v0.26-durable-store-import-provider-local-host-execution-receipt-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.26.zh.md`
+- `docs/plan/issue-backlog-v0.26.zh.md`
+- `docs/design/native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md`
+- `docs/reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md`
+- `docs/reference/native-consumer-matrix-v0.26.zh.md`
+- `docs/reference/contributor-guide-v0.26.zh.md`

@@ -417,6 +417,30 @@ target_link_libraries(ahfl_backend_durable_store_import_provider_host_execution_
 ahfl_apply_project_warnings(
     ahfl_backend_durable_store_import_provider_host_execution_readiness)
 
+add_library(ahfl_backend_durable_store_import_provider_local_host_execution_receipt STATIC
+    durable_store_import_provider_local_host_execution_receipt.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_host_execution_receipt
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_host_execution_receipt)
+
+add_library(ahfl_backend_durable_store_import_provider_local_host_execution_receipt_review STATIC
+    durable_store_import_provider_local_host_execution_receipt_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_host_execution_receipt_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_host_execution_receipt_review)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -505,6 +529,8 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_provider_sdk_handoff_readiness
         ahfl_backend_durable_store_import_provider_host_execution
         ahfl_backend_durable_store_import_provider_host_execution_readiness
+        ahfl_backend_durable_store_import_provider_local_host_execution_receipt
+        ahfl_backend_durable_store_import_provider_local_host_execution_receipt_review
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

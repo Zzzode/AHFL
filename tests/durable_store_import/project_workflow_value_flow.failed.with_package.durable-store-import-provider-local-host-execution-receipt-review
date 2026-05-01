@@ -1,0 +1,26 @@
+ahfl.durable-store-import-provider-local-host-execution-receipt-review.v1
+source_provider_local_host_execution_receipt_format ahfl.durable-store-import-provider-local-host-execution-receipt.v1
+source_provider_host_execution_plan_format ahfl.durable-store-import-provider-host-execution-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_provider_sdk_request_envelope_identity durable-store-import-provider-sdk-request-envelope::run-failed-001::blocked
+durable_store_import_provider_host_execution_identity durable-store-import-provider-host-execution::run-failed-001::blocked
+durable_store_import_provider_local_host_execution_receipt_identity durable-store-import-provider-local-host-execution-receipt::run-failed-001::blocked
+execution_status blocked
+operation_kind noop_host_execution_not_ready
+provider_local_host_execution_receipt_identity none
+starts_host_process false
+reads_host_environment false
+opens_network_connection false
+materializes_sdk_request_payload false
+invokes_provider_sdk false
+writes_host_filesystem false
+next_action wait_for_host_execution_plan
+local_host_execution_boundary provider local host execution receipt was not simulated because host execution is not ready
+next_step wait for a ready provider host execution plan before local host execution receipt simulation
+failure_attribution {
+  kind host_execution_not_ready
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

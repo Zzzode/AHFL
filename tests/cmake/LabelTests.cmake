@@ -1293,3 +1293,49 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_host_execution_readiness.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_host_execution_readiness.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-model
+    TESTS
+        ahfl.durable_store_import_provider_local_host_execution_receipt.model.validate_ok
+        ahfl.durable_store_import_provider_local_host_execution_receipt.model.validate_blocked_ok
+        ahfl.durable_store_import_provider_local_host_execution_receipt.model.fail_side_effects
+        ahfl.durable_store_import_provider_local_host_execution_receipt.model.fail_ready_without_identity
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-bootstrap
+    TESTS
+        ahfl.durable_store_import_provider_local_host_execution_receipt.bootstrap.ready_host_execution
+        ahfl.durable_store_import_provider_local_host_execution_receipt.bootstrap.fail_invalid_host_execution
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-review-model
+    TESTS
+        ahfl.durable_store_import_provider_local_host_execution_receipt_review.model.validate_ok
+        ahfl.durable_store_import_provider_local_host_execution_receipt_review.bootstrap.blocked_ok
+        ahfl.durable_store_import_provider_local_host_execution_receipt_review.bootstrap.fail_invalid_receipt
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.26 v0.26-durable-store-import-provider-local-host-execution-receipt-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workspace.workflow_value_flow.partial.with_package
+)

@@ -162,6 +162,8 @@ Backend outputs:
 | `emit-durable-store-import-provider-sdk-handoff-readiness` | reviewer-facing provider SDK handoff readiness review over SDK request envelope plan |
 | `emit-durable-store-import-provider-host-execution` | provider host execution plan over SDK request envelope plan |
 | `emit-durable-store-import-provider-host-execution-readiness` | reviewer-facing provider host execution readiness review over host execution plan |
+| `emit-durable-store-import-provider-local-host-execution-receipt` | simulated provider local host execution receipt over host execution plan |
+| `emit-durable-store-import-provider-local-host-execution-receipt-review` | reviewer-facing provider local host execution receipt review |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -215,6 +217,7 @@ ctest --preset test-dev -L ahfl-v0.22
 ctest --preset test-dev -L ahfl-v0.23
 ctest --preset test-dev -L ahfl-v0.24
 ctest --preset test-dev -L ahfl-v0.25
+ctest --preset test-dev -L ahfl-v0.26
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -251,9 +254,16 @@ Use the repo index for the full typed doc map:
 Recommended entry points:
 
 - Current plan
+  - [`docs/plan/roadmap-v0.26.zh.md`](docs/plan/roadmap-v0.26.zh.md)
+  - [`docs/plan/issue-backlog-v0.26.zh.md`](docs/plan/issue-backlog-v0.26.zh.md)
+- Current provider-local-host-execution boundary
+  - [`docs/design/native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md`](docs/design/native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md)
+  - [`docs/reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md`](docs/reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.26.zh.md`](docs/reference/native-consumer-matrix-v0.26.zh.md)
+  - [`docs/reference/contributor-guide-v0.26.zh.md`](docs/reference/contributor-guide-v0.26.zh.md)
+- Completed provider-host-execution baseline
   - [`docs/plan/roadmap-v0.25.zh.md`](docs/plan/roadmap-v0.25.zh.md)
   - [`docs/plan/issue-backlog-v0.25.zh.md`](docs/plan/issue-backlog-v0.25.zh.md)
-- Current provider-host-execution boundary
   - [`docs/design/native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md`](docs/design/native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md)
   - [`docs/reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md`](docs/reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md)
   - [`docs/reference/native-consumer-matrix-v0.25.zh.md`](docs/reference/native-consumer-matrix-v0.25.zh.md)
@@ -341,5 +351,5 @@ CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
 project / IR / backend / scheduler / checkpoint / persistence / export-package /
 durable-adapter-decision / durable-adapter-receipt / durable-adapter-receipt-persistence /
 durable-adapter-receipt-persistence-response / provider-driver / provider-runtime /
-provider-SDK-envelope / provider-host-execution regression slices, and then runs the full
+provider-SDK-envelope / provider-host-execution / provider-local-host-execution regression slices, and then runs the full
 `ctest` suite.

@@ -75,6 +75,7 @@ Avoid:
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
 - [native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md](./design/native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md)
+- [native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md](./design/native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md)
 - [native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md](./design/native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md)
 - [native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md](./design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md)
 - [native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md](./design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md)
@@ -105,8 +106,10 @@ Avoid:
 
 ### Plan
 
-- [roadmap-v0.25.zh.md](./plan/roadmap-v0.25.zh.md) - current execution plan
-- [issue-backlog-v0.25.zh.md](./plan/issue-backlog-v0.25.zh.md) - current execution backlog
+- [roadmap-v0.26.zh.md](./plan/roadmap-v0.26.zh.md) - current execution plan
+- [issue-backlog-v0.26.zh.md](./plan/issue-backlog-v0.26.zh.md) - current execution backlog
+- [roadmap-v0.25.zh.md](./plan/roadmap-v0.25.zh.md) - completed baseline
+- [issue-backlog-v0.25.zh.md](./plan/issue-backlog-v0.25.zh.md) - completed baseline
 - [roadmap-v0.24.zh.md](./plan/roadmap-v0.24.zh.md) - completed baseline
 - [issue-backlog-v0.24.zh.md](./plan/issue-backlog-v0.24.zh.md) - completed baseline
 - [roadmap-v0.23.zh.md](./plan/roadmap-v0.23.zh.md) - completed baseline
@@ -159,6 +162,9 @@ Avoid:
 ### Reference
 
 - [durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md](./reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md)
+- [durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md](./reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md)
+- [native-consumer-matrix-v0.26.zh.md](./reference/native-consumer-matrix-v0.26.zh.md)
+- [contributor-guide-v0.26.zh.md](./reference/contributor-guide-v0.26.zh.md)
 - [native-consumer-matrix-v0.25.zh.md](./reference/native-consumer-matrix-v0.25.zh.md)
 - [contributor-guide-v0.25.zh.md](./reference/contributor-guide-v0.25.zh.md)
 - [durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md](./reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md)
