@@ -660,6 +660,75 @@ target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_mock_adapte
 ahfl_apply_project_warnings(
     ahfl_backend_durable_store_import_provider_sdk_mock_adapter_readiness)
 
+add_library(ahfl_backend_durable_store_import_provider_local_filesystem_alpha_plan STATIC
+    durable_store_import_provider_local_filesystem_alpha_plan.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_filesystem_alpha_plan
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_filesystem_alpha_plan)
+
+add_library(ahfl_backend_durable_store_import_provider_local_filesystem_alpha_result STATIC
+    durable_store_import_provider_local_filesystem_alpha_result.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_filesystem_alpha_result
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_filesystem_alpha_result)
+
+add_library(ahfl_backend_durable_store_import_provider_local_filesystem_alpha_readiness STATIC
+    durable_store_import_provider_local_filesystem_alpha_readiness.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_filesystem_alpha_readiness
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_filesystem_alpha_readiness)
+
+add_library(ahfl_backend_durable_store_import_provider_write_retry_decision STATIC
+    durable_store_import_provider_write_retry_decision.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_write_retry_decision
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_write_retry_decision)
+
+add_library(ahfl_backend_durable_store_import_provider_write_commit_receipt STATIC
+    durable_store_import_provider_write_commit_receipt.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_write_commit_receipt
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_write_commit_receipt)
+
+add_library(ahfl_backend_durable_store_import_provider_write_commit_review STATIC
+    durable_store_import_provider_write_commit_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_write_commit_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_write_commit_review)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -769,6 +838,12 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_provider_sdk_mock_adapter_contract
         ahfl_backend_durable_store_import_provider_sdk_mock_adapter_execution
         ahfl_backend_durable_store_import_provider_sdk_mock_adapter_readiness
+        ahfl_backend_durable_store_import_provider_local_filesystem_alpha_plan
+        ahfl_backend_durable_store_import_provider_local_filesystem_alpha_result
+        ahfl_backend_durable_store_import_provider_local_filesystem_alpha_readiness
+        ahfl_backend_durable_store_import_provider_write_retry_decision
+        ahfl_backend_durable_store_import_provider_write_commit_receipt
+        ahfl_backend_durable_store_import_provider_write_commit_review
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

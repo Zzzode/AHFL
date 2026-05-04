@@ -1,0 +1,18 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-commit-receipt.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "write_commit_receipt_identity": "durable-store-import-provider-write-commit-receipt::run-failed-001::blocked",
+  "commit_status": "blocked",
+  "provider_commit_reference": "provider-commit::run-failed-001::blocked",
+  "provider_commit_digest": "sha256:provider-commit-blocked:run-failed-001",
+  "idempotency_key": "ahfl.durable-store-import.provider-write.v1::run-failed-001::fixture.request.failed",
+  "secret_free": true,
+  "raw_provider_payload_persisted": false,
+  "failure_attribution": {
+    "kind": "retry_decision_not_ready",
+    "message": "retry decision is blocked"
+  }
+}

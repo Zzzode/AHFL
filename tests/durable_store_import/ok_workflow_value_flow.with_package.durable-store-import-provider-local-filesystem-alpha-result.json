@@ -1,0 +1,18 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-local-filesystem-alpha-result.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "local_filesystem_alpha_result_identity": "durable-store-import-provider-local-filesystem-alpha-result::run-001::dry-run-only",
+  "result_status": "ready",
+  "normalized_result": "dry_run_only",
+  "provider_commit_reference": "local-filesystem-alpha://run-001.ahfl-provider-alpha",
+  "provider_result_digest": "sha256:local-filesystem-alpha:run-001",
+  "wrote_local_file": false,
+  "opt_in_used": false,
+  "failure_attribution": {
+    "kind": "opt_in_required",
+    "message": "local filesystem alpha write is available but not enabled for default path"
+  }
+}

@@ -1,0 +1,8 @@
+ahfl.durable-store-import-provider-local-filesystem-alpha-readiness.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+alpha_result durable-store-import-provider-local-filesystem-alpha-result::run-failed-001::blocked
+result_status blocked
+summary local filesystem alpha provider stayed on safe default path
+next_action wait_for_mock_adapter
+next_step manual review required before idempotency contract

@@ -1573,3 +1573,60 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.34 v0.34-durable-store-import-provider-local-filesystem-alpha-model
+    TESTS
+        ahfl.durable_store_import_provider_local_filesystem_alpha_plan.model.validate_ok
+        ahfl.durable_store_import_provider_local_filesystem_alpha_result.model.validate_dry_run_ok
+        ahfl.durable_store_import_provider_local_filesystem_alpha_result.integration.opt_in_write_ok
+        ahfl.durable_store_import_provider_local_filesystem_alpha_readiness.model.validate_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.34 v0.34-durable-store-import-provider-local-filesystem-alpha-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.35 v0.35-durable-store-import-provider-write-retry-model
+    TESTS
+        ahfl.durable_store_import_provider_write_retry_decision.model.validate_ok
+        ahfl.durable_store_import_provider_write_retry_decision.bootstrap.matrix_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.35 v0.35-durable-store-import-provider-write-retry-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_write_retry_decision.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_retry_decision.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_retry_decision.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.36 v0.36-durable-store-import-provider-write-commit-model
+    TESTS
+        ahfl.durable_store_import_provider_write_commit_receipt.model.validate_ok
+        ahfl.durable_store_import_provider_write_commit_receipt.bootstrap.matrix_ok
+        ahfl.durable_store_import_provider_write_commit_review.model.validate_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.36 v0.36-durable-store-import-provider-write-commit-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_write_commit_receipt.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_receipt.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_receipt.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_write_commit_review.workspace.workflow_value_flow.partial.with_package
+)

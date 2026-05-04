@@ -183,6 +183,12 @@ Backend outputs:
 | `emit-durable-store-import-provider-sdk-mock-adapter-contract` | provider SDK mock adapter contract |
 | `emit-durable-store-import-provider-sdk-mock-adapter-execution` | mock adapter execution result and normalization |
 | `emit-durable-store-import-provider-sdk-mock-adapter-readiness` | reviewer-facing mock adapter readiness review |
+| `emit-durable-store-import-provider-local-filesystem-alpha-plan` | opt-in local filesystem provider alpha plan |
+| `emit-durable-store-import-provider-local-filesystem-alpha-result` | local filesystem provider alpha normalized result |
+| `emit-durable-store-import-provider-local-filesystem-alpha-readiness` | reviewer-facing local filesystem provider alpha readiness review |
+| `emit-durable-store-import-provider-write-retry-decision` | idempotency and retry decision over provider write result |
+| `emit-durable-store-import-provider-write-commit-receipt` | durable provider write commit receipt |
+| `emit-durable-store-import-provider-write-commit-review` | reviewer-facing provider write commit review |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -244,6 +250,9 @@ ctest --preset test-dev -L ahfl-v0.30
 ctest --preset test-dev -L ahfl-v0.31
 ctest --preset test-dev -L ahfl-v0.32
 ctest --preset test-dev -L ahfl-v0.33
+ctest --preset test-dev -L ahfl-v0.34
+ctest --preset test-dev -L ahfl-v0.35
+ctest --preset test-dev -L ahfl-v0.36
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -279,14 +288,27 @@ Use the repo index for the full typed doc map:
 
 Recommended entry points:
 
-- Current plan
-  - [`docs/plan/roadmap-v0.26.zh.md`](docs/plan/roadmap-v0.26.zh.md)
-  - [`docs/plan/issue-backlog-v0.26.zh.md`](docs/plan/issue-backlog-v0.26.zh.md)
-- Current provider-local-host-execution boundary
-  - [`docs/design/native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md`](docs/design/native-durable-store-provider-local-host-execution-prototype-bootstrap-v0.26.zh.md)
-  - [`docs/reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md`](docs/reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.26.zh.md`](docs/reference/native-consumer-matrix-v0.26.zh.md)
-  - [`docs/reference/contributor-guide-v0.26.zh.md`](docs/reference/contributor-guide-v0.26.zh.md)
+- Current completed provider commit boundary
+  - [`docs/plan/roadmap-v0.36.zh.md`](docs/plan/roadmap-v0.36.zh.md)
+  - [`docs/plan/issue-backlog-v0.36.zh.md`](docs/plan/issue-backlog-v0.36.zh.md)
+  - [`docs/design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md`](docs/design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md)
+  - [`docs/reference/durable-store-provider-write-commit-receipt-compatibility-v0.36.zh.md`](docs/reference/durable-store-provider-write-commit-receipt-compatibility-v0.36.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.36.zh.md`](docs/reference/native-consumer-matrix-v0.36.zh.md)
+  - [`docs/reference/contributor-guide-v0.36.zh.md`](docs/reference/contributor-guide-v0.36.zh.md)
+- Completed provider retry boundary
+  - [`docs/plan/roadmap-v0.35.zh.md`](docs/plan/roadmap-v0.35.zh.md)
+  - [`docs/plan/issue-backlog-v0.35.zh.md`](docs/plan/issue-backlog-v0.35.zh.md)
+  - [`docs/design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md`](docs/design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md)
+  - [`docs/reference/durable-store-provider-idempotency-retry-compatibility-v0.35.zh.md`](docs/reference/durable-store-provider-idempotency-retry-compatibility-v0.35.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.35.zh.md`](docs/reference/native-consumer-matrix-v0.35.zh.md)
+  - [`docs/reference/contributor-guide-v0.35.zh.md`](docs/reference/contributor-guide-v0.35.zh.md)
+- Completed provider local filesystem alpha boundary
+  - [`docs/plan/roadmap-v0.34.zh.md`](docs/plan/roadmap-v0.34.zh.md)
+  - [`docs/plan/issue-backlog-v0.34.zh.md`](docs/plan/issue-backlog-v0.34.zh.md)
+  - [`docs/design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md`](docs/design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md)
+  - [`docs/reference/durable-store-provider-local-filesystem-alpha-compatibility-v0.34.zh.md`](docs/reference/durable-store-provider-local-filesystem-alpha-compatibility-v0.34.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.34.zh.md`](docs/reference/native-consumer-matrix-v0.34.zh.md)
+  - [`docs/reference/contributor-guide-v0.34.zh.md`](docs/reference/contributor-guide-v0.34.zh.md)
 - Completed provider-host-execution baseline
   - [`docs/plan/roadmap-v0.25.zh.md`](docs/plan/roadmap-v0.25.zh.md)
   - [`docs/plan/issue-backlog-v0.25.zh.md`](docs/plan/issue-backlog-v0.25.zh.md)

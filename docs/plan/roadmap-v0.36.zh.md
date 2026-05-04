@@ -18,11 +18,11 @@ V0.36 定义 durable write commit receipt。目标是把真实或 mock provider 
 
 ## 里程碑
 
-- [ ] M0 冻结 commit receipt stable fields
-- [ ] M1 实现 commit receipt validation
-- [ ] M2 接入 adapter response 到 commit receipt bootstrap
-- [ ] M3 覆盖 golden 与 failure attribution
-- [ ] M4 更新 consumer matrix、migration、CI
+- [x] M0 冻结 commit receipt stable fields
+- [x] M1 实现 commit receipt validation
+- [x] M2 接入 adapter response 到 commit receipt bootstrap
+- [x] M3 覆盖 golden 与 failure attribution
+- [x] M4 更新 consumer matrix、migration、CI
 
 ## 完成定义
 

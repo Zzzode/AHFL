@@ -1086,3 +1086,52 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(30|31|32|33)'
 - `docs/design/native-durable-store-provider-local-host-harness-bootstrap-v0.31.zh.md`
 - `docs/design/native-durable-store-provider-sdk-payload-materialization-bootstrap-v0.32.zh.md`
 - `docs/design/native-durable-store-provider-sdk-mock-adapter-bootstrap-v0.33.zh.md`
+
+## V0.33 to V0.36
+
+V0.34 through V0.36 extend the provider SDK mock adapter into the first
+opt-in real provider alpha, then add idempotency / retry and commit receipt
+boundaries. The sequence is:
+
+```text
+ProviderSdkMockAdapterReadiness
+-> ProviderLocalFilesystemAlphaReadiness
+-> ProviderWriteRetryDecision
+-> ProviderWriteCommitReceipt
+-> ProviderWriteCommitReview
+```
+
+The new boundaries remain conservative:
+
+- V0.34 introduces `local-filesystem-alpha` as a low-risk real provider alpha,
+  but CLI defaults to dry-run and does not write files.
+- V0.35 defines idempotency namespace, retry token placeholder, retry
+  eligibility, and duplicate detection summary.
+- V0.36 defines secret-free commit receipt and reviewer-facing commit review.
+
+### New CLI Commands
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-plan ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-result ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-readiness ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-retry-decision ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-commit-receipt ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-commit-review ...
+```
+
+### Regression Commands
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(34|35|36)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.34.zh.md`
+- `docs/plan/roadmap-v0.35.zh.md`
+- `docs/plan/roadmap-v0.36.zh.md`
+- `docs/design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md`
+- `docs/design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md`
+- `docs/design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md`

@@ -18,11 +18,11 @@ V0.34 接入第一个真实 provider adapter alpha。建议优先选择 local fi
 
 ## 里程碑
 
-- [ ] M0 选择 alpha provider 与安全边界
-- [ ] M1 实现真实 adapter alpha
-- [ ] M2 定义真实 result normalization
-- [ ] M3 增加 opt-in integration tests
-- [ ] M4 更新 docs、migration、CI opt-in 说明
+- [x] M0 选择 alpha provider 与安全边界
+- [x] M1 实现真实 adapter alpha
+- [x] M2 定义真实 result normalization
+- [x] M3 增加 opt-in integration tests
+- [x] M4 更新 docs、migration、CI opt-in 说明
 
 ## 完成定义
 

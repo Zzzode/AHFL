@@ -18,11 +18,11 @@ V0.35 冻结 idempotency / retry contract。目标是让 durable write 可以安
 
 ## 里程碑
 
-- [ ] M0 冻结 idempotency scope
-- [ ] M1 定义 retry token / duplicate detection model
-- [ ] M2 覆盖 retryable / non-retryable failure paths
-- [ ] M3 接入 mock adapter matrix
-- [ ] M4 建立 compatibility 与 golden
+- [x] M0 冻结 idempotency scope
+- [x] M1 定义 retry token / duplicate detection model
+- [x] M2 覆盖 retryable / non-retryable failure paths
+- [x] M3 接入 mock adapter matrix
+- [x] M4 建立 compatibility 与 golden
 
 ## 完成定义
 

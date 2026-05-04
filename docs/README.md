@@ -74,6 +74,9 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md](./design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md)
+- [native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md](./design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md)
+- [native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md](./design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md)
 - [native-durable-store-provider-sdk-mock-adapter-bootstrap-v0.33.zh.md](./design/native-durable-store-provider-sdk-mock-adapter-bootstrap-v0.33.zh.md)
 - [native-durable-store-provider-sdk-payload-materialization-bootstrap-v0.32.zh.md](./design/native-durable-store-provider-sdk-payload-materialization-bootstrap-v0.32.zh.md)
 - [native-durable-store-provider-local-host-harness-bootstrap-v0.31.zh.md](./design/native-durable-store-provider-local-host-harness-bootstrap-v0.31.zh.md)
@@ -114,15 +117,18 @@ Avoid:
 ### Plan
 
 - [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - future provider production roadmap
-- [roadmap-v0.34.zh.md](./plan/roadmap-v0.34.zh.md) - future provider roadmap
-- [roadmap-v0.35.zh.md](./plan/roadmap-v0.35.zh.md) - future provider roadmap
-- [roadmap-v0.36.zh.md](./plan/roadmap-v0.36.zh.md) - future provider roadmap
 - [roadmap-v0.37.zh.md](./plan/roadmap-v0.37.zh.md) - future provider roadmap
 - [roadmap-v0.38.zh.md](./plan/roadmap-v0.38.zh.md) - future provider roadmap
 - [roadmap-v0.39.zh.md](./plan/roadmap-v0.39.zh.md) - future provider roadmap
 - [roadmap-v0.40.zh.md](./plan/roadmap-v0.40.zh.md) - future provider roadmap
 - [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - future provider roadmap
 - [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - future provider roadmap
+- [roadmap-v0.36.zh.md](./plan/roadmap-v0.36.zh.md) - completed baseline
+- [issue-backlog-v0.36.zh.md](./plan/issue-backlog-v0.36.zh.md) - completed baseline
+- [roadmap-v0.35.zh.md](./plan/roadmap-v0.35.zh.md) - completed baseline
+- [issue-backlog-v0.35.zh.md](./plan/issue-backlog-v0.35.zh.md) - completed baseline
+- [roadmap-v0.34.zh.md](./plan/roadmap-v0.34.zh.md) - completed baseline
+- [issue-backlog-v0.34.zh.md](./plan/issue-backlog-v0.34.zh.md) - completed baseline
 - [roadmap-v0.33.zh.md](./plan/roadmap-v0.33.zh.md) - completed baseline
 - [issue-backlog-v0.33.zh.md](./plan/issue-backlog-v0.33.zh.md) - completed baseline
 - [roadmap-v0.32.zh.md](./plan/roadmap-v0.32.zh.md) - completed baseline
@@ -192,6 +198,15 @@ Avoid:
 
 ### Reference
 
+- [durable-store-provider-write-commit-receipt-compatibility-v0.36.zh.md](./reference/durable-store-provider-write-commit-receipt-compatibility-v0.36.zh.md)
+- [native-consumer-matrix-v0.36.zh.md](./reference/native-consumer-matrix-v0.36.zh.md)
+- [contributor-guide-v0.36.zh.md](./reference/contributor-guide-v0.36.zh.md)
+- [durable-store-provider-idempotency-retry-compatibility-v0.35.zh.md](./reference/durable-store-provider-idempotency-retry-compatibility-v0.35.zh.md)
+- [native-consumer-matrix-v0.35.zh.md](./reference/native-consumer-matrix-v0.35.zh.md)
+- [contributor-guide-v0.35.zh.md](./reference/contributor-guide-v0.35.zh.md)
+- [durable-store-provider-local-filesystem-alpha-compatibility-v0.34.zh.md](./reference/durable-store-provider-local-filesystem-alpha-compatibility-v0.34.zh.md)
+- [native-consumer-matrix-v0.34.zh.md](./reference/native-consumer-matrix-v0.34.zh.md)
+- [contributor-guide-v0.34.zh.md](./reference/contributor-guide-v0.34.zh.md)
 - [durable-store-provider-sdk-mock-adapter-compatibility-v0.33.zh.md](./reference/durable-store-provider-sdk-mock-adapter-compatibility-v0.33.zh.md)
 - [native-consumer-matrix-v0.33.zh.md](./reference/native-consumer-matrix-v0.33.zh.md)
 - [contributor-guide-v0.33.zh.md](./reference/contributor-guide-v0.33.zh.md)

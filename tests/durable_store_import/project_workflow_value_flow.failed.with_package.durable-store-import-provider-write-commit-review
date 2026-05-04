@@ -1,0 +1,10 @@
+ahfl.durable-store-import-provider-write-commit-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+commit_receipt durable-store-import-provider-write-commit-receipt::run-failed-001::blocked
+commit_status blocked
+provider_commit_reference provider-commit::run-failed-001::blocked
+provider_commit_digest sha256:provider-commit-blocked:run-failed-001
+summary provider write commit receipt status is blocked
+next_action manual_review_required
+next_step manual review or idempotent retry is required

@@ -1,0 +1,8 @@
+ahfl.durable-store-import-provider-local-filesystem-alpha-readiness.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+alpha_result durable-store-import-provider-local-filesystem-alpha-result::run-partial-001::dry-run-only
+result_status ready
+summary local filesystem alpha provider stayed on safe default path
+next_action ready_for_idempotency_contract
+next_step ready for idempotency and retry contract

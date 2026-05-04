@@ -11,6 +11,7 @@ add_library(ahfl_durable_store_import STATIC
     provider_adapter.cpp
     provider_driver.cpp
     provider_host_execution.cpp
+    provider_local_filesystem_alpha.cpp
     provider_local_host_execution.cpp
     provider_local_host_harness.cpp
     provider_runtime.cpp
@@ -20,6 +21,8 @@ add_library(ahfl_durable_store_import STATIC
     provider_sdk_payload.cpp
     provider_secret.cpp
     provider_sdk.cpp
+    provider_retry.cpp
+    provider_commit.cpp
     recovery_preview.cpp
     receipt_review.cpp
     request.cpp

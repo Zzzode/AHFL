@@ -1,0 +1,10 @@
+ahfl.durable-store-import-provider-write-commit-review.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+commit_receipt durable-store-import-provider-write-commit-receipt::run-001::committed
+commit_status committed
+provider_commit_reference provider-commit::run-001::accepted
+provider_commit_digest sha256:provider-commit:run-001
+summary provider write commit receipt status is committed
+next_action ready_for_recovery_audit
+next_step ready for durable recovery audit

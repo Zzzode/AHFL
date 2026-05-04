@@ -1,0 +1,21 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-retry-decision.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "write_retry_decision_identity": "durable-store-import-provider-write-retry-decision::run-failed-001::blocked",
+  "idempotency_key_namespace": "ahfl.durable-store-import.provider-write.v1",
+  "idempotency_key": "ahfl.durable-store-import.provider-write.v1::run-failed-001::fixture.request.failed",
+  "retry_token_version": "ahfl.provider-write-retry-token.v1",
+  "retry_token_placeholder_identity": "provider-write-retry-token-placeholder::ahfl.durable-store-import.provider-write.v1::run-failed-001::fixture.request.failed",
+  "retry_eligibility": "blocked",
+  "retry_allowed": false,
+  "duplicate_write_possible": false,
+  "duplicate_detection_summary": "adapter result was blocked before retry classification",
+  "retry_decision_summary": "wait for adapter result before retry classification",
+  "failure_attribution": {
+    "kind": "adapter_result_not_ready",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  }
+}

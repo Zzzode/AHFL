@@ -15,6 +15,9 @@
 #include "ahfl/backends/durable_store_import_provider_driver_readiness.hpp"
 #include "ahfl/backends/durable_store_import_provider_host_execution.hpp"
 #include "ahfl/backends/durable_store_import_provider_host_execution_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_local_filesystem_alpha_plan.hpp"
+#include "ahfl/backends/durable_store_import_provider_local_filesystem_alpha_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_local_filesystem_alpha_result.hpp"
 #include "ahfl/backends/durable_store_import_provider_local_host_execution_receipt.hpp"
 #include "ahfl/backends/durable_store_import_provider_local_host_execution_receipt_review.hpp"
 #include "ahfl/backends/durable_store_import_provider_local_host_harness_record.hpp"
@@ -39,6 +42,9 @@
 #include "ahfl/backends/durable_store_import_provider_secret_resolver_request.hpp"
 #include "ahfl/backends/durable_store_import_provider_secret_resolver_response.hpp"
 #include "ahfl/backends/durable_store_import_provider_write_attempt.hpp"
+#include "ahfl/backends/durable_store_import_provider_write_commit_receipt.hpp"
+#include "ahfl/backends/durable_store_import_provider_write_commit_review.hpp"
+#include "ahfl/backends/durable_store_import_provider_write_retry_decision.hpp"
 #include "ahfl/backends/durable_store_import_receipt.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_request.hpp"
 #include "ahfl/backends/durable_store_import_receipt_persistence_response.hpp"
@@ -67,11 +73,14 @@
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
+#include "ahfl/durable_store_import/provider_commit.hpp"
 #include "ahfl/durable_store_import/provider_config.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_host_execution.hpp"
+#include "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_host_harness.hpp"
+#include "ahfl/durable_store_import/provider_retry.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/provider_sdk_adapter.hpp"
@@ -2554,6 +2563,248 @@ build_durable_store_import_provider_sdk_mock_adapter_readiness_for_cli(
     return 0;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalFilesystemAlphaPlan>
+build_durable_store_import_provider_local_filesystem_alpha_plan_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto readiness = build_durable_store_import_provider_sdk_mock_adapter_readiness_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!readiness.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_local_filesystem_alpha_plan(*readiness);
+    plan.diagnostics.render(std::cerr);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        return std::nullopt;
+    }
+    return *plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_local_filesystem_alpha_plan_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_local_filesystem_alpha_plan_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-local-filesystem-alpha-plan");
+    if (!plan.has_value()) {
+        return 1;
+    }
+    ahfl::print_durable_store_import_provider_local_filesystem_alpha_plan_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalFilesystemAlphaResult>
+build_durable_store_import_provider_local_filesystem_alpha_result_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_local_filesystem_alpha_plan_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto result = ahfl::durable_store_import::run_provider_local_filesystem_alpha(*plan);
+    result.diagnostics.render(std::cerr);
+    if (result.has_errors() || !result.result.has_value()) {
+        return std::nullopt;
+    }
+    return *result.result;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_local_filesystem_alpha_result_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto result = build_durable_store_import_provider_local_filesystem_alpha_result_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-local-filesystem-alpha-result");
+    if (!result.has_value()) {
+        return 1;
+    }
+    ahfl::print_durable_store_import_provider_local_filesystem_alpha_result_json(*result,
+                                                                                 std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalFilesystemAlphaReadiness>
+build_durable_store_import_provider_local_filesystem_alpha_readiness_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto result = build_durable_store_import_provider_local_filesystem_alpha_result_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!result.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto readiness =
+        ahfl::durable_store_import::build_provider_local_filesystem_alpha_readiness(*result);
+    readiness.diagnostics.render(std::cerr);
+    if (readiness.has_errors() || !readiness.readiness.has_value()) {
+        return std::nullopt;
+    }
+    return *readiness.readiness;
+}
+
+[[nodiscard]] int
+emit_durable_store_import_provider_local_filesystem_alpha_readiness_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto readiness =
+        build_durable_store_import_provider_local_filesystem_alpha_readiness_for_cli(
+            program,
+            metadata,
+            mock_set,
+            options,
+            "emit-durable-store-import-provider-local-filesystem-alpha-readiness");
+    if (!readiness.has_value()) {
+        return 1;
+    }
+    ahfl::print_durable_store_import_provider_local_filesystem_alpha_readiness(*readiness,
+                                                                               std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteRetryDecision>
+build_durable_store_import_provider_write_retry_decision_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto adapter_result =
+        build_durable_store_import_provider_sdk_mock_adapter_execution_for_cli(
+            program, metadata, mock_set, options, command_name);
+    if (!adapter_result.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto decision =
+        ahfl::durable_store_import::build_provider_write_retry_decision(*adapter_result);
+    decision.diagnostics.render(std::cerr);
+    if (decision.has_errors() || !decision.decision.has_value()) {
+        return std::nullopt;
+    }
+    return *decision.decision;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_write_retry_decision_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto decision = build_durable_store_import_provider_write_retry_decision_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-write-retry-decision");
+    if (!decision.has_value()) {
+        return 1;
+    }
+    ahfl::print_durable_store_import_provider_write_retry_decision_json(*decision, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteCommitReceipt>
+build_durable_store_import_provider_write_commit_receipt_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto decision = build_durable_store_import_provider_write_retry_decision_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!decision.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto receipt = ahfl::durable_store_import::build_provider_write_commit_receipt(*decision);
+    receipt.diagnostics.render(std::cerr);
+    if (receipt.has_errors() || !receipt.receipt.has_value()) {
+        return std::nullopt;
+    }
+    return *receipt.receipt;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_write_commit_receipt_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto receipt = build_durable_store_import_provider_write_commit_receipt_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-write-commit-receipt");
+    if (!receipt.has_value()) {
+        return 1;
+    }
+    ahfl::print_durable_store_import_provider_write_commit_receipt_json(*receipt, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteCommitReview>
+build_durable_store_import_provider_write_commit_review_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto receipt = build_durable_store_import_provider_write_commit_receipt_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!receipt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_write_commit_review(*receipt);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_write_commit_review_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_write_commit_review_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-write-commit-review");
+    if (!review.has_value()) {
+        return 1;
+    }
+    ahfl::print_durable_store_import_provider_write_commit_review(*review, std::cout);
+    return 0;
+}
+
 [[nodiscard]] int emit_durable_store_import_decision_review_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -2737,6 +2988,24 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitDurableStoreImportProviderSdkMockAdapterReadiness,
      invoke_package_command<
          emit_durable_store_import_provider_sdk_mock_adapter_readiness_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderLocalFilesystemAlphaPlan,
+     invoke_package_command<
+         emit_durable_store_import_provider_local_filesystem_alpha_plan_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderLocalFilesystemAlphaResult,
+     invoke_package_command<
+         emit_durable_store_import_provider_local_filesystem_alpha_result_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderLocalFilesystemAlphaReadiness,
+     invoke_package_command<
+         emit_durable_store_import_provider_local_filesystem_alpha_readiness_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderWriteRetryDecision,
+     invoke_package_command<
+         emit_durable_store_import_provider_write_retry_decision_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderWriteCommitReceipt,
+     invoke_package_command<
+         emit_durable_store_import_provider_write_commit_receipt_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderWriteCommitReview,
+     invoke_package_command<
+         emit_durable_store_import_provider_write_commit_review_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,

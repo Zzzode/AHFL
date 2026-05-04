@@ -1,0 +1,18 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-retry-decision.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "write_retry_decision_identity": "durable-store-import-provider-write-retry-decision::run-partial-001::accepted",
+  "idempotency_key_namespace": "ahfl.durable-store-import.provider-write.v1",
+  "idempotency_key": "ahfl.durable-store-import.provider-write.v1::run-partial-001::fixture.request.partial",
+  "retry_token_version": "ahfl.provider-write-retry-token.v1",
+  "retry_token_placeholder_identity": "provider-write-retry-token-placeholder::ahfl.durable-store-import.provider-write.v1::run-partial-001::fixture.request.partial",
+  "retry_eligibility": "not_applicable",
+  "retry_allowed": false,
+  "duplicate_write_possible": false,
+  "duplicate_detection_summary": "accepted provider result has no retry requirement",
+  "retry_decision_summary": "do not retry an accepted provider write",
+  "failure_attribution": null
+}

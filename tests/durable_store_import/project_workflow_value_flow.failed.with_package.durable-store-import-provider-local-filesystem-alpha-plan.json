@@ -1,0 +1,21 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-local-filesystem-alpha-plan.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "local_filesystem_alpha_plan_identity": "durable-store-import-provider-local-filesystem-alpha-plan::run-failed-001::blocked",
+  "plan_status": "blocked",
+  "provider_key": "local-filesystem-alpha",
+  "real_provider_alpha": true,
+  "fake_adapter_default_path_preserved": true,
+  "opt_in_required": true,
+  "opt_in_enabled": false,
+  "target_directory": null,
+  "target_object_name": "run-failed-001.ahfl-provider-alpha",
+  "planned_payload_digest": "sha256:local-filesystem-alpha:run-failed-001",
+  "failure_attribution": {
+    "kind": "mock_readiness_not_ready",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  }
+}

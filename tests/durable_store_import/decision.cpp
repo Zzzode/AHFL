@@ -5,6 +5,7 @@
 #include "ahfl/durable_store_import/provider_config.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_host_execution.hpp"
+#include "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_host_harness.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
@@ -14,6 +15,8 @@
 #include "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp"
 #include "ahfl/durable_store_import/provider_sdk_payload.hpp"
 #include "ahfl/durable_store_import/provider_secret.hpp"
+#include "ahfl/durable_store_import/provider_commit.hpp"
+#include "ahfl/durable_store_import/provider_retry.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -26,6 +29,7 @@
 #include "../common/test_support.hpp"
 
 #include <iostream>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -2758,6 +2762,104 @@ make_valid_provider_sdk_mock_adapter_readiness() {
     }
 
     return *readiness.readiness;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalFilesystemAlphaPlan>
+make_valid_provider_local_filesystem_alpha_plan() {
+    const auto readiness = make_valid_provider_sdk_mock_adapter_readiness();
+    if (!readiness.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_local_filesystem_alpha_plan(*readiness);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalFilesystemAlphaResult>
+make_valid_provider_local_filesystem_alpha_result() {
+    const auto plan = make_valid_provider_local_filesystem_alpha_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto result = ahfl::durable_store_import::run_provider_local_filesystem_alpha(*plan);
+    if (result.has_errors() || !result.result.has_value()) {
+        result.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *result.result;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalFilesystemAlphaReadiness>
+make_valid_provider_local_filesystem_alpha_readiness() {
+    const auto result = make_valid_provider_local_filesystem_alpha_result();
+    if (!result.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto readiness =
+        ahfl::durable_store_import::build_provider_local_filesystem_alpha_readiness(*result);
+    if (readiness.has_errors() || !readiness.readiness.has_value()) {
+        readiness.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *readiness.readiness;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteRetryDecision>
+make_valid_provider_write_retry_decision() {
+    const auto result = make_valid_provider_sdk_mock_adapter_execution();
+    if (!result.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto decision = ahfl::durable_store_import::build_provider_write_retry_decision(*result);
+    if (decision.has_errors() || !decision.decision.has_value()) {
+        decision.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *decision.decision;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteCommitReceipt>
+make_valid_provider_write_commit_receipt() {
+    const auto decision = make_valid_provider_write_retry_decision();
+    if (!decision.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto receipt = ahfl::durable_store_import::build_provider_write_commit_receipt(*decision);
+    if (receipt.has_errors() || !receipt.receipt.has_value()) {
+        receipt.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *receipt.receipt;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteCommitReview>
+make_valid_provider_write_commit_review() {
+    const auto receipt = make_valid_provider_write_commit_receipt();
+    if (!receipt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_write_commit_review(*receipt);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
 }
 
 int validate_durable_store_import_adapter_execution_ok() {
@@ -6421,6 +6523,235 @@ int validate_durable_store_import_provider_sdk_mock_adapter_readiness_ok() {
                : 1;
 }
 
+int validate_durable_store_import_provider_local_filesystem_alpha_plan_ok() {
+    const auto plan = make_valid_provider_local_filesystem_alpha_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_filesystem_alpha_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return plan->plan_status ==
+                       ahfl::durable_store_import::ProviderLocalFilesystemAlphaStatus::Ready &&
+                   plan->provider_key == "local-filesystem-alpha" &&
+                   plan->real_provider_alpha && plan->fake_adapter_default_path_preserved &&
+                   plan->opt_in_required && !plan->opt_in_enabled &&
+                   !plan->opens_network_connection && !plan->reads_secret_material &&
+                   !plan->invokes_cloud_provider_sdk
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_local_filesystem_alpha_result_dry_run_ok() {
+    const auto result = make_valid_provider_local_filesystem_alpha_result();
+    if (!result.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_filesystem_alpha_result(*result);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return result->normalized_result ==
+                       ahfl::durable_store_import::ProviderLocalFilesystemAlphaResultKind::
+                           DryRunOnly &&
+                   !result->wrote_local_file && !result->opt_in_used &&
+                   result->failure_attribution.has_value()
+               ? 0
+               : 1;
+}
+
+int run_durable_store_import_provider_local_filesystem_alpha_opt_in_write_ok() {
+    auto plan = make_valid_provider_local_filesystem_alpha_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto target_dir =
+        std::filesystem::temp_directory_path() / "ahfl-provider-alpha-test-run";
+    std::filesystem::remove_all(target_dir);
+    plan->opt_in_enabled = true;
+    plan->target_directory = target_dir.string();
+    const auto result = ahfl::durable_store_import::run_provider_local_filesystem_alpha(*plan);
+    if (result.has_errors() || !result.result.has_value()) {
+        result.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    const auto target_path = target_dir / plan->target_object_name;
+    const auto ok = result.result->normalized_result ==
+                        ahfl::durable_store_import::ProviderLocalFilesystemAlphaResultKind::
+                            Accepted &&
+                    result.result->wrote_local_file && result.result->opt_in_used &&
+                    std::filesystem::exists(target_path);
+    std::filesystem::remove_all(target_dir);
+    return ok ? 0 : 1;
+}
+
+int validate_durable_store_import_provider_local_filesystem_alpha_readiness_ok() {
+    const auto readiness = make_valid_provider_local_filesystem_alpha_readiness();
+    if (!readiness.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_filesystem_alpha_readiness(
+            *readiness);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return readiness->next_action ==
+                   ahfl::durable_store_import::ProviderLocalFilesystemAlphaNextActionKind::
+                       ReadyForIdempotencyContract
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_write_retry_decision_ok() {
+    const auto decision = make_valid_provider_write_retry_decision();
+    if (!decision.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_retry_decision(*decision);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return decision->retry_eligibility ==
+                       ahfl::durable_store_import::ProviderWriteRetryEligibility::
+                           NotApplicable &&
+                   !decision->retry_allowed && !decision->duplicate_write_possible
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_write_retry_decision_matrix_ok() {
+    auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    if (!contract.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind scenarios[] = {
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Success,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch,
+    };
+    for (const auto scenario : scenarios) {
+        contract->scenario_kind = scenario;
+        const auto adapter_result =
+            ahfl::durable_store_import::run_provider_sdk_mock_adapter(*contract);
+        if (adapter_result.has_errors() || !adapter_result.result.has_value()) {
+            adapter_result.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto decision =
+            ahfl::durable_store_import::build_provider_write_retry_decision(
+                *adapter_result.result);
+        if (decision.has_errors() || !decision.decision.has_value()) {
+            decision.diagnostics.render(std::cout);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_write_commit_receipt_ok() {
+    const auto receipt = make_valid_provider_write_commit_receipt();
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_commit_receipt(*receipt);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return receipt->commit_status ==
+                       ahfl::durable_store_import::ProviderWriteCommitStatus::Committed &&
+                   receipt->secret_free && !receipt->raw_provider_payload_persisted &&
+                   !receipt->failure_attribution.has_value()
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_write_commit_receipt_matrix_ok() {
+    auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    if (!contract.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind scenarios[] = {
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Success,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure,
+    };
+    for (const auto scenario : scenarios) {
+        contract->scenario_kind = scenario;
+        const auto adapter_result =
+            ahfl::durable_store_import::run_provider_sdk_mock_adapter(*contract);
+        if (adapter_result.has_errors() || !adapter_result.result.has_value()) {
+            adapter_result.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto decision =
+            ahfl::durable_store_import::build_provider_write_retry_decision(
+                *adapter_result.result);
+        if (decision.has_errors() || !decision.decision.has_value()) {
+            decision.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto receipt =
+            ahfl::durable_store_import::build_provider_write_commit_receipt(
+                *decision.decision);
+        if (receipt.has_errors() || !receipt.receipt.has_value()) {
+            receipt.diagnostics.render(std::cout);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_write_commit_review_ok() {
+    const auto review = make_valid_provider_write_commit_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_commit_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->next_action ==
+                   ahfl::durable_store_import::ProviderWriteCommitNextActionKind::
+                       ReadyForRecoveryAudit
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -7291,6 +7622,47 @@ int main(int argc, char **argv) {
 
     if (command == "validate-durable-store-import-provider-sdk-mock-adapter-readiness-ok") {
         return validate_durable_store_import_provider_sdk_mock_adapter_readiness_ok();
+    }
+
+    // V0.34: Provider local filesystem alpha tests
+    if (command == "validate-durable-store-import-provider-local-filesystem-alpha-plan-ok") {
+        return validate_durable_store_import_provider_local_filesystem_alpha_plan_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-local-filesystem-alpha-result-dry-run-ok") {
+        return validate_durable_store_import_provider_local_filesystem_alpha_result_dry_run_ok();
+    }
+
+    if (command ==
+        "run-durable-store-import-provider-local-filesystem-alpha-opt-in-write-ok") {
+        return run_durable_store_import_provider_local_filesystem_alpha_opt_in_write_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-local-filesystem-alpha-readiness-ok") {
+        return validate_durable_store_import_provider_local_filesystem_alpha_readiness_ok();
+    }
+
+    // V0.35: Provider write retry/idempotency tests
+    if (command == "validate-durable-store-import-provider-write-retry-decision-ok") {
+        return validate_durable_store_import_provider_write_retry_decision_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-write-retry-decision-matrix-ok") {
+        return build_durable_store_import_provider_write_retry_decision_matrix_ok();
+    }
+
+    // V0.36: Provider write commit receipt tests
+    if (command == "validate-durable-store-import-provider-write-commit-receipt-ok") {
+        return validate_durable_store_import_provider_write_commit_receipt_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-write-commit-receipt-matrix-ok") {
+        return build_durable_store_import_provider_write_commit_receipt_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-write-commit-review-ok") {
+        return validate_durable_store_import_provider_write_commit_review_ok();
     }
 
     std::cerr << "unknown test command: " << command << '\n';
