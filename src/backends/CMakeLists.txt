@@ -441,6 +441,96 @@ target_link_libraries(ahfl_backend_durable_store_import_provider_local_host_exec
 ahfl_apply_project_warnings(
     ahfl_backend_durable_store_import_provider_local_host_execution_receipt_review)
 
+add_library(ahfl_backend_durable_store_import_provider_sdk_adapter_request STATIC
+    durable_store_import_provider_sdk_adapter_request.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_adapter_request
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_sdk_adapter_request)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_adapter_response_placeholder STATIC
+    durable_store_import_provider_sdk_adapter_response_placeholder.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_adapter_response_placeholder
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_sdk_adapter_response_placeholder)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_adapter_readiness STATIC
+    durable_store_import_provider_sdk_adapter_readiness.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_adapter_readiness
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_sdk_adapter_readiness)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_adapter_interface STATIC
+    durable_store_import_provider_sdk_adapter_interface.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_adapter_interface
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_sdk_adapter_interface)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_adapter_interface_review STATIC
+    durable_store_import_provider_sdk_adapter_interface_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_adapter_interface_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_sdk_adapter_interface_review)
+
+add_library(ahfl_backend_durable_store_import_provider_config_load STATIC
+    durable_store_import_provider_config_load.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_config_load
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_config_load)
+
+add_library(ahfl_backend_durable_store_import_provider_config_snapshot STATIC
+    durable_store_import_provider_config_snapshot.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_config_snapshot
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_config_snapshot)
+
+add_library(ahfl_backend_durable_store_import_provider_config_readiness STATIC
+    durable_store_import_provider_config_readiness.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_config_readiness
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_config_readiness)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -531,6 +621,14 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_provider_host_execution_readiness
         ahfl_backend_durable_store_import_provider_local_host_execution_receipt
         ahfl_backend_durable_store_import_provider_local_host_execution_receipt_review
+        ahfl_backend_durable_store_import_provider_sdk_adapter_request
+        ahfl_backend_durable_store_import_provider_sdk_adapter_response_placeholder
+        ahfl_backend_durable_store_import_provider_sdk_adapter_readiness
+        ahfl_backend_durable_store_import_provider_sdk_adapter_interface
+        ahfl_backend_durable_store_import_provider_sdk_adapter_interface_review
+        ahfl_backend_durable_store_import_provider_config_load
+        ahfl_backend_durable_store_import_provider_config_snapshot
+        ahfl_backend_durable_store_import_provider_config_readiness
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

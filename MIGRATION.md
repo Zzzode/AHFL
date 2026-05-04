@@ -740,3 +740,292 @@ ctest --preset test-dev --output-on-failure -L 'v0.26-durable-store-import-provi
 - `docs/reference/durable-store-provider-local-host-execution-prototype-compatibility-v0.26.zh.md`
 - `docs/reference/native-consumer-matrix-v0.26.zh.md`
 - `docs/reference/contributor-guide-v0.26.zh.md`
+
+## V0.26 to V0.27
+
+V0.27 extends the V0.26 provider local host execution receipt boundary with a
+provider SDK adapter request / response artifact boundary. It keeps consuming
+the V0.26 `ProviderLocalHostExecutionReceipt` as the first machine-facing source
+of SDK adapter state and does not introduce a real provider SDK, runtime config
+loader, secret manager, credential, endpoint URI, object storage writer,
+database writer, host process, host environment read, network connection,
+filesystem write, retry token, resume token, SDK payload, or provider response
+payload.
+
+### New Artifact Boundary
+
+The V0.27 artifact chain is:
+
+```text
+ProviderLocalHostExecutionReceipt
+-> ProviderSdkAdapterRequestPlan
+-> ProviderSdkAdapterResponsePlaceholder
+-> ProviderSdkAdapterReadinessReview
+```
+
+The machine-facing provider SDK adapter request format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-adapter-request-plan.v1
+```
+
+The machine-facing provider SDK adapter response placeholder format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-adapter-response-placeholder.v1
+```
+
+The reviewer-facing provider SDK adapter readiness format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-adapter-readiness-review.v1
+```
+
+### New CLI Commands
+
+Use the new V0.27 commands when you need the SDK adapter artifact boundary after
+a V0.26 provider local host execution receipt:
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-request \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-response-placeholder \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-readiness \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### SDK Adapter Outcomes
+
+V0.27 validates these provider SDK adapter paths:
+
+- `ready`: ready provider local host execution receipt generates
+  `PlanProviderSdkAdapterRequest`, deterministic
+  `provider-sdk-adapter-request::<provider-local-host-execution-receipt-id>`
+  identity, deterministic
+  `provider-sdk-adapter-response-placeholder::<provider-sdk-adapter-request-id>`
+  identity, and side-effect flags all set to `false`.
+- `blocked`: local-host-execution-not-ready paths stay non-SDK and preserve
+  failure attribution.
+
+V0.27 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, runtime config loader output, provider
+payloads, SDK payloads, object paths, database tables, credentials, endpoint
+URI, host commands, host environment, network endpoints, filesystem output, or
+private scripts.
+
+### Regression Commands
+
+Use these commands to validate the V0.27 migration surface:
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.27
+ctest --preset test-dev --output-on-failure -L 'v0.27-durable-store-import-provider-sdk-adapter-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.27.zh.md`
+- `docs/plan/issue-backlog-v0.27.zh.md`
+- `docs/design/native-durable-store-provider-sdk-adapter-prototype-bootstrap-v0.27.zh.md`
+- `docs/reference/durable-store-provider-sdk-adapter-prototype-compatibility-v0.27.zh.md`
+- `docs/reference/native-consumer-matrix-v0.27.zh.md`
+- `docs/reference/contributor-guide-v0.27.zh.md`
+
+## V0.27 to V0.28
+
+V0.28 extends the V0.27 provider SDK adapter request boundary with a provider
+SDK adapter interface descriptor boundary. It keeps consuming the V0.27
+`ProviderSdkAdapterRequestPlan` as the first machine-facing source of adapter
+interface state and does not introduce a real provider SDK, dynamic plugin
+loader, registry discovery service, runtime config loader, secret manager,
+credential, endpoint URI, network connection, filesystem write, object store
+writer, database writer, SDK payload, or provider response payload.
+
+### New Artifact Boundary
+
+The V0.28 artifact chain is:
+
+```text
+ProviderSdkAdapterRequestPlan
+-> ProviderSdkAdapterInterfacePlan
+-> ProviderSdkAdapterInterfaceReview
+```
+
+The machine-facing provider SDK adapter interface format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-adapter-interface-plan.v1
+```
+
+The reviewer-facing provider SDK adapter interface review format is:
+
+```text
+ahfl.durable-store-import-provider-sdk-adapter-interface-review.v1
+```
+
+The stable interface ABI and error taxonomy strings are:
+
+```text
+ahfl.provider-sdk-adapter-interface.v1
+ahfl.provider-sdk-adapter-error-taxonomy.v1
+```
+
+### New CLI Commands
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-interface \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-interface-review \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Interface Outcomes
+
+V0.28 validates these provider SDK adapter interface paths:
+
+- `ready`: ready V0.27 request plan generates deterministic provider registry,
+  adapter descriptor, capability descriptor, and interface artifact identities.
+- `blocked`: sdk-adapter-request-not-ready paths preserve failure attribution and
+  normalize the error to `sdk_adapter_request_not_ready`.
+
+V0.28 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, runtime config loader output, provider
+payloads, SDK payloads, credentials, endpoint URI, network endpoints,
+filesystem output, dynamic plugins, or private scripts.
+
+### Regression Commands
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.28
+ctest --preset test-dev --output-on-failure -L 'v0.28-durable-store-import-provider-sdk-adapter-interface-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.28.zh.md`
+- `docs/plan/issue-backlog-v0.28.zh.md`
+- `docs/design/native-durable-store-provider-sdk-adapter-interface-bootstrap-v0.28.zh.md`
+- `docs/reference/durable-store-provider-sdk-adapter-interface-compatibility-v0.28.zh.md`
+- `docs/reference/native-consumer-matrix-v0.28.zh.md`
+- `docs/reference/contributor-guide-v0.28.zh.md`
+
+## V0.28 to V0.29
+
+V0.29 extends the V0.28 provider SDK adapter interface boundary with a provider
+config loader boundary. It keeps consuming the V0.28
+`ProviderSdkAdapterInterfacePlan` as the first machine-facing source of config
+state and does not introduce secret values, credential material, remote config
+service calls, provider endpoint URI, network connections, filesystem writes,
+SDK payloads, provider response payloads, or production tenant provisioning.
+
+### New Artifact Boundary
+
+The V0.29 artifact chain is:
+
+```text
+ProviderSdkAdapterInterfacePlan
+-> ProviderConfigLoadPlan
+-> ProviderConfigSnapshotPlaceholder
+-> ProviderConfigReadinessReview
+```
+
+The machine-facing provider config formats are:
+
+```text
+ahfl.durable-store-import-provider-config-load-plan.v1
+ahfl.durable-store-import-provider-config-snapshot-placeholder.v1
+```
+
+The reviewer-facing provider config readiness format is:
+
+```text
+ahfl.durable-store-import-provider-config-readiness-review.v1
+```
+
+The stable config schema string is:
+
+```text
+ahfl.provider-config-schema.v1
+```
+
+### New CLI Commands
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-config-load \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-config-snapshot \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-config-readiness \
+  --package tests/ir/ok_workflow_value_flow.package.json \
+  --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
+  --input-fixture fixture.request.basic \
+  --run-id run-001 \
+  tests/ir/ok_workflow_value_flow.ahfl
+```
+
+### Config Outcomes
+
+V0.29 validates these provider config paths:
+
+- `ready`: ready V0.28 interface plan generates deterministic config load,
+  config profile, and snapshot placeholder identities.
+- `blocked`: adapter-interface-not-ready paths preserve failure attribution and
+  produce blocked config load / snapshot artifacts.
+
+V0.29 artifacts must not infer state from readiness reviews, CLI text, traces,
+host logs, secret manager responses, remote config service responses, runtime
+config loader output, provider payloads, SDK payloads, credentials, endpoint
+URI, network endpoints, filesystem output, dynamic plugins, or private scripts.
+
+### Regression Commands
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L ahfl-v0.29
+ctest --preset test-dev --output-on-failure -L 'v0.29-durable-store-import-provider-config-(emission|golden)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.29.zh.md`
+- `docs/plan/issue-backlog-v0.29.zh.md`
+- `docs/design/native-durable-store-provider-config-loader-bootstrap-v0.29.zh.md`
+- `docs/reference/durable-store-provider-config-loader-compatibility-v0.29.zh.md`
+- `docs/reference/native-consumer-matrix-v0.29.zh.md`
+- `docs/reference/contributor-guide-v0.29.zh.md`

@@ -1,0 +1,19 @@
+ahfl.durable-store-import-provider-sdk-adapter-interface-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+adapter_request durable-store-import-provider-sdk-adapter-request::run-failed-001::blocked
+interface_artifact durable-store-import-provider-sdk-adapter-interface::run-failed-001::blocked
+interface_status blocked
+operation noop_sdk_adapter_request_not_ready
+registry provider-sdk-adapter-registry::run-failed-001::local-placeholder
+adapter_descriptor provider-sdk-adapter-descriptor::run-failed-001::local-placeholder-durable-store
+capability_descriptor provider-sdk-adapter-capability::run-failed-001::durable-store-import-write
+capability_support unsupported
+error_taxonomy ahfl.provider-sdk-adapter-error-taxonomy.v1
+normalized_error sdk_adapter_request_not_ready
+returns_placeholder_result false
+side_effects sdk_payload=false sdk_call=false network=false secret=false host_env=false filesystem=false
+interface_boundary provider SDK adapter interface descriptor is blocked because SDK adapter request is not ready
+next_action wait_for_sdk_adapter_request
+next_step wait for ready provider SDK adapter request before interface implementation
+failure sdk_adapter_request_not_ready runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'

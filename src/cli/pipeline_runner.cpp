@@ -8,6 +8,9 @@
 #include "ahfl/backends/durable_store_import_adapter_execution.hpp"
 #include "ahfl/backends/durable_store_import_decision.hpp"
 #include "ahfl/backends/durable_store_import_decision_review.hpp"
+#include "ahfl/backends/durable_store_import_provider_config_load.hpp"
+#include "ahfl/backends/durable_store_import_provider_config_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_config_snapshot.hpp"
 #include "ahfl/backends/durable_store_import_provider_driver_binding.hpp"
 #include "ahfl/backends/durable_store_import_provider_driver_readiness.hpp"
 #include "ahfl/backends/durable_store_import_provider_host_execution.hpp"
@@ -17,6 +20,11 @@
 #include "ahfl/backends/durable_store_import_provider_recovery_handoff.hpp"
 #include "ahfl/backends/durable_store_import_provider_runtime_preflight.hpp"
 #include "ahfl/backends/durable_store_import_provider_runtime_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_adapter_interface.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_adapter_interface_review.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_adapter_readiness.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_adapter_request.hpp"
+#include "ahfl/backends/durable_store_import_provider_sdk_adapter_response_placeholder.hpp"
 #include "ahfl/backends/durable_store_import_provider_sdk_envelope.hpp"
 #include "ahfl/backends/durable_store_import_provider_sdk_handoff_readiness.hpp"
 #include "ahfl/backends/durable_store_import_provider_write_attempt.hpp"
@@ -48,11 +56,14 @@
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
+#include "ahfl/durable_store_import/provider_config.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
+#include "ahfl/durable_store_import/provider_sdk_adapter.hpp"
+#include "ahfl/durable_store_import/provider_sdk_interface.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -1758,6 +1769,336 @@ emit_durable_store_import_provider_local_host_execution_receipt_review_with_diag
     return 0;
 }
 
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterRequestPlan>
+build_durable_store_import_provider_sdk_adapter_request_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto receipt = build_durable_store_import_provider_local_host_execution_receipt_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!receipt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_sdk_adapter_request_plan(*receipt);
+    plan.diagnostics.render(std::cerr);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_sdk_adapter_request_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_sdk_adapter_request_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-sdk-adapter-request");
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_adapter_request_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterResponsePlaceholder>
+build_durable_store_import_provider_sdk_adapter_response_placeholder_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_sdk_adapter_request_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto placeholder =
+        ahfl::durable_store_import::build_provider_sdk_adapter_response_placeholder(*plan);
+    placeholder.diagnostics.render(std::cerr);
+    if (placeholder.has_errors() || !placeholder.placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    return *placeholder.placeholder;
+}
+
+[[nodiscard]] int
+emit_durable_store_import_provider_sdk_adapter_response_placeholder_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto placeholder =
+        build_durable_store_import_provider_sdk_adapter_response_placeholder_for_cli(
+            program,
+            metadata,
+            mock_set,
+            options,
+            "emit-durable-store-import-provider-sdk-adapter-response-placeholder");
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_adapter_response_placeholder_json(*placeholder,
+                                                                                    std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterReadinessReview>
+build_durable_store_import_provider_sdk_adapter_readiness_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto placeholder =
+        build_durable_store_import_provider_sdk_adapter_response_placeholder_for_cli(
+            program, metadata, mock_set, options, command_name);
+    if (!placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_adapter_readiness_review(*placeholder);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_sdk_adapter_readiness_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_sdk_adapter_readiness_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-sdk-adapter-readiness");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_adapter_readiness(*review, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterInterfacePlan>
+build_durable_store_import_provider_sdk_adapter_interface_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_sdk_adapter_request_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto interface_plan =
+        ahfl::durable_store_import::build_provider_sdk_adapter_interface_plan(*plan);
+    interface_plan.diagnostics.render(std::cerr);
+    if (interface_plan.has_errors() || !interface_plan.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return *interface_plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_sdk_adapter_interface_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_sdk_adapter_interface_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-sdk-adapter-interface");
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_adapter_interface_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterInterfaceReview>
+build_durable_store_import_provider_sdk_adapter_interface_review_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_sdk_adapter_interface_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_adapter_interface_review(*plan);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_sdk_adapter_interface_review_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_sdk_adapter_interface_review_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-sdk-adapter-interface-review");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_sdk_adapter_interface_review(*review, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConfigLoadPlan>
+build_durable_store_import_provider_config_load_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto interface_plan = build_durable_store_import_provider_sdk_adapter_interface_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!interface_plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_config_load_plan(*interface_plan);
+    plan.diagnostics.render(std::cerr);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_config_load_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto plan = build_durable_store_import_provider_config_load_for_cli(
+        program, metadata, mock_set, options, "emit-durable-store-import-provider-config-load");
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_config_load_json(*plan, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConfigSnapshotPlaceholder>
+build_durable_store_import_provider_config_snapshot_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto plan = build_durable_store_import_provider_config_load_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto placeholder =
+        ahfl::durable_store_import::build_provider_config_snapshot_placeholder(*plan);
+    placeholder.diagnostics.render(std::cerr);
+    if (placeholder.has_errors() || !placeholder.placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    return *placeholder.placeholder;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_config_snapshot_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto placeholder = build_durable_store_import_provider_config_snapshot_for_cli(
+        program, metadata, mock_set, options, "emit-durable-store-import-provider-config-snapshot");
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_config_snapshot_json(*placeholder, std::cout);
+    return 0;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConfigReadinessReview>
+build_durable_store_import_provider_config_readiness_for_cli(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto placeholder = build_durable_store_import_provider_config_snapshot_for_cli(
+        program, metadata, mock_set, options, command_name);
+    if (!placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_config_readiness_review(*placeholder);
+    review.diagnostics.render(std::cerr);
+    if (review.has_errors() || !review.review.has_value()) {
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] int emit_durable_store_import_provider_config_readiness_with_diagnostics(
+    const ahfl::ir::Program &program,
+    const ahfl::handoff::PackageMetadata &metadata,
+    const ahfl::dry_run::CapabilityMockSet &mock_set,
+    const CommandLineOptions &options) {
+    const auto review = build_durable_store_import_provider_config_readiness_for_cli(
+        program,
+        metadata,
+        mock_set,
+        options,
+        "emit-durable-store-import-provider-config-readiness");
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    ahfl::print_durable_store_import_provider_config_readiness(*review, std::cout);
+    return 0;
+}
+
 [[nodiscard]] int emit_durable_store_import_decision_review_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
@@ -1889,6 +2230,27 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitDurableStoreImportProviderLocalHostExecutionReceiptReview,
      invoke_package_command<
          emit_durable_store_import_provider_local_host_execution_receipt_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkAdapterRequest,
+     invoke_package_command<
+         emit_durable_store_import_provider_sdk_adapter_request_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkAdapterResponsePlaceholder,
+     invoke_package_command<
+         emit_durable_store_import_provider_sdk_adapter_response_placeholder_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkAdapterReadiness,
+     invoke_package_command<
+         emit_durable_store_import_provider_sdk_adapter_readiness_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkAdapterInterface,
+     invoke_package_command<
+         emit_durable_store_import_provider_sdk_adapter_interface_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderSdkAdapterInterfaceReview,
+     invoke_package_command<
+         emit_durable_store_import_provider_sdk_adapter_interface_review_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderConfigLoad,
+     invoke_package_command<emit_durable_store_import_provider_config_load_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderConfigSnapshot,
+     invoke_package_command<emit_durable_store_import_provider_config_snapshot_with_diagnostics>},
+    {CommandKind::EmitDurableStoreImportProviderConfigReadiness,
+     invoke_package_command<emit_durable_store_import_provider_config_readiness_with_diagnostics>},
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},
     {CommandKind::EmitRuntimeSession,

@@ -164,6 +164,14 @@ Backend outputs:
 | `emit-durable-store-import-provider-host-execution-readiness` | reviewer-facing provider host execution readiness review over host execution plan |
 | `emit-durable-store-import-provider-local-host-execution-receipt` | simulated provider local host execution receipt over host execution plan |
 | `emit-durable-store-import-provider-local-host-execution-receipt-review` | reviewer-facing provider local host execution receipt review |
+| `emit-durable-store-import-provider-sdk-adapter-request` | provider SDK adapter request plan over local host execution receipt |
+| `emit-durable-store-import-provider-sdk-adapter-response-placeholder` | provider SDK adapter response placeholder over adapter request plan |
+| `emit-durable-store-import-provider-sdk-adapter-readiness` | reviewer-facing provider SDK adapter readiness review over response placeholder |
+| `emit-durable-store-import-provider-sdk-adapter-interface` | provider SDK adapter interface descriptor plan over adapter request plan |
+| `emit-durable-store-import-provider-sdk-adapter-interface-review` | reviewer-facing provider SDK adapter interface readiness review |
+| `emit-durable-store-import-provider-config-load` | provider config load plan over adapter interface plan |
+| `emit-durable-store-import-provider-config-snapshot` | provider config snapshot placeholder over config load plan |
+| `emit-durable-store-import-provider-config-readiness` | reviewer-facing provider config readiness review |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -218,6 +226,9 @@ ctest --preset test-dev -L ahfl-v0.23
 ctest --preset test-dev -L ahfl-v0.24
 ctest --preset test-dev -L ahfl-v0.25
 ctest --preset test-dev -L ahfl-v0.26
+ctest --preset test-dev -L ahfl-v0.27
+ctest --preset test-dev -L ahfl-v0.28
+ctest --preset test-dev -L ahfl-v0.29
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh

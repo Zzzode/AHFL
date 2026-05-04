@@ -1339,3 +1339,146 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.project_manifest.workflow_value_flow.failed.with_package
         ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-request-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_adapter_request.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_adapter_request.model.validate_blocked_ok
+        ahfl.durable_store_import_provider_sdk_adapter_request.model.fail_side_effects
+        ahfl.durable_store_import_provider_sdk_adapter_request.model.fail_forbidden_material
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-request-bootstrap
+    TESTS
+        ahfl.durable_store_import_provider_sdk_adapter_request.bootstrap.ready_receipt
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-response-placeholder-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_adapter_response_placeholder.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_adapter_response_placeholder.bootstrap.blocked_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-readiness-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_adapter_readiness.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_adapter_readiness.bootstrap.fail_invalid_placeholder
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.27 v0.27-durable-store-import-provider-sdk-adapter-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_request.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.28 v0.28-durable-store-import-provider-sdk-adapter-interface-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_adapter_interface.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_adapter_interface.model.fail_forbidden_material
+        ahfl.durable_store_import_provider_sdk_adapter_interface.bootstrap.blocked_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.28 v0.28-durable-store-import-provider-sdk-adapter-interface-review-model
+    TESTS
+        ahfl.durable_store_import_provider_sdk_adapter_interface_review.model.validate_ok
+        ahfl.durable_store_import_provider_sdk_adapter_interface_review.bootstrap.fail_invalid_plan
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.28 v0.28-durable-store-import-provider-sdk-adapter-interface-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.28 v0.28-durable-store-import-provider-sdk-adapter-interface-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-load-model
+    TESTS
+        ahfl.durable_store_import_provider_config_load.model.validate_ok
+        ahfl.durable_store_import_provider_config_load.model.fail_forbidden_material
+        ahfl.durable_store_import_provider_config_load.bootstrap.blocked_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-snapshot-model
+    TESTS
+        ahfl.durable_store_import_provider_config_snapshot.model.validate_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-readiness-model
+    TESTS
+        ahfl.durable_store_import_provider_config_readiness.model.validate_ok
+        ahfl.durable_store_import_provider_config_readiness.bootstrap.fail_invalid_snapshot
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-emission
+    TESTS
+        ahflc.emit_durable_store_import_provider_config_load.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_config_load.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_load.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.29 v0.29-durable-store-import-provider-config-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_config_load.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_config_load.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_load.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_snapshot.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_config_readiness.workspace.workflow_value_flow.partial.with_package
+)

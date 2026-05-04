@@ -18,11 +18,11 @@ V0.28 在 V0.27 SDK adapter request / response artifact boundary 之后，冻结
 
 ## 里程碑
 
-- [ ] M0 冻结 adapter interface scope 与 non-goals
-- [ ] M1 定义 adapter descriptor / registry model
-- [ ] M2 定义 capability descriptor 与 unsupported capability diagnostics
-- [ ] M3 定义 provider error normalization skeleton
-- [ ] M4 建立 direct tests、CLI review、golden、docs、CI 标签
+- [x] M0 冻结 adapter interface scope 与 non-goals
+- [x] M1 定义 adapter descriptor / registry model
+- [x] M2 定义 capability descriptor 与 unsupported capability diagnostics
+- [x] M3 定义 provider error normalization skeleton
+- [x] M4 建立 direct tests、CLI review、golden、docs、CI 标签
 
 ## 完成定义
 

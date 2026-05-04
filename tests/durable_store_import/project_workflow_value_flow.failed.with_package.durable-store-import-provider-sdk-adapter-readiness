@@ -1,0 +1,25 @@
+ahfl.durable-store-import-provider-sdk-adapter-readiness-review.v1
+source_provider_sdk_adapter_response_placeholder_format ahfl.durable-store-import-provider-sdk-adapter-response-placeholder.v1
+source_provider_sdk_adapter_request_plan_format ahfl.durable-store-import-provider-sdk-adapter-request-plan.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+run_id run-failed-001
+input_fixture fixture.request.failed
+durable_store_import_provider_sdk_adapter_request_identity durable-store-import-provider-sdk-adapter-request::run-failed-001::blocked
+durable_store_import_provider_sdk_adapter_response_placeholder_identity durable-store-import-provider-sdk-adapter-response-placeholder::run-failed-001::blocked
+response_status blocked
+operation_kind noop_sdk_adapter_request_not_ready
+provider_sdk_adapter_response_placeholder_identity none
+materializes_sdk_request_payload false
+invokes_provider_sdk false
+opens_network_connection false
+reads_secret_material false
+reads_host_environment false
+writes_host_filesystem false
+next_action wait_for_local_host_execution_receipt
+sdk_adapter_boundary provider SDK adapter response placeholder was not planned because SDK adapter request is not ready
+next_step wait for ready local host execution receipt and SDK adapter request before adapter interface implementation
+failure_attribution {
+  kind sdk_adapter_request_not_ready
+  message runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
+}

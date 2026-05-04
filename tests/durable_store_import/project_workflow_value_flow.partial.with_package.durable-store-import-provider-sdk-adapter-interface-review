@@ -1,0 +1,19 @@
+ahfl.durable-store-import-provider-sdk-adapter-interface-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+adapter_request durable-store-import-provider-sdk-adapter-request::run-partial-001::ready
+interface_artifact durable-store-import-provider-sdk-adapter-interface::run-partial-001::ready
+interface_status ready
+operation plan_provider_sdk_adapter_interface
+registry provider-sdk-adapter-registry::run-partial-001::local-placeholder
+adapter_descriptor provider-sdk-adapter-descriptor::run-partial-001::local-placeholder-durable-store
+capability_descriptor provider-sdk-adapter-capability::run-partial-001::durable-store-import-write
+capability_support supported
+error_taxonomy ahfl.provider-sdk-adapter-error-taxonomy.v1
+normalized_error none
+returns_placeholder_result true
+side_effects sdk_payload=false sdk_call=false network=false secret=false host_env=false filesystem=false
+interface_boundary provider SDK adapter interface descriptor is ready with local placeholder registry, durable-store-import capability descriptor, and normalized error taxonomy; no SDK payload, SDK call, network, secret, host environment, or filesystem write was used
+next_action ready_for_mock_adapter_implementation
+next_step ready for future mock provider SDK adapter implementation
+failure none

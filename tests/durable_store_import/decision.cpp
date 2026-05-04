@@ -2,11 +2,14 @@
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
+#include "ahfl/durable_store_import/provider_config.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
+#include "ahfl/durable_store_import/provider_sdk_adapter.hpp"
+#include "ahfl/durable_store_import/provider_sdk_interface.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -2423,6 +2426,140 @@ make_valid_provider_local_host_execution_receipt_review() {
 
     const auto review =
         ahfl::durable_store_import::build_provider_local_host_execution_receipt_review(*receipt);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterRequestPlan>
+make_valid_provider_sdk_adapter_request_plan() {
+    const auto receipt = make_valid_provider_local_host_execution_receipt();
+    if (!receipt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_sdk_adapter_request_plan(*receipt);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterResponsePlaceholder>
+make_valid_provider_sdk_adapter_response_placeholder() {
+    const auto plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto placeholder =
+        ahfl::durable_store_import::build_provider_sdk_adapter_response_placeholder(*plan);
+    if (placeholder.has_errors() || !placeholder.placeholder.has_value()) {
+        placeholder.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *placeholder.placeholder;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterReadinessReview>
+make_valid_provider_sdk_adapter_readiness_review() {
+    const auto placeholder = make_valid_provider_sdk_adapter_response_placeholder();
+    if (!placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_adapter_readiness_review(*placeholder);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterInterfacePlan>
+make_valid_provider_sdk_adapter_interface_plan() {
+    const auto request_plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!request_plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_sdk_adapter_interface_plan(*request_plan);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkAdapterInterfaceReview>
+make_valid_provider_sdk_adapter_interface_review() {
+    const auto plan = make_valid_provider_sdk_adapter_interface_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_adapter_interface_review(*plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConfigLoadPlan>
+make_valid_provider_config_load_plan() {
+    const auto interface_plan = make_valid_provider_sdk_adapter_interface_plan();
+    if (!interface_plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_config_load_plan(*interface_plan);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConfigSnapshotPlaceholder>
+make_valid_provider_config_snapshot_placeholder() {
+    const auto plan = make_valid_provider_config_load_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto placeholder =
+        ahfl::durable_store_import::build_provider_config_snapshot_placeholder(*plan);
+    if (placeholder.has_errors() || !placeholder.placeholder.has_value()) {
+        placeholder.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *placeholder.placeholder;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConfigReadinessReview>
+make_valid_provider_config_readiness_review() {
+    const auto placeholder = make_valid_provider_config_snapshot_placeholder();
+    if (!placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_config_readiness_review(*placeholder);
     if (review.has_errors() || !review.review.has_value()) {
         review.diagnostics.render(std::cout);
         return std::nullopt;
@@ -4991,6 +5128,626 @@ int build_durable_store_import_provider_local_host_execution_receipt_review_reje
                : 1;
 }
 
+int validate_durable_store_import_provider_sdk_adapter_request_ok() {
+    const auto plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_request_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->request_status != ahfl::durable_store_import::ProviderSdkAdapterStatus::Ready ||
+        plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterOperationKind::
+                PlanProviderSdkAdapterRequest ||
+        !plan->provider_sdk_adapter_request_identity.has_value() ||
+        !plan->provider_sdk_adapter_response_placeholder_identity.has_value() ||
+        plan->materializes_sdk_request_payload || plan->invokes_provider_sdk ||
+        plan->opens_network_connection || plan->reads_secret_material ||
+        plan->reads_host_environment || plan->writes_host_filesystem ||
+        plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK adapter request plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_request_blocked_ok() {
+    auto receipt = make_valid_provider_local_host_execution_receipt();
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    receipt->execution_status =
+        ahfl::durable_store_import::ProviderLocalHostExecutionStatus::Blocked;
+    receipt->operation_kind =
+        ahfl::durable_store_import::ProviderLocalHostExecutionOperationKind::
+            NoopHostExecutionNotReady;
+    receipt->provider_local_host_execution_receipt_identity.reset();
+    receipt->failure_attribution =
+        ahfl::durable_store_import::ProviderLocalHostExecutionFailureAttribution{
+            .kind = ahfl::durable_store_import::ProviderLocalHostExecutionFailureKind::
+                HostExecutionNotReady,
+            .message = "blocked local host receipt",
+        };
+
+    const auto plan = ahfl::durable_store_import::build_provider_sdk_adapter_request_plan(*receipt);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->request_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterStatus::Blocked ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterOperationKind::
+                NoopLocalHostExecutionNotReady ||
+        plan.plan->provider_sdk_adapter_request_identity.has_value() ||
+        plan.plan->provider_sdk_adapter_response_placeholder_identity.has_value() ||
+        !plan.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider SDK adapter request plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_request_rejects_side_effects() {
+    auto plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->materializes_sdk_request_payload = true;
+    plan->invokes_provider_sdk = true;
+    plan->opens_network_connection = true;
+    plan->reads_secret_material = true;
+    plan->reads_host_environment = true;
+    plan->writes_host_filesystem = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_request_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider SDK adapter request side effects to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               validation.diagnostics, "cannot materialize SDK request payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot invoke provider SDK") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot open network connection") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot read secret material") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot read host environment") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot write host filesystem")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_request_rejects_forbidden_material() {
+    auto plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->provider_endpoint_uri = "https://provider.example.invalid";
+    plan->object_path = "bucket/receipt.json";
+    plan->database_table = "receipt-table";
+    plan->sdk_request_payload = "{\"unsafe\":true}";
+    plan->sdk_response_payload = "{\"unsafe\":true}";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_request_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider SDK adapter request forbidden material to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain provider_endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain object_path") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain database_table") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_request_payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_response_payload")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_sdk_adapter_request_ready_receipt() {
+    const auto plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    if (plan->durable_store_import_provider_sdk_adapter_request_identity !=
+            "durable-store-import-provider-sdk-adapter-request::run-partial-001::ready" ||
+        plan->provider_sdk_adapter_request_identity !=
+            std::optional<std::string>(
+                "provider-sdk-adapter-request::provider-local-host-execution-receipt::provider-host-execution-descriptor::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted") ||
+        plan->provider_sdk_adapter_response_placeholder_identity !=
+            std::optional<std::string>(
+                "provider-sdk-adapter-response-placeholder::provider-sdk-adapter-request::provider-local-host-execution-receipt::provider-host-execution-descriptor::provider-sdk-host-handoff::provider-sdk-invocation-envelope::provider-driver-operation::provider-persistence::workflow-value-flow::run-partial-001::accepted")) {
+        std::cerr << "unexpected ready provider SDK adapter request bootstrap result\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_response_placeholder_ok() {
+    const auto placeholder = make_valid_provider_sdk_adapter_response_placeholder();
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_response_placeholder(
+            *placeholder);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (placeholder->response_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterStatus::Ready ||
+        placeholder->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterOperationKind::
+                PlanProviderSdkAdapterResponsePlaceholder ||
+        !placeholder->provider_sdk_adapter_response_placeholder_identity.has_value() ||
+        placeholder->materializes_sdk_request_payload || placeholder->invokes_provider_sdk ||
+        placeholder->opens_network_connection || placeholder->reads_secret_material ||
+        placeholder->reads_host_environment || placeholder->writes_host_filesystem ||
+        placeholder->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK adapter response placeholder\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_adapter_response_placeholder_blocked_ok() {
+    auto plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->request_status = ahfl::durable_store_import::ProviderSdkAdapterStatus::Blocked;
+    plan->operation_kind =
+        ahfl::durable_store_import::ProviderSdkAdapterOperationKind::
+            NoopLocalHostExecutionNotReady;
+    plan->provider_sdk_adapter_request_identity.reset();
+    plan->provider_sdk_adapter_response_placeholder_identity.reset();
+    plan->failure_attribution =
+        ahfl::durable_store_import::ProviderSdkAdapterFailureAttribution{
+            .kind = ahfl::durable_store_import::ProviderSdkAdapterFailureKind::
+                LocalHostExecutionNotReady,
+            .message = "blocked SDK adapter request",
+        };
+
+    const auto placeholder =
+        ahfl::durable_store_import::build_provider_sdk_adapter_response_placeholder(*plan);
+    if (placeholder.has_errors() || !placeholder.placeholder.has_value()) {
+        placeholder.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (placeholder.placeholder->response_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterStatus::Blocked ||
+        placeholder.placeholder->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterOperationKind::
+                NoopSdkAdapterRequestNotReady ||
+        placeholder.placeholder->provider_sdk_adapter_response_placeholder_identity.has_value() ||
+        !placeholder.placeholder->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider SDK adapter response placeholder\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_readiness_ok() {
+    const auto review = make_valid_provider_sdk_adapter_readiness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_readiness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderSdkAdapterReadinessNextActionKind::
+                ReadyForProviderSdkAdapterInterface ||
+        !review->provider_sdk_adapter_response_placeholder_identity.has_value() ||
+        review->materializes_sdk_request_payload || review->invokes_provider_sdk ||
+        review->opens_network_connection || review->reads_secret_material ||
+        review->reads_host_environment || review->writes_host_filesystem ||
+        review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK adapter readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_adapter_readiness_rejects_invalid_placeholder() {
+    auto placeholder = make_valid_provider_sdk_adapter_response_placeholder();
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    placeholder->format_version =
+        "ahfl.durable-store-import-provider-sdk-adapter-response-placeholder.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_adapter_readiness_review(*placeholder);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid SDK adapter placeholder to fail readiness review\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider SDK adapter response placeholder format_version "
+               "must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_interface_ok() {
+    const auto plan = make_valid_provider_sdk_adapter_interface_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_interface_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->interface_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready ||
+        plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterInterfaceOperationKind::
+                PlanProviderSdkAdapterInterface ||
+        plan->capability_descriptor.support_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Supported ||
+        plan->normalized_error_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterNormalizedErrorKind::None ||
+        !plan->returns_placeholder_result || plan->materializes_sdk_request_payload ||
+        plan->invokes_provider_sdk || plan->opens_network_connection ||
+        plan->reads_secret_material || plan->reads_host_environment ||
+        plan->writes_host_filesystem || plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK adapter interface plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_interface_rejects_forbidden_material() {
+    auto plan = make_valid_provider_sdk_adapter_interface_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->provider_endpoint_uri = "https://provider.example.invalid";
+    plan->credential_reference = "secret://provider";
+    plan->sdk_request_payload = "{\"unsafe\":true}";
+    plan->sdk_response_payload = "{\"unsafe\":true}";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_interface_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider SDK adapter interface forbidden material to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain provider_endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain credential_reference") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_request_payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_response_payload")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_sdk_adapter_interface_blocked_ok() {
+    auto request_plan = make_valid_provider_sdk_adapter_request_plan();
+    if (!request_plan.has_value()) {
+        return 1;
+    }
+
+    request_plan->request_status = ahfl::durable_store_import::ProviderSdkAdapterStatus::Blocked;
+    request_plan->operation_kind =
+        ahfl::durable_store_import::ProviderSdkAdapterOperationKind::
+            NoopLocalHostExecutionNotReady;
+    request_plan->provider_sdk_adapter_request_identity.reset();
+    request_plan->provider_sdk_adapter_response_placeholder_identity.reset();
+    request_plan->failure_attribution =
+        ahfl::durable_store_import::ProviderSdkAdapterFailureAttribution{
+            .kind = ahfl::durable_store_import::ProviderSdkAdapterFailureKind::
+                LocalHostExecutionNotReady,
+            .message = "blocked SDK adapter request",
+        };
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_sdk_adapter_interface_plan(*request_plan);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->interface_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterInterfaceOperationKind::
+                NoopSdkAdapterRequestNotReady ||
+        plan.plan->capability_descriptor.support_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Unsupported ||
+        plan.plan->normalized_error_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterNormalizedErrorKind::
+                SdkAdapterRequestNotReady ||
+        plan.plan->returns_placeholder_result || !plan.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider SDK adapter interface plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_adapter_interface_review_ok() {
+    const auto review = make_valid_provider_sdk_adapter_interface_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_adapter_interface_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderSdkAdapterInterfaceReviewNextActionKind::
+                ReadyForMockAdapterImplementation ||
+        review->capability_support_status !=
+            ahfl::durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Supported ||
+        review->normalized_error_kind !=
+            ahfl::durable_store_import::ProviderSdkAdapterNormalizedErrorKind::None ||
+        !review->returns_placeholder_result || review->materializes_sdk_request_payload ||
+        review->invokes_provider_sdk || review->opens_network_connection ||
+        review->reads_secret_material || review->reads_host_environment ||
+        review->writes_host_filesystem || review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider SDK adapter interface review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_sdk_adapter_interface_review_rejects_invalid_plan() {
+    auto plan = make_valid_provider_sdk_adapter_interface_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->format_version =
+        "ahfl.durable-store-import-provider-sdk-adapter-interface-plan.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_sdk_adapter_interface_review(*plan);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid SDK adapter interface plan to fail review\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider SDK adapter interface plan format_version must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_config_load_ok() {
+    const auto plan = make_valid_provider_config_load_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::validate_provider_config_load_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->config_load_status != ahfl::durable_store_import::ProviderConfigStatus::Ready ||
+        plan->operation_kind !=
+            ahfl::durable_store_import::ProviderConfigOperationKind::PlanProviderConfigLoad ||
+        plan->reads_secret_material || plan->materializes_secret_value ||
+        plan->materializes_credential_material || plan->opens_network_connection ||
+        plan->reads_host_environment || plan->writes_host_filesystem ||
+        plan->materializes_sdk_request_payload || plan->invokes_provider_sdk ||
+        plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider config load plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_config_load_rejects_forbidden_material() {
+    auto plan = make_valid_provider_config_load_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->secret_value = "unsafe-secret";
+    plan->credential_material = "unsafe-credential";
+    plan->provider_endpoint_uri = "https://provider.example.invalid";
+    plan->remote_config_uri = "https://config.example.invalid";
+    plan->sdk_request_payload = "{\"unsafe\":true}";
+    const auto validation = ahfl::durable_store_import::validate_provider_config_load_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider config load forbidden material to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain secret_value") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain credential_material") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain provider_endpoint_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain remote_config_uri") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain sdk_request_payload")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_config_load_blocked_ok() {
+    auto interface_plan = make_valid_provider_sdk_adapter_interface_plan();
+    if (!interface_plan.has_value()) {
+        return 1;
+    }
+
+    interface_plan->interface_status =
+        ahfl::durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked;
+    interface_plan->operation_kind =
+        ahfl::durable_store_import::ProviderSdkAdapterInterfaceOperationKind::
+            NoopSdkAdapterRequestNotReady;
+    interface_plan->capability_descriptor.support_status =
+        ahfl::durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Unsupported;
+    interface_plan->normalized_error_kind =
+        ahfl::durable_store_import::ProviderSdkAdapterNormalizedErrorKind::
+            SdkAdapterRequestNotReady;
+    interface_plan->returns_placeholder_result = false;
+    interface_plan->failure_attribution =
+        ahfl::durable_store_import::ProviderSdkAdapterInterfaceFailureAttribution{
+            .kind = ahfl::durable_store_import::ProviderSdkAdapterInterfaceFailureKind::
+                SdkAdapterRequestNotReady,
+            .message = "blocked adapter interface",
+        };
+
+    const auto plan = ahfl::durable_store_import::build_provider_config_load_plan(*interface_plan);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->config_load_status !=
+            ahfl::durable_store_import::ProviderConfigStatus::Blocked ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderConfigOperationKind::
+                NoopAdapterInterfaceNotReady ||
+        !plan.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider config load plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_config_snapshot_ok() {
+    const auto placeholder = make_valid_provider_config_snapshot_placeholder();
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_config_snapshot_placeholder(*placeholder);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (placeholder->snapshot_status !=
+            ahfl::durable_store_import::ProviderConfigStatus::Ready ||
+        placeholder->operation_kind !=
+            ahfl::durable_store_import::ProviderConfigOperationKind::
+                PlanProviderConfigSnapshotPlaceholder ||
+        placeholder->reads_secret_material || placeholder->materializes_secret_value ||
+        placeholder->materializes_credential_material || placeholder->opens_network_connection ||
+        placeholder->reads_host_environment || placeholder->writes_host_filesystem ||
+        placeholder->materializes_sdk_request_payload || placeholder->invokes_provider_sdk ||
+        placeholder->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider config snapshot placeholder\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_config_readiness_ok() {
+    const auto review = make_valid_provider_config_readiness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_config_readiness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderConfigReadinessNextActionKind::
+                ReadyForSecretHandleResolver ||
+        review->reads_secret_material || review->materializes_secret_value ||
+        review->materializes_credential_material || review->opens_network_connection ||
+        review->reads_host_environment || review->writes_host_filesystem ||
+        review->materializes_sdk_request_payload || review->invokes_provider_sdk ||
+        review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider config readiness review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_config_readiness_rejects_invalid_snapshot() {
+    auto placeholder = make_valid_provider_config_snapshot_placeholder();
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    placeholder->format_version =
+        "ahfl.durable-store-import-provider-config-snapshot-placeholder.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_config_readiness_review(*placeholder);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid provider config snapshot to fail readiness review\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider config snapshot placeholder format_version must be")
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -5688,6 +6445,98 @@ int main(int argc, char **argv) {
     if (command ==
         "build-durable-store-import-provider-local-host-execution-receipt-review-rejects-invalid-receipt") {
         return build_durable_store_import_provider_local_host_execution_receipt_review_rejects_invalid_receipt();
+    }
+
+    // V0.27: Provider SDK Adapter request/response/readiness tests
+    if (command == "validate-durable-store-import-provider-sdk-adapter-request-ok") {
+        return validate_durable_store_import_provider_sdk_adapter_request_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-adapter-request-blocked-ok") {
+        return validate_durable_store_import_provider_sdk_adapter_request_blocked_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-adapter-request-rejects-side-effects") {
+        return validate_durable_store_import_provider_sdk_adapter_request_rejects_side_effects();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-adapter-request-rejects-forbidden-material") {
+        return validate_durable_store_import_provider_sdk_adapter_request_rejects_forbidden_material();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-adapter-request-ready-receipt") {
+        return build_durable_store_import_provider_sdk_adapter_request_ready_receipt();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-adapter-response-placeholder-ok") {
+        return validate_durable_store_import_provider_sdk_adapter_response_placeholder_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-adapter-response-placeholder-blocked-ok") {
+        return build_durable_store_import_provider_sdk_adapter_response_placeholder_blocked_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-adapter-readiness-ok") {
+        return validate_durable_store_import_provider_sdk_adapter_readiness_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-adapter-readiness-rejects-invalid-placeholder") {
+        return build_durable_store_import_provider_sdk_adapter_readiness_rejects_invalid_placeholder();
+    }
+
+    // V0.28: Provider SDK Adapter interface tests
+    if (command == "validate-durable-store-import-provider-sdk-adapter-interface-ok") {
+        return validate_durable_store_import_provider_sdk_adapter_interface_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-adapter-interface-rejects-forbidden-material") {
+        return validate_durable_store_import_provider_sdk_adapter_interface_rejects_forbidden_material();
+    }
+
+    if (command == "build-durable-store-import-provider-sdk-adapter-interface-blocked-ok") {
+        return build_durable_store_import_provider_sdk_adapter_interface_blocked_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-adapter-interface-review-ok") {
+        return validate_durable_store_import_provider_sdk_adapter_interface_review_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-sdk-adapter-interface-review-rejects-invalid-plan") {
+        return build_durable_store_import_provider_sdk_adapter_interface_review_rejects_invalid_plan();
+    }
+
+    // V0.29: Provider Config load/snapshot/readiness tests
+    if (command == "validate-durable-store-import-provider-config-load-ok") {
+        return validate_durable_store_import_provider_config_load_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-config-load-rejects-forbidden-material") {
+        return validate_durable_store_import_provider_config_load_rejects_forbidden_material();
+    }
+
+    if (command == "build-durable-store-import-provider-config-load-blocked-ok") {
+        return build_durable_store_import_provider_config_load_blocked_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-config-snapshot-ok") {
+        return validate_durable_store_import_provider_config_snapshot_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-config-readiness-ok") {
+        return validate_durable_store_import_provider_config_readiness_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-config-readiness-rejects-invalid-snapshot") {
+        return build_durable_store_import_provider_config_readiness_rejects_invalid_snapshot();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

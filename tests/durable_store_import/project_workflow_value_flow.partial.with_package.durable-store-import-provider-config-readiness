@@ -1,0 +1,15 @@
+ahfl.durable-store-import-provider-config-readiness-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+config_load durable-store-import-provider-config-load::run-partial-001::ready
+config_snapshot durable-store-import-provider-config-snapshot::run-partial-001::ready
+snapshot_status ready
+operation plan_provider_config_snapshot_placeholder
+profile provider-config-profile::provider-sdk-adapter-descriptor::run-partial-001::local-placeholder-durable-store::local-placeholder-profile
+snapshot_placeholder provider-config-snapshot-placeholder::provider-config-profile::provider-sdk-adapter-descriptor::run-partial-001::local-placeholder-durable-store::local-placeholder-profile
+config_schema ahfl.provider-config-schema.v1
+side_effects secret_read=false secret_value=false credential=false network=false host_env=false filesystem=false sdk_payload=false sdk_call=false
+config_boundary provider config snapshot placeholder is ready without reading secret material, materializing credential material, opening network, reading host environment, writing host filesystem, materializing SDK payload, or invoking provider SDK
+next_action ready_for_secret_handle_resolver
+next_step ready for future secret handle resolver boundary
+failure none

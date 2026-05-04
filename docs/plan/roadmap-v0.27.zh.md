@@ -26,21 +26,21 @@
 
 ### M0 Adapter Artifact Boundary
 
-- [ ] 冻结 request plan / response placeholder / readiness review 的职责分层
-- [ ] 冻结 V0.26 receipt 到 V0.27 request plan 的输入边界
-- [ ] 冻结 deterministic SDK adapter request / response placeholder identity namespace
+- [x] 冻结 request plan / response placeholder / readiness review 的职责分层
+- [x] 冻结 V0.26 receipt 到 V0.27 request plan 的输入边界
+- [x] 冻结 deterministic SDK adapter request / response placeholder identity namespace
 
 ### M1 Model 与 Validation
 
-- [ ] 实现 request plan model 与 validation
-- [ ] 实现 response placeholder model 与 validation
-- [ ] 实现 readiness review model 与 validation
+- [x] 实现 request plan model 与 validation
+- [x] 实现 response placeholder model 与 validation
+- [x] 实现 readiness review model 与 validation
 
 ### M2 CLI、Golden 与 Docs
 
-- [ ] 新增 CLI / backend 输出
-- [ ] 覆盖 single-file、project、workspace golden
-- [ ] 更新 compatibility、consumer matrix、contributor guide、CI 与 migration docs
+- [x] 新增 CLI / backend 输出
+- [x] 覆盖 single-file、project、workspace golden
+- [x] 更新 compatibility、consumer matrix、contributor guide、CI 与 migration docs
 
 ## 完成定义
 

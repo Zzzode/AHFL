@@ -2,6 +2,7 @@ add_library(ahfl_durable_store_import STATIC
     adapter_execution.cpp
     decision.cpp
     decision_review.cpp
+    provider_config.cpp
     receipt.cpp
     receipt_persistence.cpp
     receipt_persistence_response.cpp
@@ -12,6 +13,8 @@ add_library(ahfl_durable_store_import STATIC
     provider_host_execution.cpp
     provider_local_host_execution.cpp
     provider_runtime.cpp
+    provider_sdk_adapter.cpp
+    provider_sdk_interface.cpp
     provider_sdk.cpp
     recovery_preview.cpp
     receipt_review.cpp

@@ -18,10 +18,10 @@ V0.29 冻结 provider config loader boundary。目标是把 provider config snap
 
 ## 里程碑
 
-- [ ] M0 冻结 config loader scope、输入边界与 forbidden fields
-- [ ] M1 定义 config profile / snapshot placeholder model
-- [ ] M2 定义 missing / incompatible / unsupported config diagnostics
-- [ ] M3 建立 CLI / golden / compatibility / CI
+- [x] M0 冻结 config loader scope、输入边界与 forbidden fields
+- [x] M1 定义 config profile / snapshot placeholder model
+- [x] M2 定义 missing / incompatible / unsupported config diagnostics
+- [x] M3 建立 CLI / golden / compatibility / CI
 
 ## 完成定义
 

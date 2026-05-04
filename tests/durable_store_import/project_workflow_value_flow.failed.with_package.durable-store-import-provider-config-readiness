@@ -1,0 +1,15 @@
+ahfl.durable-store-import-provider-config-readiness-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+config_load durable-store-import-provider-config-load::run-failed-001::blocked
+config_snapshot durable-store-import-provider-config-snapshot::run-failed-001::blocked
+snapshot_status blocked
+operation noop_config_load_not_ready
+profile provider-config-profile::provider-sdk-adapter-descriptor::run-failed-001::local-placeholder-durable-store::local-placeholder-profile
+snapshot_placeholder provider-config-snapshot-placeholder::provider-config-profile::provider-sdk-adapter-descriptor::run-failed-001::local-placeholder-durable-store::local-placeholder-profile
+config_schema ahfl.provider-config-schema.v1
+side_effects secret_read=false secret_value=false credential=false network=false host_env=false filesystem=false sdk_payload=false sdk_call=false
+config_boundary provider config snapshot placeholder is blocked because config load is not ready
+next_action wait_for_adapter_interface
+next_step wait for ready adapter interface and config load plan
+failure config_load_not_ready runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'
