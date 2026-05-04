@@ -106,8 +106,25 @@ Avoid:
 
 ### Plan
 
-- [roadmap-v0.26.zh.md](./plan/roadmap-v0.26.zh.md) - current execution plan
-- [issue-backlog-v0.26.zh.md](./plan/issue-backlog-v0.26.zh.md) - current execution backlog
+- [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - future provider production roadmap
+- [roadmap-v0.27.zh.md](./plan/roadmap-v0.27.zh.md) - next execution plan
+- [roadmap-v0.28.zh.md](./plan/roadmap-v0.28.zh.md) - future provider roadmap
+- [roadmap-v0.29.zh.md](./plan/roadmap-v0.29.zh.md) - future provider roadmap
+- [roadmap-v0.30.zh.md](./plan/roadmap-v0.30.zh.md) - future provider roadmap
+- [roadmap-v0.31.zh.md](./plan/roadmap-v0.31.zh.md) - future provider roadmap
+- [roadmap-v0.32.zh.md](./plan/roadmap-v0.32.zh.md) - future provider roadmap
+- [roadmap-v0.33.zh.md](./plan/roadmap-v0.33.zh.md) - future provider roadmap
+- [roadmap-v0.34.zh.md](./plan/roadmap-v0.34.zh.md) - future provider roadmap
+- [roadmap-v0.35.zh.md](./plan/roadmap-v0.35.zh.md) - future provider roadmap
+- [roadmap-v0.36.zh.md](./plan/roadmap-v0.36.zh.md) - future provider roadmap
+- [roadmap-v0.37.zh.md](./plan/roadmap-v0.37.zh.md) - future provider roadmap
+- [roadmap-v0.38.zh.md](./plan/roadmap-v0.38.zh.md) - future provider roadmap
+- [roadmap-v0.39.zh.md](./plan/roadmap-v0.39.zh.md) - future provider roadmap
+- [roadmap-v0.40.zh.md](./plan/roadmap-v0.40.zh.md) - future provider roadmap
+- [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - future provider roadmap
+- [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - future provider roadmap
+- [roadmap-v0.26.zh.md](./plan/roadmap-v0.26.zh.md) - completed baseline
+- [issue-backlog-v0.26.zh.md](./plan/issue-backlog-v0.26.zh.md) - completed baseline
 - [roadmap-v0.25.zh.md](./plan/roadmap-v0.25.zh.md) - completed baseline
 - [issue-backlog-v0.25.zh.md](./plan/issue-backlog-v0.25.zh.md) - completed baseline
 - [roadmap-v0.24.zh.md](./plan/roadmap-v0.24.zh.md) - completed baseline
