@@ -1,6 +1,6 @@
-# AHFL Provider Production Roadmap V0.27-V0.42
+# AHFL Provider Production Roadmap V0.27-V0.50
 
-本文给出 V0.26 之后从 artifact-only provider prototype 走向 production-ready provider execution 的总体路线。当前基线是 [roadmap-v0.26.zh.md](./roadmap-v0.26.zh.md)：仓库已经能稳定表达 provider local host execution receipt，但仍没有真实 SDK、secret、网络、host process 或 durable store 写入。
+本文给出 V0.26 之后从 artifact-only provider prototype 走向 production-ready provider execution 的总体路线。当前已完成基线是 [roadmap-v0.42.zh.md](./roadmap-v0.42.zh.md)：仓库已经具备 provider production readiness review、compatibility suite、registry selection、audit evidence 与 recovery / failure evidence，但真实上线仍需要生产集成硬化、审批证据、运行时 policy gate 与 opt-in traffic guard。
 
 ## 总体原则
 
@@ -45,6 +45,19 @@
 | V0.41 | Multi-provider Registry | 支持多 provider 注册、选择、降级和 capability negotiation |
 | V0.42 | Production Readiness Review | 汇总 security、recovery、compatibility、observability，形成生产准入 review |
 
+## 阶段 E：生产集成硬化
+
+| 版本 | 主题 | 交付边界 |
+| --- | --- | --- |
+| V0.43 | Provider Contract Conformance Runner | 对 compatibility、registry、readiness artifact 执行确定性契约检查，不访问真实 provider |
+| V0.44 | Artifact Schema / Version Compatibility Checker | 检查 artifact version、source chain、compatibility ref 与 golden schema 稳定性 |
+| V0.45 | Production Config Bundle Validation | 校验生产配置包引用、secret handle、endpoint shape 与 environment binding，不读取 secret value |
+| V0.46 | Release Evidence Archive | 生成确定性 release evidence manifest，打包 readiness、audit、compatibility、registry 与 schema evidence |
+| V0.47 | Operator Approval Workflow Artifact | 定义 approval request、decision、receipt 与 rejection reason artifact，不自动批准 |
+| V0.48 | Real Provider Opt-In Execution Guard | 建立真实 provider traffic 的显式 opt-in gate，默认拒绝 |
+| V0.49 | Provider Runtime Policy Enforcement | 在执行前统一 enforce opt-in、config、registry、readiness 与 approval policy |
+| V0.50 | Production Integration Dry Run | 生成端到端 production integration dry-run report，默认仍然 non-mutating |
+
 ## 下一步
 
-立即下一步是 [roadmap-v0.27.zh.md](./roadmap-v0.27.zh.md)。V0.27 仍然是 artifact-only 阶段，禁止真实 SDK 调用、credential、secret、endpoint、network、filesystem write、object path、database table 与 provider response payload。
+立即下一步是 [roadmap-v0.43.zh.md](./roadmap-v0.43.zh.md)。V0.43 仍然只做 deterministic artifact conformance check，禁止真实 SDK 调用、credential、secret value、network traffic、filesystem write、database mutation 与 provider response payload。

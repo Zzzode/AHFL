@@ -122,7 +122,23 @@ Avoid:
 
 ### Plan
 
-- [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - future provider production roadmap
+- [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - provider production roadmap
+- [roadmap-v0.50.zh.md](./plan/roadmap-v0.50.zh.md) - planned production integration dry run
+- [issue-backlog-v0.50.zh.md](./plan/issue-backlog-v0.50.zh.md) - planned production integration dry run
+- [roadmap-v0.49.zh.md](./plan/roadmap-v0.49.zh.md) - planned provider runtime policy enforcement
+- [issue-backlog-v0.49.zh.md](./plan/issue-backlog-v0.49.zh.md) - planned provider runtime policy enforcement
+- [roadmap-v0.48.zh.md](./plan/roadmap-v0.48.zh.md) - planned real provider opt-in execution guard
+- [issue-backlog-v0.48.zh.md](./plan/issue-backlog-v0.48.zh.md) - planned real provider opt-in execution guard
+- [roadmap-v0.47.zh.md](./plan/roadmap-v0.47.zh.md) - planned operator approval workflow artifact
+- [issue-backlog-v0.47.zh.md](./plan/issue-backlog-v0.47.zh.md) - planned operator approval workflow artifact
+- [roadmap-v0.46.zh.md](./plan/roadmap-v0.46.zh.md) - planned release evidence archive
+- [issue-backlog-v0.46.zh.md](./plan/issue-backlog-v0.46.zh.md) - planned release evidence archive
+- [roadmap-v0.45.zh.md](./plan/roadmap-v0.45.zh.md) - planned production config bundle validation
+- [issue-backlog-v0.45.zh.md](./plan/issue-backlog-v0.45.zh.md) - planned production config bundle validation
+- [roadmap-v0.44.zh.md](./plan/roadmap-v0.44.zh.md) - planned artifact schema and version compatibility checker
+- [issue-backlog-v0.44.zh.md](./plan/issue-backlog-v0.44.zh.md) - planned artifact schema and version compatibility checker
+- [roadmap-v0.43.zh.md](./plan/roadmap-v0.43.zh.md) - planned provider contract conformance runner
+- [issue-backlog-v0.43.zh.md](./plan/issue-backlog-v0.43.zh.md) - planned provider contract conformance runner
 - [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - completed baseline
 - [issue-backlog-v0.42.zh.md](./plan/issue-backlog-v0.42.zh.md) - completed baseline
 - [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - completed baseline
