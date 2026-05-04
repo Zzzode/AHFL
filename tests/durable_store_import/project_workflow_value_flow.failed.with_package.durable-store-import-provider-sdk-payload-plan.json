@@ -1,0 +1,28 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-sdk-payload-materialization-plan.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "harness_record_identity": "durable-store-import-provider-local-host-harness-record::run-failed-001::blocked",
+  "sdk_payload_plan_identity": "durable-store-import-provider-sdk-payload-plan::run-failed-001::blocked",
+  "operation_kind": "noop_harness_not_ready",
+  "payload_status": "blocked",
+  "fake_provider_only": true,
+  "provider_request_payload_schema_ref": "ahfl.fake-provider-sdk-payload-schema.v1",
+  "payload_digest": "sha256:blocked",
+  "redaction_summary": {
+    "secret_free": true,
+    "credential_free": true,
+    "token_free": true,
+    "redacted_field_count": 0,
+    "summary": "fake provider payload contains only stable identities and digest metadata"
+  },
+  "materializes_sdk_request_payload": true,
+  "persists_materialized_payload": false,
+  "raw_payload": null,
+  "failure_attribution": {
+    "kind": "harness_not_ready",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  }
+}

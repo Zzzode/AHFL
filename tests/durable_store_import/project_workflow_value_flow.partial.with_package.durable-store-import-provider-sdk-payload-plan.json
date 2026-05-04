@@ -1,0 +1,25 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-sdk-payload-materialization-plan.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "harness_record_identity": "durable-store-import-provider-local-host-harness-record::run-partial-001::succeeded",
+  "sdk_payload_plan_identity": "durable-store-import-provider-sdk-payload-plan::run-partial-001::ready",
+  "operation_kind": "plan_fake_provider_payload_materialization",
+  "payload_status": "ready",
+  "fake_provider_only": true,
+  "provider_request_payload_schema_ref": "ahfl.fake-provider-sdk-payload-schema.v1",
+  "payload_digest": "sha256:fake-provider-payload:run-partial-001:fixture.request.partial",
+  "redaction_summary": {
+    "secret_free": true,
+    "credential_free": true,
+    "token_free": true,
+    "redacted_field_count": 0,
+    "summary": "fake provider payload contains only stable identities and digest metadata"
+  },
+  "materializes_sdk_request_payload": true,
+  "persists_materialized_payload": false,
+  "raw_payload": null,
+  "failure_attribution": null
+}

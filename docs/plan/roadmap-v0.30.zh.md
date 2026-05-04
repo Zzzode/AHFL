@@ -18,11 +18,11 @@ V0.30 冻结 secret handle resolver boundary。目标是定义 secret handle、r
 
 ## 里程碑
 
-- [ ] M0 冻结 secret handle 与 resolver non-goals
-- [ ] M1 定义 resolver request / response placeholder model
-- [ ] M2 定义 credential lifecycle placeholder
-- [ ] M3 定义 validation，拒绝 secret value 与 credential material
-- [ ] M4 建立 docs、golden、CI 标签
+- [x] M0 冻结 secret handle 与 resolver non-goals
+- [x] M1 定义 resolver request / response placeholder model
+- [x] M2 定义 credential lifecycle placeholder
+- [x] M3 定义 validation，拒绝 secret value 与 credential material
+- [x] M4 建立 docs、golden、CI 标签
 
 ## 完成定义
 

@@ -1954,6 +1954,96 @@ add_test(NAME ahfl.durable_store_import_provider_config_readiness.bootstrap.fail
             build-durable-store-import-provider-config-readiness-rejects-invalid-snapshot
 )
 
+add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-secret-resolver-request-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.model.fail_forbidden_material
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-secret-resolver-request-rejects-forbidden-material
+)
+
+add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.model.fail_side_effects
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-secret-resolver-request-rejects-side-effects
+)
+
+add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.bootstrap.blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-secret-resolver-request-blocked-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_secret_resolver_response.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-secret-resolver-response-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_secret_policy_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-secret-policy-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_secret_policy_review.bootstrap.fail_invalid_placeholder
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-secret-policy-review-rejects-invalid-placeholder
+)
+
+add_test(NAME ahfl.durable_store_import_provider_local_host_harness_request.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-local-host-harness-request-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_local_host_harness_request.model.fail_sandbox_escape
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-local-host-harness-request-rejects-sandbox-escape
+)
+
+add_test(NAME ahfl.durable_store_import_provider_local_host_harness_record.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-local-host-harness-record-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_local_host_harness_record.bootstrap.matrix_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            run-durable-store-import-provider-local-host-harness-matrix-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_local_host_harness_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-local-host-harness-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_sdk_payload_plan.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-sdk-payload-plan-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_sdk_payload_plan.model.fail_forbidden_fields
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-sdk-payload-plan-rejects-forbidden-fields
+)
+
+add_test(NAME ahfl.durable_store_import_provider_sdk_payload_audit.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-sdk-payload-audit-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_sdk_mock_adapter_contract.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-sdk-mock-adapter-contract-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_sdk_mock_adapter_execution.bootstrap.matrix_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            run-durable-store-import-provider-sdk-mock-adapter-matrix-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_sdk_mock_adapter_readiness.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-sdk-mock-adapter-readiness-ok
+)
+
 add_test(NAME ahfl.durable_store_import_receipt_review.model.validate_ok
     COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-ok
@@ -2540,6 +2630,86 @@ add_test(NAME ahflc.emit_durable_store_import_provider_sdk_adapter_interface_rev
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
 )
 
+function(ahfl_add_provider_v30_v33_project_cli_tests VARIANT_NAME AHFL_ARGS EXPECTED_PREFIX)
+    add_test(NAME ahflc.emit_durable_store_import_provider_secret_resolver_request.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-secret-resolver-request ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-secret-resolver-request.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_secret_resolver_response.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-secret-resolver-response ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-secret-resolver-response.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_secret_policy_review.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-secret-policy-review ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-secret-policy-review"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_local_host_harness_request.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-harness-request ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-local-host-harness-request.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_local_host_harness_record.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-harness-record ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-local-host-harness-record.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_local_host_harness_review.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-harness-review ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-local-host-harness-review"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_sdk_payload_plan.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-payload-plan ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-sdk-payload-plan.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_sdk_payload_audit.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-payload-audit ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-sdk-payload-audit"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_sdk_mock_adapter_contract.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-mock-adapter-contract ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-sdk-mock-adapter-contract.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-mock-adapter-execution ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-sdk-mock-adapter-execution.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-mock-adapter-readiness ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-sdk-mock-adapter-readiness"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+endfunction()
+
 add_test(NAME ahflc.emit_durable_store_import_provider_config_load.project_manifest.workflow_value_flow.failed.with_package
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
@@ -2562,6 +2732,12 @@ add_test(NAME ahflc.emit_durable_store_import_provider_config_readiness.project_
             "-DAHFLC_ARGS=emit-durable-store-import-provider-config-readiness --project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.failed.with_package.durable-store-import-provider-config-readiness"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+ahfl_add_provider_v30_v33_project_cli_tests(
+    project_manifest.workflow_value_flow.failed.with_package
+    "--project ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.project.json --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.fail.mocks.json --input-fixture fixture.request.failed --run-id run-failed-001"
+    "project_workflow_value_flow.failed.with_package"
 )
 
 add_test(NAME ahflc.emit_durable_store_import_decision_review.project_manifest.workflow_value_flow.failed.with_package
@@ -2994,6 +3170,12 @@ add_test(NAME ahflc.emit_durable_store_import_provider_config_readiness.workspac
             "-DAHFLC_ARGS=emit-durable-store-import-provider-config-readiness --workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
             "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/project_workflow_value_flow.partial.with_package.durable-store-import-provider-config-readiness"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+)
+
+ahfl_add_provider_v30_v33_project_cli_tests(
+    workspace.workflow_value_flow.partial.with_package
+    "--workspace ${AHFL_TESTS_DIR}/project/handoff.workspace.json --project-name workflow-value-flow --package ${AHFL_TESTS_DIR}/project/workflow_value_flow/ahfl.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/project_workflow_value_flow.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001"
+    "project_workflow_value_flow.partial.with_package"
 )
 
 add_test(NAME ahflc.emit_durable_store_import_decision_review.workspace.workflow_value_flow.partial.with_package

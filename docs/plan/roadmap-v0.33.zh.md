@@ -18,11 +18,11 @@ V0.33 建立 provider SDK mock adapter。目标是用 mock adapter 覆盖真实 
 
 ## 里程碑
 
-- [ ] M0 冻结 mock adapter fixture schema
-- [ ] M1 实现 mock adapter execution
-- [ ] M2 定义 result normalization 与 failure attribution
-- [ ] M3 覆盖 golden matrix
-- [ ] M4 更新 contributor guide 与 CI 标签
+- [x] M0 冻结 mock adapter fixture schema
+- [x] M1 实现 mock adapter execution
+- [x] M2 定义 result normalization 与 failure attribution
+- [x] M3 覆盖 golden matrix
+- [x] M4 更新 contributor guide 与 CI 标签
 
 ## 完成定义
 

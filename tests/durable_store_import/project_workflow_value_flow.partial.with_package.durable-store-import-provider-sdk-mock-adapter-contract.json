@@ -1,0 +1,19 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-sdk-mock-adapter-contract.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "sdk_payload_plan_identity": "durable-store-import-provider-sdk-payload-plan::run-partial-001::ready",
+  "mock_adapter_contract_identity": "durable-store-import-provider-sdk-mock-adapter-contract::run-partial-001::ready",
+  "operation_kind": "plan_mock_adapter_contract",
+  "contract_status": "ready",
+  "scenario_kind": "success",
+  "provider_request_payload_schema_ref": "ahfl.fake-provider-sdk-payload-schema.v1",
+  "payload_digest": "sha256:fake-provider-payload:run-partial-001:fixture.request.partial",
+  "fake_provider_only": true,
+  "opens_network_connection": false,
+  "reads_secret_material": false,
+  "invokes_real_provider_sdk": false,
+  "failure_attribution": null
+}

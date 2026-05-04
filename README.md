@@ -172,6 +172,17 @@ Backend outputs:
 | `emit-durable-store-import-provider-config-load` | provider config load plan over adapter interface plan |
 | `emit-durable-store-import-provider-config-snapshot` | provider config snapshot placeholder over config load plan |
 | `emit-durable-store-import-provider-config-readiness` | reviewer-facing provider config readiness review |
+| `emit-durable-store-import-provider-secret-resolver-request` | secret handle resolver request plan over provider config snapshot |
+| `emit-durable-store-import-provider-secret-resolver-response` | secret resolver response placeholder over resolver request |
+| `emit-durable-store-import-provider-secret-policy-review` | reviewer-facing secret-free policy review |
+| `emit-durable-store-import-provider-local-host-harness-request` | test-only local host harness request over secret policy review |
+| `emit-durable-store-import-provider-local-host-harness-record` | sandboxed local host harness execution record |
+| `emit-durable-store-import-provider-local-host-harness-review` | reviewer-facing local host harness review |
+| `emit-durable-store-import-provider-sdk-payload-plan` | fake provider SDK payload materialization plan |
+| `emit-durable-store-import-provider-sdk-payload-audit` | reviewer-facing SDK payload redaction and audit summary |
+| `emit-durable-store-import-provider-sdk-mock-adapter-contract` | provider SDK mock adapter contract |
+| `emit-durable-store-import-provider-sdk-mock-adapter-execution` | mock adapter execution result and normalization |
+| `emit-durable-store-import-provider-sdk-mock-adapter-readiness` | reviewer-facing mock adapter readiness review |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -229,6 +240,10 @@ ctest --preset test-dev -L ahfl-v0.26
 ctest --preset test-dev -L ahfl-v0.27
 ctest --preset test-dev -L ahfl-v0.28
 ctest --preset test-dev -L ahfl-v0.29
+ctest --preset test-dev -L ahfl-v0.30
+ctest --preset test-dev -L ahfl-v0.31
+ctest --preset test-dev -L ahfl-v0.32
+ctest --preset test-dev -L ahfl-v0.33
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh

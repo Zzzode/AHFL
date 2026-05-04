@@ -1,0 +1,13 @@
+ahfl.durable-store-import-provider-sdk-payload-audit-summary.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+sdk_payload_plan durable-store-import-provider-sdk-payload-plan::run-001::ready
+payload_status ready
+schema ahfl.fake-provider-sdk-payload-schema.v1
+payload_digest sha256:fake-provider-payload:run-001:fixture.request.basic
+fake_provider_only true
+raw_payload_persisted false
+redaction secret_free=true credential_free=true token_free=true redacted_field_count=0
+audit fake SDK payload digest is ready and raw payload was not persisted
+next_action ready_for_mock_adapter
+next_step ready for provider SDK mock adapter contract

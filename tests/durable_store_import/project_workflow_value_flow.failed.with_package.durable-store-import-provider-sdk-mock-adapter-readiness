@@ -1,0 +1,9 @@
+ahfl.durable-store-import-provider-sdk-mock-adapter-readiness.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+mock_adapter_result durable-store-import-provider-sdk-mock-adapter-result::run-failed-001::success
+result_status blocked
+normalized_result blocked
+normalization mock adapter normalized provider result: mock adapter contract was blocked
+next_action wait_for_payload
+next_step review mock adapter normalized failure before real adapter work

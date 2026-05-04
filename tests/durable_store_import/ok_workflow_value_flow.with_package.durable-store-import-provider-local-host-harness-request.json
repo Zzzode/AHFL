@@ -1,0 +1,24 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-local-host-harness-request.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "secret_response_identity": "durable-store-import-provider-secret-resolver-response::run-001::ready",
+  "harness_request_identity": "durable-store-import-provider-local-host-harness-request::run-001::ready",
+  "operation_kind": "plan_harness_request",
+  "request_status": "ready",
+  "sandbox_policy": {
+    "test_only": true,
+    "allow_network": false,
+    "allow_secret": false,
+    "allow_filesystem_write": false,
+    "allow_host_environment": false
+  },
+  "timeout_milliseconds": 1000,
+  "fixture_kind": "success",
+  "opens_network_connection": false,
+  "reads_secret_material": false,
+  "writes_host_filesystem": false,
+  "failure_attribution": null
+}

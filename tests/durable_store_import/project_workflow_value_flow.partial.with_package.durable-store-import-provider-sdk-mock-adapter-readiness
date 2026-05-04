@@ -1,0 +1,9 @@
+ahfl.durable-store-import-provider-sdk-mock-adapter-readiness.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+mock_adapter_result durable-store-import-provider-sdk-mock-adapter-result::run-partial-001::success
+result_status ready
+normalized_result accepted
+normalization mock adapter normalized provider result: mock provider accepted fake payload
+next_action ready_for_real_adapter_parity
+next_step mock adapter accepted fake payload and can anchor real adapter parity tests

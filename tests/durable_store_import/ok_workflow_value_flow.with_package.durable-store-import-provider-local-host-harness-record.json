@@ -1,0 +1,22 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-local-host-harness-execution-record.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "harness_request_identity": "durable-store-import-provider-local-host-harness-request::run-001::ready",
+  "harness_record_identity": "durable-store-import-provider-local-host-harness-record::run-001::succeeded",
+  "operation_kind": "run_test_harness",
+  "record_status": "ready",
+  "outcome_kind": "succeeded",
+  "exit_code": 0,
+  "timed_out": false,
+  "sandbox_denied": false,
+  "captured_diagnostic_summary": "test harness completed successfully",
+  "captured_stdout_excerpt": "ok",
+  "captured_stderr_excerpt": null,
+  "opens_network_connection": false,
+  "reads_secret_material": false,
+  "writes_host_filesystem": false,
+  "failure_attribution": null
+}

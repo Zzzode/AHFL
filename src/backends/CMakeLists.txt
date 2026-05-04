@@ -531,6 +531,135 @@ target_link_libraries(ahfl_backend_durable_store_import_provider_config_readines
 
 ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_config_readiness)
 
+add_library(ahfl_backend_durable_store_import_provider_secret_resolver_request STATIC
+    durable_store_import_provider_secret_resolver_request.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_secret_resolver_request
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_secret_resolver_request)
+
+add_library(ahfl_backend_durable_store_import_provider_secret_resolver_response STATIC
+    durable_store_import_provider_secret_resolver_response.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_secret_resolver_response
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_secret_resolver_response)
+
+add_library(ahfl_backend_durable_store_import_provider_secret_policy_review STATIC
+    durable_store_import_provider_secret_policy_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_secret_policy_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_secret_policy_review)
+
+add_library(ahfl_backend_durable_store_import_provider_local_host_harness_request STATIC
+    durable_store_import_provider_local_host_harness_request.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_host_harness_request
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_host_harness_request)
+
+add_library(ahfl_backend_durable_store_import_provider_local_host_harness_record STATIC
+    durable_store_import_provider_local_host_harness_record.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_host_harness_record
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_host_harness_record)
+
+add_library(ahfl_backend_durable_store_import_provider_local_host_harness_review STATIC
+    durable_store_import_provider_local_host_harness_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_local_host_harness_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_local_host_harness_review)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_payload_plan STATIC
+    durable_store_import_provider_sdk_payload_plan.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_payload_plan
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_sdk_payload_plan)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_payload_audit STATIC
+    durable_store_import_provider_sdk_payload_audit.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_payload_audit
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_sdk_payload_audit)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_mock_adapter_contract STATIC
+    durable_store_import_provider_sdk_mock_adapter_contract.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_mock_adapter_contract
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_sdk_mock_adapter_contract)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_mock_adapter_execution STATIC
+    durable_store_import_provider_sdk_mock_adapter_execution.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_mock_adapter_execution
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_sdk_mock_adapter_execution)
+
+add_library(ahfl_backend_durable_store_import_provider_sdk_mock_adapter_readiness STATIC
+    durable_store_import_provider_sdk_mock_adapter_readiness.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_sdk_mock_adapter_readiness
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_sdk_mock_adapter_readiness)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -629,6 +758,17 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_provider_config_load
         ahfl_backend_durable_store_import_provider_config_snapshot
         ahfl_backend_durable_store_import_provider_config_readiness
+        ahfl_backend_durable_store_import_provider_secret_resolver_request
+        ahfl_backend_durable_store_import_provider_secret_resolver_response
+        ahfl_backend_durable_store_import_provider_secret_policy_review
+        ahfl_backend_durable_store_import_provider_local_host_harness_request
+        ahfl_backend_durable_store_import_provider_local_host_harness_record
+        ahfl_backend_durable_store_import_provider_local_host_harness_review
+        ahfl_backend_durable_store_import_provider_sdk_payload_plan
+        ahfl_backend_durable_store_import_provider_sdk_payload_audit
+        ahfl_backend_durable_store_import_provider_sdk_mock_adapter_contract
+        ahfl_backend_durable_store_import_provider_sdk_mock_adapter_execution
+        ahfl_backend_durable_store_import_provider_sdk_mock_adapter_readiness
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

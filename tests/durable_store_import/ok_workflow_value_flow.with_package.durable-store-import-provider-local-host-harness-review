@@ -1,0 +1,10 @@
+ahfl.durable-store-import-provider-local-host-harness-review.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+harness_record durable-store-import-provider-local-host-harness-record::run-001::succeeded
+record_status ready
+outcome succeeded
+sandbox test_only=true network=false secret=false filesystem_write=false host_env=false
+summary test-only local host harness completed without network, secret, host environment, filesystem write, or provider SDK access
+next_action ready_for_sdk_payload_materialization
+next_step ready for fake SDK payload materialization

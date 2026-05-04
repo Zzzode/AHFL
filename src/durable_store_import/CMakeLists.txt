@@ -12,9 +12,13 @@ add_library(ahfl_durable_store_import STATIC
     provider_driver.cpp
     provider_host_execution.cpp
     provider_local_host_execution.cpp
+    provider_local_host_harness.cpp
     provider_runtime.cpp
     provider_sdk_adapter.cpp
     provider_sdk_interface.cpp
+    provider_sdk_mock_adapter.cpp
+    provider_sdk_payload.cpp
+    provider_secret.cpp
     provider_sdk.cpp
     recovery_preview.cpp
     receipt_review.cpp

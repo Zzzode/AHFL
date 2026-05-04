@@ -1,0 +1,10 @@
+ahfl.durable-store-import-provider-local-host-harness-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+harness_record durable-store-import-provider-local-host-harness-record::run-failed-001::blocked
+record_status blocked
+outcome blocked
+sandbox test_only=true network=false secret=false filesystem_write=false host_env=false
+summary test-only local host harness did not produce a successful controlled execution record
+next_action wait_for_secret_policy
+next_step manual review or source readiness is required before payload materialization

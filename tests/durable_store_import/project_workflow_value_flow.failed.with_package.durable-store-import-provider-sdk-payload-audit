@@ -1,0 +1,13 @@
+ahfl.durable-store-import-provider-sdk-payload-audit-summary.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+sdk_payload_plan durable-store-import-provider-sdk-payload-plan::run-failed-001::blocked
+payload_status blocked
+schema ahfl.fake-provider-sdk-payload-schema.v1
+payload_digest sha256:blocked
+fake_provider_only true
+raw_payload_persisted false
+redaction secret_free=true credential_free=true token_free=true redacted_field_count=0
+audit fake SDK payload materialization is blocked
+next_action wait_for_local_harness
+next_step wait for successful local harness before mock adapter execution

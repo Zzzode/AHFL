@@ -169,6 +169,9 @@ jobs:
       - name: Run V0.29 Durable Provider Config Loader Prototype Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.29'
 
+      - name: Run V0.30-V0.33 Durable Provider Boundary Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(30|31|32|33)'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -255,6 +258,9 @@ jobs:
 
       - name: Run V0.29 Durable Provider Config Loader Prototype Regression
         run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.29'
+
+      - name: Run V0.30-V0.33 Durable Provider Boundary Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.(30|31|32|33)'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

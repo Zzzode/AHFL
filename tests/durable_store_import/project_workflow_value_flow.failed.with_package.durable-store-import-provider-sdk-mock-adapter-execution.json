@@ -1,0 +1,22 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-sdk-mock-adapter-execution-result.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "mock_adapter_contract_identity": "durable-store-import-provider-sdk-mock-adapter-contract::run-failed-001::blocked",
+  "mock_adapter_result_identity": "durable-store-import-provider-sdk-mock-adapter-result::run-failed-001::success",
+  "operation_kind": "noop_contract_not_ready",
+  "result_status": "blocked",
+  "scenario_kind": "success",
+  "normalized_result": "blocked",
+  "provider_status_code": 0,
+  "normalized_message": "mock adapter contract was blocked",
+  "opens_network_connection": false,
+  "reads_secret_material": false,
+  "invokes_real_provider_sdk": false,
+  "failure_attribution": {
+    "kind": "contract_not_ready",
+    "message": "runtime session workflow 'app::main::ValueFlowWorkflow' failed at node 'first'"
+  }
+}

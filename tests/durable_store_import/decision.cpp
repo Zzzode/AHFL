@@ -6,10 +6,14 @@
 #include "ahfl/durable_store_import/provider_driver.hpp"
 #include "ahfl/durable_store_import/provider_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
+#include "ahfl/durable_store_import/provider_local_host_harness.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/provider_sdk_adapter.hpp"
 #include "ahfl/durable_store_import/provider_sdk_interface.hpp"
+#include "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp"
+#include "ahfl/durable_store_import/provider_sdk_payload.hpp"
+#include "ahfl/durable_store_import/provider_secret.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -2566,6 +2570,194 @@ make_valid_provider_config_readiness_review() {
     }
 
     return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSecretResolverRequestPlan>
+make_valid_provider_secret_resolver_request_plan() {
+    const auto snapshot = make_valid_provider_config_snapshot_placeholder();
+    if (!snapshot.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_secret_resolver_request_plan(*snapshot);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderSecretResolverResponsePlaceholder>
+make_valid_provider_secret_resolver_response_placeholder() {
+    const auto plan = make_valid_provider_secret_resolver_request_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto placeholder =
+        ahfl::durable_store_import::build_provider_secret_resolver_response_placeholder(*plan);
+    if (placeholder.has_errors() || !placeholder.placeholder.has_value()) {
+        placeholder.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *placeholder.placeholder;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSecretPolicyReview>
+make_valid_provider_secret_policy_review() {
+    const auto placeholder = make_valid_provider_secret_resolver_response_placeholder();
+    if (!placeholder.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_secret_policy_review(*placeholder);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderLocalHostHarnessExecutionRequest>
+make_valid_provider_local_host_harness_request() {
+    const auto secret_review = make_valid_provider_secret_policy_review();
+    if (!secret_review.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto request =
+        ahfl::durable_store_import::build_provider_local_host_harness_execution_request(
+            *secret_review);
+    if (request.has_errors() || !request.request.has_value()) {
+        request.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *request.request;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderLocalHostHarnessExecutionRecord>
+make_valid_provider_local_host_harness_record() {
+    const auto request = make_valid_provider_local_host_harness_request();
+    if (!request.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto record = ahfl::durable_store_import::run_provider_local_host_test_harness(*request);
+    if (record.has_errors() || !record.record.has_value()) {
+        record.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *record.record;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderLocalHostHarnessReview>
+make_valid_provider_local_host_harness_review() {
+    const auto record = make_valid_provider_local_host_harness_record();
+    if (!record.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_local_host_harness_review(*record);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderSdkPayloadMaterializationPlan>
+make_valid_provider_sdk_payload_plan() {
+    const auto review = make_valid_provider_local_host_harness_review();
+    if (!review.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_sdk_payload_materialization_plan(*review);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkPayloadAuditSummary>
+make_valid_provider_sdk_payload_audit() {
+    const auto plan = make_valid_provider_sdk_payload_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto audit = ahfl::durable_store_import::build_provider_sdk_payload_audit_summary(*plan);
+    if (audit.has_errors() || !audit.audit.has_value()) {
+        audit.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *audit.audit;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkMockAdapterContract>
+make_valid_provider_sdk_mock_adapter_contract() {
+    const auto audit = make_valid_provider_sdk_payload_audit();
+    if (!audit.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto contract =
+        ahfl::durable_store_import::build_provider_sdk_mock_adapter_contract(*audit);
+    if (contract.has_errors() || !contract.contract.has_value()) {
+        contract.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *contract.contract;
+}
+
+[[nodiscard]] std::optional<
+    ahfl::durable_store_import::ProviderSdkMockAdapterExecutionResult>
+make_valid_provider_sdk_mock_adapter_execution() {
+    const auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    if (!contract.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto result = ahfl::durable_store_import::run_provider_sdk_mock_adapter(*contract);
+    if (result.has_errors() || !result.result.has_value()) {
+        result.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *result.result;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSdkMockAdapterReadiness>
+make_valid_provider_sdk_mock_adapter_readiness() {
+    const auto result = make_valid_provider_sdk_mock_adapter_execution();
+    if (!result.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto readiness =
+        ahfl::durable_store_import::build_provider_sdk_mock_adapter_readiness(*result);
+    if (readiness.has_errors() || !readiness.readiness.has_value()) {
+        readiness.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *readiness.readiness;
 }
 
 int validate_durable_store_import_adapter_execution_ok() {
@@ -5748,6 +5940,487 @@ int build_durable_store_import_provider_config_readiness_rejects_invalid_snapsho
                : 1;
 }
 
+int validate_durable_store_import_provider_secret_resolver_request_ok() {
+    const auto plan = make_valid_provider_secret_resolver_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_secret_resolver_request_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->request_status != ahfl::durable_store_import::ProviderSecretStatus::Ready ||
+        plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSecretOperationKind::PlanSecretResolverRequest ||
+        plan->reads_secret_material || plan->materializes_secret_value ||
+        plan->materializes_credential_material || plan->materializes_token_value ||
+        plan->opens_network_connection || plan->reads_host_environment ||
+        plan->writes_host_filesystem || plan->invokes_secret_manager ||
+        plan->secret_value.has_value() || plan->credential_material.has_value() ||
+        plan->token_value.has_value() || plan->secret_manager_response.has_value() ||
+        plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider secret resolver request plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_secret_resolver_request_rejects_forbidden_material() {
+    auto plan = make_valid_provider_secret_resolver_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->secret_value = "unsafe-secret";
+    plan->credential_material = "unsafe-credential";
+    plan->token_value = "unsafe-token";
+    plan->secret_manager_response = "{\"unsafe\":true}";
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_secret_resolver_request_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider secret forbidden material to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot contain secret_value") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain credential_material") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain token_value") &&
+                   ahfl::test_support::diagnostics_contain(
+                       validation.diagnostics, "cannot contain secret_manager_response")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_secret_resolver_request_rejects_side_effects() {
+    auto plan = make_valid_provider_secret_resolver_request_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->reads_secret_material = true;
+    plan->materializes_secret_value = true;
+    plan->materializes_credential_material = true;
+    plan->materializes_token_value = true;
+    plan->opens_network_connection = true;
+    plan->reads_host_environment = true;
+    plan->writes_host_filesystem = true;
+    plan->invokes_secret_manager = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_secret_resolver_request_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected provider secret side effects to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot read secret material") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot open network connection") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot invoke secret manager")
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_secret_resolver_request_blocked_ok() {
+    auto snapshot = make_valid_provider_config_snapshot_placeholder();
+    if (!snapshot.has_value()) {
+        return 1;
+    }
+
+    snapshot->snapshot_status = ahfl::durable_store_import::ProviderConfigStatus::Blocked;
+    snapshot->operation_kind =
+        ahfl::durable_store_import::ProviderConfigOperationKind::NoopConfigLoadNotReady;
+    snapshot->failure_attribution =
+        ahfl::durable_store_import::ProviderConfigFailureAttribution{
+            .kind = ahfl::durable_store_import::ProviderConfigFailureKind::ConfigLoadNotReady,
+            .message = "blocked config snapshot",
+        };
+
+    const auto plan =
+        ahfl::durable_store_import::build_provider_secret_resolver_request_plan(*snapshot);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan.plan->request_status != ahfl::durable_store_import::ProviderSecretStatus::Blocked ||
+        plan.plan->operation_kind !=
+            ahfl::durable_store_import::ProviderSecretOperationKind::NoopConfigSnapshotNotReady ||
+        !plan.plan->failure_attribution.has_value()) {
+        std::cerr << "unexpected blocked provider secret resolver request plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_secret_resolver_response_ok() {
+    const auto placeholder = make_valid_provider_secret_resolver_response_placeholder();
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_secret_resolver_response_placeholder(
+            *placeholder);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (placeholder->response_status != ahfl::durable_store_import::ProviderSecretStatus::Ready ||
+        placeholder->credential_lifecycle_state !=
+            ahfl::durable_store_import::ProviderCredentialLifecycleState::
+                PlaceholderPendingResolution ||
+        placeholder->reads_secret_material || placeholder->materializes_secret_value ||
+        placeholder->materializes_credential_material || placeholder->materializes_token_value ||
+        placeholder->opens_network_connection || placeholder->reads_host_environment ||
+        placeholder->writes_host_filesystem || placeholder->invokes_secret_manager ||
+        placeholder->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider secret resolver response placeholder\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_secret_policy_review_ok() {
+    const auto review = make_valid_provider_secret_policy_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_secret_policy_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (review->next_action !=
+            ahfl::durable_store_import::ProviderSecretPolicyNextActionKind::
+                ReadyForLocalHostHarness ||
+        review->reads_secret_material || review->materializes_secret_value ||
+        review->materializes_credential_material || review->materializes_token_value ||
+        review->opens_network_connection || review->reads_host_environment ||
+        review->writes_host_filesystem || review->invokes_secret_manager ||
+        review->failure_attribution.has_value()) {
+        std::cerr << "unexpected provider secret policy review\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int build_durable_store_import_provider_secret_policy_review_rejects_invalid_placeholder() {
+    auto placeholder = make_valid_provider_secret_resolver_response_placeholder();
+    if (!placeholder.has_value()) {
+        return 1;
+    }
+
+    placeholder->format_version =
+        "ahfl.durable-store-import-provider-secret-resolver-response-placeholder.v999";
+    const auto review =
+        ahfl::durable_store_import::build_provider_secret_policy_review(*placeholder);
+    if (!review.has_errors()) {
+        std::cerr << "expected invalid provider secret placeholder to fail policy review\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(
+               review.diagnostics,
+               "durable store import provider secret resolver response placeholder format_version "
+               "must be")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_local_host_harness_request_ok() {
+    const auto request = make_valid_provider_local_host_harness_request();
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_host_harness_execution_request(
+            *request);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (request->request_status !=
+            ahfl::durable_store_import::ProviderLocalHostHarnessStatus::Ready ||
+        request->opens_network_connection || request->reads_secret_material ||
+        request->writes_host_filesystem || request->reads_host_environment ||
+        request->injects_secret || request->invokes_provider_sdk ||
+        !request->sandbox_policy.test_only || request->sandbox_policy.allow_network ||
+        request->sandbox_policy.allow_secret || request->sandbox_policy.allow_filesystem_write ||
+        request->sandbox_policy.allow_host_environment) {
+        std::cerr << "unexpected local host harness request\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_local_host_harness_request_rejects_sandbox_escape() {
+    auto request = make_valid_provider_local_host_harness_request();
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    request->sandbox_policy.allow_network = true;
+    request->opens_network_connection = true;
+    request->reads_secret_material = true;
+    request->writes_host_filesystem = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_host_harness_execution_request(
+            *request);
+    if (!validation.has_errors()) {
+        std::cerr << "expected sandbox escape to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "sandbox policy must be test-only") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot open network connection")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_local_host_harness_record_ok() {
+    const auto record = make_valid_provider_local_host_harness_record();
+    if (!record.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_host_harness_execution_record(
+            *record);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (record->outcome_kind !=
+            ahfl::durable_store_import::ProviderLocalHostHarnessOutcomeKind::Succeeded ||
+        record->exit_code != 0 || record->timed_out || record->sandbox_denied ||
+        record->failure_attribution.has_value()) {
+        std::cerr << "unexpected local host harness record\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int run_durable_store_import_provider_local_host_harness_matrix_ok() {
+    auto request = make_valid_provider_local_host_harness_request();
+    if (!request.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderLocalHostHarnessFixtureKind fixtures[] = {
+        ahfl::durable_store_import::ProviderLocalHostHarnessFixtureKind::NonzeroExit,
+        ahfl::durable_store_import::ProviderLocalHostHarnessFixtureKind::Timeout,
+        ahfl::durable_store_import::ProviderLocalHostHarnessFixtureKind::SandboxDenied,
+    };
+    for (const auto fixture : fixtures) {
+        request->fixture_kind = fixture;
+        const auto record = ahfl::durable_store_import::run_provider_local_host_test_harness(
+            *request);
+        if (record.has_errors() || !record.record.has_value() ||
+            !record.record->failure_attribution.has_value()) {
+            record.diagnostics.render(std::cout);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_local_host_harness_review_ok() {
+    const auto review = make_valid_provider_local_host_harness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_local_host_harness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->next_action ==
+                   ahfl::durable_store_import::ProviderLocalHostHarnessNextActionKind::
+                       ReadyForSdkPayloadMaterialization
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_payload_plan_ok() {
+    const auto plan = make_valid_provider_sdk_payload_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_payload_materialization_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    if (plan->payload_status != ahfl::durable_store_import::ProviderSdkPayloadStatus::Ready ||
+        !plan->fake_provider_only || plan->payload_digest.empty() ||
+        plan->persists_materialized_payload || plan->opens_network_connection ||
+        plan->reads_secret_material || plan->materializes_secret_value ||
+        plan->materializes_credential_material || plan->materializes_token_value ||
+        plan->invokes_provider_sdk || plan->raw_payload.has_value()) {
+        std::cerr << "unexpected SDK payload plan\n";
+        return 1;
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_payload_plan_rejects_forbidden_fields() {
+    auto plan = make_valid_provider_sdk_payload_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    plan->raw_payload = "{\"unsafe\":true}";
+    plan->secret_value = "unsafe-secret";
+    plan->credential_material = "unsafe-credential";
+    plan->token_value = "unsafe-token";
+    plan->persists_materialized_payload = true;
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_payload_materialization_plan(*plan);
+    if (!validation.has_errors()) {
+        std::cerr << "expected SDK payload forbidden fields to fail\n";
+        return 1;
+    }
+
+    return ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                   "cannot persist raw_payload") &&
+                   ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                           "cannot contain secret_value") &&
+                   ahfl::test_support::diagnostics_contain(
+                       validation.diagnostics, "cannot persist materialized payload")
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_payload_audit_ok() {
+    const auto audit = make_valid_provider_sdk_payload_audit();
+    if (!audit.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_payload_audit_summary(*audit);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return audit->next_action ==
+                       ahfl::durable_store_import::ProviderSdkPayloadNextActionKind::
+                           ReadyForMockAdapter &&
+                   !audit->raw_payload_persisted && audit->redaction_summary.secret_free
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_sdk_mock_adapter_contract_ok() {
+    const auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    if (!contract.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_mock_adapter_contract(*contract);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return contract->contract_status ==
+                       ahfl::durable_store_import::ProviderSdkMockAdapterStatus::Ready &&
+                   !contract->opens_network_connection && !contract->reads_secret_material &&
+                   !contract->invokes_real_provider_sdk
+               ? 0
+               : 1;
+}
+
+int run_durable_store_import_provider_sdk_mock_adapter_matrix_ok() {
+    auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    if (!contract.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind scenarios[] = {
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Success,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch,
+    };
+    for (const auto scenario : scenarios) {
+        contract->scenario_kind = scenario;
+        const auto result = ahfl::durable_store_import::run_provider_sdk_mock_adapter(*contract);
+        if (result.has_errors() || !result.result.has_value()) {
+            result.diagnostics.render(std::cout);
+            return 1;
+        }
+        if (scenario == ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Success) {
+            if (result.result->normalized_result !=
+                    ahfl::durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::
+                        Accepted ||
+                result.result->failure_attribution.has_value()) {
+                return 1;
+            }
+        } else if (!result.result->failure_attribution.has_value()) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_sdk_mock_adapter_readiness_ok() {
+    const auto readiness = make_valid_provider_sdk_mock_adapter_readiness();
+    if (!readiness.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_sdk_mock_adapter_readiness(*readiness);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return readiness->next_action ==
+                   ahfl::durable_store_import::ProviderSdkMockAdapterNextActionKind::
+                       ReadyForRealAdapterParity
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -6537,6 +7210,87 @@ int main(int argc, char **argv) {
     if (command ==
         "build-durable-store-import-provider-config-readiness-rejects-invalid-snapshot") {
         return build_durable_store_import_provider_config_readiness_rejects_invalid_snapshot();
+    }
+
+    // V0.30: Provider secret resolver boundary tests
+    if (command == "validate-durable-store-import-provider-secret-resolver-request-ok") {
+        return validate_durable_store_import_provider_secret_resolver_request_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-secret-resolver-request-rejects-forbidden-material") {
+        return validate_durable_store_import_provider_secret_resolver_request_rejects_forbidden_material();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-secret-resolver-request-rejects-side-effects") {
+        return validate_durable_store_import_provider_secret_resolver_request_rejects_side_effects();
+    }
+
+    if (command == "build-durable-store-import-provider-secret-resolver-request-blocked-ok") {
+        return build_durable_store_import_provider_secret_resolver_request_blocked_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-secret-resolver-response-ok") {
+        return validate_durable_store_import_provider_secret_resolver_response_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-secret-policy-review-ok") {
+        return validate_durable_store_import_provider_secret_policy_review_ok();
+    }
+
+    if (command ==
+        "build-durable-store-import-provider-secret-policy-review-rejects-invalid-placeholder") {
+        return build_durable_store_import_provider_secret_policy_review_rejects_invalid_placeholder();
+    }
+
+    // V0.31: Provider local host harness tests
+    if (command == "validate-durable-store-import-provider-local-host-harness-request-ok") {
+        return validate_durable_store_import_provider_local_host_harness_request_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-local-host-harness-request-rejects-sandbox-escape") {
+        return validate_durable_store_import_provider_local_host_harness_request_rejects_sandbox_escape();
+    }
+
+    if (command == "validate-durable-store-import-provider-local-host-harness-record-ok") {
+        return validate_durable_store_import_provider_local_host_harness_record_ok();
+    }
+
+    if (command == "run-durable-store-import-provider-local-host-harness-matrix-ok") {
+        return run_durable_store_import_provider_local_host_harness_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-local-host-harness-review-ok") {
+        return validate_durable_store_import_provider_local_host_harness_review_ok();
+    }
+
+    // V0.32: Provider SDK payload materialization tests
+    if (command == "validate-durable-store-import-provider-sdk-payload-plan-ok") {
+        return validate_durable_store_import_provider_sdk_payload_plan_ok();
+    }
+
+    if (command ==
+        "validate-durable-store-import-provider-sdk-payload-plan-rejects-forbidden-fields") {
+        return validate_durable_store_import_provider_sdk_payload_plan_rejects_forbidden_fields();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-payload-audit-ok") {
+        return validate_durable_store_import_provider_sdk_payload_audit_ok();
+    }
+
+    // V0.33: Provider SDK mock adapter tests
+    if (command == "validate-durable-store-import-provider-sdk-mock-adapter-contract-ok") {
+        return validate_durable_store_import_provider_sdk_mock_adapter_contract_ok();
+    }
+
+    if (command == "run-durable-store-import-provider-sdk-mock-adapter-matrix-ok") {
+        return run_durable_store_import_provider_sdk_mock_adapter_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-sdk-mock-adapter-readiness-ok") {
+        return validate_durable_store_import_provider_sdk_mock_adapter_readiness_ok();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

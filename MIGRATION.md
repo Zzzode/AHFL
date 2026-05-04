@@ -1029,3 +1029,60 @@ ctest --preset test-dev --output-on-failure -L 'v0.29-durable-store-import-provi
 - `docs/reference/durable-store-provider-config-loader-compatibility-v0.29.zh.md`
 - `docs/reference/native-consumer-matrix-v0.29.zh.md`
 - `docs/reference/contributor-guide-v0.29.zh.md`
+
+## V0.29 to V0.33
+
+V0.30 through V0.33 extend the provider config loader into a secret-free,
+test-only provider adapter preparation chain. The sequence is:
+
+```text
+ProviderConfigSnapshotPlaceholder
+-> ProviderSecretPolicyReview
+-> ProviderLocalHostHarnessReview
+-> ProviderSdkPayloadAuditSummary
+-> ProviderSdkMockAdapterReadiness
+```
+
+The new boundaries are intentionally non-production:
+
+- V0.30 defines secret handles and resolver placeholders without secret values.
+- V0.31 defines a sandboxed test-only local host harness without network,
+  secret injection, host env reads, filesystem writes, or real provider SDK.
+- V0.32 defines fake SDK payload materialization with digest and redaction
+  summary, but no raw payload persistence.
+- V0.33 defines a provider SDK mock adapter covering success, failure,
+  timeout, throttle, conflict, and schema mismatch.
+
+### New CLI Commands
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-secret-resolver-request ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-secret-resolver-response ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-secret-policy-review ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-harness-request ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-harness-record ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-harness-review ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-payload-plan ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-payload-audit ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-contract ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-execution ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-readiness ...
+```
+
+### Regression Commands
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(30|31|32|33)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.30.zh.md`
+- `docs/plan/roadmap-v0.31.zh.md`
+- `docs/plan/roadmap-v0.32.zh.md`
+- `docs/plan/roadmap-v0.33.zh.md`
+- `docs/design/native-durable-store-provider-secret-resolver-bootstrap-v0.30.zh.md`
+- `docs/design/native-durable-store-provider-local-host-harness-bootstrap-v0.31.zh.md`
+- `docs/design/native-durable-store-provider-sdk-payload-materialization-bootstrap-v0.32.zh.md`
+- `docs/design/native-durable-store-provider-sdk-mock-adapter-bootstrap-v0.33.zh.md`

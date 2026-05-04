@@ -74,6 +74,10 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-durable-store-provider-sdk-mock-adapter-bootstrap-v0.33.zh.md](./design/native-durable-store-provider-sdk-mock-adapter-bootstrap-v0.33.zh.md)
+- [native-durable-store-provider-sdk-payload-materialization-bootstrap-v0.32.zh.md](./design/native-durable-store-provider-sdk-payload-materialization-bootstrap-v0.32.zh.md)
+- [native-durable-store-provider-local-host-harness-bootstrap-v0.31.zh.md](./design/native-durable-store-provider-local-host-harness-bootstrap-v0.31.zh.md)
+- [native-durable-store-provider-secret-resolver-bootstrap-v0.30.zh.md](./design/native-durable-store-provider-secret-resolver-bootstrap-v0.30.zh.md)
 - [native-durable-store-provider-config-loader-bootstrap-v0.29.zh.md](./design/native-durable-store-provider-config-loader-bootstrap-v0.29.zh.md)
 - [native-durable-store-provider-sdk-adapter-interface-bootstrap-v0.28.zh.md](./design/native-durable-store-provider-sdk-adapter-interface-bootstrap-v0.28.zh.md)
 - [native-durable-store-provider-sdk-adapter-prototype-bootstrap-v0.27.zh.md](./design/native-durable-store-provider-sdk-adapter-prototype-bootstrap-v0.27.zh.md)
@@ -110,10 +114,6 @@ Avoid:
 ### Plan
 
 - [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - future provider production roadmap
-- [roadmap-v0.30.zh.md](./plan/roadmap-v0.30.zh.md) - future provider roadmap
-- [roadmap-v0.31.zh.md](./plan/roadmap-v0.31.zh.md) - future provider roadmap
-- [roadmap-v0.32.zh.md](./plan/roadmap-v0.32.zh.md) - future provider roadmap
-- [roadmap-v0.33.zh.md](./plan/roadmap-v0.33.zh.md) - future provider roadmap
 - [roadmap-v0.34.zh.md](./plan/roadmap-v0.34.zh.md) - future provider roadmap
 - [roadmap-v0.35.zh.md](./plan/roadmap-v0.35.zh.md) - future provider roadmap
 - [roadmap-v0.36.zh.md](./plan/roadmap-v0.36.zh.md) - future provider roadmap
@@ -123,6 +123,14 @@ Avoid:
 - [roadmap-v0.40.zh.md](./plan/roadmap-v0.40.zh.md) - future provider roadmap
 - [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - future provider roadmap
 - [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - future provider roadmap
+- [roadmap-v0.33.zh.md](./plan/roadmap-v0.33.zh.md) - completed baseline
+- [issue-backlog-v0.33.zh.md](./plan/issue-backlog-v0.33.zh.md) - completed baseline
+- [roadmap-v0.32.zh.md](./plan/roadmap-v0.32.zh.md) - completed baseline
+- [issue-backlog-v0.32.zh.md](./plan/issue-backlog-v0.32.zh.md) - completed baseline
+- [roadmap-v0.31.zh.md](./plan/roadmap-v0.31.zh.md) - completed baseline
+- [issue-backlog-v0.31.zh.md](./plan/issue-backlog-v0.31.zh.md) - completed baseline
+- [roadmap-v0.30.zh.md](./plan/roadmap-v0.30.zh.md) - completed baseline
+- [issue-backlog-v0.30.zh.md](./plan/issue-backlog-v0.30.zh.md) - completed baseline
 - [roadmap-v0.29.zh.md](./plan/roadmap-v0.29.zh.md) - completed baseline
 - [issue-backlog-v0.29.zh.md](./plan/issue-backlog-v0.29.zh.md) - completed baseline
 - [roadmap-v0.28.zh.md](./plan/roadmap-v0.28.zh.md) - completed baseline
@@ -184,6 +192,18 @@ Avoid:
 
 ### Reference
 
+- [durable-store-provider-sdk-mock-adapter-compatibility-v0.33.zh.md](./reference/durable-store-provider-sdk-mock-adapter-compatibility-v0.33.zh.md)
+- [native-consumer-matrix-v0.33.zh.md](./reference/native-consumer-matrix-v0.33.zh.md)
+- [contributor-guide-v0.33.zh.md](./reference/contributor-guide-v0.33.zh.md)
+- [durable-store-provider-sdk-payload-materialization-compatibility-v0.32.zh.md](./reference/durable-store-provider-sdk-payload-materialization-compatibility-v0.32.zh.md)
+- [native-consumer-matrix-v0.32.zh.md](./reference/native-consumer-matrix-v0.32.zh.md)
+- [contributor-guide-v0.32.zh.md](./reference/contributor-guide-v0.32.zh.md)
+- [durable-store-provider-local-host-harness-compatibility-v0.31.zh.md](./reference/durable-store-provider-local-host-harness-compatibility-v0.31.zh.md)
+- [native-consumer-matrix-v0.31.zh.md](./reference/native-consumer-matrix-v0.31.zh.md)
+- [contributor-guide-v0.31.zh.md](./reference/contributor-guide-v0.31.zh.md)
+- [durable-store-provider-secret-resolver-compatibility-v0.30.zh.md](./reference/durable-store-provider-secret-resolver-compatibility-v0.30.zh.md)
+- [native-consumer-matrix-v0.30.zh.md](./reference/native-consumer-matrix-v0.30.zh.md)
+- [contributor-guide-v0.30.zh.md](./reference/contributor-guide-v0.30.zh.md)
 - [durable-store-provider-config-loader-compatibility-v0.29.zh.md](./reference/durable-store-provider-config-loader-compatibility-v0.29.zh.md)
 - [native-consumer-matrix-v0.29.zh.md](./reference/native-consumer-matrix-v0.29.zh.md)
 - [contributor-guide-v0.29.zh.md](./reference/contributor-guide-v0.29.zh.md)

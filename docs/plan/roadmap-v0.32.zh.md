@@ -18,11 +18,11 @@ V0.32 冻结 SDK payload materialization boundary。目标是把稳定 artifact 
 
 ## 里程碑
 
-- [ ] M0 冻结 payload materialization scope
-- [ ] M1 定义 payload plan / digest / redaction summary
-- [ ] M2 接入 fake provider schema
-- [ ] M3 覆盖 payload forbidden-field validation
-- [ ] M4 建立 golden 与 compatibility docs
+- [x] M0 冻结 payload materialization scope
+- [x] M1 定义 payload plan / digest / redaction summary
+- [x] M2 接入 fake provider schema
+- [x] M3 覆盖 payload forbidden-field validation
+- [x] M4 建立 golden 与 compatibility docs
 
 ## 完成定义
 
