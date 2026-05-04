@@ -1,0 +1,16 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-recovery-checkpoint.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "write_recovery_checkpoint_identity": "durable-store-import-provider-write-recovery-checkpoint::run-001::stable-committed",
+  "recovery_checkpoint_reference": "provider-recovery-checkpoint::run-001",
+  "resume_token_version": "ahfl.provider-write-resume-token.v1",
+  "resume_token_placeholder_identity": "provider-write-resume-token-placeholder::ahfl.durable-store-import.provider-write.v1::run-001::fixture.request.basic",
+  "idempotency_key": "ahfl.durable-store-import.provider-write.v1::run-001::fixture.request.basic",
+  "checkpoint_status": "stable_committed",
+  "recovery_eligibility": "not_required",
+  "recovery_summary": "provider write committed; no recovery is required",
+  "failure_attribution": null
+}

@@ -189,6 +189,14 @@ Backend outputs:
 | `emit-durable-store-import-provider-write-retry-decision` | idempotency and retry decision over provider write result |
 | `emit-durable-store-import-provider-write-commit-receipt` | durable provider write commit receipt |
 | `emit-durable-store-import-provider-write-commit-review` | reviewer-facing provider write commit review |
+| `emit-durable-store-import-provider-write-recovery-checkpoint` | provider write recovery checkpoint over commit receipt |
+| `emit-durable-store-import-provider-write-recovery-plan` | provider write recovery plan over recovery checkpoint |
+| `emit-durable-store-import-provider-write-recovery-review` | reviewer-facing provider write recovery review |
+| `emit-durable-store-import-provider-failure-taxonomy-report` | provider failure taxonomy report over mock adapter result and recovery plan |
+| `emit-durable-store-import-provider-failure-taxonomy-review` | reviewer-facing provider failure taxonomy review |
+| `emit-durable-store-import-provider-execution-audit-event` | provider execution audit event over failure taxonomy report |
+| `emit-durable-store-import-provider-telemetry-summary` | provider telemetry summary over execution audit event |
+| `emit-durable-store-import-provider-operator-review-event` | reviewer-facing provider operator review event |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -253,6 +261,9 @@ ctest --preset test-dev -L ahfl-v0.33
 ctest --preset test-dev -L ahfl-v0.34
 ctest --preset test-dev -L ahfl-v0.35
 ctest --preset test-dev -L ahfl-v0.36
+ctest --preset test-dev -L ahfl-v0.37
+ctest --preset test-dev -L ahfl-v0.38
+ctest --preset test-dev -L ahfl-v0.39
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -288,13 +299,27 @@ Use the repo index for the full typed doc map:
 
 Recommended entry points:
 
-- Current completed provider commit boundary
-  - [`docs/plan/roadmap-v0.36.zh.md`](docs/plan/roadmap-v0.36.zh.md)
-  - [`docs/plan/issue-backlog-v0.36.zh.md`](docs/plan/issue-backlog-v0.36.zh.md)
-  - [`docs/design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md`](docs/design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md)
-  - [`docs/reference/durable-store-provider-write-commit-receipt-compatibility-v0.36.zh.md`](docs/reference/durable-store-provider-write-commit-receipt-compatibility-v0.36.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.36.zh.md`](docs/reference/native-consumer-matrix-v0.36.zh.md)
-  - [`docs/reference/contributor-guide-v0.36.zh.md`](docs/reference/contributor-guide-v0.36.zh.md)
+- Current completed provider audit boundary
+  - [`docs/plan/roadmap-v0.39.zh.md`](docs/plan/roadmap-v0.39.zh.md)
+  - [`docs/plan/issue-backlog-v0.39.zh.md`](docs/plan/issue-backlog-v0.39.zh.md)
+  - [`docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md`](docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md)
+  - [`docs/reference/durable-store-provider-observability-audit-compatibility-v0.39.zh.md`](docs/reference/durable-store-provider-observability-audit-compatibility-v0.39.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.39.zh.md`](docs/reference/native-consumer-matrix-v0.39.zh.md)
+  - [`docs/reference/contributor-guide-v0.39.zh.md`](docs/reference/contributor-guide-v0.39.zh.md)
+- Completed provider failure taxonomy boundary
+  - [`docs/plan/roadmap-v0.38.zh.md`](docs/plan/roadmap-v0.38.zh.md)
+  - [`docs/plan/issue-backlog-v0.38.zh.md`](docs/plan/issue-backlog-v0.38.zh.md)
+  - [`docs/design/native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md`](docs/design/native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md)
+  - [`docs/reference/durable-store-provider-failure-taxonomy-compatibility-v0.38.zh.md`](docs/reference/durable-store-provider-failure-taxonomy-compatibility-v0.38.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.38.zh.md`](docs/reference/native-consumer-matrix-v0.38.zh.md)
+  - [`docs/reference/contributor-guide-v0.38.zh.md`](docs/reference/contributor-guide-v0.38.zh.md)
+- Completed provider recovery boundary
+  - [`docs/plan/roadmap-v0.37.zh.md`](docs/plan/roadmap-v0.37.zh.md)
+  - [`docs/plan/issue-backlog-v0.37.zh.md`](docs/plan/issue-backlog-v0.37.zh.md)
+  - [`docs/design/native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md`](docs/design/native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md)
+  - [`docs/reference/durable-store-provider-recovery-resume-compatibility-v0.37.zh.md`](docs/reference/durable-store-provider-recovery-resume-compatibility-v0.37.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.37.zh.md`](docs/reference/native-consumer-matrix-v0.37.zh.md)
+  - [`docs/reference/contributor-guide-v0.37.zh.md`](docs/reference/contributor-guide-v0.37.zh.md)
 - Completed provider retry boundary
   - [`docs/plan/roadmap-v0.35.zh.md`](docs/plan/roadmap-v0.35.zh.md)
   - [`docs/plan/issue-backlog-v0.35.zh.md`](docs/plan/issue-backlog-v0.35.zh.md)

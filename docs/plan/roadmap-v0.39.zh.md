@@ -18,11 +18,11 @@ V0.39 建立 observability / audit event sink。目标是输出 structured telem
 
 ## 里程碑
 
-- [ ] M0 冻结 audit event scope
-- [ ] M1 定义 structured event model
-- [ ] M2 定义 redaction 与 sensitivity validation
-- [ ] M3 接入 provider execution chain
-- [ ] M4 建立 golden、docs、CI 标签
+- [x] M0 冻结 audit event scope
+- [x] M1 定义 structured event model
+- [x] M2 定义 redaction 与 sensitivity validation
+- [x] M3 接入 provider execution chain
+- [x] M4 建立 golden、docs、CI 标签
 
 ## 完成定义
 

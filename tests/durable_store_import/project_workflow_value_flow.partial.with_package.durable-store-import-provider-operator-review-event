@@ -1,0 +1,8 @@
+ahfl.durable-store-import-provider-operator-review-event.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+telemetry_summary durable-store-import-provider-telemetry-summary::run-partial-001::success
+outcome success
+next_action archive
+summary provider operator review event outcome is success
+next_step archive audit event

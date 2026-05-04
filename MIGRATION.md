@@ -1135,3 +1135,96 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(34|35|36)'
 - `docs/design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md`
 - `docs/design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md`
 - `docs/design/native-durable-store-provider-write-commit-receipt-bootstrap-v0.36.zh.md`
+
+## V0.36 to V0.39
+
+V0.37 through V0.39 extend the provider write commit receipt into recovery,
+failure taxonomy, and secret-free observability boundaries. The sequence is:
+
+```text
+ProviderWriteCommitReceipt
+-> ProviderWriteRecoveryCheckpoint
+-> ProviderWriteRecoveryPlan
+-> ProviderWriteRecoveryReview
+-> ProviderFailureTaxonomyReport
+-> ProviderExecutionAuditEvent
+-> ProviderTelemetrySummary
+-> ProviderOperatorReviewEvent
+```
+
+The new boundaries remain artifact-only:
+
+- V0.37 defines recovery checkpoint, resume token placeholder, partial write
+  recovery plan, and reviewer-facing recovery review.
+- V0.38 defines failure taxonomy v1, retryability, operator action, and
+  security sensitivity without persisting secret-bearing provider errors.
+- V0.39 defines provider execution audit event, telemetry summary, operator
+  review event, and audit redaction policy without persisting raw telemetry.
+
+### New CLI Commands
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-recovery-checkpoint ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-recovery-plan ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-recovery-review ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-failure-taxonomy-report ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-failure-taxonomy-review ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-execution-audit-event ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-telemetry-summary ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-operator-review-event ...
+```
+
+### Compatibility Rules
+
+Consumers may depend on:
+
+- recovery checkpoint identity, source commit status, idempotency key, resume
+  token placeholder, recovery eligibility, and recovery plan action
+- failure taxonomy kind, category, retryability, operator action, security
+  sensitivity, and redacted failure summary
+- audit outcome, audit redaction policy version, telemetry summary flags, and
+  operator review next action
+
+Consumers must not infer recovery, taxonomy, audit, or telemetry state from
+review summaries, CLI text, raw provider payloads, raw provider errors,
+secret-bearing messages, host logs, raw telemetry dumps, or private scripts.
+
+Breaking changes to stable V0.37-V0.39 fields require a format version bump and
+updates to the compatibility references and golden fixtures.
+
+### Regression Commands
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(37|38|39)'
+```
+
+For full local confidence:
+
+```sh
+ctest --preset test-dev --output-on-failure
+cmake --preset asan
+cmake --build --preset build-asan
+ctest --preset test-asan --output-on-failure -L 'ahfl-v0.(37|38|39)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.37.zh.md`
+- `docs/plan/issue-backlog-v0.37.zh.md`
+- `docs/plan/roadmap-v0.38.zh.md`
+- `docs/plan/issue-backlog-v0.38.zh.md`
+- `docs/plan/roadmap-v0.39.zh.md`
+- `docs/plan/issue-backlog-v0.39.zh.md`
+- `docs/design/native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md`
+- `docs/design/native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md`
+- `docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md`
+- `docs/reference/durable-store-provider-recovery-resume-compatibility-v0.37.zh.md`
+- `docs/reference/durable-store-provider-failure-taxonomy-compatibility-v0.38.zh.md`
+- `docs/reference/durable-store-provider-observability-audit-compatibility-v0.39.zh.md`
+- `docs/reference/native-consumer-matrix-v0.37.zh.md`
+- `docs/reference/native-consumer-matrix-v0.38.zh.md`
+- `docs/reference/native-consumer-matrix-v0.39.zh.md`
+- `docs/reference/contributor-guide-v0.37.zh.md`
+- `docs/reference/contributor-guide-v0.38.zh.md`
+- `docs/reference/contributor-guide-v0.39.zh.md`

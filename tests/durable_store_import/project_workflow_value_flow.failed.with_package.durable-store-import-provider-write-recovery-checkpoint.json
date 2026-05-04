@@ -1,0 +1,19 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-recovery-checkpoint.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "write_recovery_checkpoint_identity": "durable-store-import-provider-write-recovery-checkpoint::run-failed-001::blocked",
+  "recovery_checkpoint_reference": "provider-recovery-checkpoint::run-failed-001",
+  "resume_token_version": "ahfl.provider-write-resume-token.v1",
+  "resume_token_placeholder_identity": "provider-write-resume-token-placeholder::ahfl.durable-store-import.provider-write.v1::run-failed-001::fixture.request.failed",
+  "idempotency_key": "ahfl.durable-store-import.provider-write.v1::run-failed-001::fixture.request.failed",
+  "checkpoint_status": "blocked",
+  "recovery_eligibility": "blocked",
+  "recovery_summary": "commit receipt is blocked; recovery checkpoint is blocked",
+  "failure_attribution": {
+    "kind": "commit_receipt_not_ready",
+    "message": "commit receipt was not ready for recovery checkpoint"
+  }
+}

@@ -1,0 +1,8 @@
+ahfl.durable-store-import-provider-failure-taxonomy-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+taxonomy_report durable-store-import-provider-failure-taxonomy-report::run-failed-001::blocked
+failure_kind blocked
+retryability blocked
+summary provider failure taxonomy kind is blocked
+operator_recommendation manual review required

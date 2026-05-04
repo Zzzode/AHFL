@@ -1,0 +1,8 @@
+ahfl.durable-store-import-provider-write-recovery-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+recovery_plan durable-store-import-provider-write-recovery-plan::run-failed-001::wait-for-commit-receipt
+plan_action wait_for_commit_receipt
+summary provider write recovery action is wait-for-commit-receipt
+next_action manual_review_required
+next_step operator review or idempotent resume is required

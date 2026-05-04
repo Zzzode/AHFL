@@ -1,0 +1,16 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-telemetry-summary.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "telemetry_summary_identity": "durable-store-import-provider-telemetry-summary::run-001::success",
+  "outcome": "success",
+  "provider_write_attempted": true,
+  "provider_write_committed": true,
+  "retry_recommended": false,
+  "recovery_required": false,
+  "telemetry_summary": "provider telemetry summary outcome is success",
+  "secret_free": true,
+  "raw_telemetry_persisted": false
+}

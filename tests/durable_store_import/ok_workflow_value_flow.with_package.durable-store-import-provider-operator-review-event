@@ -1,0 +1,8 @@
+ahfl.durable-store-import-provider-operator-review-event.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+telemetry_summary durable-store-import-provider-telemetry-summary::run-001::success
+outcome success
+next_action archive
+summary provider operator review event outcome is success
+next_step archive audit event

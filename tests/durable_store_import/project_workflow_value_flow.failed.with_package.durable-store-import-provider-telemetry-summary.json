@@ -1,0 +1,16 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-telemetry-summary.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "telemetry_summary_identity": "durable-store-import-provider-telemetry-summary::run-failed-001::blocked",
+  "outcome": "blocked",
+  "provider_write_attempted": true,
+  "provider_write_committed": false,
+  "retry_recommended": false,
+  "recovery_required": false,
+  "telemetry_summary": "provider telemetry summary outcome is blocked",
+  "secret_free": true,
+  "raw_telemetry_persisted": false
+}

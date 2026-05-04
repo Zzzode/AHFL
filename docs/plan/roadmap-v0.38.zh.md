@@ -18,11 +18,11 @@ V0.38 统一 provider failure taxonomy。目标是把认证、授权、网络、
 
 ## 里程碑
 
-- [ ] M0 冻结 taxonomy scope
-- [ ] M1 定义 failure kind / category / retryability
-- [ ] M2 接入 adapter response normalization
-- [ ] M3 覆盖 mock adapter failure matrix
-- [ ] M4 更新 compatibility docs 与 golden
+- [x] M0 冻结 taxonomy scope
+- [x] M1 定义 failure kind / category / retryability
+- [x] M2 接入 adapter response normalization
+- [x] M3 覆盖 mock adapter failure matrix
+- [x] M4 更新 compatibility docs 与 golden
 
 ## 完成定义
 

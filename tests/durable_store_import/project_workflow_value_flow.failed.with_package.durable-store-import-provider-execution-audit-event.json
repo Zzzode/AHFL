@@ -1,0 +1,14 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-execution-audit-event.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "execution_audit_event_identity": "durable-store-import-provider-execution-audit-event::run-failed-001::blocked",
+  "event_name": "provider.execution.audit",
+  "outcome": "blocked",
+  "redaction_policy_version": "ahfl.provider-audit-redaction.v1",
+  "event_summary": "provider execution audit outcome is blocked",
+  "secret_free": true,
+  "raw_telemetry_persisted": false
+}

@@ -1,0 +1,17 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-failure-taxonomy-report.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "failure_taxonomy_report_identity": "durable-store-import-provider-failure-taxonomy-report::run-001::none",
+  "failure_kind": "none",
+  "failure_category": "none",
+  "retryability": "not_applicable",
+  "operator_action": "none",
+  "security_sensitivity": "none",
+  "redacted_failure_summary": "accepted provider result has no failure",
+  "recovery_review_failure_summary": "no recovery action; provider write is committed",
+  "secret_bearing_error_persisted": false,
+  "raw_provider_error_persisted": false
+}

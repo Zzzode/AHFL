@@ -729,6 +729,102 @@ target_link_libraries(ahfl_backend_durable_store_import_provider_write_commit_re
 
 ahfl_apply_project_warnings(ahfl_backend_durable_store_import_provider_write_commit_review)
 
+add_library(ahfl_backend_durable_store_import_provider_write_recovery_checkpoint STATIC
+    durable_store_import_provider_write_recovery_checkpoint.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_write_recovery_checkpoint
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_write_recovery_checkpoint)
+
+add_library(ahfl_backend_durable_store_import_provider_write_recovery_plan STATIC
+    durable_store_import_provider_write_recovery_plan.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_write_recovery_plan
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_write_recovery_plan)
+
+add_library(ahfl_backend_durable_store_import_provider_write_recovery_review STATIC
+    durable_store_import_provider_write_recovery_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_write_recovery_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_write_recovery_review)
+
+add_library(ahfl_backend_durable_store_import_provider_failure_taxonomy_report STATIC
+    durable_store_import_provider_failure_taxonomy_report.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_failure_taxonomy_report
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_failure_taxonomy_report)
+
+add_library(ahfl_backend_durable_store_import_provider_failure_taxonomy_review STATIC
+    durable_store_import_provider_failure_taxonomy_review.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_failure_taxonomy_review
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_failure_taxonomy_review)
+
+add_library(ahfl_backend_durable_store_import_provider_execution_audit_event STATIC
+    durable_store_import_provider_execution_audit_event.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_execution_audit_event
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_execution_audit_event)
+
+add_library(ahfl_backend_durable_store_import_provider_telemetry_summary STATIC
+    durable_store_import_provider_telemetry_summary.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_telemetry_summary
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_telemetry_summary)
+
+add_library(ahfl_backend_durable_store_import_provider_operator_review_event STATIC
+    durable_store_import_provider_operator_review_event.cpp
+)
+
+target_link_libraries(ahfl_backend_durable_store_import_provider_operator_review_event
+    PUBLIC
+        ahfl_durable_store_import
+)
+
+ahfl_apply_project_warnings(
+    ahfl_backend_durable_store_import_provider_operator_review_event)
+
 add_library(ahfl_backend_scheduler_review STATIC
     scheduler_review.cpp
 )
@@ -844,6 +940,14 @@ target_link_libraries(ahfl_backend
         ahfl_backend_durable_store_import_provider_write_retry_decision
         ahfl_backend_durable_store_import_provider_write_commit_receipt
         ahfl_backend_durable_store_import_provider_write_commit_review
+        ahfl_backend_durable_store_import_provider_write_recovery_checkpoint
+        ahfl_backend_durable_store_import_provider_write_recovery_plan
+        ahfl_backend_durable_store_import_provider_write_recovery_review
+        ahfl_backend_durable_store_import_provider_failure_taxonomy_report
+        ahfl_backend_durable_store_import_provider_failure_taxonomy_review
+        ahfl_backend_durable_store_import_provider_execution_audit_event
+        ahfl_backend_durable_store_import_provider_telemetry_summary
+        ahfl_backend_durable_store_import_provider_operator_review_event
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session

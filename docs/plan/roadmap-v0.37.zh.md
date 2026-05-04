@@ -18,11 +18,11 @@ V0.37 冻结 recovery / resume contract。目标是支持 crash recovery、parti
 
 ## 里程碑
 
-- [ ] M0 冻结 recovery / resume scope
-- [ ] M1 定义 recovery checkpoint / resume token model
-- [ ] M2 定义 partial write recovery plan
-- [ ] M3 覆盖 crash-before-call、crash-after-call、unknown-commit paths
-- [ ] M4 建立 golden、docs、CI 标签
+- [x] M0 冻结 recovery / resume scope
+- [x] M1 定义 recovery checkpoint / resume token model
+- [x] M2 定义 partial write recovery plan
+- [x] M3 覆盖 crash-before-call、crash-after-call、unknown-commit paths
+- [x] M4 建立 golden、docs、CI 标签
 
 ## 完成定义
 

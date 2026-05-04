@@ -2,8 +2,11 @@
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
+#include "ahfl/durable_store_import/provider_audit.hpp"
 #include "ahfl/durable_store_import/provider_config.hpp"
+#include "ahfl/durable_store_import/provider_commit.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
+#include "ahfl/durable_store_import/provider_failure_taxonomy.hpp"
 #include "ahfl/durable_store_import/provider_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
@@ -15,8 +18,8 @@
 #include "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp"
 #include "ahfl/durable_store_import/provider_sdk_payload.hpp"
 #include "ahfl/durable_store_import/provider_secret.hpp"
-#include "ahfl/durable_store_import/provider_commit.hpp"
 #include "ahfl/durable_store_import/provider_retry.hpp"
+#include "ahfl/durable_store_import/provider_recovery.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -2854,6 +2857,137 @@ make_valid_provider_write_commit_review() {
     }
 
     const auto review = ahfl::durable_store_import::build_provider_write_commit_review(*receipt);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteRecoveryCheckpoint>
+make_valid_provider_write_recovery_checkpoint() {
+    const auto receipt = make_valid_provider_write_commit_receipt();
+    if (!receipt.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto checkpoint =
+        ahfl::durable_store_import::build_provider_write_recovery_checkpoint(*receipt);
+    if (checkpoint.has_errors() || !checkpoint.checkpoint.has_value()) {
+        checkpoint.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *checkpoint.checkpoint;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteRecoveryPlan>
+make_valid_provider_write_recovery_plan() {
+    const auto checkpoint = make_valid_provider_write_recovery_checkpoint();
+    if (!checkpoint.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_write_recovery_plan(*checkpoint);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteRecoveryReview>
+make_valid_provider_write_recovery_review() {
+    const auto plan = make_valid_provider_write_recovery_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_write_recovery_review(*plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderFailureTaxonomyReport>
+make_valid_provider_failure_taxonomy_report() {
+    const auto adapter_result = make_valid_provider_sdk_mock_adapter_execution();
+    const auto recovery_plan = make_valid_provider_write_recovery_plan();
+    if (!adapter_result.has_value() || !recovery_plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto report = ahfl::durable_store_import::build_provider_failure_taxonomy_report(
+        *adapter_result, *recovery_plan);
+    if (report.has_errors() || !report.report.has_value()) {
+        report.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *report.report;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderFailureTaxonomyReview>
+make_valid_provider_failure_taxonomy_review() {
+    const auto report = make_valid_provider_failure_taxonomy_report();
+    if (!report.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_failure_taxonomy_review(*report);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderExecutionAuditEvent>
+make_valid_provider_execution_audit_event() {
+    const auto report = make_valid_provider_failure_taxonomy_report();
+    if (!report.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto event = ahfl::durable_store_import::build_provider_execution_audit_event(*report);
+    if (event.has_errors() || !event.event.has_value()) {
+        event.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *event.event;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderTelemetrySummary>
+make_valid_provider_telemetry_summary() {
+    const auto event = make_valid_provider_execution_audit_event();
+    if (!event.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto summary = ahfl::durable_store_import::build_provider_telemetry_summary(*event);
+    if (summary.has_errors() || !summary.summary.has_value()) {
+        summary.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *summary.summary;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderOperatorReviewEvent>
+make_valid_provider_operator_review_event() {
+    const auto summary = make_valid_provider_telemetry_summary();
+    if (!summary.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review = ahfl::durable_store_import::build_provider_operator_review_event(*summary);
     if (review.has_errors() || !review.review.has_value()) {
         review.diagnostics.render(std::cout);
         return std::nullopt;
@@ -6752,6 +6886,258 @@ int validate_durable_store_import_provider_write_commit_review_ok() {
                : 1;
 }
 
+int validate_durable_store_import_provider_write_recovery_checkpoint_ok() {
+    const auto checkpoint = make_valid_provider_write_recovery_checkpoint();
+    if (!checkpoint.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_recovery_checkpoint(*checkpoint);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return checkpoint->recovery_eligibility ==
+                       ahfl::durable_store_import::ProviderWriteRecoveryEligibility::
+                           NotRequired &&
+                   !checkpoint->failure_attribution.has_value()
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_write_recovery_matrix_ok() {
+    auto receipt = make_valid_provider_write_commit_receipt();
+    if (!receipt.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderWriteCommitStatus statuses[] = {
+        ahfl::durable_store_import::ProviderWriteCommitStatus::Committed,
+        ahfl::durable_store_import::ProviderWriteCommitStatus::Duplicate,
+        ahfl::durable_store_import::ProviderWriteCommitStatus::Partial,
+        ahfl::durable_store_import::ProviderWriteCommitStatus::Failed,
+        ahfl::durable_store_import::ProviderWriteCommitStatus::Blocked,
+    };
+    for (const auto status : statuses) {
+        auto candidate = *receipt;
+        candidate.commit_status = status;
+        if (status != ahfl::durable_store_import::ProviderWriteCommitStatus::Committed &&
+            !candidate.failure_attribution.has_value()) {
+            candidate.failure_attribution =
+                ahfl::durable_store_import::ProviderWriteCommitFailureAttribution{
+                    .kind = ahfl::durable_store_import::ProviderWriteCommitFailureKind::
+                        ProviderFailure,
+                    .message = "synthetic recovery matrix failure",
+                };
+        }
+        const auto checkpoint =
+            ahfl::durable_store_import::build_provider_write_recovery_checkpoint(candidate);
+        if (checkpoint.has_errors() || !checkpoint.checkpoint.has_value()) {
+            checkpoint.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto plan =
+            ahfl::durable_store_import::build_provider_write_recovery_plan(*checkpoint.checkpoint);
+        if (plan.has_errors() || !plan.plan.has_value()) {
+            plan.diagnostics.render(std::cout);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_write_recovery_review_ok() {
+    const auto review = make_valid_provider_write_recovery_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_write_recovery_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->next_action ==
+                   ahfl::durable_store_import::ProviderWriteRecoveryNextActionKind::
+                       ReadyForAuditEvent
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_failure_taxonomy_report_ok() {
+    const auto report = make_valid_provider_failure_taxonomy_report();
+    if (!report.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_failure_taxonomy_report(*report);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return report->failure_kind == ahfl::durable_store_import::ProviderFailureKindV1::None &&
+                   report->retryability ==
+                       ahfl::durable_store_import::ProviderFailureRetryabilityV1::NotApplicable &&
+                   !report->secret_bearing_error_persisted &&
+                   !report->raw_provider_error_persisted
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_failure_taxonomy_matrix_ok() {
+    auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    auto recovery_plan = make_valid_provider_write_recovery_plan();
+    if (!contract.has_value() || !recovery_plan.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind scenarios[] = {
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Success,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch,
+    };
+    for (const auto scenario : scenarios) {
+        contract->scenario_kind = scenario;
+        const auto adapter_result =
+            ahfl::durable_store_import::run_provider_sdk_mock_adapter(*contract);
+        if (adapter_result.has_errors() || !adapter_result.result.has_value()) {
+            adapter_result.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto report = ahfl::durable_store_import::build_provider_failure_taxonomy_report(
+            *adapter_result.result, *recovery_plan);
+        if (report.has_errors() || !report.report.has_value()) {
+            report.diagnostics.render(std::cout);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_failure_taxonomy_review_ok() {
+    const auto review = make_valid_provider_failure_taxonomy_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_failure_taxonomy_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->operator_action ==
+                   ahfl::durable_store_import::ProviderFailureOperatorActionV1::None
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_execution_audit_event_ok() {
+    const auto event = make_valid_provider_execution_audit_event();
+    if (!event.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_execution_audit_event(*event);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return event->outcome == ahfl::durable_store_import::ProviderAuditOutcome::Success &&
+                   event->secret_free && !event->raw_telemetry_persisted
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_execution_audit_event_matrix_ok() {
+    auto contract = make_valid_provider_sdk_mock_adapter_contract();
+    auto recovery_plan = make_valid_provider_write_recovery_plan();
+    if (!contract.has_value() || !recovery_plan.has_value()) {
+        return 1;
+    }
+
+    const ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind scenarios[] = {
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Success,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict,
+        ahfl::durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure,
+    };
+    for (const auto scenario : scenarios) {
+        contract->scenario_kind = scenario;
+        const auto adapter_result =
+            ahfl::durable_store_import::run_provider_sdk_mock_adapter(*contract);
+        if (adapter_result.has_errors() || !adapter_result.result.has_value()) {
+            adapter_result.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto report = ahfl::durable_store_import::build_provider_failure_taxonomy_report(
+            *adapter_result.result, *recovery_plan);
+        if (report.has_errors() || !report.report.has_value()) {
+            report.diagnostics.render(std::cout);
+            return 1;
+        }
+        const auto event =
+            ahfl::durable_store_import::build_provider_execution_audit_event(*report.report);
+        if (event.has_errors() || !event.event.has_value()) {
+            event.diagnostics.render(std::cout);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int validate_durable_store_import_provider_telemetry_summary_ok() {
+    const auto summary = make_valid_provider_telemetry_summary();
+    if (!summary.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_telemetry_summary(*summary);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return summary->provider_write_committed && summary->secret_free &&
+                   !summary->raw_telemetry_persisted
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_operator_review_event_ok() {
+    const auto review = make_valid_provider_operator_review_event();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_operator_review_event(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->next_action == ahfl::durable_store_import::ProviderAuditNextActionKind::Archive
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -7663,6 +8049,49 @@ int main(int argc, char **argv) {
 
     if (command == "validate-durable-store-import-provider-write-commit-review-ok") {
         return validate_durable_store_import_provider_write_commit_review_ok();
+    }
+
+    // V0.37: Provider write recovery/resume tests
+    if (command == "validate-durable-store-import-provider-write-recovery-checkpoint-ok") {
+        return validate_durable_store_import_provider_write_recovery_checkpoint_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-write-recovery-matrix-ok") {
+        return build_durable_store_import_provider_write_recovery_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-write-recovery-review-ok") {
+        return validate_durable_store_import_provider_write_recovery_review_ok();
+    }
+
+    // V0.38: Provider failure taxonomy tests
+    if (command == "validate-durable-store-import-provider-failure-taxonomy-report-ok") {
+        return validate_durable_store_import_provider_failure_taxonomy_report_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-failure-taxonomy-matrix-ok") {
+        return build_durable_store_import_provider_failure_taxonomy_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-failure-taxonomy-review-ok") {
+        return validate_durable_store_import_provider_failure_taxonomy_review_ok();
+    }
+
+    // V0.39: Provider audit / telemetry tests
+    if (command == "validate-durable-store-import-provider-execution-audit-event-ok") {
+        return validate_durable_store_import_provider_execution_audit_event_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-execution-audit-event-matrix-ok") {
+        return build_durable_store_import_provider_execution_audit_event_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-telemetry-summary-ok") {
+        return validate_durable_store_import_provider_telemetry_summary_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-operator-review-event-ok") {
+        return validate_durable_store_import_provider_operator_review_event_ok();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

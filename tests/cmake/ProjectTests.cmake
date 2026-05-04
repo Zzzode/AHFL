@@ -2089,6 +2089,56 @@ add_test(NAME ahfl.durable_store_import_provider_write_commit_review.model.valid
             validate-durable-store-import-provider-write-commit-review-ok
 )
 
+add_test(NAME ahfl.durable_store_import_provider_write_recovery_checkpoint.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-write-recovery-checkpoint-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_write_recovery.bootstrap.matrix_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-write-recovery-matrix-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_write_recovery_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-write-recovery-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_failure_taxonomy_report.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-failure-taxonomy-report-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_failure_taxonomy.bootstrap.matrix_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-failure-taxonomy-matrix-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_failure_taxonomy_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-failure-taxonomy-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_execution_audit_event.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-execution-audit-event-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_execution_audit_event.bootstrap.matrix_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-execution-audit-event-matrix-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_telemetry_summary.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-telemetry-summary-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_operator_review_event.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-operator-review-event-ok
+)
+
 add_test(NAME ahfl.durable_store_import_receipt_review.model.validate_ok
     COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-ok
@@ -2796,6 +2846,62 @@ function(ahfl_add_provider_v34_v36_project_cli_tests VARIANT_NAME AHFL_ARGS EXPE
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
                 "-DAHFLC_ARGS=emit-durable-store-import-provider-write-commit-review ${AHFL_ARGS}"
                 "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-write-commit-review"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-write-recovery-checkpoint ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-write-recovery-checkpoint.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_write_recovery_plan.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-write-recovery-plan ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-write-recovery-plan.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_write_recovery_review.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-write-recovery-review ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-write-recovery-review"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_failure_taxonomy_report.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-failure-taxonomy-report ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-failure-taxonomy-report.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_failure_taxonomy_review.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-failure-taxonomy-review ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-failure-taxonomy-review"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_execution_audit_event.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-execution-audit-event ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-execution-audit-event.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_telemetry_summary.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-telemetry-summary ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-telemetry-summary.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_operator_review_event.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-operator-review-event ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-operator-review-event"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
     )
 endfunction()

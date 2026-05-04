@@ -1630,3 +1630,67 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_write_commit_receipt.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_write_commit_review.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.37 v0.37-durable-store-import-provider-write-recovery-model
+    TESTS
+        ahfl.durable_store_import_provider_write_recovery_checkpoint.model.validate_ok
+        ahfl.durable_store_import_provider_write_recovery.bootstrap.matrix_ok
+        ahfl.durable_store_import_provider_write_recovery_review.model.validate_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.37 v0.37-durable-store-import-provider-write-recovery-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_plan.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_plan.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_plan.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_write_recovery_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.38 v0.38-durable-store-import-provider-failure-taxonomy-model
+    TESTS
+        ahfl.durable_store_import_provider_failure_taxonomy_report.model.validate_ok
+        ahfl.durable_store_import_provider_failure_taxonomy.bootstrap.matrix_ok
+        ahfl.durable_store_import_provider_failure_taxonomy_review.model.validate_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.38 v0.38-durable-store-import-provider-failure-taxonomy-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_report.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_report.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_failure_taxonomy_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.39 v0.39-durable-store-import-provider-audit-model
+    TESTS
+        ahfl.durable_store_import_provider_execution_audit_event.model.validate_ok
+        ahfl.durable_store_import_provider_execution_audit_event.bootstrap.matrix_ok
+        ahfl.durable_store_import_provider_telemetry_summary.model.validate_ok
+        ahfl.durable_store_import_provider_operator_review_event.model.validate_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.39 v0.39-durable-store-import-provider-audit-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_execution_audit_event.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_telemetry_summary.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_operator_review_event.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_execution_audit_event.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_telemetry_summary.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_operator_review_event.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_execution_audit_event.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_telemetry_summary.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_operator_review_event.workspace.workflow_value_flow.partial.with_package
+)

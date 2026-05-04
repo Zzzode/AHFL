@@ -1,0 +1,16 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-write-recovery-plan.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "write_recovery_plan_identity": "durable-store-import-provider-write-recovery-plan::run-partial-001::noop-committed",
+  "recovery_eligibility": "not_required",
+  "plan_action": "noop_committed",
+  "partial_write_recovery_plan": "no recovery action; provider write is committed",
+  "resume_token_placeholder_identity": "provider-write-resume-token-placeholder::ahfl.durable-store-import.provider-write.v1::run-partial-001::fixture.request.partial",
+  "requires_provider_commit_lookup": false,
+  "requires_operator_approval": false,
+  "secret_free": true,
+  "failure_attribution": null
+}

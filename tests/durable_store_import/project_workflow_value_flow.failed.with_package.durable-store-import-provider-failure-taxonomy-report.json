@@ -1,0 +1,17 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-failure-taxonomy-report.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "failure_taxonomy_report_identity": "durable-store-import-provider-failure-taxonomy-report::run-failed-001::blocked",
+  "failure_kind": "blocked",
+  "failure_category": "blocked",
+  "retryability": "blocked",
+  "operator_action": "manual_review",
+  "security_sensitivity": "unknown",
+  "redacted_failure_summary": "provider result blocked before failure taxonomy mapping",
+  "recovery_review_failure_summary": "wait for commit receipt before recovery planning can continue",
+  "secret_bearing_error_persisted": false,
+  "raw_provider_error_persisted": false
+}
