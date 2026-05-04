@@ -1,0 +1,15 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-selection-plan.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "selection_plan_identity": "durable-store-import-provider-selection-plan::run-partial-001::selected",
+  "selected_provider_id": "local-filesystem-alpha",
+  "fallback_provider_id": "sdk-mock-adapter",
+  "selection_status": "selected",
+  "degradation_allowed": false,
+  "requires_operator_review": false,
+  "fallback_policy": "audited-fallback-only",
+  "capability_gap_summary": "no provider capability gap detected"
+}

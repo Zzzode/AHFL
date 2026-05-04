@@ -1,0 +1,17 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-fixture-matrix.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "fixture_matrix_identity": "durable-store-import-provider-fixture-matrix::run-failed-001",
+  "covers_mock_adapter": true,
+  "covers_local_filesystem_alpha": true,
+  "covers_success_fixture": true,
+  "covers_timeout_fixture": true,
+  "covers_conflict_fixture": true,
+  "covers_schema_mismatch_fixture": true,
+  "provider_count": 2,
+  "fixture_count": 6,
+  "external_service_required": false
+}

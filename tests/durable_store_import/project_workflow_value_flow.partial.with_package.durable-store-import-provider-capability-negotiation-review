@@ -1,0 +1,9 @@
+ahfl.durable-store-import-provider-capability-negotiation-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-partial-001
+selection_plan durable-store-import-provider-selection-plan::run-partial-001::selected
+selected_provider local-filesystem-alpha
+selection_status selected
+negotiation_status compatible
+summary provider capability negotiation is selected
+recommendation provider selection can proceed

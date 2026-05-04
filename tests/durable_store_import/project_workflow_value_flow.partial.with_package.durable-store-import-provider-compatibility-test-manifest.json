@@ -1,0 +1,14 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-compatibility-test-manifest.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "compatibility_test_manifest_identity": "durable-store-import-provider-compatibility-test-manifest::run-partial-001",
+  "includes_mock_adapter": true,
+  "includes_local_filesystem_alpha": true,
+  "provider_count": 2,
+  "fixture_count": 6,
+  "capability_matrix_reference": "provider-compatibility-matrix::mock-adapter::local-filesystem-alpha",
+  "external_service_required": false
+}

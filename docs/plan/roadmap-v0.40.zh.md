@@ -18,11 +18,11 @@ V0.40 建立 provider compatibility suite。目标是为每个 provider adapter 
 
 ## 里程碑
 
-- [ ] M0 冻结 compatibility suite scope
-- [ ] M1 定义 test manifest / fixture matrix
-- [ ] M2 定义 compatibility report
-- [ ] M3 接入 mock 与 alpha provider
-- [ ] M4 更新 docs、CI opt-in、contributor guide
+- [x] M0 冻结 compatibility suite scope
+- [x] M1 定义 test manifest / fixture matrix
+- [x] M2 定义 compatibility report
+- [x] M3 接入 mock 与 alpha provider
+- [x] M4 更新 docs、CI opt-in、contributor guide
 
 ## 完成定义
 

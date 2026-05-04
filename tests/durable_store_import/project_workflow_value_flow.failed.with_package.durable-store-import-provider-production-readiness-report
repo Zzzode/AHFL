@@ -1,0 +1,7 @@
+ahfl.durable-store-import-provider-production-readiness-report.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+production_readiness_evidence durable-store-import-provider-production-readiness-evidence::run-failed-001
+release_gate blocked
+summary provider production readiness report gate is blocked
+next_step resolve blocking issues before production review

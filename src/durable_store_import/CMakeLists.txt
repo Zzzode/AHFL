@@ -13,8 +13,11 @@ add_library(ahfl_durable_store_import STATIC
     provider_host_execution.cpp
     provider_local_filesystem_alpha.cpp
     provider_audit.cpp
+    provider_compatibility.cpp
     provider_local_host_execution.cpp
     provider_local_host_harness.cpp
+    provider_production_readiness.cpp
+    provider_registry.cpp
     provider_runtime.cpp
     provider_sdk_adapter.cpp
     provider_sdk_interface.cpp

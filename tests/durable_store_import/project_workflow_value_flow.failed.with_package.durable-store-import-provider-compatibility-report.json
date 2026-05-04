@@ -1,0 +1,14 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-compatibility-report.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "compatibility_report_identity": "durable-store-import-provider-compatibility-report::run-failed-001::blocked",
+  "status": "blocked",
+  "mock_adapter_compatible": true,
+  "local_filesystem_alpha_compatible": true,
+  "capability_matrix_complete": true,
+  "external_service_required": false,
+  "compatibility_summary": "provider compatibility suite status is blocked"
+}

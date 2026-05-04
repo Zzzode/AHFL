@@ -1,0 +1,9 @@
+ahfl.durable-store-import-provider-capability-negotiation-review.v1
+workflow app::main::ValueFlowWorkflow
+session run-failed-001
+selection_plan durable-store-import-provider-selection-plan::run-failed-001::blocked
+selected_provider sdk-mock-adapter
+selection_status blocked
+negotiation_status blocked
+summary provider capability negotiation is blocked
+recommendation operator review required before provider execution

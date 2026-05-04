@@ -74,6 +74,9 @@ Avoid:
 - [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
+- [native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md](./design/native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md)
+- [native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md](./design/native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md)
+- [native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md](./design/native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md)
 - [native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md](./design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md)
 - [native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md](./design/native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md)
 - [native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md](./design/native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md)
@@ -120,9 +123,12 @@ Avoid:
 ### Plan
 
 - [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - future provider production roadmap
-- [roadmap-v0.40.zh.md](./plan/roadmap-v0.40.zh.md) - future provider roadmap
-- [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - future provider roadmap
-- [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - future provider roadmap
+- [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - completed baseline
+- [issue-backlog-v0.42.zh.md](./plan/issue-backlog-v0.42.zh.md) - completed baseline
+- [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - completed baseline
+- [issue-backlog-v0.41.zh.md](./plan/issue-backlog-v0.41.zh.md) - completed baseline
+- [roadmap-v0.40.zh.md](./plan/roadmap-v0.40.zh.md) - completed baseline
+- [issue-backlog-v0.40.zh.md](./plan/issue-backlog-v0.40.zh.md) - completed baseline
 - [roadmap-v0.39.zh.md](./plan/roadmap-v0.39.zh.md) - completed baseline
 - [issue-backlog-v0.39.zh.md](./plan/issue-backlog-v0.39.zh.md) - completed baseline
 - [roadmap-v0.38.zh.md](./plan/roadmap-v0.38.zh.md) - completed baseline
@@ -204,6 +210,15 @@ Avoid:
 
 ### Reference
 
+- [durable-store-provider-production-readiness-compatibility-v0.42.zh.md](./reference/durable-store-provider-production-readiness-compatibility-v0.42.zh.md)
+- [native-consumer-matrix-v0.42.zh.md](./reference/native-consumer-matrix-v0.42.zh.md)
+- [contributor-guide-v0.42.zh.md](./reference/contributor-guide-v0.42.zh.md)
+- [durable-store-provider-registry-selection-compatibility-v0.41.zh.md](./reference/durable-store-provider-registry-selection-compatibility-v0.41.zh.md)
+- [native-consumer-matrix-v0.41.zh.md](./reference/native-consumer-matrix-v0.41.zh.md)
+- [contributor-guide-v0.41.zh.md](./reference/contributor-guide-v0.41.zh.md)
+- [durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md](./reference/durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md)
+- [native-consumer-matrix-v0.40.zh.md](./reference/native-consumer-matrix-v0.40.zh.md)
+- [contributor-guide-v0.40.zh.md](./reference/contributor-guide-v0.40.zh.md)
 - [durable-store-provider-observability-audit-compatibility-v0.39.zh.md](./reference/durable-store-provider-observability-audit-compatibility-v0.39.zh.md)
 - [native-consumer-matrix-v0.39.zh.md](./reference/native-consumer-matrix-v0.39.zh.md)
 - [contributor-guide-v0.39.zh.md](./reference/contributor-guide-v0.39.zh.md)

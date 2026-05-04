@@ -3,6 +3,7 @@
 #include "ahfl/durable_store_import/decision_review.hpp"
 #include "ahfl/durable_store_import/provider_adapter.hpp"
 #include "ahfl/durable_store_import/provider_audit.hpp"
+#include "ahfl/durable_store_import/provider_compatibility.hpp"
 #include "ahfl/durable_store_import/provider_config.hpp"
 #include "ahfl/durable_store_import/provider_commit.hpp"
 #include "ahfl/durable_store_import/provider_driver.hpp"
@@ -11,7 +12,9 @@
 #include "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp"
 #include "ahfl/durable_store_import/provider_local_host_execution.hpp"
 #include "ahfl/durable_store_import/provider_local_host_harness.hpp"
+#include "ahfl/durable_store_import/provider_production_readiness.hpp"
 #include "ahfl/durable_store_import/provider_runtime.hpp"
+#include "ahfl/durable_store_import/provider_registry.hpp"
 #include "ahfl/durable_store_import/provider_sdk.hpp"
 #include "ahfl/durable_store_import/provider_sdk_adapter.hpp"
 #include "ahfl/durable_store_import/provider_sdk_interface.hpp"
@@ -2994,6 +2997,162 @@ make_valid_provider_operator_review_event() {
     }
 
     return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderCompatibilityTestManifest>
+make_valid_provider_compatibility_test_manifest() {
+    const auto review = make_valid_provider_operator_review_event();
+    if (!review.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto manifest =
+        ahfl::durable_store_import::build_provider_compatibility_test_manifest(*review);
+    if (manifest.has_errors() || !manifest.manifest.has_value()) {
+        manifest.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *manifest.manifest;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderFixtureMatrix>
+make_valid_provider_fixture_matrix() {
+    const auto manifest = make_valid_provider_compatibility_test_manifest();
+    if (!manifest.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto matrix = ahfl::durable_store_import::build_provider_fixture_matrix(*manifest);
+    if (matrix.has_errors() || !matrix.matrix.has_value()) {
+        matrix.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *matrix.matrix;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderCompatibilityReport>
+make_valid_provider_compatibility_report() {
+    const auto matrix = make_valid_provider_fixture_matrix();
+    const auto telemetry = make_valid_provider_telemetry_summary();
+    if (!matrix.has_value() || !telemetry.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto report =
+        ahfl::durable_store_import::build_provider_compatibility_report(*matrix, *telemetry);
+    if (report.has_errors() || !report.report.has_value()) {
+        report.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *report.report;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderRegistry>
+make_valid_provider_registry() {
+    const auto report = make_valid_provider_compatibility_report();
+    if (!report.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto registry = ahfl::durable_store_import::build_provider_registry(*report);
+    if (registry.has_errors() || !registry.registry.has_value()) {
+        registry.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *registry.registry;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSelectionPlan>
+make_valid_provider_selection_plan() {
+    const auto registry = make_valid_provider_registry();
+    if (!registry.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto plan = ahfl::durable_store_import::build_provider_selection_plan(*registry);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *plan.plan;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderCapabilityNegotiationReview>
+make_valid_provider_capability_negotiation_review() {
+    const auto plan = make_valid_provider_selection_plan();
+    if (!plan.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_capability_negotiation_review(*plan);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderProductionReadinessEvidence>
+make_valid_provider_production_readiness_evidence() {
+    const auto negotiation = make_valid_provider_capability_negotiation_review();
+    const auto compatibility = make_valid_provider_compatibility_report();
+    const auto audit = make_valid_provider_execution_audit_event();
+    const auto recovery = make_valid_provider_write_recovery_plan();
+    const auto taxonomy = make_valid_provider_failure_taxonomy_report();
+    if (!negotiation.has_value() || !compatibility.has_value() || !audit.has_value() ||
+        !recovery.has_value() || !taxonomy.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto evidence = ahfl::durable_store_import::build_provider_production_readiness_evidence(
+        *negotiation, *compatibility, *audit, *recovery, *taxonomy);
+    if (evidence.has_errors() || !evidence.evidence.has_value()) {
+        evidence.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *evidence.evidence;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderProductionReadinessReview>
+make_valid_provider_production_readiness_review() {
+    const auto evidence = make_valid_provider_production_readiness_evidence();
+    if (!evidence.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto review =
+        ahfl::durable_store_import::build_provider_production_readiness_review(*evidence);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *review.review;
+}
+
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderProductionReadinessReport>
+make_valid_provider_production_readiness_report() {
+    const auto review = make_valid_provider_production_readiness_review();
+    if (!review.has_value()) {
+        return std::nullopt;
+    }
+
+    const auto report =
+        ahfl::durable_store_import::build_provider_production_readiness_report(*review);
+    if (report.has_errors() || !report.report.has_value()) {
+        report.diagnostics.render(std::cout);
+        return std::nullopt;
+    }
+
+    return *report.report;
 }
 
 int validate_durable_store_import_adapter_execution_ok() {
@@ -7138,6 +7297,239 @@ int validate_durable_store_import_provider_operator_review_event_ok() {
                : 1;
 }
 
+int validate_durable_store_import_provider_compatibility_test_manifest_ok() {
+    const auto manifest = make_valid_provider_compatibility_test_manifest();
+    if (!manifest.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_compatibility_test_manifest(*manifest);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return manifest->includes_mock_adapter && manifest->includes_local_filesystem_alpha &&
+                   !manifest->external_service_required
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_fixture_matrix_ok() {
+    const auto matrix = make_valid_provider_fixture_matrix();
+    if (!matrix.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::validate_provider_fixture_matrix(*matrix);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return matrix->covers_mock_adapter && matrix->covers_local_filesystem_alpha &&
+                   matrix->covers_success_fixture && matrix->covers_timeout_fixture
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_compatibility_report_ok() {
+    const auto report = make_valid_provider_compatibility_report();
+    if (!report.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_compatibility_report(*report);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return report->status == ahfl::durable_store_import::ProviderCompatibilityStatus::Passed &&
+                   report->capability_matrix_complete && !report->external_service_required
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_compatibility_report_blocked_ok() {
+    auto report = make_valid_provider_compatibility_report();
+    auto telemetry = make_valid_provider_telemetry_summary();
+    auto matrix = make_valid_provider_fixture_matrix();
+    if (!report.has_value() || !telemetry.has_value() || !matrix.has_value()) {
+        return 1;
+    }
+
+    telemetry->outcome = ahfl::durable_store_import::ProviderAuditOutcome::Blocked;
+    const auto blocked =
+        ahfl::durable_store_import::build_provider_compatibility_report(*matrix, *telemetry);
+    if (blocked.has_errors() || !blocked.report.has_value()) {
+        blocked.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return blocked.report->status ==
+                   ahfl::durable_store_import::ProviderCompatibilityStatus::Blocked
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_registry_ok() {
+    const auto registry = make_valid_provider_registry();
+    if (!registry.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::validate_provider_registry(*registry);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return registry->registered_provider_count == 2 && !registry->unaudited_fallback_allowed
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_selection_plan_ok() {
+    const auto plan = make_valid_provider_selection_plan();
+    if (!plan.has_value()) {
+        return 1;
+    }
+
+    const auto validation = ahfl::durable_store_import::validate_provider_selection_plan(*plan);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return plan->selection_status == ahfl::durable_store_import::ProviderSelectionStatus::Selected &&
+                   !plan->requires_operator_review
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_capability_negotiation_review_ok() {
+    const auto review = make_valid_provider_capability_negotiation_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_capability_negotiation_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->negotiation_status ==
+                   ahfl::durable_store_import::ProviderCapabilityNegotiationStatus::Compatible
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_selection_fallback_ok() {
+    auto registry = make_valid_provider_registry();
+    if (!registry.has_value()) {
+        return 1;
+    }
+
+    registry->compatibility_status =
+        ahfl::durable_store_import::ProviderCompatibilityStatus::Failed;
+    const auto plan = ahfl::durable_store_import::build_provider_selection_plan(*registry);
+    if (plan.has_errors() || !plan.plan.has_value()) {
+        plan.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return plan.plan->selection_status ==
+                       ahfl::durable_store_import::ProviderSelectionStatus::FallbackSelected &&
+                   plan.plan->degradation_allowed
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_production_readiness_evidence_ok() {
+    const auto evidence = make_valid_provider_production_readiness_evidence();
+    if (!evidence.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_production_readiness_evidence(*evidence);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return evidence->blocking_issue_count == 0 && evidence->security_evidence_passed &&
+                   evidence->registry_evidence_passed
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_production_readiness_review_ok() {
+    const auto review = make_valid_provider_production_readiness_review();
+    if (!review.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_production_readiness_review(*review);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review->release_gate ==
+                   ahfl::durable_store_import::ProviderProductionReleaseGate::
+                       ReadyForProductionReview
+               ? 0
+               : 1;
+}
+
+int validate_durable_store_import_provider_production_readiness_report_ok() {
+    const auto report = make_valid_provider_production_readiness_report();
+    if (!report.has_value()) {
+        return 1;
+    }
+
+    const auto validation =
+        ahfl::durable_store_import::validate_provider_production_readiness_report(*report);
+    if (validation.has_errors()) {
+        validation.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return report->release_gate ==
+                   ahfl::durable_store_import::ProviderProductionReleaseGate::
+                       ReadyForProductionReview
+               ? 0
+               : 1;
+}
+
+int build_durable_store_import_provider_production_readiness_blocked_ok() {
+    auto evidence = make_valid_provider_production_readiness_evidence();
+    if (!evidence.has_value()) {
+        return 1;
+    }
+
+    evidence->compatibility_evidence_passed = false;
+    evidence->blocking_issue_count = 1;
+    const auto review =
+        ahfl::durable_store_import::build_provider_production_readiness_review(*evidence);
+    if (review.has_errors() || !review.review.has_value()) {
+        review.diagnostics.render(std::cout);
+        return 1;
+    }
+
+    return review.review->release_gate ==
+                   ahfl::durable_store_import::ProviderProductionReleaseGate::Blocked
+               ? 0
+               : 1;
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -8092,6 +8484,57 @@ int main(int argc, char **argv) {
 
     if (command == "validate-durable-store-import-provider-operator-review-event-ok") {
         return validate_durable_store_import_provider_operator_review_event_ok();
+    }
+
+    // V0.40: Provider compatibility suite tests
+    if (command == "validate-durable-store-import-provider-compatibility-test-manifest-ok") {
+        return validate_durable_store_import_provider_compatibility_test_manifest_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-fixture-matrix-ok") {
+        return validate_durable_store_import_provider_fixture_matrix_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-compatibility-report-ok") {
+        return validate_durable_store_import_provider_compatibility_report_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-compatibility-report-blocked-ok") {
+        return build_durable_store_import_provider_compatibility_report_blocked_ok();
+    }
+
+    // V0.41: Provider registry / selection tests
+    if (command == "validate-durable-store-import-provider-registry-ok") {
+        return validate_durable_store_import_provider_registry_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-selection-plan-ok") {
+        return validate_durable_store_import_provider_selection_plan_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-capability-negotiation-review-ok") {
+        return validate_durable_store_import_provider_capability_negotiation_review_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-selection-fallback-ok") {
+        return build_durable_store_import_provider_selection_fallback_ok();
+    }
+
+    // V0.42: Provider production readiness tests
+    if (command == "validate-durable-store-import-provider-production-readiness-evidence-ok") {
+        return validate_durable_store_import_provider_production_readiness_evidence_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-production-readiness-review-ok") {
+        return validate_durable_store_import_provider_production_readiness_review_ok();
+    }
+
+    if (command == "validate-durable-store-import-provider-production-readiness-report-ok") {
+        return validate_durable_store_import_provider_production_readiness_report_ok();
+    }
+
+    if (command == "build-durable-store-import-provider-production-readiness-blocked-ok") {
+        return build_durable_store_import_provider_production_readiness_blocked_ok();
     }
 
     std::cerr << "unknown test command: " << command << '\n';

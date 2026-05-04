@@ -197,6 +197,15 @@ Backend outputs:
 | `emit-durable-store-import-provider-execution-audit-event` | provider execution audit event over failure taxonomy report |
 | `emit-durable-store-import-provider-telemetry-summary` | provider telemetry summary over execution audit event |
 | `emit-durable-store-import-provider-operator-review-event` | reviewer-facing provider operator review event |
+| `emit-durable-store-import-provider-compatibility-test-manifest` | provider compatibility suite manifest over operator review event |
+| `emit-durable-store-import-provider-fixture-matrix` | provider fixture matrix for compatibility suite coverage |
+| `emit-durable-store-import-provider-compatibility-report` | provider compatibility report over fixture matrix and telemetry summary |
+| `emit-durable-store-import-provider-registry` | multi-provider registry over compatibility report |
+| `emit-durable-store-import-provider-selection-plan` | provider selection and fallback plan over registry |
+| `emit-durable-store-import-provider-capability-negotiation-review` | reviewer-facing provider capability negotiation review |
+| `emit-durable-store-import-provider-production-readiness-evidence` | production readiness evidence package over provider execution artifacts |
+| `emit-durable-store-import-provider-production-readiness-review` | provider production readiness release-gate review |
+| `emit-durable-store-import-provider-production-readiness-report` | operator-facing provider production readiness report |
 | `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
 | `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
 | `emit-package-review` | package-aware review and planner bootstrap summary |
@@ -264,6 +273,9 @@ ctest --preset test-dev -L ahfl-v0.36
 ctest --preset test-dev -L ahfl-v0.37
 ctest --preset test-dev -L ahfl-v0.38
 ctest --preset test-dev -L ahfl-v0.39
+ctest --preset test-dev -L ahfl-v0.40
+ctest --preset test-dev -L ahfl-v0.41
+ctest --preset test-dev -L ahfl-v0.42
 
 # Regenerate the C++ parser module
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
@@ -299,7 +311,28 @@ Use the repo index for the full typed doc map:
 
 Recommended entry points:
 
-- Current completed provider audit boundary
+- Current completed provider production readiness boundary
+  - [`docs/plan/roadmap-v0.42.zh.md`](docs/plan/roadmap-v0.42.zh.md)
+  - [`docs/plan/issue-backlog-v0.42.zh.md`](docs/plan/issue-backlog-v0.42.zh.md)
+  - [`docs/design/native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md`](docs/design/native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md)
+  - [`docs/reference/durable-store-provider-production-readiness-compatibility-v0.42.zh.md`](docs/reference/durable-store-provider-production-readiness-compatibility-v0.42.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.42.zh.md`](docs/reference/native-consumer-matrix-v0.42.zh.md)
+  - [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md)
+- Completed provider registry boundary
+  - [`docs/plan/roadmap-v0.41.zh.md`](docs/plan/roadmap-v0.41.zh.md)
+  - [`docs/plan/issue-backlog-v0.41.zh.md`](docs/plan/issue-backlog-v0.41.zh.md)
+  - [`docs/design/native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md`](docs/design/native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md)
+  - [`docs/reference/durable-store-provider-registry-selection-compatibility-v0.41.zh.md`](docs/reference/durable-store-provider-registry-selection-compatibility-v0.41.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.41.zh.md`](docs/reference/native-consumer-matrix-v0.41.zh.md)
+  - [`docs/reference/contributor-guide-v0.41.zh.md`](docs/reference/contributor-guide-v0.41.zh.md)
+- Completed provider compatibility suite boundary
+  - [`docs/plan/roadmap-v0.40.zh.md`](docs/plan/roadmap-v0.40.zh.md)
+  - [`docs/plan/issue-backlog-v0.40.zh.md`](docs/plan/issue-backlog-v0.40.zh.md)
+  - [`docs/design/native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md`](docs/design/native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md)
+  - [`docs/reference/durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md`](docs/reference/durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md)
+  - [`docs/reference/native-consumer-matrix-v0.40.zh.md`](docs/reference/native-consumer-matrix-v0.40.zh.md)
+  - [`docs/reference/contributor-guide-v0.40.zh.md`](docs/reference/contributor-guide-v0.40.zh.md)
+- Completed provider audit boundary
   - [`docs/plan/roadmap-v0.39.zh.md`](docs/plan/roadmap-v0.39.zh.md)
   - [`docs/plan/issue-backlog-v0.39.zh.md`](docs/plan/issue-backlog-v0.39.zh.md)
   - [`docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md`](docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md)

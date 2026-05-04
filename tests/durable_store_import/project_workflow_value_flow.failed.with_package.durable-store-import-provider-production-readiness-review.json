@@ -1,0 +1,12 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-production-readiness-review.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "production_readiness_evidence_identity": "durable-store-import-provider-production-readiness-evidence::run-failed-001",
+  "release_gate": "blocked",
+  "blocking_issue_count": 1,
+  "blocking_issue_summary": "production readiness is blocked by missing evidence",
+  "readiness_summary": "provider production release gate is blocked"
+}

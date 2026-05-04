@@ -1,0 +1,14 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-registry.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "registry_identity": "durable-store-import-provider-registry::run-001",
+  "primary_provider_id": "local-filesystem-alpha",
+  "fallback_provider_id": "sdk-mock-adapter",
+  "mock_adapter_registered": true,
+  "local_filesystem_alpha_registered": true,
+  "unaudited_fallback_allowed": false,
+  "registered_provider_count": 2
+}

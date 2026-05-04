@@ -1228,3 +1228,105 @@ ctest --preset test-asan --output-on-failure -L 'ahfl-v0.(37|38|39)'
 - `docs/reference/contributor-guide-v0.37.zh.md`
 - `docs/reference/contributor-guide-v0.38.zh.md`
 - `docs/reference/contributor-guide-v0.39.zh.md`
+
+## V0.39 to V0.42
+
+V0.40 through V0.42 extend provider audit into compatibility, multi-provider
+selection, and production readiness review. The sequence is:
+
+```text
+ProviderOperatorReviewEvent
+-> ProviderCompatibilityTestManifest
+-> ProviderFixtureMatrix
+ProviderTelemetrySummary
+-> ProviderCompatibilityReport
+-> ProviderRegistry
+-> ProviderSelectionPlan
+-> ProviderCapabilityNegotiationReview
+ProviderFailureTaxonomyReport
+ProviderWriteRecoveryPlan
+ProviderExecutionAuditEvent
+-> ProviderProductionReadinessEvidence
+-> ProviderProductionReadinessReview
+-> ProviderProductionReadinessReport
+```
+
+The new boundaries remain deterministic and local:
+
+- V0.40 defines provider compatibility test manifest, fixture matrix, and
+  compatibility report for mock adapter plus local filesystem alpha coverage.
+- V0.41 defines provider registry, provider selection plan, audited fallback
+  policy, and capability negotiation review.
+- V0.42 defines production readiness evidence, release gate review, and
+  operator-facing production readiness report.
+
+### New CLI Commands
+
+```sh
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-compatibility-test-manifest ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-fixture-matrix ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-compatibility-report ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-registry ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-selection-plan ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-capability-negotiation-review ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-production-readiness-evidence ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-production-readiness-review ...
+./build/dev/src/cli/ahflc emit-durable-store-import-provider-production-readiness-report ...
+```
+
+### Compatibility Rules
+
+Consumers may depend on:
+
+- compatibility manifest identity, fixture matrix coverage flags,
+  compatibility status, and external service requirement
+- registry primary provider, fallback provider, selection status, fallback
+  policy, and capability negotiation status
+- production readiness evidence flags, blocking issue count, release gate, and
+  operator report next step
+
+Consumers must not infer compatibility, provider selection, or production
+readiness state from CLI text, review projections, private scripts, raw logs, or
+environment-specific provider configuration.
+
+V0.42 does not auto-approve production releases and does not enable real
+provider traffic. Breaking changes to stable V0.40-V0.42 fields require a
+format version bump and updates to compatibility references and golden
+fixtures.
+
+### Regression Commands
+
+```sh
+cmake --build --preset build-dev
+ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(40|41|42)'
+```
+
+For full local confidence:
+
+```sh
+ctest --preset test-dev --output-on-failure
+cmake --preset asan
+cmake --build --preset build-asan
+ctest --preset test-asan --output-on-failure -L 'ahfl-v0.(40|41|42)'
+```
+
+### Reference Docs
+
+- `docs/plan/roadmap-v0.40.zh.md`
+- `docs/plan/issue-backlog-v0.40.zh.md`
+- `docs/plan/roadmap-v0.41.zh.md`
+- `docs/plan/issue-backlog-v0.41.zh.md`
+- `docs/plan/roadmap-v0.42.zh.md`
+- `docs/plan/issue-backlog-v0.42.zh.md`
+- `docs/design/native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md`
+- `docs/design/native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md`
+- `docs/design/native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md`
+- `docs/reference/durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md`
+- `docs/reference/durable-store-provider-registry-selection-compatibility-v0.41.zh.md`
+- `docs/reference/durable-store-provider-production-readiness-compatibility-v0.42.zh.md`
+- `docs/reference/native-consumer-matrix-v0.40.zh.md`
+- `docs/reference/native-consumer-matrix-v0.41.zh.md`
+- `docs/reference/native-consumer-matrix-v0.42.zh.md`
+- `docs/reference/contributor-guide-v0.40.zh.md`
+- `docs/reference/contributor-guide-v0.41.zh.md`
+- `docs/reference/contributor-guide-v0.42.zh.md`

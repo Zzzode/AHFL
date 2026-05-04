@@ -1694,3 +1694,72 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_telemetry_summary.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_operator_review_event.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.40 v0.40-durable-store-import-provider-compatibility-model
+    TESTS
+        ahfl.durable_store_import_provider_compatibility_test_manifest.model.validate_ok
+        ahfl.durable_store_import_provider_fixture_matrix.model.validate_ok
+        ahfl.durable_store_import_provider_compatibility_report.model.validate_ok
+        ahfl.durable_store_import_provider_compatibility_report.bootstrap.blocked_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.40 v0.40-durable-store-import-provider-compatibility-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_compatibility_test_manifest.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_fixture_matrix.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_report.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_test_manifest.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_fixture_matrix.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_test_manifest.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_fixture_matrix.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_compatibility_report.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.41 v0.41-durable-store-import-provider-registry-model
+    TESTS
+        ahfl.durable_store_import_provider_registry.model.validate_ok
+        ahfl.durable_store_import_provider_selection_plan.model.validate_ok
+        ahfl.durable_store_import_provider_capability_negotiation_review.model.validate_ok
+        ahfl.durable_store_import_provider_selection_plan.bootstrap.fallback_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.41 v0.41-durable-store-import-provider-registry-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_registry.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_selection_plan.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_capability_negotiation_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_registry.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_selection_plan.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_capability_negotiation_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_registry.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_selection_plan.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_capability_negotiation_review.workspace.workflow_value_flow.partial.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.42 v0.42-durable-store-import-provider-production-readiness-model
+    TESTS
+        ahfl.durable_store_import_provider_production_readiness_evidence.model.validate_ok
+        ahfl.durable_store_import_provider_production_readiness_review.model.validate_ok
+        ahfl.durable_store_import_provider_production_readiness_report.model.validate_ok
+        ahfl.durable_store_import_provider_production_readiness.bootstrap.blocked_ok
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.42 v0.42-durable-store-import-provider-production-readiness-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_production_readiness_evidence.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_review.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_report.workflow_value_flow.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_evidence.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_review.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_report.project_manifest.workflow_value_flow.failed.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_evidence.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_review.workspace.workflow_value_flow.partial.with_package
+        ahflc.emit_durable_store_import_provider_production_readiness_report.workspace.workflow_value_flow.partial.with_package
+)

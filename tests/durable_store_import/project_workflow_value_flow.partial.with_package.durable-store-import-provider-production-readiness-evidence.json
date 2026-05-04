@@ -1,0 +1,15 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-production-readiness-evidence.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-partial-001",
+  "run_id": "run-partial-001",
+  "input_fixture": "fixture.request.partial",
+  "production_readiness_evidence_identity": "durable-store-import-provider-production-readiness-evidence::run-partial-001",
+  "security_evidence_passed": true,
+  "recovery_evidence_passed": true,
+  "compatibility_evidence_passed": true,
+  "observability_evidence_passed": true,
+  "registry_evidence_passed": true,
+  "blocking_issue_count": 0,
+  "evidence_summary": "provider production readiness evidence is complete"
+}

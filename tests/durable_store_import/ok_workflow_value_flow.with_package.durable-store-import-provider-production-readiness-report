@@ -1,0 +1,7 @@
+ahfl.durable-store-import-provider-production-readiness-report.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+production_readiness_evidence durable-store-import-provider-production-readiness-evidence::run-001
+release_gate ready_for_production_review
+summary provider production readiness report gate is ready-for-production-review
+next_step submit evidence package to organization production review

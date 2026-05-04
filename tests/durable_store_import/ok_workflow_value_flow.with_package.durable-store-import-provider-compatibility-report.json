@@ -1,0 +1,14 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-compatibility-report.v1",
+  "workflow_canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+  "session_id": "run-001",
+  "run_id": "run-001",
+  "input_fixture": "fixture.request.basic",
+  "compatibility_report_identity": "durable-store-import-provider-compatibility-report::run-001::passed",
+  "status": "passed",
+  "mock_adapter_compatible": true,
+  "local_filesystem_alpha_compatible": true,
+  "capability_matrix_complete": true,
+  "external_service_required": false,
+  "compatibility_summary": "provider compatibility suite status is passed"
+}

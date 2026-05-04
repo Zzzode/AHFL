@@ -178,6 +178,9 @@ jobs:
       - name: Run V0.37-V0.39 Durable Provider Recovery Audit Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(37|38|39)'
 
+      - name: Run V0.40-V0.42 Durable Provider Readiness Regression
+        run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(40|41|42)'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 
@@ -273,6 +276,9 @@ jobs:
 
       - name: Run V0.37-V0.39 Durable Provider Recovery Audit Regression
         run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.(37|38|39)'
+
+      - name: Run V0.40-V0.42 Durable Provider Readiness Regression
+        run: ctest --preset test-asan --output-on-failure -L 'ahfl-v0.(40|41|42)'
 
       - name: Run Tests
         run: ctest --preset test-asan --output-on-failure

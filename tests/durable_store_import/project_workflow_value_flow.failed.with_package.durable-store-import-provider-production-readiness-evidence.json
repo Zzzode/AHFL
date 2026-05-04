@@ -1,0 +1,15 @@
+{
+  "format_version": "ahfl.durable-store-import-provider-production-readiness-evidence.v1",
+  "workflow_canonical_name": "app::main::ValueFlowWorkflow",
+  "session_id": "run-failed-001",
+  "run_id": "run-failed-001",
+  "input_fixture": "fixture.request.failed",
+  "production_readiness_evidence_identity": "durable-store-import-provider-production-readiness-evidence::run-failed-001",
+  "security_evidence_passed": true,
+  "recovery_evidence_passed": true,
+  "compatibility_evidence_passed": false,
+  "observability_evidence_passed": true,
+  "registry_evidence_passed": false,
+  "blocking_issue_count": 1,
+  "evidence_summary": "provider production readiness evidence has blocking issues"
+}

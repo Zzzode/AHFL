@@ -2139,6 +2139,66 @@ add_test(NAME ahfl.durable_store_import_provider_operator_review_event.model.val
             validate-durable-store-import-provider-operator-review-event-ok
 )
 
+add_test(NAME ahfl.durable_store_import_provider_compatibility_test_manifest.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-compatibility-test-manifest-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_fixture_matrix.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-fixture-matrix-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_compatibility_report.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-compatibility-report-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_compatibility_report.bootstrap.blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-compatibility-report-blocked-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_registry.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-registry-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_selection_plan.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-selection-plan-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_capability_negotiation_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-capability-negotiation-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_selection_plan.bootstrap.fallback_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-selection-fallback-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_production_readiness_evidence.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-production-readiness-evidence-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_production_readiness_review.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-production-readiness-review-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_production_readiness_report.model.validate_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            validate-durable-store-import-provider-production-readiness-report-ok
+)
+
+add_test(NAME ahfl.durable_store_import_provider_production_readiness.bootstrap.blocked_ok
+    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+            build-durable-store-import-provider-production-readiness-blocked-ok
+)
+
 add_test(NAME ahfl.durable_store_import_receipt_review.model.validate_ok
     COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-ok
@@ -2902,6 +2962,69 @@ function(ahfl_add_provider_v34_v36_project_cli_tests VARIANT_NAME AHFL_ARGS EXPE
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
                 "-DAHFLC_ARGS=emit-durable-store-import-provider-operator-review-event ${AHFL_ARGS}"
                 "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-operator-review-event"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_compatibility_test_manifest.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-compatibility-test-manifest ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-compatibility-test-manifest.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_fixture_matrix.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-fixture-matrix ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-fixture-matrix.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_compatibility_report.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-compatibility-report ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-compatibility-report.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_registry.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-registry ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-registry.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_selection_plan.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-selection-plan ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-selection-plan.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_capability_negotiation_review.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-capability-negotiation-review ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-capability-negotiation-review"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_production_readiness_evidence.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-production-readiness-evidence ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-production-readiness-evidence.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_production_readiness_review.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-production-readiness-review ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-production-readiness-review.json"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
+    )
+    add_test(NAME ahflc.emit_durable_store_import_provider_production_readiness_report.${VARIANT_NAME}
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=emit-durable-store-import-provider-production-readiness-report ${AHFL_ARGS}"
+                "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/${EXPECTED_PREFIX}.durable-store-import-provider-production-readiness-report"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
     )
 endfunction()
