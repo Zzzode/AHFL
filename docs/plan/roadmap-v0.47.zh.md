@@ -18,10 +18,10 @@ V0.47 建立 operator approval workflow artifact。目标是把 production integ
 
 ## 里程碑
 
-- [ ] M0 冻结 approval workflow artifact scope
-- [ ] M1 定义 approval request / decision / receipt model
-- [ ] M2 实现 evidence binding 与 rejection reason summary
-- [ ] M3 输出 operator-facing approval receipt
+- [x] M0 冻结 approval workflow artifact scope
+- [x] M1 定义 approval request / decision / receipt model
+- [x] M2 实现 evidence binding 与 rejection reason summary
+- [x] M3 输出 operator-facing approval receipt
 - [ ] M4 建立 docs、golden、CI 标签和 migration guidance
 
 ## 完成定义

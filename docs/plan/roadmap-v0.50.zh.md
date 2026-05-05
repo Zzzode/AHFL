@@ -18,11 +18,11 @@ V0.50 建立 production integration dry run。目标是把 V0.43-V0.49 的 confo
 
 ## 里程碑
 
-- [ ] M0 冻结 production integration dry-run scope
-- [ ] M1 定义 dry-run input / output report model
-- [ ] M2 实现 V0.43-V0.49 evidence chain aggregation
-- [ ] M3 输出 end-to-end readiness、blocking summary 与 next action
-- [ ] M4 建立 docs、golden、CI 标签和 migration guidance
+- [x] M0 冻结 production integration dry-run scope
+- [x] M1 定义 dry-run input / output report model
+- [x] M2 实现 V0.43-V0.49 evidence chain aggregation
+- [x] M3 输出 end-to-end readiness、blocking summary 与 next action
+- [x] M4 建立 docs、golden、CI 标签和 migration guidance
 
 ## 完成定义
 

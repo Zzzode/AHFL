@@ -18,11 +18,11 @@ V0.46 建立 release evidence archive。目标是把 readiness、audit、compati
 
 ## 里程碑
 
-- [ ] M0 冻结 release evidence archive scope
-- [ ] M1 定义 archive manifest input / output model
-- [ ] M2 实现 evidence collection 与 digest summary
-- [ ] M3 输出 missing / stale / incompatible evidence summary
-- [ ] M4 建立 docs、golden、CI 标签和 migration guidance
+- [x] M0 冻结 release evidence archive scope
+- [x] M1 定义 archive manifest input / output model
+- [x] M2 实现 evidence collection 与 digest summary
+- [x] M3 输出 missing / stale / incompatible evidence summary
+- [x] M4 建立 docs、golden、CI 标签和 migration guidance
 
 ## 完成定义
 

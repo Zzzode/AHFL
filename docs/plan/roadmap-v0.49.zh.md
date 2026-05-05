@@ -18,11 +18,11 @@ V0.49 建立 provider runtime policy enforcement。目标是在 provider executi
 
 ## 里程碑
 
-- [ ] M0 冻结 runtime policy enforcement scope
-- [ ] M1 定义 policy input / decision / violation model
-- [ ] M2 实现 opt-in、approval、config、registry 与 readiness policy aggregation
-- [ ] M3 输出 permit / deny / warning report
-- [ ] M4 建立 docs、golden、CI 标签和 migration guidance
+- [x] M0 冻结 runtime policy enforcement scope
+- [x] M1 定义 policy input / decision / violation model
+- [x] M2 实现 opt-in、approval、config、registry 与 readiness policy aggregation
+- [x] M3 输出 permit / deny / warning report
+- [x] M4 建立 docs、golden、CI 标签和 migration guidance
 
 ## 完成定义
 

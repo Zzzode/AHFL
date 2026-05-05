@@ -1763,3 +1763,92 @@ ahfl_label_tests(
         ahflc.emit_durable_store_import_provider_production_readiness_review.workspace.workflow_value_flow.partial.with_package
         ahflc.emit_durable_store_import_provider_production_readiness_report.workspace.workflow_value_flow.partial.with_package
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.43 v0.43-durable-store-import-provider-conformance-golden
+    TESTS
+        ahflc.emit_durable_store_import_provider_conformance_report.workflow_value_flow.with_package
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.44 v0.44-durable-store-import-provider-schema-compatibility-model
+    TESTS
+        ahfl.schema_compatibility.model.test_all_compatible
+        ahfl.schema_compatibility.model.test_incompatible_version
+        ahfl.schema_compatibility.model.test_source_chain_incompatible
+        ahfl.schema_compatibility.model.test_empty_identity_fields
+        ahfl.schema_compatibility.model.test_validation_wrong_format_version
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.45 v0.45-durable-store-import-provider-config-bundle-validation-model
+    TESTS
+        ahfl.config_bundle_validation.model.test_build_validation_report
+        ahfl.config_bundle_validation.model.test_validate_format_version
+        ahfl.config_bundle_validation.model.test_validate_security_constraints
+        ahfl.config_bundle_validation.model.test_summary_counts
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.46 v0.46-release-evidence-archive-model
+    TESTS
+        ahfl.release_evidence_archive.model.test_build_manifest
+        ahfl.release_evidence_archive.model.test_validate_format_version
+        ahfl.release_evidence_archive.model.test_validate_empty_fields
+        ahfl.release_evidence_archive.model.test_build_with_invalid_conformance
+        ahfl.release_evidence_archive.model.test_invalid_conformance_evidence
+        ahfl.release_evidence_archive.model.test_count_consistency
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.47 v0.47-approval-workflow-model
+    TESTS
+        ahfl.approval_workflow.model.test_build_approval_request
+        ahfl.approval_workflow.model.test_build_receipt_rejected
+        ahfl.approval_workflow.model.test_build_receipt_approved
+        ahfl.approval_workflow.model.test_build_receipt_deferred
+        ahfl.approval_workflow.model.test_validate_format_version
+        ahfl.approval_workflow.model.test_validate_rejection_details
+        ahfl.approval_workflow.model.test_validate_receipt_consistency
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.48 v0.48-opt-in-guard-model
+    TESTS
+        ahfl.opt_in_guard.model.test_build_all_gates_pass
+        ahfl.opt_in_guard.model.test_build_deny_no_approval
+        ahfl.opt_in_guard.model.test_build_deny_config_invalid
+        ahfl.opt_in_guard.model.test_build_deny_registry_mismatch
+        ahfl.opt_in_guard.model.test_build_deny_security_constraints
+        ahfl.opt_in_guard.model.test_validate_format_version
+        ahfl.opt_in_guard.model.test_validate_decision_consistency
+        ahfl.opt_in_guard.model.test_default_deny
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.49 v0.49-runtime-policy-model
+    TESTS
+        ahfl.runtime_policy.model.test_build_all_gates_pass
+        ahfl.runtime_policy.model.test_build_deny_opt_in_not_granted
+        ahfl.runtime_policy.model.test_build_deny_approval_missing
+        ahfl.runtime_policy.model.test_build_deny_config_invalid
+        ahfl.runtime_policy.model.test_build_deny_registry_mismatch
+        ahfl.runtime_policy.model.test_build_deny_readiness_not_met
+        ahfl.runtime_policy.model.test_validate_format_version
+        ahfl.runtime_policy.model.test_validate_decision_consistency
+        ahfl.runtime_policy.model.test_default_deny
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.50 v0.50-production-integration-model
+    TESTS
+        ahfl.production_integration.model.test_build_all_evidence_pass
+        ahfl.production_integration.model.test_build_blocked_conformance_fails
+        ahfl.production_integration.model.test_build_blocked_schema_incompatible
+        ahfl.production_integration.model.test_build_blocked_approval_rejected
+        ahfl.production_integration.model.test_build_blocked_runtime_policy_deny
+        ahfl.production_integration.model.test_validate_format_version
+        ahfl.production_integration.model.test_validate_readiness_consistency
+        ahfl.production_integration.model.test_default_safe_values
+        ahfl.production_integration.model.test_validate_non_mutating_mode
+)

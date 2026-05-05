@@ -18,11 +18,11 @@ V0.44 建立 artifact schema / version compatibility checker。目标是让 prov
 
 ## 里程碑
 
-- [ ] M0 冻结 schema compatibility scope
-- [ ] M1 定义 version check input / output model
-- [ ] M2 实现 source chain 与 reference version 校验
-- [ ] M3 输出 schema drift 与 incompatible version summary
-- [ ] M4 建立 docs、golden、CI 标签和 migration guidance
+- [x] M0 冻结 schema compatibility scope
+- [x] M1 定义 version check input / output model
+- [x] M2 实现 source chain 与 reference version 校验
+- [x] M3 输出 schema drift 与 incompatible version summary
+- [x] M4 建立 docs、golden、CI 标签和 migration guidance
 
 ## 完成定义
 

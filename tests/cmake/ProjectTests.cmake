@@ -3614,3 +3614,247 @@ add_test(NAME ahflc.check.workspace.fail_duplicate_project_name
             "-DEXPECTED_REGEX=workspace contains duplicate project name 'dup-project'"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
+
+# --- v0.44 schema compatibility tests ---
+
+add_test(NAME ahfl.schema_compatibility.model.test_all_compatible
+    COMMAND $<TARGET_FILE:ahfl_schema_compatibility_tests>
+            test-all-compatible
+)
+
+add_test(NAME ahfl.schema_compatibility.model.test_incompatible_version
+    COMMAND $<TARGET_FILE:ahfl_schema_compatibility_tests>
+            test-incompatible-version
+)
+
+add_test(NAME ahfl.schema_compatibility.model.test_source_chain_incompatible
+    COMMAND $<TARGET_FILE:ahfl_schema_compatibility_tests>
+            test-source-chain-incompatible
+)
+
+add_test(NAME ahfl.schema_compatibility.model.test_empty_identity_fields
+    COMMAND $<TARGET_FILE:ahfl_schema_compatibility_tests>
+            test-empty-identity-fields
+)
+
+add_test(NAME ahfl.schema_compatibility.model.test_validation_wrong_format_version
+    COMMAND $<TARGET_FILE:ahfl_schema_compatibility_tests>
+            test-validation-wrong-format-version
+)
+
+# --- v0.45 config bundle validation tests ---
+
+add_test(NAME ahfl.config_bundle_validation.model.test_build_validation_report
+    COMMAND $<TARGET_FILE:ahfl_config_bundle_validation_tests>
+            test-build-validation-report
+)
+
+add_test(NAME ahfl.config_bundle_validation.model.test_validate_format_version
+    COMMAND $<TARGET_FILE:ahfl_config_bundle_validation_tests>
+            test-validate-format-version
+)
+
+add_test(NAME ahfl.config_bundle_validation.model.test_validate_security_constraints
+    COMMAND $<TARGET_FILE:ahfl_config_bundle_validation_tests>
+            test-validate-security-constraints
+)
+
+add_test(NAME ahfl.config_bundle_validation.model.test_summary_counts
+    COMMAND $<TARGET_FILE:ahfl_config_bundle_validation_tests>
+            test-summary-counts
+)
+
+add_test(NAME ahfl.release_evidence_archive.model.test_build_manifest
+    COMMAND $<TARGET_FILE:ahfl_release_evidence_archive_tests>
+            test-build-manifest
+)
+
+add_test(NAME ahfl.release_evidence_archive.model.test_validate_format_version
+    COMMAND $<TARGET_FILE:ahfl_release_evidence_archive_tests>
+            test-validate-format-version
+)
+
+add_test(NAME ahfl.release_evidence_archive.model.test_validate_empty_fields
+    COMMAND $<TARGET_FILE:ahfl_release_evidence_archive_tests>
+            test-validate-empty-fields
+)
+
+add_test(NAME ahfl.release_evidence_archive.model.test_build_with_invalid_conformance
+    COMMAND $<TARGET_FILE:ahfl_release_evidence_archive_tests>
+            test-build-with-invalid-conformance
+)
+
+add_test(NAME ahfl.release_evidence_archive.model.test_invalid_conformance_evidence
+    COMMAND $<TARGET_FILE:ahfl_release_evidence_archive_tests>
+            test-invalid-conformance-evidence
+)
+
+add_test(NAME ahfl.release_evidence_archive.model.test_count_consistency
+    COMMAND $<TARGET_FILE:ahfl_release_evidence_archive_tests>
+            test-count-consistency
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_build_approval_request
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-build-approval-request
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_build_receipt_rejected
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-build-receipt-rejected
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_build_receipt_approved
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-build-receipt-approved
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_build_receipt_deferred
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-build-receipt-deferred
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_validate_format_version
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-validate-format-version
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_validate_rejection_details
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-validate-rejection-details
+)
+
+add_test(NAME ahfl.approval_workflow.model.test_validate_receipt_consistency
+    COMMAND $<TARGET_FILE:ahfl_approval_workflow_tests>
+            test-validate-receipt-consistency
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_build_all_gates_pass
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-build-all-gates-pass
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_build_deny_no_approval
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-build-deny-no-approval
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_build_deny_config_invalid
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-build-deny-config-invalid
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_build_deny_registry_mismatch
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-build-deny-registry-mismatch
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_build_deny_security_constraints
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-build-deny-security-constraints
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_validate_format_version
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-validate-format-version
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_validate_decision_consistency
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-validate-decision-consistency
+)
+
+add_test(NAME ahfl.opt_in_guard.model.test_default_deny
+    COMMAND $<TARGET_FILE:ahfl_opt_in_guard_tests>
+            test-default-deny
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_build_all_gates_pass
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-build-all-gates-pass
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_build_deny_opt_in_not_granted
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-build-deny-opt-in-not-granted
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_build_deny_approval_missing
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-build-deny-approval-missing
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_build_deny_config_invalid
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-build-deny-config-invalid
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_build_deny_registry_mismatch
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-build-deny-registry-mismatch
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_build_deny_readiness_not_met
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-build-deny-readiness-not-met
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_validate_format_version
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-validate-format-version
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_validate_decision_consistency
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-validate-decision-consistency
+)
+
+add_test(NAME ahfl.runtime_policy.model.test_default_deny
+    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+            test-default-deny
+)
+
+add_test(NAME ahfl.production_integration.model.test_build_all_evidence_pass
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-build-all-evidence-pass
+)
+
+add_test(NAME ahfl.production_integration.model.test_build_blocked_conformance_fails
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-build-blocked-conformance-fails
+)
+
+add_test(NAME ahfl.production_integration.model.test_build_blocked_schema_incompatible
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-build-blocked-schema-incompatible
+)
+
+add_test(NAME ahfl.production_integration.model.test_build_blocked_approval_rejected
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-build-blocked-approval-rejected
+)
+
+add_test(NAME ahfl.production_integration.model.test_build_blocked_runtime_policy_deny
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-build-blocked-runtime-policy-deny
+)
+
+add_test(NAME ahfl.production_integration.model.test_validate_format_version
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-validate-format-version
+)
+
+add_test(NAME ahfl.production_integration.model.test_validate_readiness_consistency
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-validate-readiness-consistency
+)
+
+add_test(NAME ahfl.production_integration.model.test_default_safe_values
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-default-safe-values
+)
+
+add_test(NAME ahfl.production_integration.model.test_validate_non_mutating_mode
+    COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
+            test-validate-non-mutating-mode
+)

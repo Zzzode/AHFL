@@ -154,3 +154,67 @@ target_link_libraries(ahfl_durable_store_import_decision_tests
         ahfl_store_import
 )
 ahfl_apply_project_warnings(ahfl_durable_store_import_decision_tests)
+
+add_executable(ahfl_schema_compatibility_tests
+    schema_compatibility/schema_compatibility.cpp
+)
+target_link_libraries(ahfl_schema_compatibility_tests
+    PRIVATE
+        ahfl_durable_store_import
+        ahfl_backend_durable_store_import_provider_schema_compatibility_report
+)
+ahfl_apply_project_warnings(ahfl_schema_compatibility_tests)
+
+add_executable(ahfl_config_bundle_validation_tests
+    config_bundle/config_bundle_validation.cpp
+)
+target_link_libraries(ahfl_config_bundle_validation_tests
+    PRIVATE
+        ahfl_durable_store_import
+)
+ahfl_apply_project_warnings(ahfl_config_bundle_validation_tests)
+
+add_executable(ahfl_release_evidence_archive_tests
+    release_evidence/release_evidence_archive.cpp
+)
+target_link_libraries(ahfl_release_evidence_archive_tests
+    PRIVATE
+        ahfl_durable_store_import
+)
+ahfl_apply_project_warnings(ahfl_release_evidence_archive_tests)
+
+add_executable(ahfl_approval_workflow_tests
+    approval/approval_workflow.cpp
+)
+target_link_libraries(ahfl_approval_workflow_tests
+    PRIVATE
+        ahfl_durable_store_import
+)
+ahfl_apply_project_warnings(ahfl_approval_workflow_tests)
+
+add_executable(ahfl_opt_in_guard_tests
+    opt_in_guard/opt_in_guard.cpp
+)
+target_link_libraries(ahfl_opt_in_guard_tests
+    PRIVATE
+        ahfl_durable_store_import
+)
+ahfl_apply_project_warnings(ahfl_opt_in_guard_tests)
+
+add_executable(ahfl_runtime_policy_tests
+    runtime_policy/runtime_policy.cpp
+)
+target_link_libraries(ahfl_runtime_policy_tests
+    PRIVATE
+        ahfl_durable_store_import
+)
+ahfl_apply_project_warnings(ahfl_runtime_policy_tests)
+
+add_executable(ahfl_production_integration_tests
+    production_integration/production_integration_dry_run.cpp
+)
+target_link_libraries(ahfl_production_integration_tests
+    PRIVATE
+        ahfl_durable_store_import
+)
+ahfl_apply_project_warnings(ahfl_production_integration_tests)

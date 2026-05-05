@@ -1,0 +1,29 @@
+ahfl.durable-store-import-provider-conformance-report.v1
+workflow ir::workflow_value_flow::ValueFlowWorkflow
+session run-001
+run_id run-001
+input_fixture fixture.request.basic
+compatibility_report durable-store-import-provider-compatibility-report::run-001::passed
+registry durable-store-import-provider-registry::run-001
+readiness_evidence durable-store-import-provider-production-readiness-evidence::run-001
+pass_count 16
+fail_count 0
+skipped_count 0
+checks 16
+check compatibility_status_passed pass durable-store-import-provider-compatibility-report::run-001::passed
+check mock_adapter_compatible pass durable-store-import-provider-compatibility-report::run-001::passed
+check local_filesystem_alpha_compatible pass durable-store-import-provider-compatibility-report::run-001::passed
+check capability_matrix_complete pass durable-store-import-provider-compatibility-report::run-001::passed
+check registry_mock_adapter_registered pass durable-store-import-provider-registry::run-001
+check registry_local_filesystem_alpha_registered pass durable-store-import-provider-registry::run-001
+check registry_compatibility_status_match pass durable-store-import-provider-registry::run-001
+check security_evidence_passed pass durable-store-import-provider-production-readiness-evidence::run-001
+check recovery_evidence_passed pass durable-store-import-provider-production-readiness-evidence::run-001
+check compatibility_evidence_passed pass durable-store-import-provider-production-readiness-evidence::run-001
+check observability_evidence_passed pass durable-store-import-provider-production-readiness-evidence::run-001
+check registry_evidence_passed pass durable-store-import-provider-production-readiness-evidence::run-001
+check no_blocking_issues pass durable-store-import-provider-production-readiness-evidence::run-001
+check session_id_consistency pass durable-store-import-provider-conformance-report::run-001
+check workflow_name_consistency pass durable-store-import-provider-conformance-report::run-001
+check input_fixture_consistency pass durable-store-import-provider-conformance-report::run-001
+summary provider conformance passed all checks

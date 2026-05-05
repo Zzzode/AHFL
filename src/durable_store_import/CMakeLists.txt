@@ -2,7 +2,9 @@ add_library(ahfl_durable_store_import STATIC
     adapter_execution.cpp
     decision.cpp
     decision_review.cpp
+    provider_approval_workflow.cpp
     provider_config.cpp
+    provider_conformance.cpp
     receipt.cpp
     receipt_persistence.cpp
     receipt_persistence_response.cpp
@@ -28,7 +30,13 @@ add_library(ahfl_durable_store_import STATIC
     provider_retry.cpp
     provider_recovery.cpp
     provider_failure_taxonomy.cpp
+    provider_schema_compatibility.cpp
     provider_commit.cpp
+    provider_config_bundle_validation.cpp
+    provider_opt_in_guard.cpp
+    provider_runtime_policy.cpp
+    provider_production_integration_dry_run.cpp
+    provider_release_evidence_archive.cpp
     recovery_preview.cpp
     receipt_review.cpp
     request.cpp

@@ -18,11 +18,11 @@ V0.43 建立 provider contract conformance runner。目标是在不访问真实 
 
 ## 里程碑
 
-- [ ] M0 冻结 conformance runner scope
-- [ ] M1 定义 conformance input / output artifact model
-- [ ] M2 实现 compatibility / registry / readiness cross-check
-- [ ] M3 输出 deterministic report 与 failure summary
-- [ ] M4 建立 docs、golden、CI 标签和 migration guidance
+- [x] M0 冻结 conformance runner scope
+- [x] M1 定义 conformance input / output artifact model
+- [x] M2 实现 compatibility / registry / readiness cross-check
+- [x] M3 输出 deterministic report 与 failure summary
+- [x] M4 建立 docs、golden、CI 标签和 migration guidance
 
 ## 完成定义
 

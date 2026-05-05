@@ -4,12 +4,12 @@ V0.49 聚焦 provider runtime policy enforcement。
 
 ## Planned
 
-- [ ] 定义 runtime policy enforcement artifact。
-- [ ] 聚合 opt-in guard、approval receipt、config validation、registry selection 与 readiness evidence。
-- [ ] 定义 blocking policy、warning policy 与 scoped override policy。
-- [ ] 输出 permit、deny、warning 与 override summary。
-- [ ] 输出 policy violation summary。
-- [ ] 添加 CLI emission、golden、direct tests 与 `ahfl-v0.49` 标签。
+- [x] 定义 runtime policy enforcement artifact。
+- [x] 聚合 opt-in guard、approval receipt、config validation、registry selection 与 readiness evidence。
+- [x] 定义 blocking policy、warning policy 与 scoped override policy。
+- [x] 输出 permit、deny、warning 与 override summary。
+- [x] 输出 policy violation summary。
+- [x] 添加 CLI emission、golden、direct tests 与 `ahfl-v0.49` 标签。
 
 ## Deferred
 

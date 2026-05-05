@@ -123,8 +123,8 @@ Avoid:
 ### Plan
 
 - [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - provider production roadmap
-- [roadmap-v0.50.zh.md](./plan/roadmap-v0.50.zh.md) - planned production integration dry run
-- [issue-backlog-v0.50.zh.md](./plan/issue-backlog-v0.50.zh.md) - planned production integration dry run
+- [roadmap-v0.50.zh.md](./plan/roadmap-v0.50.zh.md) - completed baseline
+- [issue-backlog-v0.50.zh.md](./plan/issue-backlog-v0.50.zh.md) - completed baseline
 - [roadmap-v0.49.zh.md](./plan/roadmap-v0.49.zh.md) - planned provider runtime policy enforcement
 - [issue-backlog-v0.49.zh.md](./plan/issue-backlog-v0.49.zh.md) - planned provider runtime policy enforcement
 - [roadmap-v0.48.zh.md](./plan/roadmap-v0.48.zh.md) - planned real provider opt-in execution guard

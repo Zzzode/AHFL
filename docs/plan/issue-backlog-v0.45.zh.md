@@ -4,11 +4,11 @@ V0.45 聚焦 production config bundle validation。
 
 ## Planned
 
-- [ ] 定义 production config bundle validation artifact。
-- [ ] 校验 provider registry selection 与 config provider reference。
-- [ ] 校验 secret handle presence、scope 与 redaction policy。
-- [ ] 校验 endpoint shape 与 environment binding。
-- [ ] 校验 runtime policy reference。
+- [x] 定义 production config bundle validation artifact。
+- [x] 校验 provider registry selection 与 config provider reference。
+- [x] 校验 secret handle presence、scope 与 redaction policy。
+- [x] 校验 endpoint shape 与 environment binding。
+- [x] 校验 runtime policy reference。
 - [ ] 添加 CLI emission、golden、direct tests 与 `ahfl-v0.45` 标签。
 
 ## Deferred
