@@ -21,6 +21,8 @@ add_subdirectory(persistence_descriptor)
 add_subdirectory(persistence_export)
 add_subdirectory(store_import)
 add_subdirectory(durable_store_import)
+add_subdirectory(evaluator)
+add_subdirectory(runtime)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
@@ -28,6 +30,8 @@ target_link_libraries(ahfl_compiler
     INTERFACE
         ahfl_handoff
         ahfl_dry_run
+        ahfl_evaluator
+        ahfl_runtime
         ahfl_runtime_session
         ahfl_execution_journal
         ahfl_replay_view

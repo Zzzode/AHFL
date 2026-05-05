@@ -1,0 +1,206 @@
+module runtime::e2e_multi_agent;
+
+// === 数据 Schema ===
+
+struct SupportRequest {
+    user_id: String;
+    message: String;
+    priority: Priority;
+}
+
+struct ClassifyContext {
+    category: Category = Category::General;
+}
+
+struct ClassifyResult {
+    category: Category;
+    confidence: String;
+}
+
+struct SupportContext {
+    response: String = "pending";
+    escalated: Bool = false;
+}
+
+struct SupportResult {
+    response: String;
+    resolved: Bool;
+}
+
+struct SummaryContext {
+    summary: String = "none";
+}
+
+struct SummaryInput {
+    category: Category;
+    response: String;
+    resolved: Bool;
+}
+
+struct SummaryResult {
+    summary: String;
+    category: Category;
+    resolved: Bool;
+}
+
+enum Priority {
+    Low,
+    Medium,
+    High,
+}
+
+enum Category {
+    General,
+    Billing,
+    Technical,
+}
+
+// === Capability 声明 ===
+
+capability ClassifyMessage(message: String) -> ClassifyResult;
+capability HandleBilling(user_id: String, message: String) -> SupportResult;
+capability HandleTechnical(user_id: String, message: String) -> SupportResult;
+capability HandleGeneral(user_id: String, message: String) -> SupportResult;
+capability GenerateSummary(category: Category, response: String, resolved: Bool) -> SummaryResult;
+
+// === Agent 1: 分类 Agent ===
+
+agent ClassifyAgent {
+    input: SupportRequest;
+    context: ClassifyContext;
+    output: ClassifyResult;
+    states: [Init, Classifying, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [ClassifyMessage];
+
+    transition Init -> Classifying;
+    transition Classifying -> Done;
+}
+
+flow for ClassifyAgent {
+    state Init {
+        goto Classifying;
+    }
+
+    state Classifying {
+        let result = ClassifyMessage(input.message);
+        ctx.category = result.category;
+        goto Done;
+    }
+
+    state Done {
+        return ClassifyResult {
+            category: ctx.category,
+            confidence: "high",
+        };
+    }
+}
+
+// === Agent 2: 处理 Agent ===
+
+agent SupportAgent {
+    input: SupportRequest;
+    context: SupportContext;
+    output: SupportResult;
+    states: [Init, Routing, Handling, Escalated, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [HandleBilling, HandleTechnical, HandleGeneral];
+
+    transition Init -> Routing;
+    transition Routing -> Handling;
+    transition Routing -> Escalated;
+    transition Handling -> Done;
+    transition Escalated -> Done;
+}
+
+flow for SupportAgent {
+    state Init {
+        goto Routing;
+    }
+
+    state Routing {
+        if input.priority == Priority::High {
+            ctx.escalated = true;
+            goto Escalated;
+        } else {
+            goto Handling;
+        }
+    }
+
+    state Handling {
+        let result = HandleGeneral(input.user_id, input.message);
+        ctx.response = result.response;
+        goto Done;
+    }
+
+    state Escalated {
+        let result = HandleTechnical(input.user_id, input.message);
+        ctx.response = result.response;
+        goto Done;
+    }
+
+    state Done {
+        return SupportResult {
+            response: ctx.response,
+            resolved: true,
+        };
+    }
+}
+
+// === Agent 3: 汇总 Agent ===
+
+agent SummaryAgent {
+    input: SummaryInput;
+    context: SummaryContext;
+    output: SummaryResult;
+    states: [Init, Summarizing, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [GenerateSummary];
+
+    transition Init -> Summarizing;
+    transition Summarizing -> Done;
+}
+
+flow for SummaryAgent {
+    state Init {
+        goto Summarizing;
+    }
+
+    state Summarizing {
+        let result = GenerateSummary(input.category, input.response, input.resolved);
+        ctx.summary = result.summary;
+        goto Done;
+    }
+
+    state Done {
+        return SummaryResult {
+            summary: ctx.summary,
+            category: input.category,
+            resolved: input.resolved,
+        };
+    }
+}
+
+// === 多 Agent Workflow ===
+
+workflow CustomerSupportWorkflow {
+    input: SupportRequest;
+    output: SummaryResult;
+
+    node classify: ClassifyAgent(input);
+    node support: SupportAgent(input) after [classify];
+    node summary: SummaryAgent(SummaryInput {
+        category: classify.category,
+        response: support.response,
+        resolved: support.resolved,
+    }) after [classify, support];
+
+    safety: always (not running(support) or completed(classify));
+    safety: always (not running(summary) or completed(support));
+    liveness: eventually completed(summary, Done);
+
+    return: summary;
+}

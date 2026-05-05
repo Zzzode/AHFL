@@ -218,3 +218,60 @@ target_link_libraries(ahfl_production_integration_tests
         ahfl_durable_store_import
 )
 ahfl_apply_project_warnings(ahfl_production_integration_tests)
+
+add_executable(ahfl_evaluator_tests
+    evaluator/evaluator.cpp
+)
+target_link_libraries(ahfl_evaluator_tests
+    PRIVATE
+        ahfl_evaluator
+)
+ahfl_apply_project_warnings(ahfl_evaluator_tests)
+
+add_executable(ahfl_executor_tests
+    evaluator/executor.cpp
+)
+target_link_libraries(ahfl_executor_tests
+    PRIVATE
+        ahfl_evaluator
+)
+ahfl_apply_project_warnings(ahfl_executor_tests)
+
+add_executable(ahfl_agent_runtime_tests
+    runtime/agent_runtime.cpp
+)
+target_link_libraries(ahfl_agent_runtime_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_agent_runtime_tests)
+
+add_executable(ahfl_workflow_runtime_tests
+    runtime/workflow_runtime.cpp
+)
+target_link_libraries(ahfl_workflow_runtime_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_workflow_runtime_tests)
+
+add_executable(ahfl_capability_bridge_tests
+    runtime/capability_bridge.cpp
+)
+target_link_libraries(ahfl_capability_bridge_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_capability_bridge_tests)
+
+add_executable(ahfl_e2e_workflow_tests
+    runtime/e2e_workflow.cpp
+)
+target_link_libraries(ahfl_e2e_workflow_tests
+    PRIVATE
+        ahfl_runtime
+        ahfl_ir
+        ahfl_semantics
+        ahfl_syntax
+)
+ahfl_apply_project_warnings(ahfl_e2e_workflow_tests)

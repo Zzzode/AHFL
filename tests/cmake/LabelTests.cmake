@@ -1852,3 +1852,39 @@ ahfl_label_tests(
         ahfl.production_integration.model.test_default_safe_values
         ahfl.production_integration.model.test_validate_non_mutating_mode
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.51 v0.51-expression-evaluator
+    TESTS
+        ahfl.evaluator.eval_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.52 v0.52-statement-executor
+    TESTS
+        ahfl.executor.exec_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.53 v0.53-agent-state-machine-runtime
+    TESTS
+        ahfl.runtime.agent_runtime_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.54 v0.54-workflow-integration
+    TESTS
+        ahfl.runtime.workflow_runtime_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.55 v0.55-capability-bridge
+    TESTS
+        ahfl.runtime.capability_bridge_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.55 v0.55-e2e
+    TESTS
+        ahfl.runtime.e2e_workflow
+)

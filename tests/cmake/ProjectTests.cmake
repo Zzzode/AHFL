@@ -3858,3 +3858,28 @@ add_test(NAME ahfl.production_integration.model.test_validate_non_mutating_mode
     COMMAND $<TARGET_FILE:ahfl_production_integration_tests>
             test-validate-non-mutating-mode
 )
+
+add_test(NAME ahfl.evaluator.eval_all
+    COMMAND $<TARGET_FILE:ahfl_evaluator_tests>
+)
+
+add_test(NAME ahfl.executor.exec_all
+    COMMAND $<TARGET_FILE:ahfl_executor_tests>
+)
+
+add_test(NAME ahfl.runtime.agent_runtime_all
+    COMMAND $<TARGET_FILE:ahfl_agent_runtime_tests>
+)
+
+add_test(NAME ahfl.runtime.workflow_runtime_all
+    COMMAND $<TARGET_FILE:ahfl_workflow_runtime_tests>
+)
+
+add_test(NAME ahfl.runtime.capability_bridge_all
+    COMMAND $<TARGET_FILE:ahfl_capability_bridge_tests>
+)
+
+add_test(NAME ahfl.runtime.e2e_workflow
+    COMMAND $<TARGET_FILE:ahfl_e2e_workflow_tests>
+            "${AHFL_TESTS_DIR}/runtime/e2e_multi_agent.ahfl"
+)
