@@ -23,6 +23,7 @@ add_subdirectory(store_import)
 add_subdirectory(durable_store_import)
 add_subdirectory(evaluator)
 add_subdirectory(runtime)
+add_subdirectory(llm_provider)
 add_subdirectory(backends)
 
 add_library(ahfl_compiler INTERFACE)
@@ -42,6 +43,7 @@ target_link_libraries(ahfl_compiler
         ahfl_persistence_export
         ahfl_store_import
         ahfl_durable_store_import
+        ahfl_llm_provider
         ahfl_backend
 )
 

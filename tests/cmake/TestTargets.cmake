@@ -275,3 +275,15 @@ target_link_libraries(ahfl_e2e_workflow_tests
         ahfl_syntax
 )
 ahfl_apply_project_warnings(ahfl_e2e_workflow_tests)
+
+add_executable(ahfl_llm_provider_tests
+    llm_provider/llm_provider.cpp
+)
+target_link_libraries(ahfl_llm_provider_tests
+    PRIVATE
+        ahfl_llm_provider
+        ahfl_ir
+        ahfl_semantics
+        ahfl_syntax
+)
+ahfl_apply_project_warnings(ahfl_llm_provider_tests)

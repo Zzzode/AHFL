@@ -1888,3 +1888,9 @@ ahfl_label_tests(
     TESTS
         ahfl.runtime.e2e_workflow
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.56 v0.56-llm-provider
+    TESTS
+        ahfl.llm_provider.all
+)

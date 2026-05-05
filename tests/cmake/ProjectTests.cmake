@@ -3883,3 +3883,7 @@ add_test(NAME ahfl.runtime.e2e_workflow
     COMMAND $<TARGET_FILE:ahfl_e2e_workflow_tests>
             "${AHFL_TESTS_DIR}/runtime/e2e_multi_agent.ahfl"
 )
+
+add_test(NAME ahfl.llm_provider.all
+    COMMAND $<TARGET_FILE:ahfl_llm_provider_tests>
+)
