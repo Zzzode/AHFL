@@ -36,8 +36,10 @@ EvalResult eval_integer_literal(const ir::IntegerLiteralExpr &expr,
     try {
         int64_t val = std::stoll(expr.spelling);
         return EvalResult{make_int(val), {}};
-    } catch (...) {
-        return make_error("failed to parse integer: " + expr.spelling);
+    } catch (const std::invalid_argument &) {
+        return make_error("invalid integer format: " + expr.spelling);
+    } catch (const std::out_of_range &) {
+        return make_error("integer out of range: " + expr.spelling);
     }
 }
 
@@ -46,8 +48,10 @@ EvalResult eval_float_literal(const ir::FloatLiteralExpr &expr,
     try {
         double val = std::stod(expr.spelling);
         return EvalResult{make_float(val), {}};
-    } catch (...) {
-        return make_error("failed to parse float: " + expr.spelling);
+    } catch (const std::invalid_argument &) {
+        return make_error("invalid float format: " + expr.spelling);
+    } catch (const std::out_of_range &) {
+        return make_error("float out of range: " + expr.spelling);
     }
 }
 
