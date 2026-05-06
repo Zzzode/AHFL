@@ -29,7 +29,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --yes clang-format-18 ninja-build
 
       - name: Configure
-        run: cmake --preset dev
+        run: cmake --preset dev -DCLANG_FORMAT_BIN=/usr/bin/clang-format-18
 
       - name: Check formatting
         run: cmake --build --preset build-format-check
