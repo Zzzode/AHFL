@@ -1,27 +1,30 @@
 <p align="center">
   <h1 align="center">AHFL</h1>
   <p align="center">
-    <strong>Agent 控制平面 DSL — 让 Agent 行为在执行前可审计</strong>
+    <strong>Agent Control Plane DSL — Make Agent Behavior Auditable Before Execution</strong>
   </p>
   <p align="center">
     <a href="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml"><img src="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
     <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg" alt="C++23">
     <img src="https://img.shields.io/badge/CMake-3.22%2B-064F8C.svg" alt="CMake 3.22+">
   </p>
+  <p align="center">
+    <a href="README.zh.md">中文文档</a>
+  </p>
 </p>
 
 ---
 
-AHFL（Agent Handoff Flow Language）是一门强类型 DSL，用于描述 Agent 状态机、行为契约、流程编排与多 Agent 工作流。配套编译器 `ahflc` 负责解析、类型检查、形式化验证，并输出可被下游工具消费的结构化中间表示。
+AHFL (Agent Handoff Flow Language) is a strongly-typed DSL for describing Agent state machines, behavioral contracts, process orchestration, and multi-Agent workflows. The companion compiler `ahflc` handles parsing, type checking, formal verification, and emits structured intermediate representations consumable by downstream tools.
 
 ## Highlights
 
-- **状态机建模** — Agent 以显式状态、转移、能力白名单定义
-- **行为契约** — `requires` / `ensures` / `invariant` / `forbid` 表达前后置条件
-- **工作流编排** — DAG 拓扑调度 + 安全性/活性时序公式
-- **端到端执行** — 本地解释器 + LLM Provider 适配器，支持真实多 Agent 协作
-- **形式化后端** — 受限 SMV 输出支持模型检查
-- **零运行时依赖** — 纯 C++23 编译器，无外部库依赖
+- **State Machine Modeling** — Agents defined with explicit states, transitions, and capability whitelists
+- **Behavioral Contracts** — `requires` / `ensures` / `invariant` / `forbid` express pre/post-conditions
+- **Workflow Orchestration** — DAG topological scheduling + safety/liveness temporal formulas
+- **End-to-End Execution** — Local interpreter + LLM Provider adapter for real multi-Agent collaboration
+- **Formal Backend** — Restricted SMV output for model checking
+- **Zero Runtime Dependencies** — Pure C++23 compiler with no external library dependencies
 
 ## Language Preview
 
@@ -66,20 +69,20 @@ workflow RefundWorkflow {
 ### Build & Run
 
 ```bash
-# 配置 & 构建
+# Configure & build
 cmake --preset dev
 cmake --build --preset build-dev
 
-# 类型检查
+# Type check
 ./build/dev/src/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
 
-# 输出 IR
+# Emit IR
 ./build/dev/src/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
 
-# 真实 LLM 执行（需要配置 ~/.ahfl/llm_config.json）
+# Real LLM execution (requires ~/.ahfl/llm_config.json)
 ./build/dev/src/cli/ahfl-run examples/refund_audit_core_v0_1.ahfl --workflow RefundWorkflow
 
-# 运行测试
+# Run tests
 ctest --preset test-dev
 ```
 
@@ -140,46 +143,46 @@ flowchart LR
 ## Development
 
 ```bash
-# 可用 Configure Presets
+# Available configure presets
 cmake --preset dev            # Debug + sanitizer-friendly
-cmake --preset release        # Release 优化
+cmake --preset release        # Release optimized
 cmake --preset asan           # AddressSanitizer
 
-# 格式化
-cmake --build --preset build-format        # 执行 clang-format
-cmake --build --preset build-format-check  # 仅检查
+# Formatting (requires clang-format 18.1.8)
+cmake --build --preset build-format        # Apply clang-format
+cmake --build --preset build-format-check  # Check only
 
-# 测试特定版本切片
+# Test a specific version slice
 ctest --preset test-dev -L ahfl-v0.42
 
-# 重新生成 Parser
+# Regenerate parser
 ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
 ```
 
 ## Contributing
 
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feat/my-feature`)
-3. 确保 `ctest --preset test-dev` 全部通过
-4. 确保 `cmake --build --preset build-format-check` 无违规
-5. 提交 Pull Request
+1. Fork this repository
+2. Create a feature branch (`git checkout -b feat/my-feature`)
+3. Ensure `ctest --preset test-dev` passes
+4. Ensure `cmake --build --preset build-format-check` reports no violations
+5. Submit a Pull Request
 
-详细指南请参阅 [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md)
+See [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md) for detailed guidelines.
 
 ## Status
 
-AHFL 当前处于 **v0.56** 阶段，已实现：
+AHFL is currently at **v0.56**, with the following implemented:
 
-- 完整的编译器前端（解析 → 语义分析 → IR 生成）
-- 100+ CLI 命令覆盖从执行计划到 Provider 生产就绪的完整 artifact 链
-- 本地表达式/语句解释器 + 状态机运行时 + 工作流 DAG 调度器
-- LLM Provider 适配器（OpenAI-compatible API，支持真实多 Agent 协作）
-- 815+ 回归测试
+- Complete compiler frontend (parsing → semantic analysis → IR generation)
+- 100+ CLI commands covering the full artifact chain from execution plans to Provider production readiness
+- Local expression/statement interpreter + state machine runtime + workflow DAG scheduler
+- LLM Provider adapter (OpenAI-compatible API, real multi-Agent collaboration)
+- 815+ regression tests
 
 ## Roadmap
 
-- [ ] 更多 Provider 适配器（本地文件系统、数据库）
-- [ ] WASM 编译目标
-- [ ] LSP 语言服务器
-- [ ] VS Code 插件
-- [ ] 在线 Playground
+- [ ] More Provider adapters (local filesystem, databases)
+- [ ] WASM compilation target
+- [ ] LSP language server
+- [ ] VS Code extension
+- [ ] Online Playground
