@@ -16,7 +16,16 @@ include(AhflTesting)
 ahfl_enable_root_compile_commands_link()
 
 find_package(Threads REQUIRED)
-find_program(CLANG_FORMAT_BIN NAMES clang-format-18 clang-format)
+find_program(CLANG_FORMAT_BIN
+    NAMES clang-format-18 clang-format
+    HINTS /opt/homebrew/opt/llvm@18/bin   # macOS Homebrew
+          /usr/lib/llvm-18/bin            # Ubuntu/Debian
+    NO_DEFAULT_PATH
+)
+# 如果 HINTS 未命中，降级搜索系统 PATH（CI 上 clang-format-18 在 /usr/bin）
+if(NOT CLANG_FORMAT_BIN)
+    find_program(CLANG_FORMAT_BIN NAMES clang-format-18)
+endif()
 
 add_subdirectory(third_party/antlr4)
 add_subdirectory(src)
