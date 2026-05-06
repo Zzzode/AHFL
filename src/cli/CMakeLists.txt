@@ -2,6 +2,9 @@ add_executable(ahflc
     ahflc.cpp
     cli_pipeline_artifacts.cpp
     command_catalog.cpp
+    pipeline_core_commands.cpp
+    pipeline_durable_store_import.cpp
+    pipeline_durable_store_import_provider.cpp
     pipeline_runner.cpp
 )
 
