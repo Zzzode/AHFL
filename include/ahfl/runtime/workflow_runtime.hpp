@@ -42,9 +42,8 @@ struct WorkflowResult {
 };
 
 // Capability 调用回调 (用于 CallExpr 在 agent 中的执行)
-using CapabilityInvoker =
-    std::function<evaluator::Value(const std::string &name,
-                                   const std::vector<evaluator::Value> &args)>;
+using CapabilityInvoker = std::function<evaluator::Value(
+    const std::string &name, const std::vector<evaluator::Value> &args)>;
 
 // Workflow Runtime 配置
 struct WorkflowRuntimeConfig {

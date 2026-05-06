@@ -103,10 +103,10 @@ validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &repo
 
 // 构建函数
 // 从 ApprovalReceipt、ProviderConfigBundleValidationReport 和 ProviderSelectionPlan 构建 OptInDecisionReport
-[[nodiscard]] ProviderOptInDecisionReportResult build_provider_opt_in_decision_report(
-    const ApprovalReceipt &approval_receipt,
-    const ProviderConfigBundleValidationReport &config_report,
-    const ProviderSelectionPlan &selection_plan);
+[[nodiscard]] ProviderOptInDecisionReportResult
+build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
+                                      const ProviderConfigBundleValidationReport &config_report,
+                                      const ProviderSelectionPlan &selection_plan);
 
 // 辅助函数：将 OptInDecision 转换为字符串
 [[nodiscard]] std::string_view to_string_view(OptInDecision decision);

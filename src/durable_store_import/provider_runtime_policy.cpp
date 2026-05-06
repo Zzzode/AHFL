@@ -114,8 +114,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     report.run_id = opt_in_report.run_id;
 
     // 填充上游 identity 引用
-    report.opt_in_decision_report_identity =
-        "opt-in-decision-report::" + opt_in_report.session_id;
+    report.opt_in_decision_report_identity = "opt-in-decision-report::" + opt_in_report.session_id;
     report.approval_receipt_identity = approval_receipt.approval_request_identity;
     report.config_validation_report_identity = config_report.config_bundle_identity;
     report.registry_selection_plan_identity =

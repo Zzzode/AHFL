@@ -56,22 +56,19 @@ validate_provider_schema_compatibility_report(const ProviderSchemaCompatibilityR
     }
 
     // 校验汇总计数与检查项一致
-    const int total =
-        report.compatible_count + report.incompatible_count + report.unknown_count;
+    const int total = report.compatible_count + report.incompatible_count + report.unknown_count;
     const int expected_total = static_cast<int>(report.version_checks.size());
     if (total != expected_total) {
-        emit_validation_error(
-            diagnostics,
-            "provider schema compatibility report summary counts ("
-                + std::to_string(total) + ") do not match version_checks count ("
-                + std::to_string(expected_total) + ")");
+        emit_validation_error(diagnostics,
+                              "provider schema compatibility report summary counts (" +
+                                  std::to_string(total) + ") do not match version_checks count (" +
+                                  std::to_string(expected_total) + ")");
     }
 
     return result;
 }
 
-ProviderSchemaCompatibilityReportResult
-build_provider_schema_compatibility_report(
+ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_report(
     const std::vector<ArtifactVersionCheck> &version_checks,
     const std::vector<SourceChainCheck> &source_chain_checks,
     const std::vector<ReferenceVersionCheck> &reference_checks,
@@ -137,8 +134,8 @@ build_provider_schema_compatibility_report(
     // 判定 schema drift
     report.has_schema_drift = (incompatible > 0) || source_chain_drift || reference_drift;
     if (report.has_schema_drift) {
-        report.drift_details = "schema drift detected: " + std::to_string(incompatible) +
-                               " incompatible version(s)";
+        report.drift_details =
+            "schema drift detected: " + std::to_string(incompatible) + " incompatible version(s)";
         if (source_chain_drift) {
             report.drift_details.value() += ", source chain incompatibility";
         }
@@ -148,10 +145,9 @@ build_provider_schema_compatibility_report(
     }
 
     // 构造汇总
-    report.compatibility_summary =
-        "provider schema compatibility: " + std::to_string(compatible) + " compatible, " +
-        std::to_string(incompatible) + " incompatible, " + std::to_string(unknown) +
-        " unknown";
+    report.compatibility_summary = "provider schema compatibility: " + std::to_string(compatible) +
+                                   " compatible, " + std::to_string(incompatible) +
+                                   " incompatible, " + std::to_string(unknown) + " unknown";
 
     // 验证构建结果
     result.diagnostics.append(validate_provider_schema_compatibility_report(report).diagnostics);

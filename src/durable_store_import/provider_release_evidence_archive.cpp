@@ -15,8 +15,7 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 构建单个 evidence item（从 conformance report）
-[[nodiscard]] EvidenceItem make_conformance_evidence_item(
-    const ProviderConformanceReport &report) {
+[[nodiscard]] EvidenceItem make_conformance_evidence_item(const ProviderConformanceReport &report) {
     EvidenceItem item;
     item.evidence_type = "conformance";
     item.evidence_identity = report.durable_store_import_provider_conformance_report_identity;
@@ -29,8 +28,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 构建单个 evidence item（从 schema compatibility report）
-[[nodiscard]] EvidenceItem make_schema_compatibility_evidence_item(
-    const ProviderSchemaCompatibilityReport &report) {
+[[nodiscard]] EvidenceItem
+make_schema_compatibility_evidence_item(const ProviderSchemaCompatibilityReport &report) {
     EvidenceItem item;
     item.evidence_type = "schema_compatibility";
     item.evidence_identity = "schema-compatibility-report::" + report.session_id;
@@ -43,8 +42,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 构建单个 evidence item（从 config bundle validation report）
-[[nodiscard]] EvidenceItem make_config_validation_evidence_item(
-    const ProviderConfigBundleValidationReport &report) {
+[[nodiscard]] EvidenceItem
+make_config_validation_evidence_item(const ProviderConfigBundleValidationReport &report) {
     EvidenceItem item;
     item.evidence_type = "config_validation";
     item.evidence_identity = report.config_bundle_identity;
@@ -58,8 +57,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 构建单个 evidence item（从 production readiness evidence）
-[[nodiscard]] EvidenceItem make_readiness_evidence_item(
-    const ProviderProductionReadinessEvidence &evidence) {
+[[nodiscard]] EvidenceItem
+make_readiness_evidence_item(const ProviderProductionReadinessEvidence &evidence) {
     EvidenceItem item;
     item.evidence_type = "readiness";
     item.evidence_identity =
@@ -69,17 +68,15 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     item.generation_timestamp = "deterministic";
     item.is_present =
         !evidence.durable_store_import_provider_production_readiness_evidence_identity.empty();
-    item.is_valid = (evidence.blocking_issue_count == 0 &&
-                     evidence.security_evidence_passed &&
-                     evidence.recovery_evidence_passed &&
-                     evidence.compatibility_evidence_passed);
+    item.is_valid = (evidence.blocking_issue_count == 0 && evidence.security_evidence_passed &&
+                     evidence.recovery_evidence_passed && evidence.compatibility_evidence_passed);
     return item;
 }
 
 } // namespace
 
-ReleaseEvidenceArchiveManifestValidationResult validate_release_evidence_archive_manifest(
-    const ReleaseEvidenceArchiveManifest &manifest) {
+ReleaseEvidenceArchiveManifestValidationResult
+validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest &manifest) {
     ReleaseEvidenceArchiveManifestValidationResult result;
     auto &diagnostics = result.diagnostics;
 
@@ -93,9 +90,9 @@ ReleaseEvidenceArchiveManifestValidationResult validate_release_evidence_archive
 
     // 检查必需字段非空
     if (manifest.workflow_canonical_name.empty() || manifest.session_id.empty()) {
-        emit_validation_error(
-            diagnostics,
-            "release evidence archive manifest workflow_canonical_name and session_id must not be empty");
+        emit_validation_error(diagnostics,
+                              "release evidence archive manifest workflow_canonical_name and "
+                              "session_id must not be empty");
     }
 
     // 检查上游 identity 引用非空
@@ -110,8 +107,8 @@ ReleaseEvidenceArchiveManifestValidationResult validate_release_evidence_archive
 
     // 检查 archive_summary 非空
     if (manifest.archive_summary.empty()) {
-        emit_validation_error(diagnostics,
-                              "release evidence archive manifest archive_summary must not be empty");
+        emit_validation_error(
+            diagnostics, "release evidence archive manifest archive_summary must not be empty");
     }
 
     // 检查计数非负
@@ -141,8 +138,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     ReleaseEvidenceArchiveManifestResult result;
 
     // 验证上游 artifact 基础可用性
-    result.diagnostics.append(
-        validate_provider_conformance_report(conformance_report).diagnostics);
+    result.diagnostics.append(validate_provider_conformance_report(conformance_report).diagnostics);
     if (result.has_errors()) {
         return result;
     }
@@ -199,13 +195,12 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
         (missing_count == 0 && invalid_count == 0 && valid_count == manifest.total_evidence_count);
 
     if (manifest.is_release_ready) {
-        manifest.archive_summary =
-            "all evidence present and valid; release ready";
+        manifest.archive_summary = "all evidence present and valid; release ready";
     } else {
-        manifest.archive_summary =
-            "release not ready: " + std::to_string(missing_count) + " missing, " +
-            std::to_string(invalid_count) + " invalid of " +
-            std::to_string(manifest.total_evidence_count) + " total evidence items";
+        manifest.archive_summary = "release not ready: " + std::to_string(missing_count) +
+                                   " missing, " + std::to_string(invalid_count) + " invalid of " +
+                                   std::to_string(manifest.total_evidence_count) +
+                                   " total evidence items";
     }
 
     // Missing evidence summary

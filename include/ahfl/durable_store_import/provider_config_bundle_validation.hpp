@@ -15,7 +15,11 @@ inline constexpr std::string_view kProviderConfigBundleValidationReportFormatVer
     "ahfl.durable-store-import-provider-config-bundle-validation-report.v1";
 
 // 校验单项的状态
-enum class ConfigValidationStatus { Valid, Invalid, Missing };
+enum class ConfigValidationStatus {
+    Valid,
+    Invalid,
+    Missing
+};
 
 // Provider reference 校验条目
 struct ProviderReferenceCheck {

@@ -8,7 +8,9 @@ namespace ahfl::llm_provider {
 struct HttpResponse {
     int status_code = 0;
     std::string body;
-    [[nodiscard]] bool success() const { return status_code >= 200 && status_code < 300; }
+    [[nodiscard]] bool success() const {
+        return status_code >= 200 && status_code < 300;
+    }
 };
 
 // HTTP 客户端，封装对 OpenAI-compatible API 的调用

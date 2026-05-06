@@ -24,9 +24,9 @@ inline constexpr std::string_view kProviderApprovalReceiptFormatVersion =
 
 // 审批决定枚举
 enum class ApprovalDecision {
-    Approved,   // 已批准
-    Rejected,   // 已拒绝
-    Deferred,   // 延迟决定
+    Approved, // 已批准
+    Rejected, // 已拒绝
+    Deferred, // 延迟决定
 };
 
 // 审批请求 - v0.47
@@ -134,25 +134,24 @@ struct ApprovalReceiptResult {
 };
 
 // 验证函数
-[[nodiscard]] ApprovalRequestValidationResult validate_approval_request(
-    const ApprovalRequest &request);
+[[nodiscard]] ApprovalRequestValidationResult
+validate_approval_request(const ApprovalRequest &request);
 
-[[nodiscard]] ApprovalDecisionRecordValidationResult validate_approval_decision_record(
-    const ApprovalDecisionRecord &decision);
+[[nodiscard]] ApprovalDecisionRecordValidationResult
+validate_approval_decision_record(const ApprovalDecisionRecord &decision);
 
-[[nodiscard]] ApprovalReceiptValidationResult validate_approval_receipt(
-    const ApprovalReceipt &receipt);
+[[nodiscard]] ApprovalReceiptValidationResult
+validate_approval_receipt(const ApprovalReceipt &receipt);
 
 // 构建函数
 // 从 ReleaseEvidenceArchiveManifest 和 ProviderProductionReadinessEvidence 构建 ApprovalRequest
-[[nodiscard]] ApprovalRequestResult build_approval_request(
-    const ReleaseEvidenceArchiveManifest &archive,
-    const ProviderProductionReadinessEvidence &readiness);
+[[nodiscard]] ApprovalRequestResult
+build_approval_request(const ReleaseEvidenceArchiveManifest &archive,
+                       const ProviderProductionReadinessEvidence &readiness);
 
 // 从 ApprovalRequest 和 ApprovalDecisionRecord 构建 ApprovalReceipt
-[[nodiscard]] ApprovalReceiptResult build_approval_receipt(
-    const ApprovalRequest &request,
-    const ApprovalDecisionRecord &decision);
+[[nodiscard]] ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
+                                                           const ApprovalDecisionRecord &decision);
 
 // 辅助函数：将 ApprovalDecision 转换为字符串
 [[nodiscard]] std::string_view to_string_view(ApprovalDecision decision);

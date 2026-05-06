@@ -34,7 +34,7 @@ class LLMCapabilityProvider {
 
     // 构建发送给 LLM 的请求 JSON
     [[nodiscard]] std::string build_request_json(const std::string &system_prompt,
-                                                  const std::string &user_prompt) const;
+                                                 const std::string &user_prompt) const;
 
     // 从 LLM 响应体中提取 content 文本
     [[nodiscard]] std::string extract_content_from_response(const std::string &response_body) const;

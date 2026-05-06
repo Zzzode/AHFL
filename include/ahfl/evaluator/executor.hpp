@@ -40,7 +40,9 @@ struct ExecResult {
     ExecOutcome outcome;
     DiagnosticBag diagnostics;
 
-    [[nodiscard]] bool has_errors() const { return diagnostics.has_error(); }
+    [[nodiscard]] bool has_errors() const {
+        return diagnostics.has_error();
+    }
 };
 
 // ============================================================================

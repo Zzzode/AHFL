@@ -30,29 +30,29 @@ enum class ProductionReadinessState {
 
 // Evidence Chain Item - 单个 evidence 的状态描述
 struct EvidenceChainItem {
-    std::string evidence_type;    // "conformance", "schema_compatibility", "config_validation",
-                                  // "release_archive", "approval", "opt_in", "runtime_policy"
+    std::string evidence_type;     // "conformance", "schema_compatibility", "config_validation",
+                                   // "release_archive", "approval", "opt_in", "runtime_policy"
     std::string evidence_identity; // 引用的 artifact identity
-    std::string format_version;   // 该 evidence 的 format_version
-    bool is_present{false};       // evidence 是否存在
-    bool is_valid{false};         // evidence 是否通过校验
-    bool is_fresh{true};          // evidence 是否新鲜（未过期）
+    std::string format_version;    // 该 evidence 的 format_version
+    bool is_present{false};        // evidence 是否存在
+    bool is_valid{false};          // evidence 是否通过校验
+    bool is_fresh{true};           // evidence 是否新鲜（未过期）
 };
 
 // Blocking Item - 阻塞项描述
 struct BlockingItem {
-    std::string block_type;        // "missing_evidence", "invalid_evidence", "policy_violation", etc.
-    std::string block_reason;      // 阻塞原因描述
+    std::string block_type;   // "missing_evidence", "invalid_evidence", "policy_violation", etc.
+    std::string block_reason; // 阻塞原因描述
     std::string responsible_artifact; // 负责的 artifact 标识
-    std::string suggested_action;  // 建议的解除阻塞操作
+    std::string suggested_action;     // 建议的解除阻塞操作
 };
 
 // Next Operator Action - 下一步操作建议
 struct NextOperatorAction {
-    std::string action_type;       // "approve", "fix_config", "retry_evidence", "resolve_blocker"
+    std::string action_type;        // "approve", "fix_config", "retry_evidence", "resolve_blocker"
     std::string action_description; // 操作描述
-    std::string action_target;     // 操作目标（artifact identity 或具体对象）
-    int priority{1};               // 优先级（1 = 最高）
+    std::string action_target;      // 操作目标（artifact identity 或具体对象）
+    int priority{1};                // 优先级（1 = 最高）
 };
 
 // Provider Production Integration Dry Run Report - v0.50

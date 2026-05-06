@@ -12,7 +12,8 @@ void EvalContext::set_input(const std::string &name, Value value) {
 
 std::optional<Value> EvalContext::get_input(const std::string &name) const {
     auto it = input_scope_.find(name);
-    if (it == input_scope_.end()) return std::nullopt;
+    if (it == input_scope_.end())
+        return std::nullopt;
     return clone_value(it->second);
 }
 
@@ -26,7 +27,8 @@ void EvalContext::set_ctx(const std::string &name, Value value) {
 
 std::optional<Value> EvalContext::get_ctx(const std::string &name) const {
     auto it = ctx_scope_.find(name);
-    if (it == ctx_scope_.end()) return std::nullopt;
+    if (it == ctx_scope_.end())
+        return std::nullopt;
     return clone_value(it->second);
 }
 
@@ -34,18 +36,18 @@ std::optional<Value> EvalContext::get_ctx(const std::string &name) const {
 // Node output scope
 // ============================================================================
 
-void EvalContext::set_node_output(const std::string &node,
-                                  const std::string &field,
-                                  Value value) {
+void EvalContext::set_node_output(const std::string &node, const std::string &field, Value value) {
     node_output_scope_[node].insert_or_assign(field, std::move(value));
 }
 
 std::optional<Value> EvalContext::get_node_output(const std::string &node,
                                                   const std::string &field) const {
     auto node_it = node_output_scope_.find(node);
-    if (node_it == node_output_scope_.end()) return std::nullopt;
+    if (node_it == node_output_scope_.end())
+        return std::nullopt;
     auto field_it = node_it->second.find(field);
-    if (field_it == node_it->second.end()) return std::nullopt;
+    if (field_it == node_it->second.end())
+        return std::nullopt;
     return clone_value(field_it->second);
 }
 
@@ -59,7 +61,8 @@ void EvalContext::bind_local(const std::string &name, Value value) {
 
 std::optional<Value> EvalContext::get_local(const std::string &name) const {
     auto it = local_scope_.find(name);
-    if (it == local_scope_.end()) return std::nullopt;
+    if (it == local_scope_.end())
+        return std::nullopt;
     return clone_value(it->second);
 }
 

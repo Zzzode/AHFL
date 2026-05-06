@@ -29,11 +29,11 @@ class ResponseParser {
 
     // 从 JSON 字符串中提取指定 key 的 value（简单手写解析器）
     [[nodiscard]] std::string extract_json_value(const std::string &json_str,
-                                                  const std::string &key) const;
+                                                 const std::string &key) const;
 
     // 解析基本类型值
-    [[nodiscard]] std::optional<evaluator::Value> parse_primitive(const std::string &value_str,
-                                                                   const std::string &type_name) const;
+    [[nodiscard]] std::optional<evaluator::Value>
+    parse_primitive(const std::string &value_str, const std::string &type_name) const;
 };
 
 } // namespace ahfl::llm_provider

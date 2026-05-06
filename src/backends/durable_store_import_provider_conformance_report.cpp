@@ -31,11 +31,11 @@ void print_durable_store_import_provider_conformance_report(
         out << "run_id " << *report.run_id << '\n';
     }
     out << "input_fixture " << report.input_fixture << '\n';
-    out << "compatibility_report " << report.durable_store_import_provider_compatibility_report_identity
-        << '\n';
+    out << "compatibility_report "
+        << report.durable_store_import_provider_compatibility_report_identity << '\n';
     out << "registry " << report.durable_store_import_provider_registry_identity << '\n';
-    out << "readiness_evidence " << report.durable_store_import_provider_production_readiness_evidence_identity
-        << '\n';
+    out << "readiness_evidence "
+        << report.durable_store_import_provider_production_readiness_evidence_identity << '\n';
     out << "pass_count " << report.pass_count << '\n';
     out << "fail_count " << report.fail_count << '\n';
     out << "skipped_count " << report.skipped_count << '\n';

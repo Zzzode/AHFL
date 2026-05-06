@@ -175,7 +175,7 @@ std::string PromptBuilder::build_system_prompt(const std::string &capability_nam
 }
 
 std::string PromptBuilder::build_user_prompt(const std::string &capability_name,
-                                              const std::vector<evaluator::Value> &args) const {
+                                             const std::vector<evaluator::Value> &args) const {
     const auto *cap = find_capability(capability_name);
     if (cap == nullptr) {
         return "No input provided.";

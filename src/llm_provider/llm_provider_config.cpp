@@ -51,8 +51,8 @@ std::string extract_string_field(const std::string &json, const std::string &key
     }
     ++pos;
     // 跳过空格
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' ||
-                                  json[pos] == '\r')) {
+    while (pos < json.size() &&
+           (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) {
         ++pos;
     }
     if (pos >= json.size()) {

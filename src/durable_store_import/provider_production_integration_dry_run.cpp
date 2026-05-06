@@ -55,9 +55,7 @@ validate_provider_production_integration_dry_run_report(
 
     // 校验 is_non_mutating_mode 必须为 true（当前版本约束）
     if (!report.is_non_mutating_mode) {
-        diagnostics.error()
-            .message("is_non_mutating_mode must be true in current version")
-            .emit();
+        diagnostics.error().message("is_non_mutating_mode must be true in current version").emit();
     }
 
     // 校验 evidence chain 计数一致性
@@ -118,8 +116,7 @@ build_provider_production_integration_dry_run_report(
     report.release_evidence_archive_manifest_identity =
         evidence_archive.durable_store_import_provider_conformance_report_identity;
     report.approval_receipt_identity = approval_receipt.approval_request_identity;
-    report.opt_in_decision_report_identity =
-        "opt-in-decision-report::" + opt_in_report.session_id;
+    report.opt_in_decision_report_identity = "opt-in-decision-report::" + opt_in_report.session_id;
     report.runtime_policy_report_identity =
         "runtime-policy-report::" + runtime_policy_report.session_id;
 
@@ -289,8 +286,7 @@ build_provider_production_integration_dry_run_report(
             blocking_desc += blocker.block_reason;
         }
         report.blocking_summary = blocking_desc;
-        report.dry_run_summary =
-            "production integration dry run blocked: " + blocking_desc;
+        report.dry_run_summary = "production integration dry run blocked: " + blocking_desc;
     }
 
     // non-mutating 模式始终为 true

@@ -183,7 +183,8 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
 
 ExecResult exec_block(const ir::Block &block, ExecContext &ctx) {
     for (const auto &stmt_ptr : block.statements) {
-        if (!stmt_ptr) continue;
+        if (!stmt_ptr)
+            continue;
         auto result = exec_statement(*stmt_ptr, ctx);
         // 如果有错误或控制流非 Continue，立即返回
         if (result.has_errors() || !std::holds_alternative<ExecContinue>(result.outcome)) {

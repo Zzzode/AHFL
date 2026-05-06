@@ -7,19 +7,17 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_CONFORMANCE";
+inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_PROVIDER_CONFORMANCE";
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
 }
 
 // 执行单个检查并返回检查项
-[[nodiscard]] ConformanceCheckItem run_check(
-    const std::string &check_name,
-    bool condition,
-    const std::string &artifact_reference,
-    const std::string &failure_reason_if_fail) {
+[[nodiscard]] ConformanceCheckItem run_check(const std::string &check_name,
+                                             bool condition,
+                                             const std::string &artifact_reference,
+                                             const std::string &failure_reason_if_fail) {
     ConformanceCheckItem item;
     item.check_name = check_name;
     item.artifact_reference = artifact_reference;
@@ -34,8 +32,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 
 } // namespace
 
-ProviderConformanceReportValidationResult validate_provider_conformance_report(
-    const ProviderConformanceReport &report) {
+ProviderConformanceReportValidationResult
+validate_provider_conformance_report(const ProviderConformanceReport &report) {
     ProviderConformanceReportValidationResult result;
     auto &diagnostics = result.diagnostics;
 
@@ -73,21 +71,21 @@ ProviderConformanceReportValidationResult validate_provider_conformance_report(
 
     // 检查计数非负
     if (report.pass_count < 0 || report.fail_count < 0 || report.skipped_count < 0) {
-        emit_validation_error(diagnostics,
-                              "provider conformance report counts cannot be negative");
+        emit_validation_error(diagnostics, "provider conformance report counts cannot be negative");
     }
 
     return result;
 }
 
-ProviderConformanceReportResult build_provider_conformance_report(
-    const ProviderCompatibilityReport &compatibility_report,
-    const ProviderRegistry &registry,
-    const ProviderProductionReadinessEvidence &readiness_evidence) {
+ProviderConformanceReportResult
+build_provider_conformance_report(const ProviderCompatibilityReport &compatibility_report,
+                                  const ProviderRegistry &registry,
+                                  const ProviderProductionReadinessEvidence &readiness_evidence) {
     ProviderConformanceReportResult result;
 
     // 验证上游 artifact
-    result.diagnostics.append(validate_provider_compatibility_report(compatibility_report).diagnostics);
+    result.diagnostics.append(
+        validate_provider_compatibility_report(compatibility_report).diagnostics);
     result.diagnostics.append(validate_provider_registry(registry).diagnostics);
     result.diagnostics.append(
         validate_provider_production_readiness_evidence(readiness_evidence).diagnostics);
@@ -118,105 +116,98 @@ ProviderConformanceReportResult build_provider_conformance_report(
     std::vector<ConformanceCheckItem> checks;
 
     // 检查 1: Compatibility Status Pass
-    checks.push_back(run_check(
-        "compatibility_status_passed",
-        compatibility_report.status == ProviderCompatibilityStatus::Passed,
-        report.durable_store_import_provider_compatibility_report_identity,
-        "compatibility status is not passed"));
+    checks.push_back(run_check("compatibility_status_passed",
+                               compatibility_report.status == ProviderCompatibilityStatus::Passed,
+                               report.durable_store_import_provider_compatibility_report_identity,
+                               "compatibility status is not passed"));
 
     // 检查 2: Mock Adapter Compatible
-    checks.push_back(run_check(
-        "mock_adapter_compatible",
-        compatibility_report.mock_adapter_compatible,
-        report.durable_store_import_provider_compatibility_report_identity,
-        "mock adapter is not compatible"));
+    checks.push_back(run_check("mock_adapter_compatible",
+                               compatibility_report.mock_adapter_compatible,
+                               report.durable_store_import_provider_compatibility_report_identity,
+                               "mock adapter is not compatible"));
 
     // 检查 3: Local Filesystem Alpha Compatible
-    checks.push_back(run_check(
-        "local_filesystem_alpha_compatible",
-        compatibility_report.local_filesystem_alpha_compatible,
-        report.durable_store_import_provider_compatibility_report_identity,
-        "local filesystem alpha is not compatible"));
+    checks.push_back(run_check("local_filesystem_alpha_compatible",
+                               compatibility_report.local_filesystem_alpha_compatible,
+                               report.durable_store_import_provider_compatibility_report_identity,
+                               "local filesystem alpha is not compatible"));
 
     // 检查 4: Capability Matrix Complete
-    checks.push_back(run_check(
-        "capability_matrix_complete",
-        compatibility_report.capability_matrix_complete,
-        report.durable_store_import_provider_compatibility_report_identity,
-        "capability matrix is not complete"));
+    checks.push_back(run_check("capability_matrix_complete",
+                               compatibility_report.capability_matrix_complete,
+                               report.durable_store_import_provider_compatibility_report_identity,
+                               "capability matrix is not complete"));
 
     // 检查 5: Registry Mock Adapter Registered
-    checks.push_back(run_check(
-        "registry_mock_adapter_registered",
-        registry.mock_adapter_registered,
-        report.durable_store_import_provider_registry_identity,
-        "mock adapter is not registered in registry"));
+    checks.push_back(run_check("registry_mock_adapter_registered",
+                               registry.mock_adapter_registered,
+                               report.durable_store_import_provider_registry_identity,
+                               "mock adapter is not registered in registry"));
 
     // 检查 6: Registry Local Filesystem Alpha Registered
-    checks.push_back(run_check(
-        "registry_local_filesystem_alpha_registered",
-        registry.local_filesystem_alpha_registered,
-        report.durable_store_import_provider_registry_identity,
-        "local filesystem alpha is not registered in registry"));
+    checks.push_back(run_check("registry_local_filesystem_alpha_registered",
+                               registry.local_filesystem_alpha_registered,
+                               report.durable_store_import_provider_registry_identity,
+                               "local filesystem alpha is not registered in registry"));
 
     // 检查 7: Registry Compatibility Status Match
-    checks.push_back(run_check(
-        "registry_compatibility_status_match",
-        registry.compatibility_status == ProviderCompatibilityStatus::Passed ||
-            registry.compatibility_status == ProviderCompatibilityStatus::Failed,
-        report.durable_store_import_provider_registry_identity,
-        "registry compatibility status does not match expected values"));
+    checks.push_back(
+        run_check("registry_compatibility_status_match",
+                  registry.compatibility_status == ProviderCompatibilityStatus::Passed ||
+                      registry.compatibility_status == ProviderCompatibilityStatus::Failed,
+                  report.durable_store_import_provider_registry_identity,
+                  "registry compatibility status does not match expected values"));
 
     // 检查 8: Security Evidence Passed
-    checks.push_back(run_check(
-        "security_evidence_passed",
-        readiness_evidence.security_evidence_passed,
-        report.durable_store_import_provider_production_readiness_evidence_identity,
-        "security evidence did not pass"));
+    checks.push_back(
+        run_check("security_evidence_passed",
+                  readiness_evidence.security_evidence_passed,
+                  report.durable_store_import_provider_production_readiness_evidence_identity,
+                  "security evidence did not pass"));
 
     // 检查 9: Recovery Evidence Passed
-    checks.push_back(run_check(
-        "recovery_evidence_passed",
-        readiness_evidence.recovery_evidence_passed,
-        report.durable_store_import_provider_production_readiness_evidence_identity,
-        "recovery evidence did not pass"));
+    checks.push_back(
+        run_check("recovery_evidence_passed",
+                  readiness_evidence.recovery_evidence_passed,
+                  report.durable_store_import_provider_production_readiness_evidence_identity,
+                  "recovery evidence did not pass"));
 
     // 检查 10: Compatibility Evidence Passed
-    checks.push_back(run_check(
-        "compatibility_evidence_passed",
-        readiness_evidence.compatibility_evidence_passed,
-        report.durable_store_import_provider_production_readiness_evidence_identity,
-        "compatibility evidence did not pass"));
+    checks.push_back(
+        run_check("compatibility_evidence_passed",
+                  readiness_evidence.compatibility_evidence_passed,
+                  report.durable_store_import_provider_production_readiness_evidence_identity,
+                  "compatibility evidence did not pass"));
 
     // 检查 11: Observability Evidence Passed
-    checks.push_back(run_check(
-        "observability_evidence_passed",
-        readiness_evidence.observability_evidence_passed,
-        report.durable_store_import_provider_production_readiness_evidence_identity,
-        "observability evidence did not pass"));
+    checks.push_back(
+        run_check("observability_evidence_passed",
+                  readiness_evidence.observability_evidence_passed,
+                  report.durable_store_import_provider_production_readiness_evidence_identity,
+                  "observability evidence did not pass"));
 
     // 检查 12: Registry Evidence Passed
-    checks.push_back(run_check(
-        "registry_evidence_passed",
-        readiness_evidence.registry_evidence_passed,
-        report.durable_store_import_provider_production_readiness_evidence_identity,
-        "registry evidence did not pass"));
+    checks.push_back(
+        run_check("registry_evidence_passed",
+                  readiness_evidence.registry_evidence_passed,
+                  report.durable_store_import_provider_production_readiness_evidence_identity,
+                  "registry evidence did not pass"));
 
     // 检查 13: No Blocking Issues
-    checks.push_back(run_check(
-        "no_blocking_issues",
-        readiness_evidence.blocking_issue_count == 0,
-        report.durable_store_import_provider_production_readiness_evidence_identity,
-        "there are " + std::to_string(readiness_evidence.blocking_issue_count) +
-            " blocking issues"));
+    checks.push_back(
+        run_check("no_blocking_issues",
+                  readiness_evidence.blocking_issue_count == 0,
+                  report.durable_store_import_provider_production_readiness_evidence_identity,
+                  "there are " + std::to_string(readiness_evidence.blocking_issue_count) +
+                      " blocking issues"));
 
     // 检查 14: Session ID Consistency
-    checks.push_back(run_check(
-        "session_id_consistency",
-        compatibility_report.session_id == registry.session_id &&
-            registry.session_id == readiness_evidence.session_id,
-        report.durable_store_import_provider_conformance_report_identity,
-        "session IDs are not consistent across artifacts"));
+    checks.push_back(run_check("session_id_consistency",
+                               compatibility_report.session_id == registry.session_id &&
+                                   registry.session_id == readiness_evidence.session_id,
+                               report.durable_store_import_provider_conformance_report_identity,
+                               "session IDs are not consistent across artifacts"));
 
     // 检查 15: Workflow Name Consistency
     checks.push_back(run_check(
@@ -227,12 +218,11 @@ ProviderConformanceReportResult build_provider_conformance_report(
         "workflow canonical names are not consistent across artifacts"));
 
     // 检查 16: Input Fixture Consistency
-    checks.push_back(run_check(
-        "input_fixture_consistency",
-        compatibility_report.input_fixture == registry.input_fixture &&
-            registry.input_fixture == readiness_evidence.input_fixture,
-        report.durable_store_import_provider_conformance_report_identity,
-        "input fixtures are not consistent across artifacts"));
+    checks.push_back(run_check("input_fixture_consistency",
+                               compatibility_report.input_fixture == registry.input_fixture &&
+                                   registry.input_fixture == readiness_evidence.input_fixture,
+                               report.durable_store_import_provider_conformance_report_identity,
+                               "input fixtures are not consistent across artifacts"));
 
     // 计算统计数据
     int pass_count = 0;
@@ -261,9 +251,8 @@ ProviderConformanceReportResult build_provider_conformance_report(
     if (fail_count == 0) {
         report.conformance_summary = "provider conformance passed all checks";
     } else {
-        report.conformance_summary = "provider conformance failed " +
-                                     std::to_string(fail_count) + " of " +
-                                     std::to_string(checks.size()) + " checks";
+        report.conformance_summary = "provider conformance failed " + std::to_string(fail_count) +
+                                     " of " + std::to_string(checks.size()) + " checks";
     }
 
     // 验证生成的 report

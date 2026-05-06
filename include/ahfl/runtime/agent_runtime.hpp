@@ -60,7 +60,8 @@ class AgentRuntime {
     AgentRuntime(const ir::AgentDecl &agent, const ir::FlowDecl &flow, QuotaConfig quota = {});
 
     // 设置 capability invoker（用于执行 flow 中的 capability 调用）
-    void set_capability_invoker(std::function<Value(const std::string &, const std::vector<Value> &)> invoker);
+    void set_capability_invoker(
+        std::function<Value(const std::string &, const std::vector<Value> &)> invoker);
 
     // 执行 agent，从初始状态开始
     [[nodiscard]] AgentResult run(Value input);

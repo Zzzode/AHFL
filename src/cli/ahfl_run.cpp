@@ -191,9 +191,8 @@ class SimpleJsonParser {
     std::size_t pos_;
 
     void skip_whitespace() {
-        while (pos_ < json_.size() &&
-               (json_[pos_] == ' ' || json_[pos_] == '\t' || json_[pos_] == '\n' ||
-                json_[pos_] == '\r')) {
+        while (pos_ < json_.size() && (json_[pos_] == ' ' || json_[pos_] == '\t' ||
+                                       json_[pos_] == '\n' || json_[pos_] == '\r')) {
             ++pos_;
         }
     }
@@ -473,8 +472,10 @@ class SimpleJsonParser {
 // 打印执行结果
 // ============================================================================
 
-void print_workflow_result(const WorkflowResult &result, const std::filesystem::path &file_path,
-                           const std::string &workflow_name, const std::filesystem::path &config_path,
+void print_workflow_result(const WorkflowResult &result,
+                           const std::filesystem::path &file_path,
+                           const std::string &workflow_name,
+                           const std::filesystem::path &config_path,
                            const std::string &model_name) {
     std::cout << "\n=== AHFL Workflow Execution ===\n";
     std::cout << "File: " << file_path << "\n";
@@ -633,7 +634,8 @@ int main(int argc, char **argv) {
     LLMCapabilityProvider llm_provider(program, llm_config);
     CapabilityRegistry registry;
     llm_provider.register_all(registry);
-    std::cout << "LLM Provider 已注册 " << registry.registered_names().size() << " 个 capabilities\n";
+    std::cout << "LLM Provider 已注册 " << registry.registered_names().size()
+              << " 个 capabilities\n";
 
     // 5. 配置 WorkflowRuntime
     WorkflowRuntimeConfig wf_config;
@@ -646,8 +648,8 @@ int main(int argc, char **argv) {
     auto result = workflow_runtime.run(args.workflow_name, std::move(*input_value_opt));
 
     // 7. 输出结果
-    print_workflow_result(result, args.file_path, args.workflow_name, args.llm_config_path,
-                          llm_config.model);
+    print_workflow_result(
+        result, args.file_path, args.workflow_name, args.llm_config_path, llm_config.model);
 
     // 返回状态码
     return (result.status == WorkflowStatus::Completed && !result.has_errors()) ? 0 : 1;

@@ -18,13 +18,14 @@ inline constexpr std::string_view kProviderReleaseEvidenceArchiveManifestFormatV
 
 // 单个 evidence item 的状态描述
 struct EvidenceItem {
-    std::string evidence_type;       // "conformance", "schema_compatibility", "config_validation", "readiness"
-    std::string evidence_identity;   // 引用的 artifact identity
-    std::string format_version;      // 该 evidence 的 format_version
-    std::string digest;              // SHA-256 摘要或语义哈希
+    std::string
+        evidence_type; // "conformance", "schema_compatibility", "config_validation", "readiness"
+    std::string evidence_identity;    // 引用的 artifact identity
+    std::string format_version;       // 该 evidence 的 format_version
+    std::string digest;               // SHA-256 摘要或语义哈希
     std::string generation_timestamp; // UTC ISO 8601 时间戳
-    bool is_present{false};          // evidence 是否存在
-    bool is_valid{false};            // evidence 是否通过校验
+    bool is_present{false};           // evidence 是否存在
+    bool is_valid{false};             // evidence 是否通过校验
 };
 
 // Release Evidence Archive Manifest - v0.46

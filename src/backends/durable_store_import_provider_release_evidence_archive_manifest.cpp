@@ -12,8 +12,8 @@ void print_durable_store_import_provider_release_evidence_archive_manifest(
     if (manifest.run_id.has_value()) {
         out << "run_id " << *manifest.run_id << '\n';
     }
-    out << "conformance_report " << manifest.durable_store_import_provider_conformance_report_identity
-        << '\n';
+    out << "conformance_report "
+        << manifest.durable_store_import_provider_conformance_report_identity << '\n';
     out << "schema_compatibility_report "
         << manifest.durable_store_import_provider_schema_compatibility_report_identity << '\n';
     out << "config_bundle_validation_report "
@@ -29,8 +29,7 @@ void print_durable_store_import_provider_release_evidence_archive_manifest(
     out << "evidence_items " << manifest.evidence_items.size() << '\n';
     for (const auto &item : manifest.evidence_items) {
         out << "evidence " << item.evidence_type << ' ' << item.evidence_identity << ' '
-            << item.format_version << ' '
-            << (item.is_present ? "present" : "missing") << ' '
+            << item.format_version << ' ' << (item.is_present ? "present" : "missing") << ' '
             << (item.is_valid ? "valid" : "invalid") << '\n';
     }
     out << "archive_summary " << manifest.archive_summary << '\n';

@@ -23,20 +23,14 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
             field("version_checks", [&]() { print_version_checks(report.version_checks); });
             field("source_chain_checks",
                   [&]() { print_source_chain_checks(report.source_chain_checks); });
-            field("reference_checks",
-                  [&]() { print_reference_checks(report.reference_checks); });
-            field("compatible_count",
-                  [&]() { out_ << report.compatible_count; });
-            field("incompatible_count",
-                  [&]() { out_ << report.incompatible_count; });
-            field("unknown_count",
-                  [&]() { out_ << report.unknown_count; });
-            field("compatibility_summary",
-                  [&]() { write_string(report.compatibility_summary); });
+            field("reference_checks", [&]() { print_reference_checks(report.reference_checks); });
+            field("compatible_count", [&]() { out_ << report.compatible_count; });
+            field("incompatible_count", [&]() { out_ << report.incompatible_count; });
+            field("unknown_count", [&]() { out_ << report.unknown_count; });
+            field("compatibility_summary", [&]() { write_string(report.compatibility_summary); });
             field("has_schema_drift",
                   [&]() { out_ << (report.has_schema_drift ? "true" : "false"); });
-            field("drift_details",
-                  [&]() { print_optional_string(report.drift_details); });
+            field("drift_details", [&]() { print_optional_string(report.drift_details); });
         });
         out_ << '\n';
     }
@@ -64,18 +58,16 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
         out_ << "null";
     }
 
-    void print_version_checks(
-        const std::vector<durable_store_import::ArtifactVersionCheck> &checks) {
+    void
+    print_version_checks(const std::vector<durable_store_import::ArtifactVersionCheck> &checks) {
         print_array(1, [&](const auto &item) {
             for (const auto &check : checks) {
                 item([&]() {
                     print_object(2, [&](const auto &field) {
-                        field("artifact_type",
-                              [&]() { write_string(check.artifact_type); });
+                        field("artifact_type", [&]() { write_string(check.artifact_type); });
                         field("artifact_identity",
                               [&]() { write_string(check.artifact_identity); });
-                        field("format_version",
-                              [&]() { write_string(check.format_version); });
+                        field("format_version", [&]() { write_string(check.format_version); });
                         field("status", [&]() { print_status(check.status); });
                         field("expected_format_version",
                               [&]() { print_optional_string(check.expected_format_version); });
@@ -87,8 +79,8 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
         });
     }
 
-    void print_source_chain_checks(
-        const std::vector<durable_store_import::SourceChainCheck> &checks) {
+    void
+    print_source_chain_checks(const std::vector<durable_store_import::SourceChainCheck> &checks) {
         print_array(1, [&](const auto &item) {
             for (const auto &check : checks) {
                 item([&]() {
@@ -111,14 +103,13 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
         });
     }
 
-    void print_reference_checks(
-        const std::vector<durable_store_import::ReferenceVersionCheck> &checks) {
+    void
+    print_reference_checks(const std::vector<durable_store_import::ReferenceVersionCheck> &checks) {
         print_array(1, [&](const auto &item) {
             for (const auto &check : checks) {
                 item([&]() {
                     print_object(2, [&](const auto &field) {
-                        field("reference_type",
-                              [&]() { write_string(check.reference_type); });
+                        field("reference_type", [&]() { write_string(check.reference_type); });
                         field("reference_identity",
                               [&]() { write_string(check.reference_identity); });
                         field("referenced_format_version",

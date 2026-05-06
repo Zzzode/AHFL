@@ -33,7 +33,7 @@ const ir::EnumDecl *ResponseParser::find_enum(const std::string &name) const {
 }
 
 std::string ResponseParser::extract_json_value(const std::string &json_str,
-                                                const std::string &key) const {
+                                               const std::string &key) const {
     // 查找 "key"
     std::string search = "\"" + key + "\"";
     auto pos = json_str.find(search);
@@ -50,9 +50,8 @@ std::string ResponseParser::extract_json_value(const std::string &json_str,
     ++pos;
 
     // 跳过空白
-    while (pos < json_str.size() &&
-           (json_str[pos] == ' ' || json_str[pos] == '\t' || json_str[pos] == '\n' ||
-            json_str[pos] == '\r')) {
+    while (pos < json_str.size() && (json_str[pos] == ' ' || json_str[pos] == '\t' ||
+                                     json_str[pos] == '\n' || json_str[pos] == '\r')) {
         ++pos;
     }
 
@@ -121,8 +120,8 @@ std::string ResponseParser::extract_json_value(const std::string &json_str,
     return value;
 }
 
-std::optional<evaluator::Value> ResponseParser::parse_primitive(const std::string &value_str,
-                                                                 const std::string &type_name) const {
+std::optional<evaluator::Value>
+ResponseParser::parse_primitive(const std::string &value_str, const std::string &type_name) const {
     if (type_name == "String") {
         return evaluator::make_string(value_str);
     }
@@ -160,7 +159,7 @@ std::optional<evaluator::Value> ResponseParser::parse_primitive(const std::strin
 }
 
 std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &json_obj,
-                                                              const ir::StructDecl &decl) const {
+                                                             const ir::StructDecl &decl) const {
     std::unordered_map<std::string, evaluator::Value> fields;
 
     for (const auto &field : decl.fields) {
@@ -196,7 +195,7 @@ std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &
 }
 
 std::optional<evaluator::Value> ResponseParser::parse(const std::string &json_str,
-                                                       const std::string &expected_type) const {
+                                                      const std::string &expected_type) const {
     // 基本类型
     if (expected_type == "String" || expected_type == "Int" || expected_type == "Float" ||
         expected_type == "Bool") {

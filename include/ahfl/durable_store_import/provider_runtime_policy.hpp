@@ -100,12 +100,12 @@ struct ProviderRuntimePolicyReportResult {
 validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &report);
 
 // 构建函数 - 聚合所有 policy evidence
-[[nodiscard]] ProviderRuntimePolicyReportResult build_provider_runtime_policy_report(
-    const ProviderOptInDecisionReport &opt_in_report,
-    const ApprovalReceipt &approval_receipt,
-    const ProviderConfigBundleValidationReport &config_report,
-    const ProviderSelectionPlan &selection_plan,
-    const ProviderProductionReadinessEvidence &readiness_evidence);
+[[nodiscard]] ProviderRuntimePolicyReportResult
+build_provider_runtime_policy_report(const ProviderOptInDecisionReport &opt_in_report,
+                                     const ApprovalReceipt &approval_receipt,
+                                     const ProviderConfigBundleValidationReport &config_report,
+                                     const ProviderSelectionPlan &selection_plan,
+                                     const ProviderProductionReadinessEvidence &readiness_evidence);
 
 // 辅助函数：将 PolicyDecision 转换为字符串
 [[nodiscard]] std::string_view to_string_view(PolicyDecision decision);

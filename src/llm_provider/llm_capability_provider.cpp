@@ -14,7 +14,7 @@ LLMCapabilityProvider::LLMCapabilityProvider(const ir::Program &program, LLMProv
       prompt_builder_(program_), response_parser_(program_) {}
 
 std::string LLMCapabilityProvider::build_request_json(const std::string &system_prompt,
-                                                       const std::string &user_prompt) const {
+                                                      const std::string &user_prompt) const {
     // 手写 JSON 构建（避免依赖外部 JSON 库）
     // 转义字符串中的特殊字符
     auto escape_json_string = [](const std::string &s) -> std::string {
@@ -84,8 +84,8 @@ LLMCapabilityProvider::extract_content_from_response(const std::string &response
 
     // 跳过空白
     while (pos < response_body.size() &&
-           (response_body[pos] == ' ' || response_body[pos] == '\t' ||
-            response_body[pos] == '\n' || response_body[pos] == '\r')) {
+           (response_body[pos] == ' ' || response_body[pos] == '\t' || response_body[pos] == '\n' ||
+            response_body[pos] == '\r')) {
         ++pos;
     }
 
@@ -189,10 +189,10 @@ void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) 
     for (const auto &decl : program_.declarations) {
         if (auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
             std::string cap_name = cap->name;
-            registry.register_function(
-                cap_name, [this, cap_name](const std::vector<evaluator::Value> &args) {
-                    return this->invoke(cap_name, args);
-                });
+            registry.register_function(cap_name,
+                                       [this, cap_name](const std::vector<evaluator::Value> &args) {
+                                           return this->invoke(cap_name, args);
+                                       });
         }
     }
 }

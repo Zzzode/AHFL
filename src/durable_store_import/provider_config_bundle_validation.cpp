@@ -15,8 +15,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 校验 provider reference：selection plan 中的 provider 是否在 config 中引用
-[[nodiscard]] ProviderReferenceCheck check_provider_reference(
-    const ProviderSelectionPlan &plan, std::string_view provider_id) {
+[[nodiscard]] ProviderReferenceCheck check_provider_reference(const ProviderSelectionPlan &plan,
+                                                              std::string_view provider_id) {
     ProviderReferenceCheck check;
     check.provider_name = std::string(provider_id);
 
@@ -27,8 +27,7 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     }
 
     // 判断 provider 是否在 selection plan 中被注册
-    if (plan.selected_provider_id == provider_id ||
-        plan.fallback_provider_id == provider_id) {
+    if (plan.selected_provider_id == provider_id || plan.fallback_provider_id == provider_id) {
         check.status = ConfigValidationStatus::Valid;
     } else {
         check.status = ConfigValidationStatus::Invalid;
@@ -40,8 +39,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 基于 config snapshot 构建 secret handle check（不读取 secret value）
-[[nodiscard]] SecretHandleCheck check_secret_handle(
-    const ProviderConfigSnapshotPlaceholder &snapshot) {
+[[nodiscard]] SecretHandleCheck
+check_secret_handle(const ProviderConfigSnapshotPlaceholder &snapshot) {
     SecretHandleCheck check;
     check.secret_name = snapshot.provider_config_profile_identity + ".secret-handle";
     check.secret_scope = snapshot.provider_config_profile_identity;
@@ -66,8 +65,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 校验 endpoint shape：config snapshot 中是否引用了 endpoint uri
-[[nodiscard]] EndpointShapeCheck check_endpoint_shape(
-    const ProviderConfigSnapshotPlaceholder &snapshot) {
+[[nodiscard]] EndpointShapeCheck
+check_endpoint_shape(const ProviderConfigSnapshotPlaceholder &snapshot) {
     EndpointShapeCheck check;
     check.endpoint_name = snapshot.provider_config_profile_identity + ".endpoint";
     check.expected_shape = "uri";
@@ -83,8 +82,8 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 }
 
 // 校验 environment binding：config 是否引用了运行时环境
-[[nodiscard]] EnvironmentBindingCheck check_environment_binding(
-    const ProviderConfigSnapshotPlaceholder &snapshot) {
+[[nodiscard]] EnvironmentBindingCheck
+check_environment_binding(const ProviderConfigSnapshotPlaceholder &snapshot) {
     EnvironmentBindingCheck check;
     check.binding_name = "config-snapshot." + snapshot.provider_config_profile_identity;
 
@@ -131,10 +130,9 @@ void compute_summary(ProviderConfigBundleValidationReport &report) {
         tally(eb.status);
     }
 
-    report.validation_summary =
-        std::to_string(report.valid_count) + " valid, " +
-        std::to_string(report.invalid_count) + " invalid, " +
-        std::to_string(report.missing_count) + " missing";
+    report.validation_summary = std::to_string(report.valid_count) + " valid, " +
+                                std::to_string(report.invalid_count) + " invalid, " +
+                                std::to_string(report.missing_count) + " missing";
 
     if (report.invalid_count > 0) {
         report.blocking_summary =
@@ -153,10 +151,10 @@ validate_provider_config_bundle_validation_report(
     auto &diagnostics = result.diagnostics;
 
     if (report.format_version != kProviderConfigBundleValidationReportFormatVersion) {
-        emit_validation_error(
-            diagnostics,
-            "provider config bundle validation report format_version must be '" +
-                std::string(kProviderConfigBundleValidationReportFormatVersion) + "'");
+        emit_validation_error(diagnostics,
+                              "provider config bundle validation report format_version must be '" +
+                                  std::string(kProviderConfigBundleValidationReportFormatVersion) +
+                                  "'");
     }
 
     if (report.source_durable_store_import_provider_selection_plan_format_version !=
@@ -199,28 +197,24 @@ validate_provider_config_bundle_validation_report(
     }
     if (report.opens_network_connection) {
         emit_validation_error(
-            diagnostics,
-            "provider config bundle validation must not open network connections");
+            diagnostics, "provider config bundle validation must not open network connections");
     }
     if (report.generates_production_config) {
         emit_validation_error(
-            diagnostics,
-            "provider config bundle validation must not generate production config");
+            diagnostics, "provider config bundle validation must not generate production config");
     }
 
     return result;
 }
 
-ProviderConfigBundleValidationReportResult
-build_provider_config_bundle_validation_report(
+ProviderConfigBundleValidationReportResult build_provider_config_bundle_validation_report(
     const ProviderSelectionPlan &selection_plan,
     const ProviderConfigSnapshotPlaceholder &config_snapshot) {
     ProviderConfigBundleValidationReportResult result;
     auto &diagnostics = result.diagnostics;
 
     // 前置校验：selection plan 和 snapshot 状态
-    if (selection_plan.workflow_canonical_name.empty() ||
-        selection_plan.session_id.empty()) {
+    if (selection_plan.workflow_canonical_name.empty() || selection_plan.session_id.empty()) {
         emit_validation_error(diagnostics,
                               "selection plan workflow_canonical_name and session_id required");
         return result;

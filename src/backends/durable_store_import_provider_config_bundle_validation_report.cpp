@@ -41,8 +41,7 @@ void print_durable_store_import_provider_config_bundle_validation_report(
 
     // Secret handles（redacted 输出，不暴露 secret value）
     for (const auto &sh : report.secret_handles) {
-        out << "secret_handle " << sh.secret_name << " scope=" << sh.secret_scope
-            << " presence=";
+        out << "secret_handle " << sh.secret_name << " scope=" << sh.secret_scope << " presence=";
         print_validation_status(sh.presence_status, out);
         out << " scope_status=";
         print_validation_status(sh.scope_status, out);

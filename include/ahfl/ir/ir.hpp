@@ -113,8 +113,8 @@ enum class ContractClauseKind {
 
 /// Workflow 中值引用的来源类型
 enum class WorkflowValueSourceKind {
-    WorkflowInput,       // 引用 workflow 的 input
-    WorkflowNodeOutput,  // 引用某个 node 的输出
+    WorkflowInput,      // 引用 workflow 的 input
+    WorkflowNodeOutput, // 引用某个 node 的输出
 };
 
 // ----------------------------------------------------------------------------
@@ -191,20 +191,20 @@ struct QualifiedValueExpr {
 
 /// 函数调用表达式: capability_name(arg1, arg2, ...)
 struct CallExpr {
-    std::string callee;            // 被调函数名（capability 名称）
+    std::string callee;             // 被调函数名（capability 名称）
     std::vector<ExprPtr> arguments; // 实参列表
 };
 
 /// 结构体字段初始化
 struct StructFieldInit {
-    std::string name;  // 字段名
-    ExprPtr value;     // 初始化表达式
+    std::string name; // 字段名
+    ExprPtr value;    // 初始化表达式
 };
 
 /// 结构体字面量: TypeName { field1: val1, field2: val2 }
 struct StructLiteralExpr {
-    std::string type_name;                 // 类型名
-    std::vector<StructFieldInit> fields;   // 字段初始化列表
+    std::string type_name;               // 类型名
+    std::vector<StructFieldInit> fields; // 字段初始化列表
 };
 
 /// 列表字面量: [a, b, c]
@@ -243,14 +243,14 @@ struct BinaryExpr {
 
 /// 成员访问表达式: expr.member
 struct MemberAccessExpr {
-    ExprPtr base;        // 基对象
-    std::string member;  // 成员名
+    ExprPtr base;       // 基对象
+    std::string member; // 成员名
 };
 
 /// 索引访问表达式: expr[index]
 struct IndexAccessExpr {
-    ExprPtr base;   // 基对象
-    ExprPtr index;  // 索引表达式
+    ExprPtr base;  // 基对象
+    ExprPtr index; // 索引表达式
 };
 
 /// 括号分组表达式: (expr)
@@ -353,9 +353,9 @@ struct Block {
 
 /// let 绑定语句: let name: Type = initializer;
 struct LetStatement {
-    std::string name;              // 变量名
-    std::string type;              // 类型（全限定名）
-    ExprPtr initializer;           // 初始化表达式
+    std::string name;    // 变量名
+    std::string type;    // 类型（全限定名）
+    ExprPtr initializer; // 初始化表达式
 };
 
 /// 赋值语句: target = value;
@@ -366,9 +366,9 @@ struct AssignStatement {
 
 /// 条件语句: if (condition) { then } else { else }
 struct IfStatement {
-    ExprPtr condition;               // 条件表达式
-    Owned<Block> then_block;         // then 分支
-    Owned<Block> else_block;         // else 分支（可选）
+    ExprPtr condition;       // 条件表达式
+    Owned<Block> then_block; // then 分支
+    Owned<Block> else_block; // else 分支（可选）
 };
 
 /// 状态跳转语句: goto StateName;
@@ -411,8 +411,8 @@ struct Statement {
 
 /// 声明来源信息（用于诊断和调试）
 struct DeclarationProvenance {
-    std::string module_name;  // 所属模块名
-    std::string source_path;  // 源文件路径
+    std::string module_name; // 所属模块名
+    std::string source_path; // 源文件路径
 };
 
 // ----------------------------------------------------------------------------
@@ -436,7 +436,7 @@ struct ImportDecl {
 struct ConstDecl {
     DeclarationProvenance provenance;
     std::string name;
-    std::string type;      // 类型（全限定名）
+    std::string type; // 类型（全限定名）
     ExprPtr value;
 };
 
@@ -450,8 +450,8 @@ struct TypeAliasDecl {
 /// 结构体字段声明
 struct FieldDecl {
     std::string name;
-    std::string type;          // 类型（全限定名）
-    ExprPtr default_value;     // 可选的默认值
+    std::string type;      // 类型（全限定名）
+    ExprPtr default_value; // 可选的默认值
 };
 
 /// 结构体声明: struct Name { field1: Type1; ... }
@@ -505,15 +505,15 @@ struct TransitionDecl {
 struct AgentDecl {
     DeclarationProvenance provenance;
     std::string name;
-    std::string input_type;                   // 输入类型（全限定名）
-    std::string context_type;                 // 上下文类型（全限定名）
-    std::string output_type;                  // 输出类型（全限定名）
-    std::vector<std::string> states;          // 状态集合
-    std::string initial_state;                // 初始状态
-    std::vector<std::string> final_states;    // 终止状态集合
-    std::vector<std::string> capabilities;    // 可用 capability 列表
-    std::vector<QuotaItem> quota;             // 资源配额
-    std::vector<TransitionDecl> transitions;  // 合法状态转换
+    std::string input_type;                  // 输入类型（全限定名）
+    std::string context_type;                // 上下文类型（全限定名）
+    std::string output_type;                 // 输出类型（全限定名）
+    std::vector<std::string> states;         // 状态集合
+    std::string initial_state;               // 初始状态
+    std::vector<std::string> final_states;   // 终止状态集合
+    std::vector<std::string> capabilities;   // 可用 capability 列表
+    std::vector<QuotaItem> quota;            // 资源配额
+    std::vector<TransitionDecl> transitions; // 合法状态转换
 };
 
 /// 契约子句
@@ -525,8 +525,8 @@ struct ContractClause {
 /// 契约声明: contract for AgentName { requires ...; ensures ...; }
 struct ContractDecl {
     DeclarationProvenance provenance;
-    std::string target;                        // 目标 Agent
-    std::vector<ContractClause> clauses;       // 契约子句列表
+    std::string target;                  // 目标 Agent
+    std::vector<ContractClause> clauses; // 契约子句列表
 };
 
 // ----------------------------------------------------------------------------
@@ -555,25 +555,25 @@ using StatePolicyItem = std::variant<RetryPolicy, RetryOnPolicy, TimeoutPolicy>;
 struct StateHandler {
     /// 状态处理器摘要（由 IR lowering 阶段计算）
     struct Summary {
-        std::vector<std::string> goto_targets; // 可能跳转到的目标状态
-        bool may_return{false};                // 是否可能执行 return
-        bool may_fallthrough{true};            // 是否可能顺序执行到底
-        std::vector<Path> assigned_paths;      // 被赋值的路径
+        std::vector<std::string> goto_targets;   // 可能跳转到的目标状态
+        bool may_return{false};                  // 是否可能执行 return
+        bool may_fallthrough{true};              // 是否可能顺序执行到底
+        std::vector<Path> assigned_paths;        // 被赋值的路径
         std::vector<std::string> called_targets; // 调用的 capability
-        std::size_t assert_count{0};           // assert 语句数量
+        std::size_t assert_count{0};             // assert 语句数量
     };
 
-    std::string state_name;                // 处理哪个状态
-    std::vector<StatePolicyItem> policy;   // 执行策略
-    Block body;                            // 处理逻辑（语句块）
-    Summary summary;                       // 推导出的摘要信息
+    std::string state_name;              // 处理哪个状态
+    std::vector<StatePolicyItem> policy; // 执行策略
+    Block body;                          // 处理逻辑（语句块）
+    Summary summary;                     // 推导出的摘要信息
 };
 
 /// 流程声明: flow for AgentName { state Init { ... } ... }
 struct FlowDecl {
     DeclarationProvenance provenance;
-    std::string target;                          // 目标 Agent
-    std::vector<StateHandler> state_handlers;    // 各状态的处理器
+    std::string target;                       // 目标 Agent
+    std::vector<StateHandler> state_handlers; // 各状态的处理器
 };
 
 // ----------------------------------------------------------------------------
@@ -605,13 +605,13 @@ struct WorkflowNode {
 struct WorkflowDecl {
     DeclarationProvenance provenance;
     std::string name;
-    std::string input_type;                       // Workflow 输入类型
-    std::string output_type;                      // Workflow 输出类型
-    std::vector<WorkflowNode> nodes;              // DAG 节点列表
-    std::vector<TemporalExprPtr> safety;          // 安全性属性
-    std::vector<TemporalExprPtr> liveness;        // 活性属性
-    ExprPtr return_value;                         // 最终返回值表达式
-    WorkflowExprSummary return_summary;           // 返回值表达式的摘要
+    std::string input_type;                // Workflow 输入类型
+    std::string output_type;               // Workflow 输出类型
+    std::vector<WorkflowNode> nodes;       // DAG 节点列表
+    std::vector<TemporalExprPtr> safety;   // 安全性属性
+    std::vector<TemporalExprPtr> liveness; // 活性属性
+    ExprPtr return_value;                  // 最终返回值表达式
+    WorkflowExprSummary return_summary;    // 返回值表达式的摘要
 };
 
 // ----------------------------------------------------------------------------
@@ -628,7 +628,7 @@ enum class FormalObservationScopeKind {
 /// 形式化观察的范围
 struct FormalObservationScope {
     FormalObservationScopeKind kind{FormalObservationScopeKind::ContractClause};
-    std::string owner;       // 所属 Agent 或 Workflow
+    std::string owner;           // 所属 Agent 或 Workflow
     std::size_t clause_index{0}; // 子句索引
     std::size_t atom_index{0};   // 原子索引
 };
@@ -649,8 +649,8 @@ using FormalObservationNode = std::variant<CalledCapabilityObservation, Embedded
 
 /// 形式化观察（用于 SMV 模型生成）
 struct FormalObservation {
-    std::string symbol;             // 观察符号
-    FormalObservationNode node;     // 观察内容
+    std::string symbol;         // 观察符号
+    FormalObservationNode node; // 观察内容
 };
 
 // ----------------------------------------------------------------------------
@@ -674,7 +674,7 @@ using Decl = std::variant<ModuleDecl,
 /// IR 程序 — 编译单元的完整 IR 表示
 struct Program {
     std::string format_version{std::string(kFormatVersion)};
-    std::vector<Decl> declarations;                  // 所有顶层声明
+    std::vector<Decl> declarations;                     // 所有顶层声明
     std::vector<FormalObservation> formal_observations; // 形式化观察列表
 };
 

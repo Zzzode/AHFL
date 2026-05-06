@@ -17,7 +17,11 @@ inline constexpr std::string_view kProviderConformanceReportFormatVersion =
     "ahfl.durable-store-import-provider-conformance-report.v1";
 
 // 契约检查结果枚举
-enum class ConformanceCheckResult { Pass, Fail, Skipped };
+enum class ConformanceCheckResult {
+    Pass,
+    Fail,
+    Skipped
+};
 
 // 单个契约检查项
 struct ConformanceCheckItem {
@@ -75,9 +79,9 @@ struct ProviderConformanceReportResult {
 validate_provider_conformance_report(const ProviderConformanceReport &report);
 
 // 构建函数 - 消费 v0.40-v0.42 的 artifact
-[[nodiscard]] ProviderConformanceReportResult build_provider_conformance_report(
-    const ProviderCompatibilityReport &compatibility_report,
-    const ProviderRegistry &registry,
-    const ProviderProductionReadinessEvidence &readiness_evidence);
+[[nodiscard]] ProviderConformanceReportResult
+build_provider_conformance_report(const ProviderCompatibilityReport &compatibility_report,
+                                  const ProviderRegistry &registry,
+                                  const ProviderProductionReadinessEvidence &readiness_evidence);
 
 } // namespace ahfl::durable_store_import

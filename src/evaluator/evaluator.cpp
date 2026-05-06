@@ -21,18 +21,15 @@ EvalResult make_error(std::string message) {
 // Literal evaluation
 // ============================================================================
 
-EvalResult eval_none_literal(const ir::NoneLiteralExpr & /*expr*/,
-                             const EvalContext & /*ctx*/) {
+EvalResult eval_none_literal(const ir::NoneLiteralExpr & /*expr*/, const EvalContext & /*ctx*/) {
     return EvalResult{make_none(), {}};
 }
 
-EvalResult eval_bool_literal(const ir::BoolLiteralExpr &expr,
-                             const EvalContext & /*ctx*/) {
+EvalResult eval_bool_literal(const ir::BoolLiteralExpr &expr, const EvalContext & /*ctx*/) {
     return EvalResult{make_bool(expr.value), {}};
 }
 
-EvalResult eval_integer_literal(const ir::IntegerLiteralExpr &expr,
-                                const EvalContext & /*ctx*/) {
+EvalResult eval_integer_literal(const ir::IntegerLiteralExpr &expr, const EvalContext & /*ctx*/) {
     try {
         int64_t val = std::stoll(expr.spelling);
         return EvalResult{make_int(val), {}};
@@ -43,8 +40,7 @@ EvalResult eval_integer_literal(const ir::IntegerLiteralExpr &expr,
     }
 }
 
-EvalResult eval_float_literal(const ir::FloatLiteralExpr &expr,
-                              const EvalContext & /*ctx*/) {
+EvalResult eval_float_literal(const ir::FloatLiteralExpr &expr, const EvalContext & /*ctx*/) {
     try {
         double val = std::stod(expr.spelling);
         return EvalResult{make_float(val), {}};
@@ -55,18 +51,15 @@ EvalResult eval_float_literal(const ir::FloatLiteralExpr &expr,
     }
 }
 
-EvalResult eval_decimal_literal(const ir::DecimalLiteralExpr &expr,
-                                const EvalContext & /*ctx*/) {
+EvalResult eval_decimal_literal(const ir::DecimalLiteralExpr &expr, const EvalContext & /*ctx*/) {
     return EvalResult{make_decimal(expr.spelling), {}};
 }
 
-EvalResult eval_string_literal(const ir::StringLiteralExpr &expr,
-                               const EvalContext & /*ctx*/) {
+EvalResult eval_string_literal(const ir::StringLiteralExpr &expr, const EvalContext & /*ctx*/) {
     return EvalResult{make_string(expr.spelling), {}};
 }
 
-EvalResult eval_duration_literal(const ir::DurationLiteralExpr &expr,
-                                 const EvalContext & /*ctx*/) {
+EvalResult eval_duration_literal(const ir::DurationLiteralExpr &expr, const EvalContext & /*ctx*/) {
     return EvalResult{make_duration(expr.spelling), {}};
 }
 
@@ -79,7 +72,8 @@ EvalResult eval_some_expr(const ir::SomeExpr &expr, const EvalContext &ctx) {
         return make_error("SomeExpr has null inner expression");
     }
     auto inner = eval_expr(*expr.value, ctx);
-    if (inner.has_errors()) return inner;
+    if (inner.has_errors())
+        return inner;
     return EvalResult{make_optional_some(std::move(inner.value)), {}};
 }
 
@@ -93,7 +87,8 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
     // Simple identifier (no members) -> look up in local scope
     if (path.members.empty()) {
         auto val = ctx.get_local(path.root_name);
-        if (val.has_value()) return EvalResult{std::move(*val), {}};
+        if (val.has_value())
+            return EvalResult{std::move(*val), {}};
         return make_error("unresolved path: " + path.root_name);
     }
 
@@ -119,7 +114,8 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
     // Single member: root.member -> lookup_path (input/ctx/node_output scope)
     if (path.members.size() == 1) {
         auto val = ctx.lookup_path(path.root_name, path.members[0]);
-        if (val.has_value()) return EvalResult{std::move(*val), {}};
+        if (val.has_value())
+            return EvalResult{std::move(*val), {}};
         return make_error("unresolved path: " + path.root_name + "." + path.members[0]);
     }
 
@@ -225,7 +221,8 @@ EvalResult eval_unary_expr(const ir::UnaryExpr &expr, const EvalContext &ctx) {
         return make_error("UnaryExpr has null operand");
     }
     auto operand = eval_expr(*expr.operand, ctx);
-    if (operand.has_errors()) return operand;
+    if (operand.has_errors())
+        return operand;
 
     switch (expr.op) {
     case ir::ExprUnaryOp::Not: {
@@ -311,28 +308,33 @@ EvalResult eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx) 
     }
 
     auto lhs = eval_expr(*expr.lhs, ctx);
-    if (lhs.has_errors()) return lhs;
+    if (lhs.has_errors())
+        return lhs;
     auto rhs = eval_expr(*expr.rhs, ctx);
-    if (rhs.has_errors()) return rhs;
+    if (rhs.has_errors())
+        return rhs;
 
     switch (expr.op) {
     // --- Logical operators ---
     case ir::ExprBinaryOp::And: {
         auto *lb = std::get_if<BoolValue>(&lhs.value.node);
         auto *rb = std::get_if<BoolValue>(&rhs.value.node);
-        if (!lb || !rb) return make_error("'and' requires Bool operands");
+        if (!lb || !rb)
+            return make_error("'and' requires Bool operands");
         return EvalResult{make_bool(lb->value && rb->value), {}};
     }
     case ir::ExprBinaryOp::Or: {
         auto *lb = std::get_if<BoolValue>(&lhs.value.node);
         auto *rb = std::get_if<BoolValue>(&rhs.value.node);
-        if (!lb || !rb) return make_error("'or' requires Bool operands");
+        if (!lb || !rb)
+            return make_error("'or' requires Bool operands");
         return EvalResult{make_bool(lb->value || rb->value), {}};
     }
     case ir::ExprBinaryOp::Implies: {
         auto *lb = std::get_if<BoolValue>(&lhs.value.node);
         auto *rb = std::get_if<BoolValue>(&rhs.value.node);
-        if (!lb || !rb) return make_error("'implies' requires Bool operands");
+        if (!lb || !rb)
+            return make_error("'implies' requires Bool operands");
         return EvalResult{make_bool(!lb->value || rb->value), {}};
     }
 
@@ -348,11 +350,13 @@ EvalResult eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx) 
         // Bool == Bool
         auto *lb = std::get_if<BoolValue>(&lhs.value.node);
         auto *rb = std::get_if<BoolValue>(&rhs.value.node);
-        if (lb && rb) return EvalResult{make_bool(lb->value == rb->value), {}};
+        if (lb && rb)
+            return EvalResult{make_bool(lb->value == rb->value), {}};
         // String == String
         auto *ls = std::get_if<StringValue>(&lhs.value.node);
         auto *rs = std::get_if<StringValue>(&rhs.value.node);
-        if (ls && rs) return EvalResult{make_bool(ls->value == rs->value), {}};
+        if (ls && rs)
+            return EvalResult{make_bool(ls->value == rs->value), {}};
         // Enum == Enum
         auto *le = std::get_if<EnumValue>(&lhs.value.node);
         auto *re = std::get_if<EnumValue>(&rhs.value.node);
@@ -369,15 +373,18 @@ EvalResult eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx) 
     case ir::ExprBinaryOp::NotEqual: {
         // Inline equality check and negate result
         if (auto nums = extract_numeric(lhs.value, rhs.value)) {
-            if (nums->both_int) return EvalResult{make_bool(nums->lhs_int != nums->rhs_int), {}};
+            if (nums->both_int)
+                return EvalResult{make_bool(nums->lhs_int != nums->rhs_int), {}};
             return EvalResult{make_bool(nums->lhs_float != nums->rhs_float), {}};
         }
         auto *lb = std::get_if<BoolValue>(&lhs.value.node);
         auto *rb2 = std::get_if<BoolValue>(&rhs.value.node);
-        if (lb && rb2) return EvalResult{make_bool(lb->value != rb2->value), {}};
+        if (lb && rb2)
+            return EvalResult{make_bool(lb->value != rb2->value), {}};
         auto *ls = std::get_if<StringValue>(&lhs.value.node);
         auto *rs = std::get_if<StringValue>(&rhs.value.node);
-        if (ls && rs) return EvalResult{make_bool(ls->value != rs->value), {}};
+        if (ls && rs)
+            return EvalResult{make_bool(ls->value != rs->value), {}};
         auto *le = std::get_if<EnumValue>(&lhs.value.node);
         auto *re = std::get_if<EnumValue>(&rhs.value.node);
         if (le && re) {
@@ -393,66 +400,86 @@ EvalResult eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx) 
     // --- Comparison operators ---
     case ir::ExprBinaryOp::Less: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'<' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_bool(nums->lhs_int < nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'<' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_bool(nums->lhs_int < nums->rhs_int), {}};
         return EvalResult{make_bool(nums->lhs_float < nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::LessEqual: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'<=' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_bool(nums->lhs_int <= nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'<=' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_bool(nums->lhs_int <= nums->rhs_int), {}};
         return EvalResult{make_bool(nums->lhs_float <= nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::Greater: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'>' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_bool(nums->lhs_int > nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'>' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_bool(nums->lhs_int > nums->rhs_int), {}};
         return EvalResult{make_bool(nums->lhs_float > nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::GreaterEqual: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'>=' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_bool(nums->lhs_int >= nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'>=' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_bool(nums->lhs_int >= nums->rhs_int), {}};
         return EvalResult{make_bool(nums->lhs_float >= nums->rhs_float), {}};
     }
 
     // --- Arithmetic operators ---
     case ir::ExprBinaryOp::Add: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'+' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_int(nums->lhs_int + nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'+' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_int(nums->lhs_int + nums->rhs_int), {}};
         return EvalResult{make_float(nums->lhs_float + nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::Subtract: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'-' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_int(nums->lhs_int - nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'-' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_int(nums->lhs_int - nums->rhs_int), {}};
         return EvalResult{make_float(nums->lhs_float - nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::Multiply: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'*' requires numeric operands");
-        if (nums->both_int) return EvalResult{make_int(nums->lhs_int * nums->rhs_int), {}};
+        if (!nums)
+            return make_error("'*' requires numeric operands");
+        if (nums->both_int)
+            return EvalResult{make_int(nums->lhs_int * nums->rhs_int), {}};
         return EvalResult{make_float(nums->lhs_float * nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::Divide: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'/' requires numeric operands");
+        if (!nums)
+            return make_error("'/' requires numeric operands");
         if (nums->both_int) {
-            if (nums->rhs_int == 0) return make_error("division by zero");
+            if (nums->rhs_int == 0)
+                return make_error("division by zero");
             return EvalResult{make_int(nums->lhs_int / nums->rhs_int), {}};
         }
-        if (nums->rhs_float == 0.0) return make_error("division by zero");
+        if (nums->rhs_float == 0.0)
+            return make_error("division by zero");
         return EvalResult{make_float(nums->lhs_float / nums->rhs_float), {}};
     }
     case ir::ExprBinaryOp::Modulo: {
         auto nums = extract_numeric(lhs.value, rhs.value);
-        if (!nums) return make_error("'%' requires numeric operands");
+        if (!nums)
+            return make_error("'%' requires numeric operands");
         if (nums->both_int) {
-            if (nums->rhs_int == 0) return make_error("modulo by zero");
+            if (nums->rhs_int == 0)
+                return make_error("modulo by zero");
             return EvalResult{make_int(nums->lhs_int % nums->rhs_int), {}};
         }
-        if (nums->rhs_float == 0.0) return make_error("modulo by zero");
+        if (nums->rhs_float == 0.0)
+            return make_error("modulo by zero");
         return EvalResult{make_float(std::fmod(nums->lhs_float, nums->rhs_float)), {}};
     }
     }
@@ -469,7 +496,8 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr, const EvalContex
         return make_error("MemberAccessExpr has null base");
     }
     auto base = eval_expr(*expr.base, ctx);
-    if (base.has_errors()) return base;
+    if (base.has_errors())
+        return base;
 
     // Struct member access
     if (auto *sv = std::get_if<StructValue>(&base.value.node)) {
@@ -500,9 +528,11 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr, const EvalContext 
         return make_error("IndexAccessExpr has null operand");
     }
     auto base = eval_expr(*expr.base, ctx);
-    if (base.has_errors()) return base;
+    if (base.has_errors())
+        return base;
     auto index = eval_expr(*expr.index, ctx);
-    if (index.has_errors()) return index;
+    if (index.has_errors())
+        return index;
 
     auto *lv = std::get_if<ListValue>(&base.value.node);
     if (!lv) {
@@ -548,50 +578,52 @@ EvalResult eval_call_expr(const ir::CallExpr & /*expr*/, const EvalContext & /*c
 // ============================================================================
 
 EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx) {
-    return std::visit([&ctx](const auto &node) -> EvalResult {
-        using T = std::decay_t<decltype(node)>;
-        if constexpr (std::is_same_v<T, ir::NoneLiteralExpr>) {
-            return eval_none_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::BoolLiteralExpr>) {
-            return eval_bool_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::IntegerLiteralExpr>) {
-            return eval_integer_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::FloatLiteralExpr>) {
-            return eval_float_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::DecimalLiteralExpr>) {
-            return eval_decimal_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::StringLiteralExpr>) {
-            return eval_string_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::DurationLiteralExpr>) {
-            return eval_duration_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::SomeExpr>) {
-            return eval_some_expr(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::PathExpr>) {
-            return eval_path_expr(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::QualifiedValueExpr>) {
-            return eval_qualified_value_expr(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::CallExpr>) {
-            return eval_call_expr(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {
-            return eval_struct_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::ListLiteralExpr>) {
-            return eval_list_literal(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::SetLiteralExpr>) {
-            return make_error("SetLiteralExpr not supported in v0.51");
-        } else if constexpr (std::is_same_v<T, ir::MapLiteralExpr>) {
-            return make_error("MapLiteralExpr not supported in v0.51");
-        } else if constexpr (std::is_same_v<T, ir::UnaryExpr>) {
-            return eval_unary_expr(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::BinaryExpr>) {
-            return eval_binary_expr(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::MemberAccessExpr>) {
-            return eval_member_access(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::IndexAccessExpr>) {
-            return eval_index_access(node, ctx);
-        } else if constexpr (std::is_same_v<T, ir::GroupExpr>) {
-            return eval_group_expr(node, ctx);
-        }
-    }, expr.node);
+    return std::visit(
+        [&ctx](const auto &node) -> EvalResult {
+            using T = std::decay_t<decltype(node)>;
+            if constexpr (std::is_same_v<T, ir::NoneLiteralExpr>) {
+                return eval_none_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::BoolLiteralExpr>) {
+                return eval_bool_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::IntegerLiteralExpr>) {
+                return eval_integer_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::FloatLiteralExpr>) {
+                return eval_float_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::DecimalLiteralExpr>) {
+                return eval_decimal_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::StringLiteralExpr>) {
+                return eval_string_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::DurationLiteralExpr>) {
+                return eval_duration_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::SomeExpr>) {
+                return eval_some_expr(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::PathExpr>) {
+                return eval_path_expr(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::QualifiedValueExpr>) {
+                return eval_qualified_value_expr(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::CallExpr>) {
+                return eval_call_expr(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {
+                return eval_struct_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::ListLiteralExpr>) {
+                return eval_list_literal(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::SetLiteralExpr>) {
+                return make_error("SetLiteralExpr not supported in v0.51");
+            } else if constexpr (std::is_same_v<T, ir::MapLiteralExpr>) {
+                return make_error("MapLiteralExpr not supported in v0.51");
+            } else if constexpr (std::is_same_v<T, ir::UnaryExpr>) {
+                return eval_unary_expr(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::BinaryExpr>) {
+                return eval_binary_expr(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::MemberAccessExpr>) {
+                return eval_member_access(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::IndexAccessExpr>) {
+                return eval_index_access(node, ctx);
+            } else if constexpr (std::is_same_v<T, ir::GroupExpr>) {
+                return eval_group_expr(node, ctx);
+            }
+        },
+        expr.node);
 }
 
 } // namespace ahfl::evaluator

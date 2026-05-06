@@ -91,10 +91,10 @@ validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &repo
     return ProviderOptInDecisionReportValidationResult{std::move(diagnostics)};
 }
 
-[[nodiscard]] ProviderOptInDecisionReportResult build_provider_opt_in_decision_report(
-    const ApprovalReceipt &approval_receipt,
-    const ProviderConfigBundleValidationReport &config_report,
-    const ProviderSelectionPlan &selection_plan) {
+[[nodiscard]] ProviderOptInDecisionReportResult
+build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
+                                      const ProviderConfigBundleValidationReport &config_report,
+                                      const ProviderSelectionPlan &selection_plan) {
 
     DiagnosticBag diagnostics;
     ProviderOptInDecisionReport report;
