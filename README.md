@@ -1,461 +1,185 @@
-# AHFL
+<p align="center">
+  <h1 align="center">AHFL</h1>
+  <p align="center">
+    <strong>Agent 控制平面 DSL — 让 Agent 行为在执行前可审计</strong>
+  </p>
+  <p align="center">
+    <a href="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml"><img src="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+    <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg" alt="C++23">
+    <img src="https://img.shields.io/badge/CMake-3.22%2B-064F8C.svg" alt="CMake 3.22+">
+  </p>
+</p>
 
-AHFL is a strongly typed DSL and compiler toolchain for describing agent
-state machines, contracts, flows, and workflow orchestration.
+---
 
-The repository currently contains the C++23 implementation of `ahflc`: a
-compiler-style CLI that parses AHFL source, checks it, validates project-aware
-source graphs, and emits IR / runtime / formal backend outputs.
+AHFL（Agent Handoff Flow Language）是一门强类型 DSL，用于描述 Agent 状态机、行为契约、流程编排与多 Agent 工作流。配套编译器 `ahflc` 负责解析、类型检查、形式化验证，并输出可被下游工具消费的结构化中间表示。
 
-## Why AHFL Exists
+## Highlights
 
-AHFL is meant to make agent behavior auditable before it becomes runtime code:
+- **状态机建模** — Agent 以显式状态、转移、能力白名单定义
+- **行为契约** — `requires` / `ensures` / `invariant` / `forbid` 表达前后置条件
+- **工作流编排** — DAG 拓扑调度 + 安全性/活性时序公式
+- **端到端执行** — 本地解释器 + LLM Provider 适配器，支持真实多 Agent 协作
+- **形式化后端** — 受限 SMV 输出支持模型检查
+- **零运行时依赖** — 纯 C++23 编译器，无外部库依赖
 
-- model an agent as an explicit state machine
-- whitelist capabilities the agent may call
-- express preconditions, postconditions, invariants, and forbidden behavior
-- type-check flow logic and workflow data movement
-- emit stable machine-readable artifacts for downstream tooling
-
-The short version: AHFL tries to move agent orchestration from “prompt plus
-glue code” into a checked, inspectable contract.
-
-## Language Sketch
+## Language Preview
 
 ```ahfl
 agent RefundAudit {
     input: RefundRequest;
-    context: RefundContext;
     output: RefundDecision;
     states: [Init, Auditing, Approved, Rejected, Terminated];
     initial: Init;
     final: [Terminated];
-    capabilities: [OrderQuery, AuditDecision, TicketCreate];
+    capabilities: [OrderQuery, AuditDecision];
 
     transition Init -> Auditing;
     transition Auditing -> Approved;
     transition Auditing -> Rejected;
-    transition Approved -> Terminated;
-    transition Rejected -> Terminated;
 }
 
 contract for RefundAudit {
     requires: order_exists(input.order_id);
     invariant: always not called(RefundExecute);
-    forbid: always not called(UserInfoModify);
 }
 
-workflow RefundAuditWorkflow {
+workflow RefundWorkflow {
     input: RefundRequest;
     output: RefundDecision;
-
     node audit: RefundAudit(input);
-
-    safety: always not running(audit) or eventually completed(audit);
     liveness: eventually completed(audit, Terminated);
-
     return: audit;
 }
 ```
 
-Full example: [`examples/refund_audit_core_v0_1.ahfl`](examples/refund_audit_core_v0_1.ahfl)
-
 ## Quick Start
 
-Requirements:
+### Prerequisites
 
-- CMake 3.22+
-- C++23 compiler
-- Ninja, when using the checked-in presets
+| Tool | Version |
+|------|---------|
+| C++ Compiler | C++23 support (GCC 13+, Clang 17+, Apple Clang 15+) |
+| CMake | 3.22+ |
+| Ninja | recommended |
 
-Build:
+### Build & Run
 
 ```bash
+# 配置 & 构建
 cmake --preset dev
 cmake --build --preset build-dev
-```
 
-Check the bundled example:
-
-```bash
+# 类型检查
 ./build/dev/src/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
-```
 
-Inspect compiler output:
-
-```bash
-./build/dev/src/cli/ahflc dump-ast examples/refund_audit_core_v0_1.ahfl
-./build/dev/src/cli/ahflc dump-types examples/refund_audit_core_v0_1.ahfl
+# 输出 IR
 ./build/dev/src/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
-```
 
-Run the regression suite:
+# 真实 LLM 执行（需要配置 ~/.ahfl/llm_config.json）
+./build/dev/src/cli/ahfl-run examples/refund_audit_core_v0_1.ahfl --workflow RefundWorkflow
 
-```bash
+# 运行测试
 ctest --preset test-dev
 ```
 
-## What `ahflc` Does
+## Architecture
 
-The current pipeline is:
-
-```text
-AHFL source
-  -> ANTLR parser
-  -> hand-written AST
-  -> resolver
-  -> type checker
-  -> validator
-  -> backend emitters
+```mermaid
+flowchart LR
+    subgraph Frontend
+        A[AHFL Source] --> B[ANTLR Parser]
+        B --> C[AST]
+        C --> D[Resolver]
+        D --> E[Type Checker]
+        E --> F[Validator]
+    end
+    subgraph Backend
+        F --> G[IR Lowering]
+        G --> H[JSON / Native Emitter]
+        G --> I[SMV Formal Backend]
+        G --> J[Runtime Session]
+    end
+    subgraph Execution
+        J --> K[Evaluator]
+        K --> L[State Machine Runtime]
+        L --> M[Workflow DAG Scheduler]
+        M --> N[LLM Provider Bridge]
+    end
 ```
 
-Supported frontend concepts include:
+## Project Structure
 
-- declarations: `struct`, `enum`, `const`, `type`, `capability`, `predicate`
-- agent definitions with states, transitions, quotas, and capability allowlists
-- `contract for` blocks with `requires`, `ensures`, `invariant`, and `forbid`
-- `flow for` blocks with state handlers, calls, assignments, `if`, `goto`, and `return`
-- DAG-style `workflow` definitions with safety and liveness formulas
-- project-aware loading through search roots, project descriptors, and workspaces
-
-Backend outputs:
-
-| Command | Output |
-| --- | --- |
-| `emit-ir` | stable textual semantic IR |
-| `emit-ir-json` | machine-readable structured IR |
-| `emit-summary` | capability-oriented backend summary |
-| `emit-native-json` | runtime-facing Native handoff package |
-| `emit-execution-plan` | execution plan artifact for planner / dry-run bootstrap |
-| `emit-runtime-session` | deterministic runtime session snapshot for local runtime bootstrap |
-| `emit-execution-journal` | deterministic event journal for replay / audit bootstrap |
-| `emit-replay-view` | deterministic replay projection over plan, session, and journal |
-| `emit-scheduler-snapshot` | deterministic scheduler-facing snapshot over plan, session, journal, and replay |
-| `emit-checkpoint-record` | deterministic checkpoint-facing record over plan, session, journal, replay, and snapshot |
-| `emit-checkpoint-review` | reviewer-facing checkpoint summary over checkpoint record |
-| `emit-scheduler-review` | reviewer-facing scheduler decision summary over scheduler snapshot |
-| `emit-persistence-descriptor` | deterministic persistence descriptor over checkpoint record |
-| `emit-persistence-review` | reviewer-facing persistence summary over persistence descriptor |
-| `emit-export-manifest` | deterministic export manifest for store-import bootstrap |
-| `emit-export-review` | reviewer-facing export summary over export manifest |
-| `emit-store-import-descriptor` | deterministic store-import descriptor over export manifest |
-| `emit-store-import-review` | reviewer-facing store-import summary over store-import descriptor |
-| `emit-durable-store-import-request` | durable-store-import request artifact for adapter-facing handoff |
-| `emit-durable-store-import-review` | reviewer-facing durable-store-import summary over durable request |
-| `emit-durable-store-import-decision` | durable adapter decision artifact over durable request |
-| `emit-durable-store-import-receipt` | durable adapter receipt artifact over durable decision |
-| `emit-durable-store-import-receipt-persistence-request` | durable receipt persistence request artifact over durable receipt |
-| `emit-durable-store-import-decision-review` | reviewer-facing durable adapter decision summary |
-| `emit-durable-store-import-receipt-review` | reviewer-facing durable adapter receipt summary |
-| `emit-durable-store-import-receipt-persistence-review` | reviewer-facing durable receipt persistence summary |
-| `emit-durable-store-import-receipt-persistence-response` | durable receipt persistence response artifact over persistence request |
-| `emit-durable-store-import-receipt-persistence-response-review` | reviewer-facing durable receipt persistence response summary |
-| `emit-durable-store-import-adapter-execution` | local fake durable store adapter execution receipt over persistence response |
-| `emit-durable-store-import-recovery-preview` | reviewer-facing recovery command preview over adapter execution receipt |
-| `emit-durable-store-import-provider-write-attempt` | provider-neutral durable store write attempt preview over adapter execution receipt |
-| `emit-durable-store-import-provider-recovery-handoff` | reviewer-facing provider recovery handoff preview over provider write attempt |
-| `emit-durable-store-import-provider-driver-binding` | provider driver binding plan over provider write attempt |
-| `emit-durable-store-import-provider-driver-readiness` | reviewer-facing provider driver readiness review over driver binding plan |
-| `emit-durable-store-import-provider-runtime-preflight` | provider runtime preflight plan over driver binding plan |
-| `emit-durable-store-import-provider-runtime-readiness` | reviewer-facing provider runtime readiness review over runtime preflight plan |
-| `emit-durable-store-import-provider-sdk-envelope` | provider SDK request envelope plan over runtime preflight plan |
-| `emit-durable-store-import-provider-sdk-handoff-readiness` | reviewer-facing provider SDK handoff readiness review over SDK request envelope plan |
-| `emit-durable-store-import-provider-host-execution` | provider host execution plan over SDK request envelope plan |
-| `emit-durable-store-import-provider-host-execution-readiness` | reviewer-facing provider host execution readiness review over host execution plan |
-| `emit-durable-store-import-provider-local-host-execution-receipt` | simulated provider local host execution receipt over host execution plan |
-| `emit-durable-store-import-provider-local-host-execution-receipt-review` | reviewer-facing provider local host execution receipt review |
-| `emit-durable-store-import-provider-sdk-adapter-request` | provider SDK adapter request plan over local host execution receipt |
-| `emit-durable-store-import-provider-sdk-adapter-response-placeholder` | provider SDK adapter response placeholder over adapter request plan |
-| `emit-durable-store-import-provider-sdk-adapter-readiness` | reviewer-facing provider SDK adapter readiness review over response placeholder |
-| `emit-durable-store-import-provider-sdk-adapter-interface` | provider SDK adapter interface descriptor plan over adapter request plan |
-| `emit-durable-store-import-provider-sdk-adapter-interface-review` | reviewer-facing provider SDK adapter interface readiness review |
-| `emit-durable-store-import-provider-config-load` | provider config load plan over adapter interface plan |
-| `emit-durable-store-import-provider-config-snapshot` | provider config snapshot placeholder over config load plan |
-| `emit-durable-store-import-provider-config-readiness` | reviewer-facing provider config readiness review |
-| `emit-durable-store-import-provider-secret-resolver-request` | secret handle resolver request plan over provider config snapshot |
-| `emit-durable-store-import-provider-secret-resolver-response` | secret resolver response placeholder over resolver request |
-| `emit-durable-store-import-provider-secret-policy-review` | reviewer-facing secret-free policy review |
-| `emit-durable-store-import-provider-local-host-harness-request` | test-only local host harness request over secret policy review |
-| `emit-durable-store-import-provider-local-host-harness-record` | sandboxed local host harness execution record |
-| `emit-durable-store-import-provider-local-host-harness-review` | reviewer-facing local host harness review |
-| `emit-durable-store-import-provider-sdk-payload-plan` | fake provider SDK payload materialization plan |
-| `emit-durable-store-import-provider-sdk-payload-audit` | reviewer-facing SDK payload redaction and audit summary |
-| `emit-durable-store-import-provider-sdk-mock-adapter-contract` | provider SDK mock adapter contract |
-| `emit-durable-store-import-provider-sdk-mock-adapter-execution` | mock adapter execution result and normalization |
-| `emit-durable-store-import-provider-sdk-mock-adapter-readiness` | reviewer-facing mock adapter readiness review |
-| `emit-durable-store-import-provider-local-filesystem-alpha-plan` | opt-in local filesystem provider alpha plan |
-| `emit-durable-store-import-provider-local-filesystem-alpha-result` | local filesystem provider alpha normalized result |
-| `emit-durable-store-import-provider-local-filesystem-alpha-readiness` | reviewer-facing local filesystem provider alpha readiness review |
-| `emit-durable-store-import-provider-write-retry-decision` | idempotency and retry decision over provider write result |
-| `emit-durable-store-import-provider-write-commit-receipt` | durable provider write commit receipt |
-| `emit-durable-store-import-provider-write-commit-review` | reviewer-facing provider write commit review |
-| `emit-durable-store-import-provider-write-recovery-checkpoint` | provider write recovery checkpoint over commit receipt |
-| `emit-durable-store-import-provider-write-recovery-plan` | provider write recovery plan over recovery checkpoint |
-| `emit-durable-store-import-provider-write-recovery-review` | reviewer-facing provider write recovery review |
-| `emit-durable-store-import-provider-failure-taxonomy-report` | provider failure taxonomy report over mock adapter result and recovery plan |
-| `emit-durable-store-import-provider-failure-taxonomy-review` | reviewer-facing provider failure taxonomy review |
-| `emit-durable-store-import-provider-execution-audit-event` | provider execution audit event over failure taxonomy report |
-| `emit-durable-store-import-provider-telemetry-summary` | provider telemetry summary over execution audit event |
-| `emit-durable-store-import-provider-operator-review-event` | reviewer-facing provider operator review event |
-| `emit-durable-store-import-provider-compatibility-test-manifest` | provider compatibility suite manifest over operator review event |
-| `emit-durable-store-import-provider-fixture-matrix` | provider fixture matrix for compatibility suite coverage |
-| `emit-durable-store-import-provider-compatibility-report` | provider compatibility report over fixture matrix and telemetry summary |
-| `emit-durable-store-import-provider-registry` | multi-provider registry over compatibility report |
-| `emit-durable-store-import-provider-selection-plan` | provider selection and fallback plan over registry |
-| `emit-durable-store-import-provider-capability-negotiation-review` | reviewer-facing provider capability negotiation review |
-| `emit-durable-store-import-provider-production-readiness-evidence` | production readiness evidence package over provider execution artifacts |
-| `emit-durable-store-import-provider-production-readiness-review` | provider production readiness release-gate review |
-| `emit-durable-store-import-provider-production-readiness-report` | operator-facing provider production readiness report |
-| `emit-audit-report` | deterministic audit report across plan, session, journal, and trace |
-| `emit-dry-run-trace` | deterministic local dry-run trace with capability mocks |
-| `emit-package-review` | package-aware review and planner bootstrap summary |
-| `emit-smv` | restricted formal backend for model-check-oriented tooling |
-
-## Project-Aware Inputs
-
-Most commands support the same input modes:
-
-```bash
-# Single file
-./build/dev/src/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
-
-# Source graph rooted at one or more directories
-./build/dev/src/cli/ahflc check \
-  --search-root tests/project/check_ok \
-  tests/project/check_ok/app/main.ahfl
-
-# Project descriptor
-./build/dev/src/cli/ahflc check \
-  --project tests/project/check_ok/ahfl.project.json
-
-# Workspace descriptor
-./build/dev/src/cli/ahflc check \
-  --workspace tests/project/ahfl.workspace.json \
-  --project-name check-ok
 ```
-
-Use `dump-project` when you only want to inspect the loaded source graph.
-
-## Common Commands
-
-```bash
-# Configure / build
-cmake --preset dev
-cmake --build --preset build-dev
-
-# Format handwritten C++ sources
-cmake --build --preset build-format
-cmake --build --preset build-format-check
-
-# Test
-ctest --preset test-dev
-ctest --preset test-dev -L ahfl-v0.3
-ctest --preset test-dev -L ahfl-v0.15
-ctest --preset test-dev -L ahfl-v0.16
-ctest --preset test-dev -L ahfl-v0.19
-ctest --preset test-dev -L ahfl-v0.20
-ctest --preset test-dev -L ahfl-v0.21
-ctest --preset test-dev -L ahfl-v0.22
-ctest --preset test-dev -L ahfl-v0.23
-ctest --preset test-dev -L ahfl-v0.24
-ctest --preset test-dev -L ahfl-v0.25
-ctest --preset test-dev -L ahfl-v0.26
-ctest --preset test-dev -L ahfl-v0.27
-ctest --preset test-dev -L ahfl-v0.28
-ctest --preset test-dev -L ahfl-v0.29
-ctest --preset test-dev -L ahfl-v0.30
-ctest --preset test-dev -L ahfl-v0.31
-ctest --preset test-dev -L ahfl-v0.32
-ctest --preset test-dev -L ahfl-v0.33
-ctest --preset test-dev -L ahfl-v0.34
-ctest --preset test-dev -L ahfl-v0.35
-ctest --preset test-dev -L ahfl-v0.36
-ctest --preset test-dev -L ahfl-v0.37
-ctest --preset test-dev -L ahfl-v0.38
-ctest --preset test-dev -L ahfl-v0.39
-ctest --preset test-dev -L ahfl-v0.40
-ctest --preset test-dev -L ahfl-v0.41
-ctest --preset test-dev -L ahfl-v0.42
-
-# Regenerate the C++ parser module
-ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
+├── grammar/              ANTLR4 grammar definition
+├── include/ahfl/         Public compiler headers
+├── src/
+│   ├── frontend/         Parser, AST, project loading
+│   ├── semantics/        Resolver, type checker, validator
+│   ├── ir/               Semantic IR model
+│   ├── backends/         Emitters (IR, JSON, Native, SMV, ...)
+│   ├── evaluator/        Expression & statement interpreter
+│   ├── runtime/          Agent/Workflow runtime engine
+│   ├── llm_provider/     LLM capability provider (OpenAI-compatible)
+│   └── cli/              CLI entry points (ahflc, ahfl-run)
+├── tests/                Regression & E2E tests (815+)
+├── examples/             Example .ahfl programs
+└── docs/                 Specs, designs, plans
 ```
-
-Available configure presets:
-
-- `dev`
-- `release`
-- `relwithdebinfo`
-- `asan`
-
-## Repository Map
-
-| Path | Purpose |
-| --- | --- |
-| `grammar/AHFL.g4` | source grammar |
-| `src/parser/generated/` | generated ANTLR C++ parser sources |
-| `include/ahfl/` | public compiler headers |
-| `src/frontend/` | parsing, AST lowering, project loading |
-| `src/semantics/` | resolver, type checker, validator |
-| `src/ir/` | semantic IR model |
-| `src/backends/` | IR, JSON, Native, summary, and SMV emitters |
-| `src/cli/ahflc.cpp` | CLI entry point |
-| `tests/` | regression and golden tests |
-| `docs/` | spec, design, plan, and reference docs |
 
 ## Documentation
 
-Use the repo index for the full typed doc map:
+| Category | Entry Point |
+|----------|-------------|
+| Language Spec | [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) |
+| CLI Reference | [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md) |
+| IR Format | [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md) |
+| Project System | [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) |
+| Full Doc Index | [`docs/README.md`](docs/README.md) |
 
-- [`docs/README.md`](docs/README.md) — full document index and naming rules
+## Development
 
-Recommended entry points:
+```bash
+# 可用 Configure Presets
+cmake --preset dev            # Debug + sanitizer-friendly
+cmake --preset release        # Release 优化
+cmake --preset asan           # AddressSanitizer
 
-- Current completed provider production readiness boundary
-  - [`docs/plan/roadmap-v0.42.zh.md`](docs/plan/roadmap-v0.42.zh.md)
-  - [`docs/plan/issue-backlog-v0.42.zh.md`](docs/plan/issue-backlog-v0.42.zh.md)
-  - [`docs/design/native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md`](docs/design/native-durable-store-provider-production-readiness-bootstrap-v0.42.zh.md)
-  - [`docs/reference/durable-store-provider-production-readiness-compatibility-v0.42.zh.md`](docs/reference/durable-store-provider-production-readiness-compatibility-v0.42.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.42.zh.md`](docs/reference/native-consumer-matrix-v0.42.zh.md)
-  - [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md)
-- Completed provider registry boundary
-  - [`docs/plan/roadmap-v0.41.zh.md`](docs/plan/roadmap-v0.41.zh.md)
-  - [`docs/plan/issue-backlog-v0.41.zh.md`](docs/plan/issue-backlog-v0.41.zh.md)
-  - [`docs/design/native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md`](docs/design/native-durable-store-provider-registry-selection-bootstrap-v0.41.zh.md)
-  - [`docs/reference/durable-store-provider-registry-selection-compatibility-v0.41.zh.md`](docs/reference/durable-store-provider-registry-selection-compatibility-v0.41.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.41.zh.md`](docs/reference/native-consumer-matrix-v0.41.zh.md)
-  - [`docs/reference/contributor-guide-v0.41.zh.md`](docs/reference/contributor-guide-v0.41.zh.md)
-- Completed provider compatibility suite boundary
-  - [`docs/plan/roadmap-v0.40.zh.md`](docs/plan/roadmap-v0.40.zh.md)
-  - [`docs/plan/issue-backlog-v0.40.zh.md`](docs/plan/issue-backlog-v0.40.zh.md)
-  - [`docs/design/native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md`](docs/design/native-durable-store-provider-compatibility-suite-bootstrap-v0.40.zh.md)
-  - [`docs/reference/durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md`](docs/reference/durable-store-provider-compatibility-suite-compatibility-v0.40.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.40.zh.md`](docs/reference/native-consumer-matrix-v0.40.zh.md)
-  - [`docs/reference/contributor-guide-v0.40.zh.md`](docs/reference/contributor-guide-v0.40.zh.md)
-- Completed provider audit boundary
-  - [`docs/plan/roadmap-v0.39.zh.md`](docs/plan/roadmap-v0.39.zh.md)
-  - [`docs/plan/issue-backlog-v0.39.zh.md`](docs/plan/issue-backlog-v0.39.zh.md)
-  - [`docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md`](docs/design/native-durable-store-provider-observability-audit-bootstrap-v0.39.zh.md)
-  - [`docs/reference/durable-store-provider-observability-audit-compatibility-v0.39.zh.md`](docs/reference/durable-store-provider-observability-audit-compatibility-v0.39.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.39.zh.md`](docs/reference/native-consumer-matrix-v0.39.zh.md)
-  - [`docs/reference/contributor-guide-v0.39.zh.md`](docs/reference/contributor-guide-v0.39.zh.md)
-- Completed provider failure taxonomy boundary
-  - [`docs/plan/roadmap-v0.38.zh.md`](docs/plan/roadmap-v0.38.zh.md)
-  - [`docs/plan/issue-backlog-v0.38.zh.md`](docs/plan/issue-backlog-v0.38.zh.md)
-  - [`docs/design/native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md`](docs/design/native-durable-store-provider-failure-taxonomy-bootstrap-v0.38.zh.md)
-  - [`docs/reference/durable-store-provider-failure-taxonomy-compatibility-v0.38.zh.md`](docs/reference/durable-store-provider-failure-taxonomy-compatibility-v0.38.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.38.zh.md`](docs/reference/native-consumer-matrix-v0.38.zh.md)
-  - [`docs/reference/contributor-guide-v0.38.zh.md`](docs/reference/contributor-guide-v0.38.zh.md)
-- Completed provider recovery boundary
-  - [`docs/plan/roadmap-v0.37.zh.md`](docs/plan/roadmap-v0.37.zh.md)
-  - [`docs/plan/issue-backlog-v0.37.zh.md`](docs/plan/issue-backlog-v0.37.zh.md)
-  - [`docs/design/native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md`](docs/design/native-durable-store-provider-recovery-resume-bootstrap-v0.37.zh.md)
-  - [`docs/reference/durable-store-provider-recovery-resume-compatibility-v0.37.zh.md`](docs/reference/durable-store-provider-recovery-resume-compatibility-v0.37.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.37.zh.md`](docs/reference/native-consumer-matrix-v0.37.zh.md)
-  - [`docs/reference/contributor-guide-v0.37.zh.md`](docs/reference/contributor-guide-v0.37.zh.md)
-- Completed provider retry boundary
-  - [`docs/plan/roadmap-v0.35.zh.md`](docs/plan/roadmap-v0.35.zh.md)
-  - [`docs/plan/issue-backlog-v0.35.zh.md`](docs/plan/issue-backlog-v0.35.zh.md)
-  - [`docs/design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md`](docs/design/native-durable-store-provider-idempotency-retry-bootstrap-v0.35.zh.md)
-  - [`docs/reference/durable-store-provider-idempotency-retry-compatibility-v0.35.zh.md`](docs/reference/durable-store-provider-idempotency-retry-compatibility-v0.35.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.35.zh.md`](docs/reference/native-consumer-matrix-v0.35.zh.md)
-  - [`docs/reference/contributor-guide-v0.35.zh.md`](docs/reference/contributor-guide-v0.35.zh.md)
-- Completed provider local filesystem alpha boundary
-  - [`docs/plan/roadmap-v0.34.zh.md`](docs/plan/roadmap-v0.34.zh.md)
-  - [`docs/plan/issue-backlog-v0.34.zh.md`](docs/plan/issue-backlog-v0.34.zh.md)
-  - [`docs/design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md`](docs/design/native-durable-store-provider-local-filesystem-alpha-bootstrap-v0.34.zh.md)
-  - [`docs/reference/durable-store-provider-local-filesystem-alpha-compatibility-v0.34.zh.md`](docs/reference/durable-store-provider-local-filesystem-alpha-compatibility-v0.34.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.34.zh.md`](docs/reference/native-consumer-matrix-v0.34.zh.md)
-  - [`docs/reference/contributor-guide-v0.34.zh.md`](docs/reference/contributor-guide-v0.34.zh.md)
-- Completed provider-host-execution baseline
-  - [`docs/plan/roadmap-v0.25.zh.md`](docs/plan/roadmap-v0.25.zh.md)
-  - [`docs/plan/issue-backlog-v0.25.zh.md`](docs/plan/issue-backlog-v0.25.zh.md)
-  - [`docs/design/native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md`](docs/design/native-durable-store-provider-host-execution-prototype-bootstrap-v0.25.zh.md)
-  - [`docs/reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md`](docs/reference/durable-store-provider-host-execution-prototype-compatibility-v0.25.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.25.zh.md`](docs/reference/native-consumer-matrix-v0.25.zh.md)
-  - [`docs/reference/contributor-guide-v0.25.zh.md`](docs/reference/contributor-guide-v0.25.zh.md)
-- Completed provider-SDK-envelope baseline
-  - [`docs/plan/roadmap-v0.24.zh.md`](docs/plan/roadmap-v0.24.zh.md)
-  - [`docs/plan/issue-backlog-v0.24.zh.md`](docs/plan/issue-backlog-v0.24.zh.md)
-  - [`docs/design/native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md`](docs/design/native-durable-store-provider-sdk-envelope-prototype-bootstrap-v0.24.zh.md)
-  - [`docs/reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md`](docs/reference/durable-store-provider-sdk-envelope-prototype-compatibility-v0.24.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.24.zh.md`](docs/reference/native-consumer-matrix-v0.24.zh.md)
-  - [`docs/reference/contributor-guide-v0.24.zh.md`](docs/reference/contributor-guide-v0.24.zh.md)
-- Completed provider-runtime baseline
-  - [`docs/plan/roadmap-v0.23.zh.md`](docs/plan/roadmap-v0.23.zh.md)
-  - [`docs/plan/issue-backlog-v0.23.zh.md`](docs/plan/issue-backlog-v0.23.zh.md)
-  - [`docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md`](docs/design/native-durable-store-provider-runtime-preflight-prototype-bootstrap-v0.23.zh.md)
-  - [`docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md`](docs/reference/durable-store-provider-runtime-preflight-prototype-compatibility-v0.23.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.23.zh.md`](docs/reference/native-consumer-matrix-v0.23.zh.md)
-  - [`docs/reference/contributor-guide-v0.23.zh.md`](docs/reference/contributor-guide-v0.23.zh.md)
-- Completed provider-driver baseline
-  - [`docs/plan/roadmap-v0.22.zh.md`](docs/plan/roadmap-v0.22.zh.md)
-  - [`docs/plan/issue-backlog-v0.22.zh.md`](docs/plan/issue-backlog-v0.22.zh.md)
-  - [`docs/design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md`](docs/design/native-durable-store-provider-driver-prototype-bootstrap-v0.22.zh.md)
-  - [`docs/reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md`](docs/reference/durable-store-provider-driver-prototype-compatibility-v0.22.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.22.zh.md`](docs/reference/native-consumer-matrix-v0.22.zh.md)
-  - [`docs/reference/contributor-guide-v0.22.zh.md`](docs/reference/contributor-guide-v0.22.zh.md)
-- Completed provider-adapter baseline
-  - [`docs/plan/roadmap-v0.21.zh.md`](docs/plan/roadmap-v0.21.zh.md)
-  - [`docs/plan/issue-backlog-v0.21.zh.md`](docs/plan/issue-backlog-v0.21.zh.md)
-  - [`docs/design/native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md`](docs/design/native-durable-store-provider-adapter-prototype-bootstrap-v0.21.zh.md)
-  - [`docs/reference/durable-store-provider-adapter-prototype-compatibility-v0.21.zh.md`](docs/reference/durable-store-provider-adapter-prototype-compatibility-v0.21.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.21.zh.md`](docs/reference/native-consumer-matrix-v0.21.zh.md)
-  - [`docs/reference/contributor-guide-v0.21.zh.md`](docs/reference/contributor-guide-v0.21.zh.md)
-- Previous completed baseline
-  - [`docs/plan/roadmap-v0.18.zh.md`](docs/plan/roadmap-v0.18.zh.md)
-  - [`docs/plan/issue-backlog-v0.18.zh.md`](docs/plan/issue-backlog-v0.18.zh.md)
-  - [`docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md`](docs/design/native-durable-store-adapter-receipt-persistence-prototype-bootstrap-v0.18.zh.md)
-  - [`docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md`](docs/reference/durable-store-adapter-receipt-persistence-prototype-compatibility-v0.18.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.18.zh.md`](docs/reference/native-consumer-matrix-v0.18.zh.md)
-  - [`docs/reference/contributor-guide-v0.18.zh.md`](docs/reference/contributor-guide-v0.18.zh.md)
-  - [`docs/plan/roadmap-v0.17.zh.md`](docs/plan/roadmap-v0.17.zh.md)
-  - [`docs/plan/issue-backlog-v0.17.zh.md`](docs/plan/issue-backlog-v0.17.zh.md)
-  - [`docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md`](docs/design/native-durable-store-adapter-receipt-prototype-bootstrap-v0.17.zh.md)
-  - [`docs/reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md`](docs/reference/durable-store-adapter-receipt-prototype-compatibility-v0.17.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.17.zh.md`](docs/reference/native-consumer-matrix-v0.17.zh.md)
-  - [`docs/reference/contributor-guide-v0.17.zh.md`](docs/reference/contributor-guide-v0.17.zh.md)
-  - [`docs/plan/roadmap-v0.16.zh.md`](docs/plan/roadmap-v0.16.zh.md)
-  - [`docs/plan/issue-backlog-v0.16.zh.md`](docs/plan/issue-backlog-v0.16.zh.md)
-  - [`docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md`](docs/design/native-durable-store-adapter-decision-prototype-bootstrap-v0.16.zh.md)
-  - [`docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md`](docs/reference/durable-store-adapter-decision-prototype-compatibility-v0.16.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.16.zh.md`](docs/reference/native-consumer-matrix-v0.16.zh.md)
-  - [`docs/reference/contributor-guide-v0.16.zh.md`](docs/reference/contributor-guide-v0.16.zh.md)
-  - [`docs/plan/roadmap-v0.15.zh.md`](docs/plan/roadmap-v0.15.zh.md)
-  - [`docs/plan/issue-backlog-v0.15.zh.md`](docs/plan/issue-backlog-v0.15.zh.md)
-  - [`docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md`](docs/design/native-durable-store-import-prototype-bootstrap-v0.15.zh.md)
-  - [`docs/reference/durable-store-import-prototype-compatibility-v0.15.zh.md`](docs/reference/durable-store-import-prototype-compatibility-v0.15.zh.md)
-  - [`docs/reference/native-consumer-matrix-v0.15.zh.md`](docs/reference/native-consumer-matrix-v0.15.zh.md)
-  - [`docs/reference/contributor-guide-v0.15.zh.md`](docs/reference/contributor-guide-v0.15.zh.md)
-  - [`docs/plan/roadmap-v0.14.zh.md`](docs/plan/roadmap-v0.14.zh.md)
-  - [`docs/reference/store-import-prototype-compatibility-v0.14.zh.md`](docs/reference/store-import-prototype-compatibility-v0.14.zh.md)
-  - [`docs/plan/roadmap-v0.13.zh.md`](docs/plan/roadmap-v0.13.zh.md)
-  - [`docs/reference/export-package-prototype-compatibility-v0.13.zh.md`](docs/reference/export-package-prototype-compatibility-v0.13.zh.md)
-- Core references
-  - [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md)
-  - [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md)
-  - [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md)
-  - [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md)
+# 格式化
+cmake --build --preset build-format        # 执行 clang-format
+cmake --build --preset build-format-check  # 仅检查
 
-## Current Boundaries
+# 测试特定版本切片
+ctest --preset test-dev -L ahfl-v0.42
 
-AHFL is not a runtime yet. The compiler currently focuses on:
+# 重新生成 Parser
+ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
+```
 
-- parsing and lowering AHFL source into a structured AST
-- resolving names, aliases, imports, capabilities, and workflow references
-- type-checking values, calls, flow statements, contracts, and workflow nodes
-- validating agent state machines, contracts, workflow DAGs, and temporal formulas
-- emitting stable backend artifacts for integration and verification work
+## Contributing
 
-The restricted `emit-smv` backend intentionally abstracts most data/value
-semantics. Its current boundary is documented in
-[`docs/design/formal-backend-v0.2.zh.md`](docs/design/formal-backend-v0.2.zh.md).
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feat/my-feature`)
+3. 确保 `ctest --preset test-dev` 全部通过
+4. 确保 `cmake --build --preset build-format-check` 无违规
+5. 提交 Pull Request
 
-## CI
+详细指南请参阅 [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md)
 
-CI builds `ahflc` on Ubuntu and macOS, checks formatting on Ubuntu, runs labeled
-project / IR / backend / scheduler / checkpoint / persistence / export-package /
-durable-adapter-decision / durable-adapter-receipt / durable-adapter-receipt-persistence /
-durable-adapter-receipt-persistence-response / provider-driver / provider-runtime /
-provider-SDK-envelope / provider-host-execution / provider-local-host-execution regression slices, and then runs the full
-`ctest` suite.
+## Status
+
+AHFL 当前处于 **v0.56** 阶段，已实现：
+
+- 完整的编译器前端（解析 → 语义分析 → IR 生成）
+- 100+ CLI 命令覆盖从执行计划到 Provider 生产就绪的完整 artifact 链
+- 本地表达式/语句解释器 + 状态机运行时 + 工作流 DAG 调度器
+- LLM Provider 适配器（OpenAI-compatible API，支持真实多 Agent 协作）
+- 815+ 回归测试
+
+## Roadmap
+
+- [ ] 更多 Provider 适配器（本地文件系统、数据库）
+- [ ] WASM 编译目标
+- [ ] LSP 语言服务器
+- [ ] VS Code 插件
+- [ ] 在线 Playground
