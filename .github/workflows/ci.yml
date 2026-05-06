@@ -26,10 +26,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install --yes clang-format-18 ninja-build
+        run: |
+          sudo apt-get update && sudo apt-get install --yes ninja-build pipx
+          pipx install clang-format==18.1.8
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Verify clang-format version
+        run: clang-format --version
 
       - name: Configure
-        run: cmake --preset dev -DCLANG_FORMAT_BIN=/usr/bin/clang-format-18
+        run: cmake --preset dev -DCLANG_FORMAT_BIN=$(which clang-format)
 
       - name: Check formatting
         run: cmake --build --preset build-format-check

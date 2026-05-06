@@ -10,7 +10,7 @@ function(ahfl_enable_format_targets root_dir clang_format_bin)
     if(NOT clang_format_bin)
         message(STATUS "clang-format not found; format targets are disabled")
         message(STATUS "  macOS: brew install llvm@18")
-        message(STATUS "  Linux: sudo apt-get install clang-format-18")
+        message(STATUS "  Linux: pipx install clang-format==18.1.8")
         return()
     endif()
 
@@ -31,7 +31,7 @@ function(ahfl_enable_format_targets root_dir clang_format_bin)
             "  Required: ${AHFL_REQUIRED_CLANG_FORMAT_MAJOR}.x\n"
             "  CI uses clang-format-${AHFL_REQUIRED_CLANG_FORMAT_MAJOR} on Ubuntu 24.04.\n"
             "  Install:  brew install llvm@18  (macOS)\n"
-            "            sudo apt-get install clang-format-18  (Linux)\n"
+            "            pipx install clang-format==18.1.8  (Linux)\n"
             "  Format targets are DISABLED to prevent version drift."
         )
         return()

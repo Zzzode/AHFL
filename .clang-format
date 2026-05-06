@@ -1,7 +1,7 @@
 ---
-# Pinned to clang-format 18.x — must match CI (Ubuntu 24.04).
+# Pinned to clang-format 18.1.8 — must match CI exactly.
 # macOS: brew install llvm@18
-# Linux: sudo apt-get install clang-format-18
+# Linux: pipx install clang-format==18.1.8
 BasedOnStyle: LLVM
 IndentWidth: 4
 ContinuationIndentWidth: 4
