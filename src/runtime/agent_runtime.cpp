@@ -71,8 +71,9 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
     // 设置带 capability 调用支持的表达式求值器
     if (capability_invoker_) {
         auto invoker = capability_invoker_;
-        exec_ctx.expr_eval = [invoker](const ir::Expr &expr,
-                                       const evaluator::EvalContext &eval_ctx) -> evaluator::EvalResult {
+        exec_ctx.expr_eval =
+            [invoker](const ir::Expr &expr,
+                      const evaluator::EvalContext &eval_ctx) -> evaluator::EvalResult {
             // 如果是 CallExpr，使用 capability invoker 处理
             if (auto *call = std::get_if<ir::CallExpr>(&expr.node)) {
                 std::vector<evaluator::Value> arg_values;
@@ -245,8 +246,9 @@ bool AgentRuntime::is_valid_transition(const std::string &from, const std::strin
         return true;
     }
     return std::any_of(
-        agent_.transitions.begin(), agent_.transitions.end(),
-        [&](const ir::TransitionDecl &t) { return t.from_state == from && t.to_state == to; });
+        agent_.transitions.begin(), agent_.transitions.end(), [&](const ir::TransitionDecl &t) {
+            return t.from_state == from && t.to_state == to;
+        });
 }
 
 bool AgentRuntime::is_final_state(const std::string &state_name) const {
@@ -281,14 +283,16 @@ QuotaConfig AgentRuntime::parse_quota(const std::vector<ir::QuotaItem> &items) {
             if (sv.ends_with("ms")) {
                 std::size_t val{0};
                 auto num_part = sv.substr(0, sv.size() - 2);
-                auto [ptr, ec] = std::from_chars(num_part.data(), num_part.data() + num_part.size(), val);
+                auto [ptr, ec] =
+                    std::from_chars(num_part.data(), num_part.data() + num_part.size(), val);
                 if (ec == std::errc{}) {
                     config.max_execution_time = std::chrono::milliseconds(val);
                 }
             } else if (sv.ends_with("s")) {
                 std::size_t val{0};
                 auto num_part = sv.substr(0, sv.size() - 1);
-                auto [ptr, ec] = std::from_chars(num_part.data(), num_part.data() + num_part.size(), val);
+                auto [ptr, ec] =
+                    std::from_chars(num_part.data(), num_part.data() + num_part.size(), val);
                 if (ec == std::errc{}) {
                     config.max_execution_time = std::chrono::milliseconds(val * 1000);
                 }
@@ -302,9 +306,8 @@ QuotaConfig AgentRuntime::parse_quota(const std::vector<ir::QuotaItem> &items) {
 // Factory Function
 // ============================================================================
 
-std::optional<AgentRuntime> build_agent_runtime(const ir::Program &program,
-                                                 const std::string &agent_name,
-                                                 QuotaConfig quota) {
+std::optional<AgentRuntime>
+build_agent_runtime(const ir::Program &program, const std::string &agent_name, QuotaConfig quota) {
     const ir::AgentDecl *agent_decl = nullptr;
     const ir::FlowDecl *flow_decl = nullptr;
 

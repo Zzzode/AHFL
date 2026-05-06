@@ -6,8 +6,8 @@
 namespace ahfl::runtime {
 
 evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
-                                                   const evaluator::EvalContext &eval_ctx,
-                                                   CapabilityRegistry *registry) {
+                                                  const evaluator::EvalContext &eval_ctx,
+                                                  CapabilityRegistry *registry) {
     // 如果不是 CallExpr，委托给标准求值器
     if (!std::holds_alternative<ir::CallExpr>(expr.node)) {
         return evaluator::eval_expr(expr, eval_ctx);

@@ -28,8 +28,8 @@ void CapabilityRegistry::register_function(
 void CapabilityRegistry::register_mock(const std::string &name, Value mock_result) {
     CapabilityBinding binding;
     binding.name = name;
-    binding.handler =
-        [result = std::make_shared<Value>(std::move(mock_result))](const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+    binding.handler = [result = std::make_shared<Value>(std::move(mock_result))](
+                          const std::vector<Value> & /*args*/) -> CapabilityCallResult {
         return CapabilityCallResult{
             .status = CapabilityCallStatus::Success,
             .value = evaluator::clone_value(*result),
@@ -80,9 +80,8 @@ CapabilityRegistry::as_invoker() const {
     };
 }
 
-CapabilityCallResult
-CapabilityRegistry::invoke_with_retry(const CapabilityBinding &binding,
-                                       const std::vector<Value> &args) {
+CapabilityCallResult CapabilityRegistry::invoke_with_retry(const CapabilityBinding &binding,
+                                                           const std::vector<Value> &args) {
     const std::size_t max_attempts = binding.retry.max_retries + 1;
     CapabilityCallResult last_result{};
 

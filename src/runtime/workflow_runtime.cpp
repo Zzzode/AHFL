@@ -158,8 +158,7 @@ WorkflowRuntime::eval_node_input(const ir::Expr &input_expr,
         if (const auto *sv = std::get_if<evaluator::StructValue>(&node_val.node)) {
             for (const auto &[field_name, field_val] : sv->fields) {
                 if (field_val) {
-                    ctx.set_node_output(
-                        node_name, field_name, evaluator::clone_value(*field_val));
+                    ctx.set_node_output(node_name, field_name, evaluator::clone_value(*field_val));
                 }
             }
         }
@@ -266,9 +265,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                     for (const auto &[field_name, field_val] : sv->fields) {
                         if (field_val) {
                             eval_ctx.set_node_output(
-                                prev_node_name,
-                                field_name,
-                                evaluator::clone_value(*field_val));
+                                prev_node_name, field_name, evaluator::clone_value(*field_val));
                         }
                     }
                 }
