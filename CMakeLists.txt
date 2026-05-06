@@ -16,7 +16,7 @@ include(AhflTesting)
 ahfl_enable_root_compile_commands_link()
 
 find_package(Threads REQUIRED)
-find_program(CLANG_FORMAT_BIN NAMES clang-format clang-format-21 clang-format-20)
+find_program(CLANG_FORMAT_BIN NAMES clang-format-18 clang-format)
 
 add_subdirectory(third_party/antlr4)
 add_subdirectory(src)

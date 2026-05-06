@@ -271,12 +271,13 @@ class NativeJsonPrinter final : private PrettyJsonWriter {
                 std::sort(items.begin(), items.end());
 
                 print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &[capability_name, binding_key] : items) {
+                    for (const auto &entry : items) {
+                        const auto &cap_name = entry.first;
+                        const auto &bind_key = entry.second;
                         item([&]() {
                             print_object(indent_level + 2, [&](const auto &binding_field) {
-                                binding_field("capability_name",
-                                              [&]() { write_string(capability_name); });
-                                binding_field("binding_key", [&]() { write_string(binding_key); });
+                                binding_field("capability_name", [&]() { write_string(cap_name); });
+                                binding_field("binding_key", [&]() { write_string(bind_key); });
                             });
                         });
                     }

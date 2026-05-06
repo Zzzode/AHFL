@@ -26,7 +26,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install clang-format
-        run: sudo apt-get update && sudo apt-get install --yes clang-format ninja-build
+        run: sudo apt-get update && sudo apt-get install --yes clang-format-18 ninja-build
 
       - name: Configure
         run: cmake --preset dev

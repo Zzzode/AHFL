@@ -42,8 +42,8 @@ struct SourceChainCheck {
 
 // Reference Version Check（compatibility ref, registry ref, readiness ref, audit ref）
 struct ReferenceVersionCheck {
-    std::string reference_type;            // 引用类型（compatibility/registry/readiness/audit）
-    std::string reference_identity;        // 引用标识
+    std::string reference_type;     // 引用类型（compatibility/registry/readiness/audit）
+    std::string reference_identity; // 引用标识
     std::string referenced_format_version; // 被引用 artifact 的 format_version
     std::string expected_format_version;   // 期望的 format_version
     bool is_compatible;                    // 引用版本是否兼容

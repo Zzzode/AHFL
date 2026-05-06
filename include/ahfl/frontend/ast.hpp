@@ -252,8 +252,8 @@ struct DurationSyntax;
 struct PathSyntax {
     ahfl::SourceRange range;
     PathRootKind root_kind{PathRootKind::Identifier}; // 根节点类型
-    std::string root_name;                            // 根名称（"input", "ctx", 或标识符名）
-    std::vector<std::string> members;                 // 成员访问链
+    std::string root_name;            // 根名称（"input", "ctx", 或标识符名）
+    std::vector<std::string> members; // 成员访问链
 
     [[nodiscard]] std::string spelling() const;
 };
