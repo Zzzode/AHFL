@@ -46,17 +46,25 @@ struct CommandLineArgs {
     bool show_help = false;
 };
 
+// 获取默认配置文件路径 (~/.ahfl/llm_config.json)
+[[nodiscard]] std::filesystem::path get_default_config_path() {
+    const char *home = std::getenv("HOME");
+    if (home == nullptr) {
+        return {};
+    }
+    return std::filesystem::path(home) / ".ahfl" / "llm_config.json";
+}
+
 // 打印帮助信息
 void print_help(const char *program_name) {
     std::cout << "用法: " << program_name << " <file.ahfl> [选项]\n\n"
               << "选项:\n"
               << "  --workflow <name>     要执行的 workflow 名称\n"
-              << "  --llm-config <path>   LLM 配置文件路径 (JSON)\n"
+              << "  --llm-config <path>   LLM 配置文件路径 (默认: ~/.ahfl/llm_config.json)\n"
               << "  --input '<json>'      输入 JSON 字符串\n"
               << "  --help                显示此帮助信息\n\n"
               << "示例:\n"
               << "  " << program_name << " app.ahfl --workflow MyWorkflow \\\n"
-              << "    --llm-config llm_config.json \\\n"
               << "    --input '{\"message\": \"My server crashed\"}'\n";
 }
 
@@ -113,9 +121,9 @@ std::optional<CommandLineArgs> parse_args(int argc, char **argv) {
         std::cerr << "错误: 未指定 --workflow\n";
         return std::nullopt;
     }
+    // --llm-config 可选，默认使用 ~/.ahfl/llm_config.json
     if (args.llm_config_path.empty()) {
-        std::cerr << "错误: 未指定 --llm-config\n";
-        return std::nullopt;
+        args.llm_config_path = get_default_config_path();
     }
 
     return args;
@@ -593,7 +601,20 @@ int main(int argc, char **argv) {
     // 2. 加载 LLM 配置
     auto config_content_opt = read_file(args.llm_config_path);
     if (!config_content_opt.has_value()) {
-        std::cerr << "错误: 无法读取 LLM 配置文件: " << args.llm_config_path << "\n";
+        std::cerr << "错误: 无法读取 LLM 配置文件: " << args.llm_config_path << "\n\n";
+        std::cerr << "请创建配置文件:\n";
+        std::cerr << "  mkdir -p ~/.ahfl\n";
+        std::cerr << "  cat > ~/.ahfl/llm_config.json << 'EOF'\n";
+        std::cerr << "  {\n";
+        std::cerr << "    \"endpoint\": \"https://open.bigmodel.cn/api/paas/v4\",\n";
+        std::cerr << "    \"model\": \"glm-4\",\n";
+        std::cerr << "    \"api_key\": \"${GLM_API_KEY}\",\n";
+        std::cerr << "    \"temperature\": 0.1,\n";
+        std::cerr << "    \"max_tokens\": 1024,\n";
+        std::cerr << "    \"json_mode\": true\n";
+        std::cerr << "  }\n";
+        std::cerr << "  EOF\n\n";
+        std::cerr << "并设置环境变量: export GLM_API_KEY=\"your-key\"\n";
         return 1;
     }
 
