@@ -531,6 +531,15 @@ struct Program final : Node {
     void accept(Visitor &visitor) override;
 };
 
+/// AST 结构不变量错误。用于捕获 tagged-struct 的 kind 与载荷字段不匹配问题。
+struct AstInvariantViolation {
+    ahfl::SourceRange range;
+    std::string message;
+};
+
+[[nodiscard]] std::vector<AstInvariantViolation>
+validate_program_invariants(const Program &program);
+
 /// 模块声明: module a::b::c;
 struct ModuleDecl final : Decl {
     Owned<QualifiedName> name;
