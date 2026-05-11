@@ -50,35 +50,4 @@ void emit_backend(BackendKind kind,
     }
 }
 
-void emit_backend(BackendKind kind,
-                  const ir::Program &program,
-                  const ResolveResult &resolve_result,
-                  const TypeCheckResult &type_check_result,
-                  std::ostream &out,
-                  const handoff::PackageMetadata *package_metadata) {
-    static_cast<void>(resolve_result);
-    static_cast<void>(type_check_result);
-    emit_backend(kind, program, out, package_metadata);
-}
-
-void emit_backend(BackendKind kind,
-                  const ast::Program &program,
-                  const ResolveResult &resolve_result,
-                  const TypeCheckResult &type_check_result,
-                  std::ostream &out,
-                  const handoff::PackageMetadata *package_metadata) {
-    emit_backend(
-        kind, lower_program_ir(program, resolve_result, type_check_result), out, package_metadata);
-}
-
-void emit_backend(BackendKind kind,
-                  const SourceGraph &graph,
-                  const ResolveResult &resolve_result,
-                  const TypeCheckResult &type_check_result,
-                  std::ostream &out,
-                  const handoff::PackageMetadata *package_metadata) {
-    emit_backend(
-        kind, lower_program_ir(graph, resolve_result, type_check_result), out, package_metadata);
-}
-
 } // namespace ahfl
