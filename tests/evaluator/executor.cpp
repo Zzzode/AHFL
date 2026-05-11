@@ -29,16 +29,16 @@ void check(bool condition, const std::string &test_name) {
 
 // Helper: make IR ExprPtr
 ExprPtr make_expr_ptr(ExprNode node) {
-    return std::make_unique<Expr>(Expr{std::move(node)});
+    return std::make_unique<Expr>(Expr{std::move(node), {}});
 }
 
 // Helper: make a Statement from StatementNode
 Statement make_stmt(StatementNode node) {
-    return Statement{std::move(node)};
+    return Statement{std::move(node), {}};
 }
 
 StatementPtr make_stmt_ptr(StatementNode node) {
-    return std::make_unique<Statement>(Statement{std::move(node)});
+    return std::make_unique<Statement>(Statement{std::move(node), {}});
 }
 
 // ============================================================================

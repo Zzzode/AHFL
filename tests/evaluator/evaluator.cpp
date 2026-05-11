@@ -30,11 +30,11 @@ void check(bool condition, const std::string &test_name) {
 
 // Helper: make IR Expr from ExprNode
 Expr make_expr(ExprNode node) {
-    return Expr{std::move(node)};
+    return Expr{std::move(node), {}};
 }
 
 ExprPtr make_expr_ptr(ExprNode node) {
-    return std::make_unique<Expr>(Expr{std::move(node)});
+    return std::make_unique<Expr>(Expr{std::move(node), {}});
 }
 
 // ============================================================================

@@ -4,28 +4,84 @@
   "declarations": [
     {
       "kind": "module",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 0,
+          "end_offset": 31
+        }
+      },
       "name": "ir::workflow_value_flow"
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 33,
+          "end_offset": 70
+        }
+      },
       "name": "ir::workflow_value_flow::Request",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::workflow_value_flow::Request",
+        "local_name": "Request",
+        "module_name": "ir::workflow_value_flow"
+      },
       "fields": [
         {
           "name": "value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 54,
+            "end_offset": 68
+          },
           "default_value": null
         }
       ]
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 72,
+          "end_offset": 118
+        }
+      },
       "name": "ir::workflow_value_flow::Context",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::workflow_value_flow::Context",
+        "local_name": "Context",
+        "module_name": "ir::workflow_value_flow"
+      },
       "fields": [
         {
           "name": "value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 93,
+            "end_offset": 116
+          },
           "default_value": {
             "kind": "string_literal",
+            "source_range": {
+              "begin_offset": 109,
+              "end_offset": 115
+            },
             "spelling": "\"seed\""
           }
         }
@@ -33,21 +89,72 @@
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 120,
+          "end_offset": 158
+        }
+      },
       "name": "ir::workflow_value_flow::Response",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::workflow_value_flow::Response",
+        "local_name": "Response",
+        "module_name": "ir::workflow_value_flow"
+      },
       "fields": [
         {
           "name": "value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 142,
+            "end_offset": 156
+          },
           "default_value": null
         }
       ]
     },
     {
       "kind": "agent",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 160,
+          "end_offset": 358
+        }
+      },
       "name": "ir::workflow_value_flow::EchoAgent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::workflow_value_flow::EchoAgent",
+        "local_name": "EchoAgent",
+        "module_name": "ir::workflow_value_flow"
+      },
       "input_type": "ir::workflow_value_flow::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Request",
+        "canonical_name": "ir::workflow_value_flow::Request"
+      },
       "context_type": "ir::workflow_value_flow::Context",
+      "context_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Context",
+        "canonical_name": "ir::workflow_value_flow::Context"
+      },
       "output_type": "ir::workflow_value_flow::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Response",
+        "canonical_name": "ir::workflow_value_flow::Response"
+      },
       "states": [
         "Init",
         "Done"
@@ -67,10 +174,28 @@
     },
     {
       "kind": "flow",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 360,
+          "end_offset": 517
+        }
+      },
       "target": "ir::workflow_value_flow::EchoAgent",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::workflow_value_flow::EchoAgent",
+        "local_name": "EchoAgent",
+        "module_name": "ir::workflow_value_flow"
+      },
       "state_handlers": [
         {
           "state_name": "Init",
+          "source_range": {
+            "begin_offset": 385,
+            "end_offset": 422
+          },
           "policy": [],
           "summary": {
             "goto_targets": [
@@ -83,9 +208,17 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 396,
+              "end_offset": 422
+            },
             "statements": [
               {
                 "kind": "goto",
+                "source_range": {
+                  "begin_offset": 406,
+                  "end_offset": 416
+                },
                 "target_state": "Done"
               }
             ]
@@ -93,6 +226,10 @@
         },
         {
           "state_name": "Done",
+          "source_range": {
+            "begin_offset": 428,
+            "end_offset": 515
+          },
           "policy": [],
           "summary": {
             "goto_targets": [],
@@ -103,17 +240,33 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 439,
+              "end_offset": 515
+            },
             "statements": [
               {
                 "kind": "return",
+                "source_range": {
+                  "begin_offset": 449,
+                  "end_offset": 509
+                },
                 "value": {
                   "kind": "struct_literal",
+                  "source_range": {
+                    "begin_offset": 456,
+                    "end_offset": 508
+                  },
                   "type_name": "ir::workflow_value_flow::Response",
                   "fields": [
                     {
                       "name": "value",
                       "value": {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 486,
+                          "end_offset": 497
+                        },
                         "path": {
                           "root_kind": "input",
                           "root_name": "input",
@@ -133,15 +286,53 @@
     },
     {
       "kind": "workflow",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 519,
+          "end_offset": 747
+        }
+      },
       "name": "ir::workflow_value_flow::ValueFlowWorkflow",
+      "symbol_ref": {
+        "kind": "workflow",
+        "canonical_name": "ir::workflow_value_flow::ValueFlowWorkflow",
+        "local_name": "ValueFlowWorkflow",
+        "module_name": "ir::workflow_value_flow"
+      },
       "input_type": "ir::workflow_value_flow::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Request",
+        "canonical_name": "ir::workflow_value_flow::Request"
+      },
       "output_type": "ir::workflow_value_flow::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Response",
+        "canonical_name": "ir::workflow_value_flow::Response"
+      },
       "nodes": [
         {
           "name": "first",
+          "source_range": {
+            "begin_offset": 595,
+            "end_offset": 624
+          },
           "target": "ir::workflow_value_flow::EchoAgent",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "ir::workflow_value_flow::EchoAgent",
+            "local_name": "EchoAgent",
+            "module_name": "ir::workflow_value_flow"
+          },
           "input": {
             "kind": "path",
+            "source_range": {
+              "begin_offset": 617,
+              "end_offset": 622
+            },
             "path": {
               "root_kind": "input",
               "root_name": "input",
@@ -161,15 +352,33 @@
         },
         {
           "name": "second",
+          "source_range": {
+            "begin_offset": 629,
+            "end_offset": 698
+          },
           "target": "ir::workflow_value_flow::EchoAgent",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "ir::workflow_value_flow::EchoAgent",
+            "local_name": "EchoAgent",
+            "module_name": "ir::workflow_value_flow"
+          },
           "input": {
             "kind": "struct_literal",
+            "source_range": {
+              "begin_offset": 652,
+              "end_offset": 682
+            },
             "type_name": "ir::workflow_value_flow::Request",
             "fields": [
               {
                 "name": "value",
                 "value": {
                   "kind": "path",
+                  "source_range": {
+                    "begin_offset": 669,
+                    "end_offset": 680
+                  },
                   "path": {
                     "root_kind": "identifier",
                     "root_name": "first",
@@ -212,12 +421,20 @@
       },
       "return_value": {
         "kind": "struct_literal",
+        "source_range": {
+          "begin_offset": 712,
+          "end_offset": 744
+        },
         "type_name": "ir::workflow_value_flow::Response",
         "fields": [
           {
             "name": "value",
             "value": {
               "kind": "path",
+              "source_range": {
+                "begin_offset": 730,
+                "end_offset": 742
+              },
               "path": {
                 "root_kind": "identifier",
                 "root_name": "second",
