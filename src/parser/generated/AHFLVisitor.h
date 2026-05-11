@@ -55,6 +55,16 @@ public:
 
     virtual std::any visitCapabilityDecl(AHFLParser::CapabilityDeclContext *context) = 0;
 
+    virtual std::any visitCapabilityEffectBlock(AHFLParser::CapabilityEffectBlockContext *context) = 0;
+
+    virtual std::any visitCapabilityEffectItem(AHFLParser::CapabilityEffectItemContext *context) = 0;
+
+    virtual std::any visitCapabilityEffectKind(AHFLParser::CapabilityEffectKindContext *context) = 0;
+
+    virtual std::any visitCapabilityReceiptMode(AHFLParser::CapabilityReceiptModeContext *context) = 0;
+
+    virtual std::any visitCapabilityRetryMode(AHFLParser::CapabilityRetryModeContext *context) = 0;
+
     virtual std::any visitPredicateDecl(AHFLParser::PredicateDeclContext *context) = 0;
 
     virtual std::any visitParamList(AHFLParser::ParamListContext *context) = 0;

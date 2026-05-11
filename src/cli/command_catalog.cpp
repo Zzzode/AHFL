@@ -564,6 +564,9 @@ constexpr CommandSpec kCommandSpecs[] = {
     {CommandKind::EmitPackageReview, "emit-package-review", 99, 96, 102, 11},
     {CommandKind::EmitSummary, "emit-summary", 100, 97, 103},
     {CommandKind::EmitSmv, "emit-smv", 101, 98, 104},
+    {CommandKind::EmitAssuranceJson, "emit-assurance-json", 102, 99, 105},
+    {CommandKind::ValidateAssurance, "validate-assurance", 103, 100, 106, 12},
+    {CommandKind::VerifyFormal, "verify-formal", 104, 101, 107, 13},
 };
 
 [[nodiscard]] const CommandSpec *find_command_spec(CommandKind command) {
@@ -683,6 +686,12 @@ static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSup
                "[--search-root <dir>]... <input.ahfl>";
     }
 
+    if (command == CommandKind::VerifyFormal) {
+        return "[--model-checker <path>] [--formal-model-out <model.smv>] "
+               "[--package <ahfl.package.json>] "
+               "[--search-root <dir>]... <input.ahfl>";
+    }
+
     if (is_package_supported_command(command)) {
         return "[--package <ahfl.package.json>] [--search-root <dir>]... <input.ahfl>";
     }
@@ -784,6 +793,8 @@ selected_backend_for_command(std::optional<CommandKind> command) {
         return ahfl::BackendKind::Summary;
     case CommandKind::EmitSmv:
         return ahfl::BackendKind::Smv;
+    case CommandKind::EmitAssuranceJson:
+        return ahfl::BackendKind::AssuranceJson;
     default:
         return std::nullopt;
     }

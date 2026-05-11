@@ -28,10 +28,13 @@ public:
     T__80 = 81, T__81 = 82, T__82 = 83, T__83 = 84, T__84 = 85, T__85 = 86,
     T__86 = 87, T__87 = 88, T__88 = 89, T__89 = 90, T__90 = 91, T__91 = 92,
     T__92 = 93, T__93 = 94, T__94 = 95, T__95 = 96, T__96 = 97, T__97 = 98,
-    T__98 = 99, T__99 = 100, T__100 = 101, T__101 = 102, DURATION_LITERAL = 103,
-    DECIMAL_LITERAL = 104, FLOAT_LITERAL = 105, INT_LITERAL = 106, STRING_LITERAL = 107,
-    IDENT = 108, DOC_COMMENT = 109, LINE_COMMENT = 110, BLOCK_COMMENT = 111,
-    WS = 112
+    T__98 = 99, T__99 = 100, T__100 = 101, T__101 = 102, T__102 = 103, T__103 = 104,
+    T__104 = 105, T__105 = 106, T__106 = 107, T__107 = 108, T__108 = 109,
+    T__109 = 110, T__110 = 111, T__111 = 112, T__112 = 113, T__113 = 114,
+    T__114 = 115, T__115 = 116, T__116 = 117, T__117 = 118, DURATION_LITERAL = 119,
+    DECIMAL_LITERAL = 120, FLOAT_LITERAL = 121, INT_LITERAL = 122, STRING_LITERAL = 123,
+    IDENT = 124, DOC_COMMENT = 125, LINE_COMMENT = 126, BLOCK_COMMENT = 127,
+    WS = 128
   };
 
   enum {
@@ -40,29 +43,31 @@ public:
     RuleIdentListOpt = 7, RuleQualifiedIdentListOpt = 8, RuleType_ = 9,
     RulePrimitiveType = 10, RuleConstDecl = 11, RuleTypeAliasDecl = 12,
     RuleStructDecl = 13, RuleStructFieldDecl = 14, RuleEnumDecl = 15, RuleEnumVariant = 16,
-    RuleCapabilityDecl = 17, RulePredicateDecl = 18, RuleParamList = 19,
-    RuleParam = 20, RuleAgentDecl = 21, RuleInputDecl = 22, RuleContextDecl = 23,
-    RuleOutputDecl = 24, RuleStatesDecl = 25, RuleInitialDecl = 26, RuleFinalDecl = 27,
-    RuleCapabilitiesDecl = 28, RuleQuotaDecl = 29, RuleQuotaItem = 30, RuleTransitionDecl = 31,
-    RuleContractDecl = 32, RuleContractItem = 33, RuleRequiresDecl = 34,
-    RuleEnsuresDecl = 35, RuleInvariantDecl = 36, RuleForbidDecl = 37, RuleFlowDecl = 38,
-    RuleStateHandler = 39, RuleStatePolicy = 40, RuleStatePolicyItem = 41,
-    RuleWorkflowDecl = 42, RuleWorkflowInputDecl = 43, RuleWorkflowOutputDecl = 44,
-    RuleWorkflowItem = 45, RuleWorkflowNodeDecl = 46, RuleWorkflowSafetyDecl = 47,
-    RuleWorkflowLivenessDecl = 48, RuleWorkflowReturnDecl = 49, RuleBlock = 50,
-    RuleStatement = 51, RuleLetStmt = 52, RuleAssignStmt = 53, RuleIfStmt = 54,
-    RuleGotoStmt = 55, RuleReturnStmt = 56, RuleAssertStmt = 57, RuleExprStmt = 58,
-    RuleLValue = 59, RuleExpr = 60, RuleImpliesExpr = 61, RuleOrExpr = 62,
-    RuleAndExpr = 63, RuleEqualityExpr = 64, RuleCompareExpr = 65, RuleAddExpr = 66,
-    RuleMulExpr = 67, RuleUnaryExpr = 68, RulePostfixExpr = 69, RulePrimaryExpr = 70,
-    RulePathExpr = 71, RulePathRoot = 72, RuleQualifiedValueExpr = 73, RuleCallExpr = 74,
-    RuleExprList = 75, RuleLiteral = 76, RuleIntegerLiteral = 77, RuleFloatLiteral = 78,
-    RuleDecimalLiteral = 79, RuleStringLiteral = 80, RuleDurationLiteral = 81,
-    RuleListLiteral = 82, RuleSetLiteral = 83, RuleMapLiteral = 84, RuleMapEntryList = 85,
-    RuleMapEntry = 86, RuleStructLiteral = 87, RuleStructInitList = 88,
-    RuleStructInit = 89, RuleConstExpr = 90, RuleTemporalExpr = 91, RuleWorkflowTemporalExpr = 92,
-    RuleTemporalImpliesExpr = 93, RuleTemporalOrExpr = 94, RuleTemporalAndExpr = 95,
-    RuleTemporalUntilExpr = 96, RuleTemporalUnaryExpr = 97, RuleTemporalAtom = 98
+    RuleCapabilityDecl = 17, RuleCapabilityEffectBlock = 18, RuleCapabilityEffectItem = 19,
+    RuleCapabilityEffectKind = 20, RuleCapabilityReceiptMode = 21, RuleCapabilityRetryMode = 22,
+    RulePredicateDecl = 23, RuleParamList = 24, RuleParam = 25, RuleAgentDecl = 26,
+    RuleInputDecl = 27, RuleContextDecl = 28, RuleOutputDecl = 29, RuleStatesDecl = 30,
+    RuleInitialDecl = 31, RuleFinalDecl = 32, RuleCapabilitiesDecl = 33,
+    RuleQuotaDecl = 34, RuleQuotaItem = 35, RuleTransitionDecl = 36, RuleContractDecl = 37,
+    RuleContractItem = 38, RuleRequiresDecl = 39, RuleEnsuresDecl = 40,
+    RuleInvariantDecl = 41, RuleForbidDecl = 42, RuleFlowDecl = 43, RuleStateHandler = 44,
+    RuleStatePolicy = 45, RuleStatePolicyItem = 46, RuleWorkflowDecl = 47,
+    RuleWorkflowInputDecl = 48, RuleWorkflowOutputDecl = 49, RuleWorkflowItem = 50,
+    RuleWorkflowNodeDecl = 51, RuleWorkflowSafetyDecl = 52, RuleWorkflowLivenessDecl = 53,
+    RuleWorkflowReturnDecl = 54, RuleBlock = 55, RuleStatement = 56, RuleLetStmt = 57,
+    RuleAssignStmt = 58, RuleIfStmt = 59, RuleGotoStmt = 60, RuleReturnStmt = 61,
+    RuleAssertStmt = 62, RuleExprStmt = 63, RuleLValue = 64, RuleExpr = 65,
+    RuleImpliesExpr = 66, RuleOrExpr = 67, RuleAndExpr = 68, RuleEqualityExpr = 69,
+    RuleCompareExpr = 70, RuleAddExpr = 71, RuleMulExpr = 72, RuleUnaryExpr = 73,
+    RulePostfixExpr = 74, RulePrimaryExpr = 75, RulePathExpr = 76, RulePathRoot = 77,
+    RuleQualifiedValueExpr = 78, RuleCallExpr = 79, RuleExprList = 80, RuleLiteral = 81,
+    RuleIntegerLiteral = 82, RuleFloatLiteral = 83, RuleDecimalLiteral = 84,
+    RuleStringLiteral = 85, RuleDurationLiteral = 86, RuleListLiteral = 87,
+    RuleSetLiteral = 88, RuleMapLiteral = 89, RuleMapEntryList = 90, RuleMapEntry = 91,
+    RuleStructLiteral = 92, RuleStructInitList = 93, RuleStructInit = 94,
+    RuleConstExpr = 95, RuleTemporalExpr = 96, RuleWorkflowTemporalExpr = 97,
+    RuleTemporalImpliesExpr = 98, RuleTemporalOrExpr = 99, RuleTemporalAndExpr = 100,
+    RuleTemporalUntilExpr = 101, RuleTemporalUnaryExpr = 102, RuleTemporalAtom = 103
   };
 
   explicit AHFLParser(antlr4::TokenStream *input);
@@ -100,6 +105,11 @@ public:
   class EnumDeclContext;
   class EnumVariantContext;
   class CapabilityDeclContext;
+  class CapabilityEffectBlockContext;
+  class CapabilityEffectItemContext;
+  class CapabilityEffectKindContext;
+  class CapabilityReceiptModeContext;
+  class CapabilityRetryModeContext;
   class PredicateDeclContext;
   class ParamListContext;
   class ParamContext;
@@ -441,6 +451,7 @@ public:
     virtual size_t getRuleIndex() const override;
     antlr4::tree::TerminalNode *IDENT();
     Type_Context *type_();
+    CapabilityEffectBlockContext *capabilityEffectBlock();
     ParamListContext *paramList();
 
 
@@ -449,6 +460,75 @@ public:
   };
 
   CapabilityDeclContext* capabilityDecl();
+
+  class  CapabilityEffectBlockContext : public antlr4::ParserRuleContext {
+  public:
+    CapabilityEffectBlockContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    std::vector<CapabilityEffectItemContext *> capabilityEffectItem();
+    CapabilityEffectItemContext* capabilityEffectItem(size_t i);
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  CapabilityEffectBlockContext* capabilityEffectBlock();
+
+  class  CapabilityEffectItemContext : public antlr4::ParserRuleContext {
+  public:
+    CapabilityEffectItemContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+    CapabilityEffectKindContext *capabilityEffectKind();
+    QualifiedIdentContext *qualifiedIdent();
+    PathExprContext *pathExpr();
+    CapabilityReceiptModeContext *capabilityReceiptMode();
+    CapabilityRetryModeContext *capabilityRetryMode();
+    DurationLiteralContext *durationLiteral();
+    QualifiedIdentListOptContext *qualifiedIdentListOpt();
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  CapabilityEffectItemContext* capabilityEffectItem();
+
+  class  CapabilityEffectKindContext : public antlr4::ParserRuleContext {
+  public:
+    CapabilityEffectKindContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  CapabilityEffectKindContext* capabilityEffectKind();
+
+  class  CapabilityReceiptModeContext : public antlr4::ParserRuleContext {
+  public:
+    CapabilityReceiptModeContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  CapabilityReceiptModeContext* capabilityReceiptMode();
+
+  class  CapabilityRetryModeContext : public antlr4::ParserRuleContext {
+  public:
+    CapabilityRetryModeContext(antlr4::ParserRuleContext *parent, size_t invokingState);
+    virtual size_t getRuleIndex() const override;
+
+
+    virtual std::any accept(antlr4::tree::ParseTreeVisitor *visitor) override;
+
+  };
+
+  CapabilityRetryModeContext* capabilityRetryMode();
 
   class  PredicateDeclContext : public antlr4::ParserRuleContext {
   public:

@@ -216,6 +216,49 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     return "invalid";
 }
 
+[[nodiscard]] std::string_view capability_effect_kind_name(ir::CapabilityEffectKind kind) {
+    switch (kind) {
+    case ir::CapabilityEffectKind::Unknown:
+        return "unknown";
+    case ir::CapabilityEffectKind::Read:
+        return "read";
+    case ir::CapabilityEffectKind::ExternalSideEffect:
+        return "external_side_effect";
+    case ir::CapabilityEffectKind::DurableWrite:
+        return "durable_write";
+    case ir::CapabilityEffectKind::FinancialWrite:
+        return "financial_write";
+    }
+
+    return "unknown";
+}
+
+[[nodiscard]] std::string_view capability_receipt_mode_name(ir::CapabilityReceiptMode mode) {
+    switch (mode) {
+    case ir::CapabilityReceiptMode::None:
+        return "none";
+    case ir::CapabilityReceiptMode::Optional:
+        return "optional";
+    case ir::CapabilityReceiptMode::Required:
+        return "required";
+    }
+
+    return "none";
+}
+
+[[nodiscard]] std::string_view capability_retry_mode_name(ir::CapabilityRetryMode mode) {
+    switch (mode) {
+    case ir::CapabilityRetryMode::Unsafe:
+        return "unsafe";
+    case ir::CapabilityRetryMode::SafeIfIdempotent:
+        return "safe_if_idempotent";
+    case ir::CapabilityRetryMode::Safe:
+        return "safe";
+    }
+
+    return "unsafe";
+}
+
 class IrJsonPrinter final {
   public:
     explicit IrJsonPrinter(std::ostream &out) : out_(out) {}
@@ -427,6 +470,47 @@ class IrJsonPrinter final {
             for (const auto &param : params) {
                 item([&]() { print_param(param, indent_level + 1); });
             }
+        });
+    }
+
+    void print_capability_effect(const ir::CapabilityEffectSpec &effect, int indent_level) {
+        print_object(indent_level, [&](const auto &field) {
+            field("declared", [&]() { write_bool(effect.declared); });
+            field("kind", [&]() { write_string(capability_effect_kind_name(effect.kind)); });
+            field("receipt_mode",
+                  [&]() { write_string(capability_receipt_mode_name(effect.receipt_mode)); });
+            field("retry_mode",
+                  [&]() { write_string(capability_retry_mode_name(effect.retry_mode)); });
+            field("domain", [&]() {
+                if (effect.domain.has_value()) {
+                    write_string(*effect.domain);
+                } else {
+                    write_null();
+                }
+            });
+            field("idempotency_key", [&]() {
+                if (effect.idempotency_key.has_value()) {
+                    write_string(*effect.idempotency_key);
+                } else {
+                    write_null();
+                }
+            });
+            field("timeout", [&]() {
+                if (effect.timeout.has_value()) {
+                    write_string(*effect.timeout);
+                } else {
+                    write_null();
+                }
+            });
+            field("compensation", [&]() {
+                if (effect.compensation.has_value()) {
+                    write_string(*effect.compensation);
+                } else {
+                    write_null();
+                }
+            });
+            field("policies", [&]() { write_string_array(effect.policies, indent_level + 1); });
+            print_source_range_field(field, effect.source_range, indent_level + 1);
         });
     }
 
@@ -1048,6 +1132,11 @@ class IrJsonPrinter final {
                         if (has_type_ref(value.return_type_ref)) {
                             field("return_type_ref", [&]() {
                                 print_type_ref(value.return_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (value.effect.declared) {
+                            field("effect", [&]() {
+                                print_capability_effect(value.effect, indent_level + 1);
                             });
                         }
                     });

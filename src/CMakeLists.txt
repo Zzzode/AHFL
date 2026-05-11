@@ -9,6 +9,7 @@ add_subdirectory(parser)
 add_subdirectory(frontend)
 add_subdirectory(semantics)
 add_subdirectory(ir)
+add_subdirectory(assurance)
 add_subdirectory(handoff)
 add_subdirectory(dry_run)
 add_subdirectory(runtime_session)
@@ -25,6 +26,7 @@ add_subdirectory(evaluator)
 add_subdirectory(runtime)
 add_subdirectory(llm_provider)
 add_subdirectory(backends)
+add_subdirectory(formal)
 
 add_library(ahfl_compiler INTERFACE)
 target_link_libraries(ahfl_compiler
@@ -43,6 +45,8 @@ target_link_libraries(ahfl_compiler
         ahfl_persistence_export
         ahfl_store_import
         ahfl_durable_store_import
+        ahfl_assurance
+        ahfl_formal
         ahfl_llm_provider
         ahfl_backend
 )

@@ -27,6 +27,30 @@ if(NOT CLANG_FORMAT_BIN)
     find_program(CLANG_FORMAT_BIN NAMES clang-format-18)
 endif()
 
+set(AHFL_SMV_CHECKER "" CACHE FILEPATH
+    "Path to a nuXmv/NuSMV-compatible checker used by optional formal CTest tests"
+)
+if(NOT AHFL_SMV_CHECKER AND DEFINED ENV{AHFL_SMV_CHECKER})
+    set(AHFL_SMV_CHECKER "$ENV{AHFL_SMV_CHECKER}" CACHE FILEPATH
+        "Path to a nuXmv/NuSMV-compatible checker used by optional formal CTest tests"
+        FORCE
+    )
+endif()
+if(NOT AHFL_SMV_CHECKER)
+    find_program(AHFL_DETECTED_SMV_CHECKER NAMES NuSMV nuXmv nuxmv)
+    if(AHFL_DETECTED_SMV_CHECKER)
+        set(AHFL_SMV_CHECKER "${AHFL_DETECTED_SMV_CHECKER}" CACHE FILEPATH
+            "Path to a nuXmv/NuSMV-compatible checker used by optional formal CTest tests"
+            FORCE
+        )
+    endif()
+endif()
+if(AHFL_SMV_CHECKER)
+    message(STATUS "AHFL SMV checker for optional tests: ${AHFL_SMV_CHECKER}")
+else()
+    message(STATUS "AHFL SMV checker for optional tests: not found")
+endif()
+
 add_subdirectory(third_party/antlr4)
 add_subdirectory(src)
 

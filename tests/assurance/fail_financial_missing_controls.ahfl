@@ -1,0 +1,63 @@
+module assurance::financial_missing_controls;
+
+struct Request {
+    id: String;
+    amount: Decimal(2);
+}
+
+struct Receipt {
+    id: String;
+}
+
+struct Context {
+    processed: Bool = false;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+capability ChargeCard(request: Request) -> Receipt {
+    effect: financial_write;
+    domain: payments;
+    receipt: optional;
+    retry: unsafe;
+    policy: [payments::audit_event];
+}
+
+agent BillingAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [ChargeCard];
+    transition Init -> Done;
+}
+
+flow for BillingAgent {
+    state Init {
+        let charge_receipt: Receipt = ChargeCard(input);
+        assert(charge_receipt.id == input.id);
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}
+
+workflow BillingWorkflow {
+    input: Request;
+    output: Response;
+
+    node billing: BillingAgent(input);
+
+    safety: always eventually completed(billing);
+    liveness: eventually completed(billing);
+
+    return: billing;
+}

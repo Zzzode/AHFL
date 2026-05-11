@@ -145,6 +145,20 @@ class AstInvariantValidator final {
         }
     }
 
+    void validate_path(const PathSyntax *path, SourceRange range, std::string_view field_name) {
+        require(path != nullptr, range, std::string(field_name) + " is missing");
+        if (path == nullptr) {
+            return;
+        }
+
+        require(!path->root_name.empty(),
+                path->range,
+                std::string(field_name) + " is missing root_name");
+        for (const auto &member : path->members) {
+            require(!member.empty(), path->range, std::string(field_name) + " has empty member");
+        }
+    }
+
     void validate_type(const TypeSyntax &type) {
         switch (type.kind) {
         case TypeSyntaxKind::Unit:
@@ -496,6 +510,31 @@ class AstInvariantValidator final {
         }
     }
 
+    void validate_capability_effect(const CapabilityEffectSyntax &effect) {
+        if (effect.domain) {
+            validate_qualified_name(effect.domain.get(), effect.range, "CapabilityEffect.domain");
+        }
+        if (effect.idempotency_key) {
+            validate_path(
+                effect.idempotency_key.get(), effect.range, "CapabilityEffect.idempotency_key");
+        }
+        if (effect.timeout) {
+            require(!effect.timeout->spelling.empty(),
+                    effect.timeout->range,
+                    "CapabilityEffect.timeout is missing spelling");
+        }
+        if (effect.compensation) {
+            validate_qualified_name(
+                effect.compensation.get(), effect.range, "CapabilityEffect.compensation");
+        }
+        for (const auto &policy : effect.policies) {
+            require(policy != nullptr, effect.range, "CapabilityEffect.policies contains null");
+            if (policy) {
+                validate_qualified_name(policy.get(), effect.range, "CapabilityEffect.policy");
+            }
+        }
+    }
+
     void validate_declaration(const Decl &declaration) {
         switch (declaration.kind) {
         case NodeKind::Program:
@@ -576,6 +615,9 @@ class AstInvariantValidator final {
                 node.return_type != nullptr, node.range, "CapabilityDecl is missing return_type");
             if (node.return_type) {
                 validate_type(*node.return_type);
+            }
+            if (node.effect) {
+                validate_capability_effect(*node.effect);
             }
             break;
         }
@@ -805,6 +847,49 @@ std::string_view to_string(TypeSyntaxKind kind) noexcept {
     }
 
     return "Unknown";
+}
+
+std::string_view to_string(CapabilityEffectKind kind) noexcept {
+    switch (kind) {
+    case CapabilityEffectKind::Unknown:
+        return "unknown";
+    case CapabilityEffectKind::Read:
+        return "read";
+    case CapabilityEffectKind::ExternalSideEffect:
+        return "external_side_effect";
+    case CapabilityEffectKind::DurableWrite:
+        return "durable_write";
+    case CapabilityEffectKind::FinancialWrite:
+        return "financial_write";
+    }
+
+    return "unknown";
+}
+
+std::string_view to_string(CapabilityReceiptMode mode) noexcept {
+    switch (mode) {
+    case CapabilityReceiptMode::None:
+        return "none";
+    case CapabilityReceiptMode::Optional:
+        return "optional";
+    case CapabilityReceiptMode::Required:
+        return "required";
+    }
+
+    return "none";
+}
+
+std::string_view to_string(CapabilityRetryMode mode) noexcept {
+    switch (mode) {
+    case CapabilityRetryMode::Unsafe:
+        return "unsafe";
+    case CapabilityRetryMode::SafeIfIdempotent:
+        return "safe_if_idempotent";
+    case CapabilityRetryMode::Safe:
+        return "safe";
+    }
+
+    return "unsafe";
 }
 
 std::string QualifiedName::spelling() const {

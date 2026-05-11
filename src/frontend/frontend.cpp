@@ -415,6 +415,9 @@ class ProgramBuilder {
             declaration->params = build_param_list(borrow(capability_decl->get().paramList()));
             declaration->return_type = build_type_syntax(
                 require(capability_decl->get().type_(), "capability return type is missing"));
+            if (const auto effect = borrow(capability_decl->get().capabilityEffectBlock())) {
+                declaration->effect = build_capability_effect(effect->get());
+            }
             return declaration;
         }
 
@@ -1499,6 +1502,105 @@ class ProgramBuilder {
         return names;
     }
 
+    [[nodiscard]] ast::CapabilityEffectKind
+    capability_effect_kind_from(std::string_view spelling) const {
+        if (spelling == "read") {
+            return ast::CapabilityEffectKind::Read;
+        }
+        if (spelling == "external_side_effect") {
+            return ast::CapabilityEffectKind::ExternalSideEffect;
+        }
+        if (spelling == "durable_write") {
+            return ast::CapabilityEffectKind::DurableWrite;
+        }
+        if (spelling == "financial_write") {
+            return ast::CapabilityEffectKind::FinancialWrite;
+        }
+        return ast::CapabilityEffectKind::Unknown;
+    }
+
+    [[nodiscard]] ast::CapabilityReceiptMode
+    capability_receipt_mode_from(std::string_view spelling) const {
+        if (spelling == "required") {
+            return ast::CapabilityReceiptMode::Required;
+        }
+        if (spelling == "optional") {
+            return ast::CapabilityReceiptMode::Optional;
+        }
+        return ast::CapabilityReceiptMode::None;
+    }
+
+    [[nodiscard]] ast::CapabilityRetryMode
+    capability_retry_mode_from(std::string_view spelling) const {
+        if (spelling == "safe") {
+            return ast::CapabilityRetryMode::Safe;
+        }
+        if (spelling == "safe_if_idempotent") {
+            return ast::CapabilityRetryMode::SafeIfIdempotent;
+        }
+        return ast::CapabilityRetryMode::Unsafe;
+    }
+
+    [[nodiscard]] Owned<ast::CapabilityEffectSyntax>
+    build_capability_effect(AHFLParser::CapabilityEffectBlockContext &context) const {
+        auto effect = make_owned<ast::CapabilityEffectSyntax>();
+        effect->range = context_range(context, source_);
+
+        for (auto *item_context : context.capabilityEffectItem()) {
+            auto &item = require(item_context, "capability effect item is missing");
+            const auto keyword =
+                require(item.getStart(), "capability effect item keyword is missing").getText();
+
+            if (keyword == "effect") {
+                effect->effect_kind = capability_effect_kind_from(
+                    require(item.capabilityEffectKind(), "capability effect kind is missing")
+                        .getText());
+                continue;
+            }
+            if (keyword == "domain") {
+                effect->domain = build_qualified_name(
+                    require(item.qualifiedIdent(), "capability effect domain is missing"));
+                continue;
+            }
+            if (keyword == "idempotency") {
+                effect->idempotency_key = build_path_syntax(
+                    require(item.pathExpr(), "capability idempotency path is missing"));
+                continue;
+            }
+            if (keyword == "receipt") {
+                effect->receipt_mode = capability_receipt_mode_from(
+                    require(item.capabilityReceiptMode(), "capability receipt mode is missing")
+                        .getText());
+                continue;
+            }
+            if (keyword == "retry") {
+                effect->retry_mode = capability_retry_mode_from(
+                    require(item.capabilityRetryMode(), "capability retry mode is missing")
+                        .getText());
+                continue;
+            }
+            if (keyword == "timeout") {
+                effect->timeout = build_duration_syntax(
+                    require(item.durationLiteral(), "capability timeout is missing"));
+                continue;
+            }
+            if (keyword == "compensation") {
+                effect->compensation = build_qualified_name(
+                    require(item.qualifiedIdent(), "capability compensation is missing"));
+                continue;
+            }
+            if (keyword == "policy") {
+                effect->policies =
+                    build_qualified_name_list_opt(borrow(item.qualifiedIdentListOpt()));
+                continue;
+            }
+
+            throw std::logic_error("capability effect item did not match any supported kind");
+        }
+
+        return effect;
+    }
+
     [[nodiscard]] std::vector<Owned<ast::ParamDeclSyntax>>
     build_param_list(MaybeRef<AHFLParser::ParamListContext> context) const {
         std::vector<Owned<ast::ParamDeclSyntax>> params;
@@ -1818,6 +1920,30 @@ class AstPrinter final {
         }
 
         print_type_field("return", node.return_type.get(), 2);
+        if (node.effect) {
+            line(2, "effect");
+            line(3, "kind: " + std::string(ast::to_string(node.effect->effect_kind)));
+            line(3, "receipt: " + std::string(ast::to_string(node.effect->receipt_mode)));
+            line(3, "retry: " + std::string(ast::to_string(node.effect->retry_mode)));
+            if (node.effect->domain) {
+                line(3, "domain: " + node.effect->domain->spelling());
+            }
+            if (node.effect->idempotency_key) {
+                line(3, "idempotency: " + node.effect->idempotency_key->spelling());
+            }
+            if (node.effect->timeout) {
+                line(3, "timeout: " + node.effect->timeout->spelling);
+            }
+            if (node.effect->compensation) {
+                line(3, "compensation: " + node.effect->compensation->spelling());
+            }
+            std::vector<std::string> policies;
+            policies.reserve(node.effect->policies.size());
+            for (const auto &policy : node.effect->policies) {
+                policies.push_back(policy->spelling());
+            }
+            print_string_list("policy", policies, 3);
+        }
     }
 
     void visit(const ast::PredicateDecl &node) {
