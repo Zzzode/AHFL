@@ -114,6 +114,35 @@ enum class StatePolicyItemKind {
     Timeout, // 超时限制
 };
 
+/// Capability 副作用类别，用于 assurance analysis 推导控制、策略、恢复义务
+enum class CapabilityEffectKind {
+    Unknown,
+    Read,
+    ExternalSideEffect,
+    DurableWrite,
+    FinancialWrite,
+};
+
+[[nodiscard]] std::string_view to_string(CapabilityEffectKind kind) noexcept;
+
+/// Capability 执行回执要求
+enum class CapabilityReceiptMode {
+    None,
+    Optional,
+    Required,
+};
+
+[[nodiscard]] std::string_view to_string(CapabilityReceiptMode mode) noexcept;
+
+/// Capability 重试安全性声明
+enum class CapabilityRetryMode {
+    Unsafe,
+    SafeIfIdempotent,
+    Safe,
+};
+
+[[nodiscard]] std::string_view to_string(CapabilityRetryMode mode) noexcept;
+
 /// 路径表达式的根节点类型
 /// - Identifier: 普通标识符（变量名、node 输出引用等）
 /// - Input: 关键字 `input`（agent/workflow 的输入）
@@ -476,6 +505,29 @@ struct StatePolicySyntax {
     std::vector<Owned<StatePolicyItemSyntax>> items;
 };
 
+/// Capability 副作用声明块:
+/// capability ChargeCard(request: Payment) -> Receipt {
+///     effect: financial_write;
+///     domain: payments;
+///     idempotency: request.idempotency_key;
+///     receipt: required;
+///     retry: safe_if_idempotent;
+///     timeout: 30s;
+///     compensation: RefundCard;
+///     policy: [payments::approval_required];
+/// }
+struct CapabilityEffectSyntax {
+    ahfl::SourceRange range;
+    CapabilityEffectKind effect_kind{CapabilityEffectKind::Unknown};
+    Owned<QualifiedName> domain;
+    Owned<PathSyntax> idempotency_key;
+    CapabilityReceiptMode receipt_mode{CapabilityReceiptMode::None};
+    CapabilityRetryMode retry_mode{CapabilityRetryMode::Unsafe};
+    Owned<DurationSyntax> timeout;
+    Owned<QualifiedName> compensation;
+    std::vector<Owned<QualifiedName>> policies;
+};
+
 /// 状态处理器: state StateName [policy {...}] { statements... }
 struct StateHandlerSyntax {
     ahfl::SourceRange range;
@@ -609,6 +661,7 @@ struct CapabilityDecl final : Decl {
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
     Owned<TypeSyntax> return_type;
+    Owned<CapabilityEffectSyntax> effect;
 
     CapabilityDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;

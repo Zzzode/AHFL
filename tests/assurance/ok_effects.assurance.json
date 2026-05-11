@@ -1,0 +1,161 @@
+{
+  "format_version": "ahfl.assurance-bundle.v0.1",
+  "status": "ready",
+  "capabilities": [
+    {
+      "name": "assurance::effects::ChargeCard",
+      "effect_declared": true,
+      "effect_kind": "financial_write",
+      "domain": "payments",
+      "idempotency_key": "request.id",
+      "receipt_mode": "required",
+      "retry_mode": "safe_if_idempotent",
+      "timeout": "30s",
+      "compensation": "RefundCard",
+      "policies": [
+        "payments::approval_required",
+        "payments::audit_event"
+      ],
+      "production_blockers": []
+    },
+    {
+      "name": "assurance::effects::ReadUser",
+      "effect_declared": true,
+      "effect_kind": "read",
+      "domain": "identity",
+      "idempotency_key": null,
+      "receipt_mode": "none",
+      "retry_mode": "safe",
+      "timeout": null,
+      "compensation": null,
+      "policies": [],
+      "production_blockers": []
+    },
+    {
+      "name": "assurance::effects::SendEmail",
+      "effect_declared": true,
+      "effect_kind": "external_side_effect",
+      "domain": "messaging",
+      "idempotency_key": null,
+      "receipt_mode": "optional",
+      "retry_mode": "unsafe",
+      "timeout": "10s",
+      "compensation": null,
+      "policies": [
+        "messaging::audit_event"
+      ],
+      "production_blockers": []
+    }
+  ],
+  "flow_effects": [
+    {
+      "flow_target": "assurance::effects::BillingAgent",
+      "state": "Init",
+      "called_targets": [
+        "assurance::effects::ReadUser",
+        "assurance::effects::ChargeCard",
+        "assurance::effects::SendEmail"
+      ],
+      "effect_kinds": [
+        "read",
+        "financial_write",
+        "external_side_effect"
+      ],
+      "requires_checkpoint": true,
+      "requires_recovery": true,
+      "production_blockers": []
+    },
+    {
+      "flow_target": "assurance::effects::BillingAgent",
+      "state": "Done",
+      "called_targets": [],
+      "effect_kinds": [],
+      "requires_checkpoint": false,
+      "requires_recovery": false,
+      "production_blockers": []
+    }
+  ],
+  "policy_obligations": [
+    {
+      "target": "assurance::effects::ChargeCard",
+      "kind": "audit_event",
+      "enforcement": "runtime_policy",
+      "reason": "external effects must be observable in the assurance bundle",
+      "satisfied": true
+    },
+    {
+      "target": "assurance::effects::ChargeCard",
+      "kind": "provider_receipt",
+      "enforcement": "runtime_policy",
+      "reason": "durable writes must produce receipts for replay and recovery",
+      "satisfied": true
+    },
+    {
+      "target": "assurance::effects::ChargeCard",
+      "kind": "approval_required",
+      "enforcement": "runtime_policy",
+      "reason": "financial side effects require an explicit approval gate",
+      "satisfied": true
+    },
+    {
+      "target": "assurance::effects::SendEmail",
+      "kind": "audit_event",
+      "enforcement": "runtime_policy",
+      "reason": "external effects must be observable in the assurance bundle",
+      "satisfied": true
+    }
+  ],
+  "recovery_obligations": [
+    {
+      "target": "assurance::effects::ChargeCard",
+      "kind": "idempotency_guard",
+      "enforcement": "compiler_contract_and_runtime_policy",
+      "reason": "durable effects must be retryable without duplicate external writes",
+      "satisfied": true
+    },
+    {
+      "target": "assurance::effects::ChargeCard",
+      "kind": "compensation_path",
+      "enforcement": "capability_contract",
+      "reason": "financial side effects require a named compensating action",
+      "satisfied": true
+    }
+  ],
+  "formal_model_profile": {
+    "profile": "finite_control_system_v0",
+    "selected_backend": "smv",
+    "included": [
+      "agent_state_space",
+      "flow_transition_graph",
+      "workflow_dag_dependencies",
+      "workflow_node_lifecycle_phase",
+      "compiler_generated_lifecycle_final_dependency_obligations",
+      "temporal_control_observations_called_in_state_running_completed",
+      "flow_call_events",
+      "capability_effect_events",
+      "effect_policy_obligation_checks",
+      "recovery_failure_lifecycle_hooks",
+      "generic_failure_environment_inputs",
+      "counterexample_source_mapping",
+      "capability_effect_classes"
+    ],
+    "abstracted": [
+      "provider_implementation",
+      "capability_return_values",
+      "embedded_data_predicates",
+      "external_system_state",
+      "provider_failure_injection_semantics"
+    ],
+    "runtime_monitored": [
+      "provider_receipts",
+      "checkpoint_records",
+      "audit_events",
+      "failure_events"
+    ],
+    "unsupported": [
+      "full_provider_semantics",
+      "unbounded_data_domain_model_checking",
+      "distributed_fairness_proof"
+    ]
+  }
+}

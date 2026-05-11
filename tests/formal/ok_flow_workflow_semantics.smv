@@ -1,69 +1,119 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Pure embedded expressions are abstracted as boolean observation variables.
+-- Embedded data predicates are exported as environment observation assumptions.
+-- Capability calls/effects are bound to flow handler events where available.
+-- AHFL_MAP workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0 => observation workflow_safety formal::flow_workflow::ReviewWorkflow[1]
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__state => workflow formal::flow_workflow::ReviewWorkflow node first state
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase => workflow formal::flow_workflow::ReviewWorkflow node first lifecycle phase
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node first environment failure request
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__state => workflow formal::flow_workflow::ReviewWorkflow node second state
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase => workflow formal::flow_workflow::ReviewWorkflow node second lifecycle phase
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node second environment failure request
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__started => workflow formal::flow_workflow::ReviewWorkflow node first has started
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__running => workflow formal::flow_workflow::ReviewWorkflow node first is running
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed => workflow formal::flow_workflow::ReviewWorkflow node first completed
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failed => workflow formal::flow_workflow::ReviewWorkflow node first failed
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovering => workflow formal::flow_workflow::ReviewWorkflow node first recovering
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovered => workflow formal::flow_workflow::ReviewWorkflow node first recovered
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__started => workflow formal::flow_workflow::ReviewWorkflow node second has started
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__running => workflow formal::flow_workflow::ReviewWorkflow node second is running
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed => workflow formal::flow_workflow::ReviewWorkflow node second completed
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__failed => workflow formal::flow_workflow::ReviewWorkflow node second failed
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovering => workflow formal::flow_workflow::ReviewWorkflow node second recovering
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovered => workflow formal::flow_workflow::ReviewWorkflow node second recovered
 MODULE main
 VAR
-  agent__formal_flow_workflow_ReviewAgent__state : {Init, FastTrack, Review, Done};
   workflow__formal_flow_workflow_ReviewWorkflow__node__first__state : {Init, FastTrack, Review, Done};
-  workflow__formal_flow_workflow_ReviewWorkflow__node__first__started : boolean;
-  workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
   workflow__formal_flow_workflow_ReviewWorkflow__node__second__state : {Init, FastTrack, Review, Done};
-  workflow__formal_flow_workflow_ReviewWorkflow__node__second__started : boolean;
-  workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
 IVAR
   workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0 : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested : boolean;
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested : boolean;
 DEFINE
-  workflow__formal_flow_workflow_ReviewWorkflow__node__first__running := workflow__formal_flow_workflow_ReviewWorkflow__node__first__started & !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed);
-  workflow__formal_flow_workflow_ReviewWorkflow__node__second__running := workflow__formal_flow_workflow_ReviewWorkflow__node__second__started & !(workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__started := !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_IDLE);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed := (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_COMPLETED | (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RUNNING & (workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done)));
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__running := (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RUNNING & !((workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done)));
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__failed := (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_FAILED | workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_TERMINAL_FAILED);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovering := (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERING | workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_COMPENSATING);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovered := (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERED | workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_COMPENSATED);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__started := !(workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_IDLE);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPLETED | (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RUNNING & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done)));
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__running := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RUNNING & !((workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done)));
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__failed := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_FAILED | workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_TERMINAL_FAILED);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovering := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERING | workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPENSATING);
+  workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovered := (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERED | workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPENSATED);
 ASSIGN
-  init(agent__formal_flow_workflow_ReviewAgent__state) := Init;
-  next(agent__formal_flow_workflow_ReviewAgent__state) := case
-    agent__formal_flow_workflow_ReviewAgent__state = Init : {FastTrack, Review};
-    agent__formal_flow_workflow_ReviewAgent__state = FastTrack : Done;
-    agent__formal_flow_workflow_ReviewAgent__state = Review : Done;
-    agent__formal_flow_workflow_ReviewAgent__state = Done : Done;
-    TRUE : agent__formal_flow_workflow_ReviewAgent__state;
-  esac;
   init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__state) := Init;
   next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__state) := case
+    !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RUNNING) : workflow__formal_flow_workflow_ReviewWorkflow__node__first__state;
     workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Init : {FastTrack, Review};
     workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = FastTrack : Done;
     workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Review : Done;
     workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done : Done;
     TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__first__state;
   esac;
-  init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__started) := TRUE;
-  next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__started) := TRUE;
-  init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) := FALSE;
-  next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) := case
-    workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed : TRUE;
-    workflow__formal_flow_workflow_ReviewWorkflow__node__first__started & (workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done) : TRUE;
-    TRUE : FALSE;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase) := AHFL_NODE_RUNNING;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase) := case
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_COMPLETED : AHFL_NODE_COMPLETED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_TERMINAL_FAILED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_COMPENSATED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_COMPENSATING : AHFL_NODE_COMPENSATED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERED : AHFL_NODE_RUNNING;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERING : AHFL_NODE_RECOVERED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_FAILED : AHFL_NODE_RECOVERING;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_IDLE & (TRUE) : AHFL_NODE_RUNNING;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_IDLE : AHFL_NODE_IDLE;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RUNNING & (workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done) : AHFL_NODE_COMPLETED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RUNNING & workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested : AHFL_NODE_FAILED;
+    TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase;
   esac;
   init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__state) := Init;
   next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__state) := case
-    !(workflow__formal_flow_workflow_ReviewWorkflow__node__second__started) & !(workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) : workflow__formal_flow_workflow_ReviewWorkflow__node__second__state;
+    !(workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RUNNING) : workflow__formal_flow_workflow_ReviewWorkflow__node__second__state;
     workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Init : {FastTrack, Review};
     workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = FastTrack : Done;
     workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Review : Done;
     workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done : Done;
     TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__second__state;
   esac;
-  init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__started) := FALSE;
-  next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__started) := case
-    workflow__formal_flow_workflow_ReviewWorkflow__node__second__started : TRUE;
-    workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed : TRUE;
-    TRUE : FALSE;
+  init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase) := AHFL_NODE_IDLE;
+  next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase) := case
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPLETED : AHFL_NODE_COMPLETED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_TERMINAL_FAILED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPENSATED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_COMPENSATING : AHFL_NODE_COMPENSATED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERED : AHFL_NODE_RUNNING;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERING : AHFL_NODE_RECOVERED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_FAILED : AHFL_NODE_RECOVERING;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_IDLE & (workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed) : AHFL_NODE_RUNNING;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_IDLE : AHFL_NODE_IDLE;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RUNNING & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done) : AHFL_NODE_COMPLETED;
+    workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RUNNING & workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested : AHFL_NODE_FAILED;
+    TRUE : workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase;
   esac;
-  init(workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed) := FALSE;
-  next(workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed) := case
-    workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed : TRUE;
-    workflow__formal_flow_workflow_ReviewWorkflow__node__second__started & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done) : TRUE;
-    TRUE : FALSE;
-  esac;
+-- workflow formal::flow_workflow::ReviewWorkflow node first lifecycle[completed_final]
+LTLSPEC G (workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed -> (workflow__formal_flow_workflow_ReviewWorkflow__node__first__state = Done))
+-- workflow formal::flow_workflow::ReviewWorkflow node first recovery[failed_enters_recovering]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_FAILED) -> F (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERING))
+-- workflow formal::flow_workflow::ReviewWorkflow node first recovery[recovering_enters_recovered]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERING) -> F (workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERED))
+-- workflow formal::flow_workflow::ReviewWorkflow node first recovery[recovered_resumes_running]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase = AHFL_NODE_RECOVERED) -> F (workflow__formal_flow_workflow_ReviewWorkflow__node__first__running | workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed))
+-- workflow formal::flow_workflow::ReviewWorkflow node second lifecycle[completed_final]
+LTLSPEC G (workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed -> (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done))
+-- workflow formal::flow_workflow::ReviewWorkflow node second dependency[start_after]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__running | workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed) -> (workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed))
+-- workflow formal::flow_workflow::ReviewWorkflow node second recovery[failed_enters_recovering]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_FAILED) -> F (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERING))
+-- workflow formal::flow_workflow::ReviewWorkflow node second recovery[recovering_enters_recovered]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERING) -> F (workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERED))
+-- workflow formal::flow_workflow::ReviewWorkflow node second recovery[recovered_resumes_running]
+LTLSPEC G ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase = AHFL_NODE_RECOVERED) -> F (workflow__formal_flow_workflow_ReviewWorkflow__node__second__running | workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed))
 -- workflow formal::flow_workflow::ReviewWorkflow safety[0]
-LTLSPEC G ((! (workflow__formal_flow_workflow_ReviewWorkflow__node__second__running) | workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed))
+LTLSPEC (G ((!workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested & !workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested)) -> (G ((! (workflow__formal_flow_workflow_ReviewWorkflow__node__second__running) | workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed))))
 -- workflow formal::flow_workflow::ReviewWorkflow safety[1]
-LTLSPEC G ((! (workflow__formal_flow_workflow_ReviewWorkflow__node__first__running) | workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0))
+LTLSPEC (G ((!workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested & !workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested)) -> ((G (workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0) -> (G ((! (workflow__formal_flow_workflow_ReviewWorkflow__node__first__running) | workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0))))))
 -- workflow formal::flow_workflow::ReviewWorkflow liveness[0]
-LTLSPEC F ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done)))
+LTLSPEC (G ((!workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested & !workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested)) -> (F ((workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed & (workflow__formal_flow_workflow_ReviewWorkflow__node__second__state = Done)))))

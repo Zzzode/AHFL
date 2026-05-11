@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cstddef>
 #include <functional>
+#include <map>
+#include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -108,11 +110,27 @@ struct WorkflowNodeInfo {
            sanitize_identifier(node_name) + "__state";
 }
 
+[[nodiscard]] std::string workflow_node_phase_var(const ir::WorkflowDecl &workflow,
+                                                  std::string_view node_name) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__phase";
+}
+
 [[nodiscard]] std::string workflow_node_completed_var(const ir::WorkflowDecl &workflow,
                                                       std::string_view node_name) {
     return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
            sanitize_identifier(node_name) + "__completed";
 }
+
+constexpr std::string_view kNodeIdle = "AHFL_NODE_IDLE";
+constexpr std::string_view kNodeRunning = "AHFL_NODE_RUNNING";
+constexpr std::string_view kNodeCompleted = "AHFL_NODE_COMPLETED";
+constexpr std::string_view kNodeFailed = "AHFL_NODE_FAILED";
+constexpr std::string_view kNodeRecovering = "AHFL_NODE_RECOVERING";
+constexpr std::string_view kNodeRecovered = "AHFL_NODE_RECOVERED";
+constexpr std::string_view kNodeCompensating = "AHFL_NODE_COMPENSATING";
+constexpr std::string_view kNodeCompensated = "AHFL_NODE_COMPENSATED";
+constexpr std::string_view kNodeTerminalFailed = "AHFL_NODE_TERMINAL_FAILED";
 
 [[nodiscard]] std::string workflow_node_started_var(const ir::WorkflowDecl &workflow,
                                                     std::string_view node_name) {
@@ -124,6 +142,44 @@ struct WorkflowNodeInfo {
                                                     std::string_view node_name) {
     return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
            sanitize_identifier(node_name) + "__running";
+}
+
+[[nodiscard]] std::string workflow_node_failure_requested_var(const ir::WorkflowDecl &workflow,
+                                                              std::string_view node_name) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__failure_requested";
+}
+
+[[nodiscard]] std::string workflow_node_failed_var(const ir::WorkflowDecl &workflow,
+                                                   std::string_view node_name) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__failed";
+}
+
+[[nodiscard]] std::string workflow_node_recovering_var(const ir::WorkflowDecl &workflow,
+                                                       std::string_view node_name) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__recovering";
+}
+
+[[nodiscard]] std::string workflow_node_recovered_var(const ir::WorkflowDecl &workflow,
+                                                      std::string_view node_name) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__recovered";
+}
+
+[[nodiscard]] std::string workflow_node_call_event_var(const ir::WorkflowDecl &workflow,
+                                                       std::string_view node_name,
+                                                       std::string_view capability_name) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__call__" + sanitize_identifier(capability_name);
+}
+
+[[nodiscard]] std::string workflow_node_effect_event_var(const ir::WorkflowDecl &workflow,
+                                                         std::string_view node_name,
+                                                         std::string_view effect_kind) {
+    return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
+           sanitize_identifier(node_name) + "__effect__" + sanitize_identifier(effect_kind);
 }
 
 [[nodiscard]] std::string clause_atom_name(std::string_view base_name, std::size_t index) {
@@ -141,6 +197,56 @@ struct WorkflowNodeInfo {
     }
 
     return "invalid";
+}
+
+[[nodiscard]] std::string capability_effect_kind_name(ir::CapabilityEffectKind kind) {
+    switch (kind) {
+    case ir::CapabilityEffectKind::Read:
+        return "read";
+    case ir::CapabilityEffectKind::ExternalSideEffect:
+        return "external_side_effect";
+    case ir::CapabilityEffectKind::DurableWrite:
+        return "durable_write";
+    case ir::CapabilityEffectKind::FinancialWrite:
+        return "financial_write";
+    case ir::CapabilityEffectKind::Unknown:
+        return "unknown";
+    }
+
+    return "unknown";
+}
+
+[[nodiscard]] bool capability_name_matches(std::string_view candidate,
+                                           std::string_view requested_name) {
+    if (candidate == requested_name) {
+        return true;
+    }
+
+    const auto requested = std::string(requested_name);
+    const auto candidate_text = std::string(candidate);
+    if (candidate_text.size() <= requested.size()) {
+        return false;
+    }
+
+    return candidate_text.ends_with("::" + requested);
+}
+
+[[nodiscard]] bool has_policy(const ir::CapabilityEffectSpec &effect,
+                              std::string_view requested_policy) {
+    return std::ranges::any_of(effect.policies, [&](const auto &policy) {
+        return policy == requested_policy || capability_name_matches(policy, requested_policy);
+    });
+}
+
+[[nodiscard]] bool is_external_or_stronger(ir::CapabilityEffectKind kind) {
+    return kind == ir::CapabilityEffectKind::ExternalSideEffect ||
+           kind == ir::CapabilityEffectKind::DurableWrite ||
+           kind == ir::CapabilityEffectKind::FinancialWrite;
+}
+
+[[nodiscard]] bool is_durable_or_stronger(ir::CapabilityEffectKind kind) {
+    return kind == ir::CapabilityEffectKind::DurableWrite ||
+           kind == ir::CapabilityEffectKind::FinancialWrite;
 }
 
 [[nodiscard]] std::string called_observation_key(std::string_view agent_name,
@@ -176,6 +282,30 @@ struct WorkflowNodeInfo {
     return "(" + join(clauses, " | ") + ")";
 }
 
+[[nodiscard]] std::string render_disjunction(const std::vector<std::string> &guards) {
+    if (guards.empty()) {
+        return "FALSE";
+    }
+
+    if (guards.size() == 1) {
+        return guards.front();
+    }
+
+    return "(" + join(guards, " | ") + ")";
+}
+
+[[nodiscard]] std::string render_conjunction(const std::vector<std::string> &guards) {
+    if (guards.empty()) {
+        return "TRUE";
+    }
+
+    if (guards.size() == 1) {
+        return guards.front();
+    }
+
+    return "(" + join(guards, " & ") + ")";
+}
+
 [[nodiscard]] std::string contract_clause_kind_name(ir::ContractClauseKind kind) {
     switch (kind) {
     case ir::ContractClauseKind::Requires:
@@ -209,12 +339,14 @@ class SmvPrinter final {
     std::ostream &out_;
     std::unordered_map<std::string, std::reference_wrapper<const ir::AgentDecl>> agents_;
     std::unordered_map<std::string, std::reference_wrapper<const ir::FlowDecl>> flows_;
+    std::unordered_map<std::string, std::reference_wrapper<const ir::CapabilityDecl>> capabilities_;
     std::vector<std::reference_wrapper<const ir::ContractDecl>> contracts_;
     std::vector<std::reference_wrapper<const ir::WorkflowDecl>> workflows_;
     std::vector<std::string> state_variables_;
     std::vector<std::string> observation_variables_;
     std::unordered_map<std::string, std::string> called_observation_symbols_;
     std::unordered_map<std::string, std::string> embedded_observation_symbols_;
+    std::vector<std::string> symbol_mappings_;
     std::vector<std::string> defines_;
     std::vector<std::string> assignments_;
     std::vector<std::string> specs_;
@@ -229,6 +361,9 @@ class SmvPrinter final {
                     [&](const ir::ContractDecl &contract) {
                         contracts_.push_back(std::cref(contract));
                     },
+                    [&](const ir::CapabilityDecl &capability) {
+                        capabilities_.emplace(capability.name, std::cref(capability));
+                    },
                     [&](const ir::FlowDecl &flow) { flows_.emplace(flow.target, std::cref(flow)); },
                     [&](const ir::WorkflowDecl &workflow) {
                         workflows_.push_back(std::cref(workflow));
@@ -241,32 +376,43 @@ class SmvPrinter final {
 
     void index_observations(const ir::Program &program) {
         for (const auto &observation : program.formal_observations) {
-            observation_variables_.push_back(observation.symbol + " : boolean;");
-
-            std::visit(Overloaded{
-                           [&](const ir::CalledCapabilityObservation &value) {
-                               called_observation_symbols_.emplace(
-                                   called_observation_key(value.agent, value.capability),
-                                   observation.symbol);
-                           },
-                           [&](const ir::EmbeddedBoolObservation &value) {
-                               embedded_observation_symbols_.emplace(
-                                   embedded_observation_key(value.scope.kind,
-                                                            value.scope.owner,
-                                                            value.scope.clause_index,
-                                                            value.scope.atom_index),
-                                   observation.symbol);
-                           },
-                       },
-                       observation.node);
+            std::visit(
+                Overloaded{
+                    [&](const ir::CalledCapabilityObservation &value) {
+                        called_observation_symbols_.emplace(
+                            called_observation_key(value.agent, value.capability),
+                            observation.symbol);
+                        add_symbol_mapping(observation.symbol,
+                                           "agent " + value.agent + " called " + value.capability);
+                    },
+                    [&](const ir::EmbeddedBoolObservation &value) {
+                        observation_variables_.push_back(observation.symbol + " : boolean;");
+                        embedded_observation_symbols_.emplace(
+                            embedded_observation_key(value.scope.kind,
+                                                     value.scope.owner,
+                                                     value.scope.clause_index,
+                                                     value.scope.atom_index),
+                            observation.symbol);
+                        add_symbol_mapping(observation.symbol,
+                                           "observation " +
+                                               observation_scope_kind_key(value.scope.kind) + " " +
+                                               value.scope.owner + "[" +
+                                               std::to_string(value.scope.clause_index) + "]");
+                    },
+                },
+                observation.node);
         }
     }
 
     void collect_state_variables() {
         for (const auto &[name, agent] : agents_) {
             (void)name;
-            state_variables_.push_back(agent_state_var(agent.get()) + " : {" +
-                                       join(agent.get().states, ", ") + "};");
+            if (agent_has_contract(agent.get())) {
+                const auto state_var = agent_state_var(agent.get());
+                state_variables_.push_back(state_var + " : {" + join(agent.get().states, ", ") +
+                                           "};");
+                add_symbol_mapping(state_var, "agent " + agent.get().name + " state");
+            }
         }
 
         for (const auto &workflow : workflows_) {
@@ -276,12 +422,27 @@ class SmvPrinter final {
                     continue;
                 }
 
-                state_variables_.push_back(workflow_node_state_var(workflow.get(), node.name) +
-                                           " : {" + join(agent->get().states, ", ") + "};");
-                state_variables_.push_back(workflow_node_started_var(workflow.get(), node.name) +
-                                           " : boolean;");
-                state_variables_.push_back(workflow_node_completed_var(workflow.get(), node.name) +
-                                           " : boolean;");
+                const auto state_var = workflow_node_state_var(workflow.get(), node.name);
+                const auto phase_var = workflow_node_phase_var(workflow.get(), node.name);
+                const auto failure_requested_var =
+                    workflow_node_failure_requested_var(workflow.get(), node.name);
+                state_variables_.push_back(state_var + " : {" + join(agent->get().states, ", ") +
+                                           "};");
+                state_variables_.push_back(
+                    phase_var + " : {" + std::string(kNodeIdle) + ", " + std::string(kNodeRunning) +
+                    ", " + std::string(kNodeCompleted) + ", " + std::string(kNodeFailed) + ", " +
+                    std::string(kNodeRecovering) + ", " + std::string(kNodeRecovered) + ", " +
+                    std::string(kNodeCompensating) + ", " + std::string(kNodeCompensated) + ", " +
+                    std::string(kNodeTerminalFailed) + "};");
+                add_symbol_mapping(
+                    state_var, "workflow " + workflow.get().name + " node " + node.name + " state");
+                add_symbol_mapping(phase_var,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " lifecycle phase");
+                observation_variables_.push_back(failure_requested_var + " : boolean;");
+                add_symbol_mapping(failure_requested_var,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " environment failure request");
             }
         }
     }
@@ -292,22 +453,70 @@ class SmvPrinter final {
             for (const auto &node : workflow.get().nodes) {
                 const auto started_name = workflow_node_started_var(workflow.get(), node.name);
                 const auto running_name = workflow_node_running_var(workflow.get(), node.name);
+                const auto completed_name = workflow_node_completed_var(workflow.get(), node.name);
+                const auto failed_name = workflow_node_failed_var(workflow.get(), node.name);
+                const auto recovering_name =
+                    workflow_node_recovering_var(workflow.get(), node.name);
+                const auto recovered_name = workflow_node_recovered_var(workflow.get(), node.name);
                 const auto target = node_map.find(node.name);
                 if (target == node_map.end()) {
                     continue;
                 }
 
-                defines_.push_back(running_name + " := " + started_name + " & !(" +
-                                   workflow_node_completed_var(workflow.get(), node.name) + ");");
+                const auto phase_name = workflow_node_phase_var(workflow.get(), node.name);
+                const auto final_guard =
+                    render_state_membership(workflow_node_state_var(workflow.get(), node.name),
+                                            target->second.agent.get().final_states);
+
+                defines_.push_back(started_name + " := !(" + phase_name + " = " +
+                                   std::string(kNodeIdle) + ");");
+                defines_.push_back(completed_name + " := (" + phase_name + " = " +
+                                   std::string(kNodeCompleted) + " | (" + phase_name + " = " +
+                                   std::string(kNodeRunning) + " & " + final_guard + "));");
+                defines_.push_back(running_name + " := (" + phase_name + " = " +
+                                   std::string(kNodeRunning) + " & !(" + final_guard + "));");
+                defines_.push_back(failed_name + " := (" + phase_name + " = " +
+                                   std::string(kNodeFailed) + " | " + phase_name + " = " +
+                                   std::string(kNodeTerminalFailed) + ");");
+                defines_.push_back(recovering_name + " := (" + phase_name + " = " +
+                                   std::string(kNodeRecovering) + " | " + phase_name + " = " +
+                                   std::string(kNodeCompensating) + ");");
+                defines_.push_back(recovered_name + " := (" + phase_name + " = " +
+                                   std::string(kNodeRecovered) + " | " + phase_name + " = " +
+                                   std::string(kNodeCompensated) + ");");
+                add_symbol_mapping(started_name,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " has started");
+                add_symbol_mapping(running_name,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " is running");
+                add_symbol_mapping(completed_name,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " completed");
+                add_symbol_mapping(failed_name,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " failed");
+                add_symbol_mapping(recovering_name,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " recovering");
+                add_symbol_mapping(recovered_name,
+                                   "workflow " + workflow.get().name + " node " + node.name +
+                                       " recovered");
             }
         }
+
+        collect_call_and_effect_event_defines();
+        collect_called_observation_defines();
     }
 
     void collect_assignments() {
         for (const auto &[name, agent] : agents_) {
             (void)name;
-            collect_state_machine_assignments(
-                agent.get(), agent_state_var(agent.get()), build_effective_adjacency(agent.get()));
+            if (agent_has_contract(agent.get())) {
+                collect_state_machine_assignments(agent.get(),
+                                                  agent_state_var(agent.get()),
+                                                  build_effective_adjacency(agent.get()));
+            }
         }
 
         for (const auto &workflow : workflows_) {
@@ -332,52 +541,73 @@ class SmvPrinter final {
 
             for (std::size_t index = 0; index < contract.get().clauses.size(); ++index) {
                 const auto &clause = contract.get().clauses[index];
-                std::string formula;
+                std::optional<std::string> formula;
                 if (const auto expr = std::get_if<ir::ExprPtr>(&clause.value); expr != nullptr) {
                     formula = render_contract_expr_clause(
                         contract.get(), agent->get(), clause.kind, index);
                 } else if (const auto temporal = std::get_if<ir::TemporalExprPtr>(&clause.value);
                            temporal != nullptr) {
                     std::size_t atom_index = 0;
-                    formula = render_agent_formula(**temporal, agent->get(), index, atom_index);
+                    std::vector<std::string> observation_assumptions;
+                    formula = wrap_formula_with_observation_assumptions(
+                        render_agent_formula(
+                            **temporal, agent->get(), index, atom_index, observation_assumptions),
+                        observation_assumptions);
                 } else {
+                    continue;
+                }
+
+                if (!formula.has_value()) {
                     continue;
                 }
 
                 specs_.push_back("-- contract " + contract.get().target + " " +
                                  contract_clause_kind_name(clause.kind) + "[" +
                                  std::to_string(index) + "]");
-                specs_.push_back("LTLSPEC " + formula);
+                specs_.push_back("LTLSPEC " + *formula);
             }
         }
 
         for (const auto &workflow : workflows_) {
+            const auto node_map = build_workflow_node_map(workflow.get());
+            collect_workflow_control_specs(workflow.get(), node_map);
+
             for (std::size_t index = 0; index < workflow.get().safety.size(); ++index) {
                 std::size_t atom_index = 0;
-                const auto formula =
+                std::vector<std::string> observation_assumptions;
+                const auto formula = wrap_formula_with_observation_assumptions(
                     render_workflow_formula(*workflow.get().safety[index],
                                             workflow.get(),
                                             ir::FormalObservationScopeKind::WorkflowSafetyClause,
                                             index,
-                                            atom_index);
+                                            atom_index,
+                                            observation_assumptions),
+                    observation_assumptions);
                 specs_.push_back("-- workflow " + workflow.get().name + " safety[" +
                                  std::to_string(index) + "]");
-                specs_.push_back("LTLSPEC " + formula);
+                specs_.push_back("LTLSPEC " + wrap_formula_with_workflow_no_failure_assumption(
+                                                  workflow.get(), formula));
             }
 
             for (std::size_t index = 0; index < workflow.get().liveness.size(); ++index) {
                 std::size_t atom_index = 0;
-                const auto formula =
+                std::vector<std::string> observation_assumptions;
+                const auto formula = wrap_formula_with_observation_assumptions(
                     render_workflow_formula(*workflow.get().liveness[index],
                                             workflow.get(),
                                             ir::FormalObservationScopeKind::WorkflowLivenessClause,
                                             index,
-                                            atom_index);
+                                            atom_index,
+                                            observation_assumptions),
+                    observation_assumptions);
                 specs_.push_back("-- workflow " + workflow.get().name + " liveness[" +
                                  std::to_string(index) + "]");
-                specs_.push_back("LTLSPEC " + formula);
+                specs_.push_back("LTLSPEC " + wrap_formula_with_workflow_no_failure_assumption(
+                                                  workflow.get(), formula));
             }
         }
+
+        collect_effect_obligation_specs();
     }
 
     [[nodiscard]] MaybeCRef<ir::AgentDecl> find_agent(std::string_view canonical_name) const {
@@ -386,6 +616,11 @@ class SmvPrinter final {
         }
 
         return std::nullopt;
+    }
+
+    [[nodiscard]] bool agent_has_contract(const ir::AgentDecl &agent) const {
+        return std::ranges::any_of(
+            contracts_, [&](const auto &contract) { return contract.get().target == agent.name; });
     }
 
     [[nodiscard]] std::unordered_map<std::string, WorkflowNodeInfo>
@@ -414,6 +649,160 @@ class SmvPrinter final {
         }
 
         return std::nullopt;
+    }
+
+    [[nodiscard]] MaybeCRef<ir::CapabilityDecl>
+    find_capability(std::string_view canonical_name) const {
+        if (const auto iter = capabilities_.find(std::string(canonical_name));
+            iter != capabilities_.end()) {
+            return std::cref(iter->second.get());
+        }
+
+        const auto match = std::ranges::find_if(capabilities_, [&](const auto &entry) {
+            return capability_name_matches(entry.first, canonical_name);
+        });
+        if (match != capabilities_.end()) {
+            return std::cref(match->second.get());
+        }
+
+        return std::nullopt;
+    }
+
+    void add_symbol_mapping(const std::string &symbol, const std::string &description) {
+        const auto mapping = symbol + " => " + description;
+        if (std::ranges::find(symbol_mappings_, mapping) == symbol_mappings_.end()) {
+            symbol_mappings_.push_back(mapping);
+        }
+    }
+
+    [[nodiscard]] bool handler_calls_capability(const ir::StateHandler &handler,
+                                                std::string_view capability_name) const {
+        return std::ranges::any_of(handler.summary.called_targets, [&](const auto &target) {
+            return capability_name_matches(target, capability_name);
+        });
+    }
+
+    [[nodiscard]] std::string
+    render_workflow_node_state_guard(const ir::WorkflowDecl &workflow,
+                                     const ir::WorkflowNode &node,
+                                     const ir::StateHandler &handler) const {
+        return "(" + workflow_node_running_var(workflow, node.name) + " & (" +
+               workflow_node_state_var(workflow, node.name) + " = " + handler.state_name + "))";
+    }
+
+    [[nodiscard]] std::vector<std::string>
+    collect_called_guards(std::string_view agent_name, std::string_view capability_name) const {
+        std::vector<std::string> guards;
+
+        for (const auto &workflow : workflows_) {
+            for (const auto &node : workflow.get().nodes) {
+                if (node.target != agent_name) {
+                    continue;
+                }
+
+                const auto flow = find_flow(node.target);
+                if (!flow.has_value()) {
+                    continue;
+                }
+
+                for (const auto &handler : flow->get().state_handlers) {
+                    if (handler_calls_capability(handler, capability_name)) {
+                        guards.push_back(
+                            render_workflow_node_state_guard(workflow.get(), node, handler));
+                    }
+                }
+            }
+        }
+
+        if (!guards.empty()) {
+            return guards;
+        }
+
+        const auto agent = find_agent(agent_name);
+        const auto flow = find_flow(agent_name);
+        if (!agent.has_value() || !flow.has_value() || !agent_has_contract(agent->get())) {
+            return guards;
+        }
+
+        for (const auto &handler : flow->get().state_handlers) {
+            if (handler_calls_capability(handler, capability_name)) {
+                guards.push_back("(" + agent_state_var(agent->get()) + " = " + handler.state_name +
+                                 ")");
+            }
+        }
+
+        return guards;
+    }
+
+    void collect_call_and_effect_event_defines() {
+        std::map<std::string, std::vector<std::string>> call_guards;
+        std::map<std::string, std::vector<std::string>> effect_guards;
+        std::map<std::string, std::string> call_mappings;
+        std::map<std::string, std::string> effect_mappings;
+
+        for (const auto &workflow : workflows_) {
+            for (const auto &node : workflow.get().nodes) {
+                const auto flow = find_flow(node.target);
+                if (!flow.has_value()) {
+                    continue;
+                }
+
+                for (const auto &handler : flow->get().state_handlers) {
+                    const auto guard =
+                        render_workflow_node_state_guard(workflow.get(), node, handler);
+                    for (const auto &called_target : handler.summary.called_targets) {
+                        const auto capability = find_capability(called_target);
+                        if (!capability.has_value()) {
+                            continue;
+                        }
+
+                        const auto call_symbol =
+                            workflow_node_call_event_var(workflow.get(), node.name, called_target);
+                        call_guards[call_symbol].push_back(guard);
+                        call_mappings.emplace(call_symbol,
+                                              "workflow " + workflow.get().name + " node " +
+                                                  node.name + " calls " + called_target);
+
+                        const auto effect_kind =
+                            capability_effect_kind_name(capability->get().effect.kind);
+                        const auto effect_symbol =
+                            workflow_node_effect_event_var(workflow.get(), node.name, effect_kind);
+                        effect_guards[effect_symbol].push_back(guard);
+                        effect_mappings.emplace(effect_symbol,
+                                                "workflow " + workflow.get().name + " node " +
+                                                    node.name + " effect " + effect_kind);
+                    }
+                }
+            }
+        }
+
+        for (const auto &[symbol, guards] : call_guards) {
+            defines_.push_back(symbol + " := " + render_disjunction(guards) + ";");
+            add_symbol_mapping(symbol, call_mappings.at(symbol));
+        }
+
+        for (const auto &[symbol, guards] : effect_guards) {
+            defines_.push_back(symbol + " := " + render_disjunction(guards) + ";");
+            add_symbol_mapping(symbol, effect_mappings.at(symbol));
+        }
+    }
+
+    void collect_called_observation_defines() {
+        std::map<std::string, std::string> symbols(called_observation_symbols_.begin(),
+                                                   called_observation_symbols_.end());
+
+        for (const auto &[key, symbol] : symbols) {
+            const auto separator = key.find('\n');
+            if (separator == std::string::npos) {
+                continue;
+            }
+
+            const auto agent_name = key.substr(0, separator);
+            const auto capability_name = key.substr(separator + 1);
+            defines_.push_back(
+                symbol + " := " +
+                render_disjunction(collect_called_guards(agent_name, capability_name)) + ";");
+        }
     }
 
     [[nodiscard]] std::string
@@ -455,36 +844,185 @@ class SmvPrinter final {
                                            const ir::WorkflowNode &node,
                                            const ir::AgentDecl &agent) {
         const auto state_var = workflow_node_state_var(workflow, node.name);
-        const auto started_var = workflow_node_started_var(workflow, node.name);
-        const auto completed_var = workflow_node_completed_var(workflow, node.name);
+        const auto phase_var = workflow_node_phase_var(workflow, node.name);
+        const auto failure_requested_var = workflow_node_failure_requested_var(workflow, node.name);
         const auto dependency_guard = render_dependency_guard(workflow, node.after);
+        const auto final_guard = render_state_membership(state_var, agent.final_states);
 
         collect_state_machine_assignments(agent,
                                           state_var,
                                           build_effective_adjacency(agent),
-                                          node.after.empty() ? std::string()
-                                                             : "!(" + started_var + ") & !(" +
-                                                                   dependency_guard + ")");
+                                          "!(" + phase_var + " = " + std::string(kNodeRunning) +
+                                              ")");
 
-        assignments_.push_back("init(" + started_var +
-                               ") := " + std::string(node.after.empty() ? "TRUE" : "FALSE") + ";");
-        if (node.after.empty()) {
-            assignments_.push_back("next(" + started_var + ") := TRUE;");
-        } else {
-            assignments_.push_back("next(" + started_var + ") := case");
-            assignments_.push_back("  " + started_var + " : TRUE;");
-            assignments_.push_back("  " + dependency_guard + " : TRUE;");
-            assignments_.push_back("  TRUE : FALSE;");
-            assignments_.push_back("esac;");
-        }
-
-        assignments_.push_back("init(" + completed_var + ") := FALSE;");
-        assignments_.push_back("next(" + completed_var + ") := case");
-        assignments_.push_back("  " + completed_var + " : TRUE;");
-        assignments_.push_back("  " + started_var + " & " +
-                               render_state_membership(state_var, agent.final_states) + " : TRUE;");
-        assignments_.push_back("  TRUE : FALSE;");
+        assignments_.push_back("init(" + phase_var + ") := " +
+                               std::string(node.after.empty() ? kNodeRunning : kNodeIdle) + ";");
+        assignments_.push_back("next(" + phase_var + ") := case");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeCompleted) + " : " +
+                               std::string(kNodeCompleted) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeTerminalFailed) + " : " +
+                               std::string(kNodeTerminalFailed) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeCompensated) + " : " +
+                               std::string(kNodeTerminalFailed) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeCompensating) + " : " +
+                               std::string(kNodeCompensated) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeRecovered) + " : " +
+                               std::string(kNodeRunning) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeRecovering) + " : " +
+                               std::string(kNodeRecovered) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeFailed) + " : " +
+                               std::string(kNodeRecovering) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeIdle) + " & (" +
+                               dependency_guard + ") : " + std::string(kNodeRunning) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeIdle) + " : " +
+                               std::string(kNodeIdle) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeRunning) + " & " +
+                               final_guard + " : " + std::string(kNodeCompleted) + ";");
+        assignments_.push_back("  " + phase_var + " = " + std::string(kNodeRunning) + " & " +
+                               failure_requested_var + " : " + std::string(kNodeFailed) + ";");
+        assignments_.push_back("  TRUE : " + phase_var + ";");
         assignments_.push_back("esac;");
+    }
+
+    void collect_workflow_control_specs(
+        const ir::WorkflowDecl &workflow,
+        const std::unordered_map<std::string, WorkflowNodeInfo> &node_map) {
+        for (const auto &node : workflow.nodes) {
+            const auto target = node_map.find(node.name);
+            if (target == node_map.end()) {
+                continue;
+            }
+
+            const auto state_var = workflow_node_state_var(workflow, node.name);
+            const auto completed_var = workflow_node_completed_var(workflow, node.name);
+            const auto final_guard =
+                render_state_membership(state_var, target->second.agent.get().final_states);
+
+            specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
+                             " lifecycle[completed_final]");
+            specs_.push_back("LTLSPEC G (" + completed_var + " -> " + final_guard + ")");
+
+            if (!node.after.empty()) {
+                const auto dependency_guard = render_dependency_guard(workflow, node.after);
+                specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
+                                 " dependency[start_after]");
+                specs_.push_back("LTLSPEC G ((" + workflow_node_running_var(workflow, node.name) +
+                                 " | " + completed_var + ") -> (" + dependency_guard + "))");
+            }
+
+            const auto phase_var = workflow_node_phase_var(workflow, node.name);
+            specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
+                             " recovery[failed_enters_recovering]");
+            specs_.push_back("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeFailed) +
+                             ") -> F (" + phase_var + " = " + std::string(kNodeRecovering) + "))");
+            specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
+                             " recovery[recovering_enters_recovered]");
+            specs_.push_back("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeRecovering) +
+                             ") -> F (" + phase_var + " = " + std::string(kNodeRecovered) + "))");
+            specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
+                             " recovery[recovered_resumes_running]");
+            specs_.push_back("LTLSPEC G ((" + phase_var + " = " + std::string(kNodeRecovered) +
+                             ") -> F (" + workflow_node_running_var(workflow, node.name) + " | " +
+                             completed_var + "))");
+        }
+    }
+
+    void add_effect_obligation_spec(const ir::WorkflowDecl &workflow,
+                                    const ir::WorkflowNode &node,
+                                    std::string_view called_target,
+                                    std::string_view event_symbol,
+                                    std::string_view obligation_name,
+                                    bool satisfied) {
+        specs_.push_back("-- workflow " + workflow.name + " node " + node.name + " call " +
+                         std::string(called_target) + " " + std::string(obligation_name));
+        specs_.push_back("LTLSPEC G (" + std::string(event_symbol) + " -> " +
+                         std::string(satisfied ? "TRUE" : "FALSE") + ")");
+    }
+
+    void collect_effect_obligation_specs() {
+        for (const auto &workflow : workflows_) {
+            for (const auto &node : workflow.get().nodes) {
+                const auto flow = find_flow(node.target);
+                if (!flow.has_value()) {
+                    continue;
+                }
+
+                for (const auto &handler : flow->get().state_handlers) {
+                    for (const auto &called_target : handler.summary.called_targets) {
+                        const auto call_event =
+                            workflow_node_call_event_var(workflow.get(), node.name, called_target);
+                        const auto capability = find_capability(called_target);
+                        if (!capability.has_value()) {
+                            continue;
+                        }
+
+                        const auto &effect = capability->get().effect;
+                        if (!effect.declared || effect.kind == ir::CapabilityEffectKind::Unknown) {
+                            specs_.push_back("-- workflow " + workflow.get().name + " node " +
+                                             node.name + " call " + called_target +
+                                             " effect[profile_missing_or_unknown]: "
+                                             "validate-assurance gate");
+                            continue;
+                        }
+
+                        add_effect_obligation_spec(workflow.get(),
+                                                   node,
+                                                   called_target,
+                                                   call_event,
+                                                   "effect[declared]",
+                                                   true);
+
+                        if (is_external_or_stronger(effect.kind)) {
+                            add_effect_obligation_spec(workflow.get(),
+                                                       node,
+                                                       called_target,
+                                                       call_event,
+                                                       "effect[audit_event]",
+                                                       has_policy(effect, "audit_event"));
+                        }
+
+                        if (is_durable_or_stronger(effect.kind)) {
+                            add_effect_obligation_spec(workflow.get(),
+                                                       node,
+                                                       called_target,
+                                                       call_event,
+                                                       "effect[idempotency_key]",
+                                                       effect.idempotency_key.has_value());
+                            add_effect_obligation_spec(workflow.get(),
+                                                       node,
+                                                       called_target,
+                                                       call_event,
+                                                       "effect[provider_receipt]",
+                                                       effect.receipt_mode ==
+                                                           ir::CapabilityReceiptMode::Required);
+                            add_effect_obligation_spec(
+                                workflow.get(),
+                                node,
+                                called_target,
+                                call_event,
+                                "recovery[retry_is_idempotent]",
+                                effect.retry_mode != ir::CapabilityRetryMode::SafeIfIdempotent ||
+                                    effect.idempotency_key.has_value());
+                        }
+
+                        if (effect.kind == ir::CapabilityEffectKind::FinancialWrite) {
+                            add_effect_obligation_spec(workflow.get(),
+                                                       node,
+                                                       called_target,
+                                                       call_event,
+                                                       "effect[approval_policy]",
+                                                       has_policy(effect, "approval_required"));
+                            add_effect_obligation_spec(workflow.get(),
+                                                       node,
+                                                       called_target,
+                                                       call_event,
+                                                       "recovery[compensation]",
+                                                       effect.compensation.has_value());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     void collect_state_machine_assignments(
@@ -564,111 +1102,191 @@ class SmvPrinter final {
         return join(guards, " & ");
     }
 
-    [[nodiscard]] std::string render_agent_formula(const ir::TemporalExpr &expr,
-                                                   const ir::AgentDecl &agent,
-                                                   std::size_t clause_index,
-                                                   std::size_t &atom_index) const {
-        return std::visit(
-            Overloaded{
-                [&](const ir::EmbeddedTemporalExpr &) {
-                    return lookup_embedded_observation_symbol(
-                        ir::FormalObservationScopeKind::ContractClause,
-                        agent.name,
-                        clause_index,
-                        atom_index++);
-                },
-                [&](const ir::CalledTemporalExpr &value) {
-                    return lookup_called_observation_symbol(agent.name, value.capability);
-                },
-                [&](const ir::InStateTemporalExpr &value) {
-                    return "(" + agent_state_var(agent) + " = " + value.state + ")";
-                },
-                [&](const ir::TemporalUnaryExpr &value) {
-                    return smv_unary_op(value.op) + " (" +
-                           render_agent_formula(*value.operand, agent, clause_index, atom_index) +
-                           ")";
-                },
-                [&](const ir::TemporalBinaryExpr &value) {
-                    return "(" + render_agent_formula(*value.lhs, agent, clause_index, atom_index) +
-                           " " + smv_binary_op(value.op) + " " +
-                           render_agent_formula(*value.rhs, agent, clause_index, atom_index) + ")";
-                },
-                [&](const auto &) { return std::string("FALSE"); },
-            },
-            expr.node);
+    [[nodiscard]] std::string wrap_formula_with_observation_assumptions(
+        std::string formula, const std::vector<std::string> &observation_assumptions) const {
+        std::vector<std::string> unique_assumptions;
+        for (const auto &assumption : observation_assumptions) {
+            if (std::ranges::find(unique_assumptions, assumption) == unique_assumptions.end()) {
+                unique_assumptions.push_back(assumption);
+            }
+        }
+
+        if (unique_assumptions.empty()) {
+            return formula;
+        }
+
+        return "(G (" + render_conjunction(unique_assumptions) + ") -> (" + formula + "))";
     }
 
-    [[nodiscard]] std::string render_contract_expr_clause(const ir::ContractDecl &contract,
-                                                          const ir::AgentDecl &agent,
-                                                          ir::ContractClauseKind kind,
-                                                          std::size_t clause_index) const {
+    [[nodiscard]] std::string
+    wrap_formula_with_workflow_no_failure_assumption(const ir::WorkflowDecl &workflow,
+                                                     std::string formula) const {
+        std::vector<std::string> no_failure_guards;
+        no_failure_guards.reserve(workflow.nodes.size());
+
+        for (const auto &node : workflow.nodes) {
+            no_failure_guards.push_back("!" +
+                                        workflow_node_failure_requested_var(workflow, node.name));
+        }
+
+        if (no_failure_guards.empty()) {
+            return formula;
+        }
+
+        return "(G (" + render_conjunction(no_failure_guards) + ") -> (" + formula + "))";
+    }
+
+    [[nodiscard]] std::string
+    render_agent_formula(const ir::TemporalExpr &expr,
+                         const ir::AgentDecl &agent,
+                         std::size_t clause_index,
+                         std::size_t &atom_index,
+                         std::vector<std::string> &observation_assumptions) const {
+        return std::visit(Overloaded{
+                              [&](const ir::EmbeddedTemporalExpr &) {
+                                  const auto observation = lookup_embedded_observation_symbol(
+                                      ir::FormalObservationScopeKind::ContractClause,
+                                      agent.name,
+                                      clause_index,
+                                      atom_index++);
+                                  observation_assumptions.push_back(observation);
+                                  return observation;
+                              },
+                              [&](const ir::CalledTemporalExpr &value) {
+                                  return lookup_called_observation_symbol(agent.name,
+                                                                          value.capability);
+                              },
+                              [&](const ir::InStateTemporalExpr &value) {
+                                  return "(" + agent_state_var(agent) + " = " + value.state + ")";
+                              },
+                              [&](const ir::TemporalUnaryExpr &value) {
+                                  return smv_unary_op(value.op) + " (" +
+                                         render_agent_formula(*value.operand,
+                                                              agent,
+                                                              clause_index,
+                                                              atom_index,
+                                                              observation_assumptions) +
+                                         ")";
+                              },
+                              [&](const ir::TemporalBinaryExpr &value) {
+                                  return "(" +
+                                         render_agent_formula(*value.lhs,
+                                                              agent,
+                                                              clause_index,
+                                                              atom_index,
+                                                              observation_assumptions) +
+                                         " " + smv_binary_op(value.op) + " " +
+                                         render_agent_formula(*value.rhs,
+                                                              agent,
+                                                              clause_index,
+                                                              atom_index,
+                                                              observation_assumptions) +
+                                         ")";
+                              },
+                              [&](const auto &) { return std::string("FALSE"); },
+                          },
+                          expr.node);
+    }
+
+    [[nodiscard]] std::optional<std::string>
+    render_contract_expr_clause(const ir::ContractDecl &contract,
+                                const ir::AgentDecl &agent,
+                                ir::ContractClauseKind kind,
+                                std::size_t clause_index) {
+        (void)agent;
         const auto observation = lookup_embedded_observation_symbol(
             ir::FormalObservationScopeKind::ContractClause, contract.target, clause_index, 0);
 
         switch (kind) {
         case ir::ContractClauseKind::Requires:
-            // A `requires` clause is exported as an initial-state precondition only.
-            return observation;
+            specs_.push_back("-- contract " + contract.target + " requires[" +
+                             std::to_string(clause_index) +
+                             "] observation_assumption: " + observation);
+            return std::nullopt;
         case ir::ContractClauseKind::Ensures:
-            // An `ensures` clause is only checked once the agent reaches a final state.
-            return "G (" + render_state_membership(agent_state_var(agent), agent.final_states) +
-                   " -> " + observation + ")";
+            specs_.push_back("-- contract " + contract.target + " ensures[" +
+                             std::to_string(clause_index) +
+                             "] data_guarantee_abstracted: " + observation);
+            return std::nullopt;
         case ir::ContractClauseKind::Invariant:
         case ir::ContractClauseKind::Forbid:
-            return observation;
+            specs_.push_back("-- contract " + contract.target + " " +
+                             contract_clause_kind_name(kind) + "[" + std::to_string(clause_index) +
+                             "] observation_assumption: " + observation);
+            return std::nullopt;
         }
 
-        return observation;
+        return std::nullopt;
     }
 
-    [[nodiscard]] std::string render_workflow_formula(const ir::TemporalExpr &expr,
-                                                      const ir::WorkflowDecl &workflow,
-                                                      ir::FormalObservationScopeKind scope_kind,
-                                                      std::size_t clause_index,
-                                                      std::size_t &atom_index) const {
-        return std::visit(
-            Overloaded{
-                [&](const ir::EmbeddedTemporalExpr &) {
-                    return lookup_embedded_observation_symbol(
-                        scope_kind, workflow.name, clause_index, atom_index++);
-                },
-                [&](const ir::RunningTemporalExpr &value) {
-                    return workflow_node_running_var(workflow, value.node);
-                },
-                [&](const ir::CompletedTemporalExpr &value) {
-                    if (!value.state_name.has_value()) {
-                        return workflow_node_completed_var(workflow, value.node);
-                    }
+    [[nodiscard]] std::string
+    render_workflow_formula(const ir::TemporalExpr &expr,
+                            const ir::WorkflowDecl &workflow,
+                            ir::FormalObservationScopeKind scope_kind,
+                            std::size_t clause_index,
+                            std::size_t &atom_index,
+                            std::vector<std::string> &observation_assumptions) const {
+        return std::visit(Overloaded{
+                              [&](const ir::EmbeddedTemporalExpr &) {
+                                  const auto observation = lookup_embedded_observation_symbol(
+                                      scope_kind, workflow.name, clause_index, atom_index++);
+                                  observation_assumptions.push_back(observation);
+                                  return observation;
+                              },
+                              [&](const ir::RunningTemporalExpr &value) {
+                                  return workflow_node_running_var(workflow, value.node);
+                              },
+                              [&](const ir::CompletedTemporalExpr &value) {
+                                  if (!value.state_name.has_value()) {
+                                      return workflow_node_completed_var(workflow, value.node);
+                                  }
 
-                    return "(" + workflow_node_completed_var(workflow, value.node) + " & (" +
-                           workflow_node_state_var(workflow, value.node) + " = " +
-                           *value.state_name + "))";
-                },
-                [&](const ir::TemporalUnaryExpr &value) {
-                    return smv_unary_op(value.op) + " (" +
-                           render_workflow_formula(
-                               *value.operand, workflow, scope_kind, clause_index, atom_index) +
-                           ")";
-                },
-                [&](const ir::TemporalBinaryExpr &value) {
-                    return "(" +
-                           render_workflow_formula(
-                               *value.lhs, workflow, scope_kind, clause_index, atom_index) +
-                           " " + smv_binary_op(value.op) + " " +
-                           render_workflow_formula(
-                               *value.rhs, workflow, scope_kind, clause_index, atom_index) +
-                           ")";
-                },
-                [&](const auto &) { return std::string("FALSE"); },
-            },
-            expr.node);
+                                  return "(" + workflow_node_completed_var(workflow, value.node) +
+                                         " & (" + workflow_node_state_var(workflow, value.node) +
+                                         " = " + *value.state_name + "))";
+                              },
+                              [&](const ir::TemporalUnaryExpr &value) {
+                                  return smv_unary_op(value.op) + " (" +
+                                         render_workflow_formula(*value.operand,
+                                                                 workflow,
+                                                                 scope_kind,
+                                                                 clause_index,
+                                                                 atom_index,
+                                                                 observation_assumptions) +
+                                         ")";
+                              },
+                              [&](const ir::TemporalBinaryExpr &value) {
+                                  return "(" +
+                                         render_workflow_formula(*value.lhs,
+                                                                 workflow,
+                                                                 scope_kind,
+                                                                 clause_index,
+                                                                 atom_index,
+                                                                 observation_assumptions) +
+                                         " " + smv_binary_op(value.op) + " " +
+                                         render_workflow_formula(*value.rhs,
+                                                                 workflow,
+                                                                 scope_kind,
+                                                                 clause_index,
+                                                                 atom_index,
+                                                                 observation_assumptions) +
+                                         ")";
+                              },
+                              [&](const auto &) { return std::string("FALSE"); },
+                          },
+                          expr.node);
     }
 
     void emit() {
         out_ << "-- AHFL restricted SMV backend v0.1\n";
         out_ << "-- This lowering preserves validated state-machine, flow, and workflow "
                 "structure.\n";
-        out_ << "-- Pure embedded expressions are abstracted as boolean observation variables.\n";
+        out_
+            << "-- Embedded data predicates are exported as environment observation assumptions.\n";
+        out_ << "-- Capability calls/effects are bound to flow handler events where available.\n";
+        for (const auto &mapping : symbol_mappings_) {
+            out_ << "-- AHFL_MAP " << mapping << '\n';
+        }
         out_ << "MODULE main\n";
 
         if (!state_variables_.empty()) {

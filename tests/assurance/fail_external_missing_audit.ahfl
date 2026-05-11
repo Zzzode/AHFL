@@ -1,0 +1,61 @@
+module assurance::external_missing_audit;
+
+struct Request {
+    id: String;
+}
+
+struct Ack {
+    ok: Bool;
+}
+
+struct Context {
+    processed: Bool = false;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+capability SendEmail(message: String) -> Ack {
+    effect: external_side_effect;
+    domain: messaging;
+    receipt: optional;
+    retry: unsafe;
+}
+
+agent NotifyAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [SendEmail];
+    transition Init -> Done;
+}
+
+flow for NotifyAgent {
+    state Init {
+        let ack: Ack = SendEmail(input.id);
+        assert(ack.ok);
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}
+
+workflow NotifyWorkflow {
+    input: Request;
+    output: Response;
+
+    node notify: NotifyAgent(input);
+
+    safety: always eventually completed(notify);
+    liveness: eventually completed(notify);
+
+    return: notify;
+}

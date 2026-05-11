@@ -14,6 +14,17 @@ function(ahfl_add_check_fail_test name source_file expected_pattern)
     )
 endfunction()
 
+function(ahfl_add_command_fail_test name subcommand source_file expected_pattern)
+    add_test(NAME ${name}
+        COMMAND ${CMAKE_COMMAND}
+            -DAHFLC=$<TARGET_FILE:ahflc>
+            -DINPUT_FILE=${source_file}
+            "-DAHFLC_ARGS=${subcommand};${source_file}"
+            -DEXPECTED_REGEX=${expected_pattern}
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+    )
+endfunction()
+
 function(ahfl_add_output_test name subcommand source_file expected_file)
     add_test(NAME ${name}
         COMMAND ${CMAKE_COMMAND}

@@ -1,0 +1,96 @@
+module assurance::effects;
+
+struct Request {
+    id: String;
+    amount: Decimal(2);
+}
+
+struct User {
+    id: String;
+}
+
+struct Ack {
+    ok: Bool;
+}
+
+struct Receipt {
+    id: String;
+}
+
+struct Context {
+    processed: Bool = false;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+capability ReadUser(id: String) -> User {
+    effect: read;
+    domain: identity;
+    receipt: none;
+    retry: safe;
+}
+
+capability SendEmail(message: String) -> Ack {
+    effect: external_side_effect;
+    domain: messaging;
+    receipt: optional;
+    retry: unsafe;
+    timeout: 10s;
+    policy: [messaging::audit_event];
+}
+
+capability ChargeCard(request: Request) -> Receipt {
+    effect: financial_write;
+    domain: payments;
+    idempotency: request.id;
+    receipt: required;
+    retry: safe_if_idempotent;
+    timeout: 30s;
+    compensation: RefundCard;
+    policy: [payments::approval_required, payments::audit_event];
+}
+
+agent BillingAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [ReadUser, SendEmail, ChargeCard];
+    transition Init -> Done;
+}
+
+flow for BillingAgent {
+    state Init with {
+        retry: 1;
+        timeout: 30s;
+    } {
+        let user: User = ReadUser(input.id);
+        let card_receipt: Receipt = ChargeCard(input);
+        let ack: Ack = SendEmail(user.id);
+        assert(ack.ok);
+        assert(card_receipt.id == input.id);
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}
+
+workflow BillingWorkflow {
+    input: Request;
+    output: Response;
+
+    node billing: BillingAgent(input);
+
+    safety: always eventually completed(billing);
+    liveness: eventually completed(billing);
+
+    return: billing;
+}

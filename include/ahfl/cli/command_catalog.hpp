@@ -112,6 +112,9 @@ enum class CommandKind {
     EmitPackageReview,
     EmitSummary,
     EmitSmv,
+    EmitAssuranceJson,
+    ValidateAssurance,
+    VerifyFormal,
 };
 
 struct CommandLineOptions {
@@ -126,6 +129,8 @@ struct CommandLineOptions {
     std::optional<std::string_view> workflow_name;
     std::optional<std::string_view> input_fixture;
     std::optional<std::string_view> run_id;
+    std::optional<std::string_view> model_checker;
+    std::optional<std::string_view> formal_model_out;
     std::vector<std::string_view> search_roots;
     std::vector<std::string_view> positional;
 };
