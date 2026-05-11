@@ -70,7 +70,36 @@ enumDecl:
 enumVariant: IDENT;
 
 capabilityDecl:
-	'capability' IDENT '(' paramList? ')' '->' type_ ';';
+	'capability' IDENT '(' paramList? ')' '->' type_ (';' | capabilityEffectBlock);
+
+capabilityEffectBlock: '{' capabilityEffectItem* '}';
+
+capabilityEffectItem:
+	'effect' ':' capabilityEffectKind ';'
+	| 'domain' ':' qualifiedIdent ';'
+	| 'idempotency' ':' pathExpr ';'
+	| 'receipt' ':' capabilityReceiptMode ';'
+	| 'retry' ':' capabilityRetryMode ';'
+	| 'timeout' ':' durationLiteral ';'
+	| 'compensation' ':' qualifiedIdent ';'
+	| 'policy' ':' '[' qualifiedIdentListOpt ']' ';';
+
+capabilityEffectKind:
+	'read'
+	| 'external_side_effect'
+	| 'durable_write'
+	| 'financial_write'
+	| 'unknown';
+
+capabilityReceiptMode:
+	'required'
+	| 'optional'
+	| 'none';
+
+capabilityRetryMode:
+	'safe'
+	| 'safe_if_idempotent'
+	| 'unsafe';
 
 predicateDecl:
 	'predicate' IDENT '(' paramList? ')' '->' 'Bool' ';';

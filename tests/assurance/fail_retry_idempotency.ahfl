@@ -1,0 +1,62 @@
+module assurance::retry_idempotency;
+
+struct Request {
+    id: String;
+}
+
+struct Receipt {
+    id: String;
+}
+
+struct Context {
+    processed: Bool = false;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+capability PersistRecord(request: Request) -> Receipt {
+    effect: durable_write;
+    domain: records;
+    receipt: required;
+    retry: safe_if_idempotent;
+    policy: [records::audit_event];
+}
+
+agent StoreAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [PersistRecord];
+    transition Init -> Done;
+}
+
+flow for StoreAgent {
+    state Init {
+        let persist_receipt: Receipt = PersistRecord(input);
+        assert(persist_receipt.id == input.id);
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}
+
+workflow StoreWorkflow {
+    input: Request;
+    output: Response;
+
+    node store: StoreAgent(input);
+
+    safety: always eventually completed(store);
+    liveness: eventually completed(store);
+
+    return: store;
+}

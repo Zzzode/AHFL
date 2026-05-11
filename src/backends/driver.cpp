@@ -1,5 +1,6 @@
 #include "ahfl/backends/driver.hpp"
 
+#include "ahfl/backends/assurance.hpp"
 #include "ahfl/backends/execution_plan.hpp"
 #include "ahfl/backends/native_json.hpp"
 #include "ahfl/backends/package_review.hpp"
@@ -46,6 +47,9 @@ void emit_backend(BackendKind kind,
         return;
     case BackendKind::Smv:
         print_program_smv(program, out);
+        return;
+    case BackendKind::AssuranceJson:
+        print_program_assurance_json(program, out);
         return;
     }
 }

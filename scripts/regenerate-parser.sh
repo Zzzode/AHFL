@@ -100,6 +100,7 @@ GENERATED_DIR="${WORK_DIR}/generated"
 mkdir -p "${GENERATED_DIR}"
 cp "${WORK_DIR}/grammar"/AHFL*.cpp "${WORK_DIR}/grammar"/AHFL*.h "${GENERATED_DIR}/"
 perl -pi -e 's/[ \t]+$//' "${GENERATED_DIR}"/AHFL*.cpp "${GENERATED_DIR}"/AHFL*.h
+perl -pi -e 's/^ +\t/\t/' "${GENERATED_DIR}"/AHFL*.cpp "${GENERATED_DIR}"/AHFL*.h
 
 if [[ "${CHECK_ONLY}" -eq 1 ]]; then
     if ! diff -ru "${OUTPUT_DIR}" "${GENERATED_DIR}"; then

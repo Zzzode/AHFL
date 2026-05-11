@@ -44,6 +44,7 @@ ahflc emit-dry-run-trace --package <ahfl.package.json> --capability-mocks <mocks
 ahflc emit-package-review [--package <ahfl.package.json>] <input-mode>
 ahflc emit-summary <input-mode>
 ahflc emit-smv <input-mode>
+ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [--package <ahfl.package.json>] <input-mode>
 ```
 
 ## 选项
@@ -66,6 +67,10 @@ ahflc emit-smv <input-mode>
   - 为 runtime-adjacent outputs 提供稳定 run identity；不传时会使用默认 run id。
 - `--workflow <canonical>`
   - 在 package 暴露多个 workflow entry 时显式选择目标 workflow。
+- `--model-checker <path>`
+  - 仅用于 `verify-formal`，显式指定 NuSMV/nuXmv 兼容 checker。
+- `--formal-model-out <model.smv>`
+  - 仅用于 `verify-formal`，保留实际交给 checker 的 SMV 模型，便于复现和 CI artifact 归档。
 
 ## V0.10 主链路示例
 
@@ -171,6 +176,23 @@ ahflc emit-smv <input-mode>
 2. 稳定承诺 terminal reason、next action、next-step recommendation 与 readable summary。
 3. 不承诺独立状态机、recovery ABI 或 persistence mutation plan。
 
+### `verify-formal`
+
+用途：
+
+1. 沿正式 parse / resolve / typecheck / validate / IR lowering 链路生成 SMV 模型。
+2. 调用 `--model-checker`、`AHFL_SMV_CHECKER`、`NuSMV`、`nuXmv` 或 `nuxmv` 指定的真实 checker。
+3. 把 checker 输出中的 `is true` / `is false` specification 结果转成 CI 可用的成功或失败。
+
+示例：
+
+```bash
+./build/dev/src/cli/ahflc verify-formal \
+  --model-checker /path/to/NuSMV \
+  --formal-model-out build/formal/review-workflow.smv \
+  tests/formal/ok_real_smv_control.ahfl
+```
+
 ## 选项支持矩阵
 
 | 命令 | `--package` | `--capability-mocks` | `--input-fixture` | `--run-id` | `--workflow` |
@@ -185,6 +207,7 @@ ahflc emit-smv <input-mode>
 | `emit-audit-report` | 必需 | 必需 | 必需 | 可选 | 可选 |
 | `emit-dry-run-trace` | 必需 | 必需 | 必需 | 可选 | 可选 |
 | `emit-package-review` | 可选 | 否 | 否 | 否 | 否 |
+| `verify-formal` | 可选 | 否 | 否 | 否 | 否 |
 
 ## project-aware 支持矩阵
 
@@ -208,6 +231,7 @@ ahflc emit-smv <input-mode>
 | `emit-package-review` | 是 | 是 | 是 |
 | `emit-summary` | 是 | 是 | 是 |
 | `emit-smv` | 是 | 是 | 是 |
+| `verify-formal` | 是 | 是 | 是 |
 
 ## 最小验证建议
 

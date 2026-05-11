@@ -62,6 +62,49 @@ ahfl_add_output_test(
 )
 
 ahfl_add_output_test(
+    ahflc.emit_assurance_json.effects
+    emit-assurance-json
+    "${AHFL_TESTS_DIR}/assurance/ok_effects.ahfl"
+    "${AHFL_TESTS_DIR}/assurance/ok_effects.assurance.json"
+)
+
+add_test(NAME ahflc.validate_assurance.effects
+    COMMAND $<TARGET_FILE:ahflc> validate-assurance
+            "${AHFL_TESTS_DIR}/assurance/ok_effects.ahfl"
+)
+set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: assurance validation ready"
+)
+
+ahfl_add_command_fail_test(
+    ahflc.validate_assurance.fail_missing_effect
+    validate-assurance
+    "${AHFL_TESTS_DIR}/assurance/fail_missing_effect.ahfl"
+    "missing_effect_spec"
+)
+
+ahfl_add_command_fail_test(
+    ahflc.validate_assurance.fail_financial_missing_controls
+    validate-assurance
+    "${AHFL_TESTS_DIR}/assurance/fail_financial_missing_controls.ahfl"
+    "missing_financial_compensation"
+)
+
+ahfl_add_command_fail_test(
+    ahflc.validate_assurance.fail_external_missing_audit
+    validate-assurance
+    "${AHFL_TESTS_DIR}/assurance/fail_external_missing_audit.ahfl"
+    "audit_event"
+)
+
+ahfl_add_command_fail_test(
+    ahflc.validate_assurance.fail_retry_idempotency
+    validate-assurance
+    "${AHFL_TESTS_DIR}/assurance/fail_retry_idempotency.ahfl"
+    "retry_safe_if_idempotent_without_key"
+)
+
+ahfl_add_output_test(
     ahflc.emit_ir_json.expr_temporal
     emit-ir-json
     "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
@@ -88,6 +131,75 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
     "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.smv"
 )
+
+ahfl_add_check_test(
+    ahflc.check.formal_real_smv_control
+    "${AHFL_TESTS_DIR}/formal/ok_real_smv_control.ahfl"
+)
+
+add_test(NAME ahflc.verify_formal.fake_pass
+    COMMAND $<TARGET_FILE:ahflc> verify-formal
+            --model-checker "${AHFL_TESTS_DIR}/formal/fake_smv_checker_pass.sh"
+            --formal-model-out
+            "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_flow_workflow_semantics.verify.smv"
+            "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
+)
+set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
+    PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+)
+
+add_test(NAME ahflc.verify_formal.fake_fail
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_TESTS_DIR}/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=formal verification failed"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+if(AHFL_SMV_CHECKER)
+    add_test(NAME ahflc.verify_formal.real_smv
+        COMMAND $<TARGET_FILE:ahflc> verify-formal
+                --model-checker "${AHFL_SMV_CHECKER}"
+                --formal-model-out
+                "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_real_smv_control.verify.smv"
+                "${AHFL_TESTS_DIR}/formal/ok_real_smv_control.ahfl"
+    )
+    set_tests_properties(ahflc.verify_formal.real_smv PROPERTIES
+        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    )
+
+    add_test(NAME ahflc.verify_formal.real_smv_observation_assumptions
+        COMMAND $<TARGET_FILE:ahflc> verify-formal
+                --model-checker "${AHFL_SMV_CHECKER}"
+                --formal-model-out
+                "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_expr_temporal.verify.smv"
+                "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
+    )
+    set_tests_properties(ahflc.verify_formal.real_smv_observation_assumptions PROPERTIES
+        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    )
+
+    add_test(NAME ahflc.verify_formal.real_smv_effect_events
+        COMMAND $<TARGET_FILE:ahflc> verify-formal
+                --model-checker "${AHFL_SMV_CHECKER}"
+                --formal-model-out
+                "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_effects.verify.smv"
+                "${AHFL_TESTS_DIR}/assurance/ok_effects.ahfl"
+    )
+    set_tests_properties(ahflc.verify_formal.real_smv_effect_events PROPERTIES
+        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    )
+
+    add_test(NAME ahflc.verify_formal.real_smv_counterexample
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/formal/fail_real_smv_control.ahfl"
+                "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/fail_real_smv_control.ahfl"
+                "-DEXPECTED_REGEX=counterexample AHFL mapping"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+    )
+endif()
 
 ahfl_add_output_test(
     ahflc.emit_ir_json.flow_workflow_semantics

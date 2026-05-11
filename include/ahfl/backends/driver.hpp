@@ -15,6 +15,7 @@ enum class BackendKind {
     PackageReview,
     Summary,
     Smv,
+    AssuranceJson,
 };
 
 void emit_backend(BackendKind kind,

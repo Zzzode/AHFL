@@ -134,6 +134,94 @@ template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
     return ir::PathRootKind::Identifier;
 }
 
+[[nodiscard]] ir::CapabilityEffectKind
+lower_capability_effect_kind(ast::CapabilityEffectKind kind) {
+    switch (kind) {
+    case ast::CapabilityEffectKind::Unknown:
+        return ir::CapabilityEffectKind::Unknown;
+    case ast::CapabilityEffectKind::Read:
+        return ir::CapabilityEffectKind::Read;
+    case ast::CapabilityEffectKind::ExternalSideEffect:
+        return ir::CapabilityEffectKind::ExternalSideEffect;
+    case ast::CapabilityEffectKind::DurableWrite:
+        return ir::CapabilityEffectKind::DurableWrite;
+    case ast::CapabilityEffectKind::FinancialWrite:
+        return ir::CapabilityEffectKind::FinancialWrite;
+    }
+
+    return ir::CapabilityEffectKind::Unknown;
+}
+
+[[nodiscard]] ir::CapabilityReceiptMode
+lower_capability_receipt_mode(ast::CapabilityReceiptMode mode) {
+    switch (mode) {
+    case ast::CapabilityReceiptMode::None:
+        return ir::CapabilityReceiptMode::None;
+    case ast::CapabilityReceiptMode::Optional:
+        return ir::CapabilityReceiptMode::Optional;
+    case ast::CapabilityReceiptMode::Required:
+        return ir::CapabilityReceiptMode::Required;
+    }
+
+    return ir::CapabilityReceiptMode::None;
+}
+
+[[nodiscard]] ir::CapabilityRetryMode lower_capability_retry_mode(ast::CapabilityRetryMode mode) {
+    switch (mode) {
+    case ast::CapabilityRetryMode::Unsafe:
+        return ir::CapabilityRetryMode::Unsafe;
+    case ast::CapabilityRetryMode::SafeIfIdempotent:
+        return ir::CapabilityRetryMode::SafeIfIdempotent;
+    case ast::CapabilityRetryMode::Safe:
+        return ir::CapabilityRetryMode::Safe;
+    }
+
+    return ir::CapabilityRetryMode::Unsafe;
+}
+
+[[nodiscard]] std::string_view capability_effect_kind_name(ir::CapabilityEffectKind kind) {
+    switch (kind) {
+    case ir::CapabilityEffectKind::Unknown:
+        return "unknown";
+    case ir::CapabilityEffectKind::Read:
+        return "read";
+    case ir::CapabilityEffectKind::ExternalSideEffect:
+        return "external_side_effect";
+    case ir::CapabilityEffectKind::DurableWrite:
+        return "durable_write";
+    case ir::CapabilityEffectKind::FinancialWrite:
+        return "financial_write";
+    }
+
+    return "unknown";
+}
+
+[[nodiscard]] std::string_view capability_receipt_mode_name(ir::CapabilityReceiptMode mode) {
+    switch (mode) {
+    case ir::CapabilityReceiptMode::None:
+        return "none";
+    case ir::CapabilityReceiptMode::Optional:
+        return "optional";
+    case ir::CapabilityReceiptMode::Required:
+        return "required";
+    }
+
+    return "none";
+}
+
+[[nodiscard]] std::string_view capability_retry_mode_name(ir::CapabilityRetryMode mode) {
+    switch (mode) {
+    case ir::CapabilityRetryMode::Unsafe:
+        return "unsafe";
+    case ir::CapabilityRetryMode::SafeIfIdempotent:
+        return "safe_if_idempotent";
+    case ir::CapabilityRetryMode::Safe:
+        return "safe";
+    }
+
+    return "unsafe";
+}
+
 [[nodiscard]] ir::ExprUnaryOp lower_expr_unary_op(ast::ExprUnaryOp op) {
     switch (op) {
     case ast::ExprUnaryOp::Not:
@@ -1584,6 +1672,40 @@ class IrLowerer final {
         return result;
     }
 
+    [[nodiscard]] ir::CapabilityEffectSpec
+    lower_capability_effect(const ast::CapabilityEffectSyntax *syntax) const {
+        ir::CapabilityEffectSpec effect;
+        if (syntax == nullptr) {
+            return effect;
+        }
+
+        effect.declared = true;
+        effect.kind = lower_capability_effect_kind(syntax->effect_kind);
+        effect.receipt_mode = lower_capability_receipt_mode(syntax->receipt_mode);
+        effect.retry_mode = lower_capability_retry_mode(syntax->retry_mode);
+        effect.source_range = syntax->range;
+
+        if (syntax->domain) {
+            effect.domain = syntax->domain->spelling();
+        }
+        if (syntax->idempotency_key) {
+            effect.idempotency_key = syntax->idempotency_key->spelling();
+        }
+        if (syntax->timeout) {
+            effect.timeout = syntax->timeout->spelling;
+        }
+        if (syntax->compensation) {
+            effect.compensation = syntax->compensation->spelling();
+        }
+
+        effect.policies.reserve(syntax->policies.size());
+        for (const auto &policy : syntax->policies) {
+            effect.policies.push_back(policy->spelling());
+        }
+
+        return effect;
+    }
+
     [[nodiscard]] ir::CapabilityDecl lower_capability(const ast::CapabilityDecl &node) const {
         const auto symbol = find_local_symbol_here(SymbolNamespace::Capabilities, node.name);
         const auto info =
@@ -1601,6 +1723,7 @@ class IrLowerer final {
                 .return_type_ref = info.has_value()
                                        ? type_ref_from_maybe(borrow(info->get().return_type.get()))
                                        : type_ref_from_syntax(*node.return_type),
+                .effect = lower_capability_effect(node.effect.get()),
                 .symbol_ref =
                     symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Capability, symbol_name),
             },
@@ -2447,6 +2570,30 @@ class IrProgramPrinter final {
         line(0,
              "capability " + declaration.name + "(" + print_params(declaration.params) + ") -> " +
                  declaration.return_type);
+        if (declaration.effect.declared) {
+            line(1, "effect: " + std::string(capability_effect_kind_name(declaration.effect.kind)));
+            line(1,
+                 "receipt: " +
+                     std::string(capability_receipt_mode_name(declaration.effect.receipt_mode)));
+            line(1,
+                 "retry: " +
+                     std::string(capability_retry_mode_name(declaration.effect.retry_mode)));
+            if (declaration.effect.domain.has_value()) {
+                line(1, "domain: " + *declaration.effect.domain);
+            }
+            if (declaration.effect.idempotency_key.has_value()) {
+                line(1, "idempotency: " + *declaration.effect.idempotency_key);
+            }
+            if (declaration.effect.timeout.has_value()) {
+                line(1, "timeout: " + *declaration.effect.timeout);
+            }
+            if (declaration.effect.compensation.has_value()) {
+                line(1, "compensation: " + *declaration.effect.compensation);
+            }
+            if (!declaration.effect.policies.empty()) {
+                line(1, "policy: [" + join(declaration.effect.policies, ", ") + "]");
+            }
+        }
     }
 
     void print_decl(const ir::PredicateDecl &declaration) {

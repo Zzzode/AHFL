@@ -1,7 +1,9 @@
+#include "ahfl/assurance/assurance.hpp"
 #include "ahfl/backends/driver.hpp"
 #include "ahfl/cli/command_catalog.hpp"
 #include "ahfl/cli/pipeline_runner.hpp"
 #include "ahfl/dry_run/runner.hpp"
+#include "ahfl/formal/checker.hpp"
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
@@ -109,6 +111,30 @@ template <typename InputT>
     const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
     ahfl::emit_backend(*backend, ir_program, out, package_metadata);
     return true;
+}
+
+[[nodiscard]] int validate_assurance_program(const ahfl::ir::Program &program) {
+    const auto bundle = ahfl::assurance::build_assurance_bundle(program);
+    const auto validation = ahfl::assurance::validate_assurance_bundle(bundle);
+    ahfl::assurance::print_assurance_validation_report(validation,
+                                                       validation.ok ? std::cout : std::cerr);
+    return validation.ok ? 0 : 1;
+}
+
+[[nodiscard]] int verify_formal_program(const ahfl::ir::Program &program,
+                                        const CommandLineOptions &options) {
+    ahfl::formal::FormalCheckerOptions formal_options;
+    if (options.model_checker.has_value()) {
+        formal_options.checker_path = std::string(*options.model_checker);
+    }
+    if (options.formal_model_out.has_value()) {
+        formal_options.model_output_path = std::filesystem::path(*options.formal_model_out);
+    }
+
+    const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
+    ahfl::formal::print_formal_verification_report(
+        result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);
+    return ahfl::formal::is_formal_verification_success(result) ? 0 : 1;
 }
 
 [[nodiscard]] bool
@@ -250,6 +276,14 @@ run_analysis_pipeline(const CommandLineOptions &options,
             return 1;
         }
 
+        if (effective_command == CommandKind::ValidateAssurance) {
+            return validate_assurance_program(ir_program);
+        }
+
+        if (effective_command == CommandKind::VerifyFormal) {
+            return verify_formal_program(ir_program, options);
+        }
+
         if (effective_command.has_value()) {
             if (const auto command_status =
                     ahfl::cli::dispatch_package_command(*effective_command,
@@ -270,6 +304,16 @@ run_analysis_pipeline(const CommandLineOptions &options,
                                   std::cout)) {
             return 0;
         }
+    }
+
+    if (effective_command == CommandKind::ValidateAssurance) {
+        const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+        return validate_assurance_program(ir_program);
+    }
+
+    if (effective_command == CommandKind::VerifyFormal) {
+        const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+        return verify_formal_program(ir_program, options);
     }
 
     if (emit_selected_backend(effective_command,
@@ -382,6 +426,28 @@ run_analysis_pipeline(const CommandLineOptions &options,
             }
 
             options.run_id = arguments[++index];
+            continue;
+        }
+
+        if (argument == "--model-checker") {
+            if (index + 1 >= arguments.size()) {
+                std::cerr << "error: --model-checker requires an executable path\n";
+                print_usage(std::cerr);
+                return 2;
+            }
+
+            options.model_checker = arguments[++index];
+            continue;
+        }
+
+        if (argument == "--formal-model-out") {
+            if (index + 1 >= arguments.size()) {
+                std::cerr << "error: --formal-model-out requires an output path\n";
+                print_usage(std::cerr);
+                return 2;
+            }
+
+            options.formal_model_out = arguments[++index];
             continue;
         }
 
@@ -511,6 +577,18 @@ int run_cli(std::span<const std::string_view> arguments) {
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
                   << "\n";
+        print_usage(std::cerr);
+        return 2;
+    }
+
+    if (options.model_checker.has_value() && effective_command != CommandKind::VerifyFormal) {
+        std::cerr << "error: --model-checker is only supported with verify-formal\n";
+        print_usage(std::cerr);
+        return 2;
+    }
+
+    if (options.formal_model_out.has_value() && effective_command != CommandKind::VerifyFormal) {
+        std::cerr << "error: --formal-model-out is only supported with verify-formal\n";
         print_usage(std::cerr);
         return 2;
     }

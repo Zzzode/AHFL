@@ -87,6 +87,26 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitCapabilityEffectBlock(AHFLParser::CapabilityEffectBlockContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCapabilityEffectItem(AHFLParser::CapabilityEffectItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCapabilityEffectKind(AHFLParser::CapabilityEffectKindContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCapabilityReceiptMode(AHFLParser::CapabilityReceiptModeContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCapabilityRetryMode(AHFLParser::CapabilityRetryModeContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitPredicateDecl(AHFLParser::PredicateDeclContext *ctx) override {
     return visitChildren(ctx);
   }

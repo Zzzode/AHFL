@@ -53,10 +53,12 @@ Avoid:
 
 ### Spec
 
+- [assurance-v0.1.zh.md](./spec/assurance-v0.1.zh.md)
 - [core-language-v0.1.zh.md](./spec/core-language-v0.1.zh.md)
 
 ### Design
 
+- [assurance-architecture-v0.1.zh.md](./design/assurance-architecture-v0.1.zh.md)
 - [ast-model-architecture-v0.2.zh.md](./design/ast-model-architecture-v0.2.zh.md)
 - [backend-extension-guide-v0.2.zh.md](./design/backend-extension-guide-v0.2.zh.md)
 - [cli-pipeline-architecture-v0.2.zh.md](./design/cli-pipeline-architecture-v0.2.zh.md)

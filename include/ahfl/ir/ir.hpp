@@ -549,6 +549,43 @@ struct ParamDecl {
     SourceRangeOpt source_range;
 };
 
+/// Capability 副作用类别。IR 中保留结构化值，backend 再映射为目标工件枚举。
+enum class CapabilityEffectKind {
+    Unknown,
+    Read,
+    ExternalSideEffect,
+    DurableWrite,
+    FinancialWrite,
+};
+
+/// Capability 执行回执要求
+enum class CapabilityReceiptMode {
+    None,
+    Optional,
+    Required,
+};
+
+/// Capability 重试安全性声明
+enum class CapabilityRetryMode {
+    Unsafe,
+    SafeIfIdempotent,
+    Safe,
+};
+
+/// Capability effect analysis 的输入事实，由 DSL 显式声明并随 IR 传播。
+struct CapabilityEffectSpec {
+    bool declared{false};
+    CapabilityEffectKind kind{CapabilityEffectKind::Unknown};
+    std::optional<std::string> domain;
+    std::optional<std::string> idempotency_key;
+    CapabilityReceiptMode receipt_mode{CapabilityReceiptMode::None};
+    CapabilityRetryMode retry_mode{CapabilityRetryMode::Unsafe};
+    std::optional<std::string> timeout;
+    std::optional<std::string> compensation;
+    std::vector<std::string> policies;
+    SourceRangeOpt source_range;
+};
+
 /// 能力声明: capability Name(param1: Type1, ...) -> ReturnType;
 struct CapabilityDecl {
     DeclarationProvenance provenance;
@@ -556,6 +593,7 @@ struct CapabilityDecl {
     std::vector<ParamDecl> params;
     std::string return_type;
     TypeRef return_type_ref;
+    CapabilityEffectSpec effect;
     SymbolRef symbol_ref;
 };
 

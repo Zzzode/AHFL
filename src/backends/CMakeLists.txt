@@ -9,6 +9,17 @@ target_link_libraries(ahfl_backend_smv
 
 ahfl_apply_project_warnings(ahfl_backend_smv)
 
+add_library(ahfl_backend_assurance STATIC
+    assurance.cpp
+)
+
+target_link_libraries(ahfl_backend_assurance
+    PUBLIC
+        ahfl_assurance
+)
+
+ahfl_apply_project_warnings(ahfl_backend_assurance)
+
 add_library(ahfl_backend_summary STATIC
     summary.cpp
 )
@@ -1170,6 +1181,7 @@ target_link_libraries(ahfl_backend
         ahfl_backend_native_json
         ahfl_backend_package_review
         ahfl_backend_runtime_session
+        ahfl_backend_assurance
         ahfl_backend_summary
         ahfl_backend_smv
 )

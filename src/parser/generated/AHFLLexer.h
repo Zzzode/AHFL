@@ -28,10 +28,13 @@ public:
     T__80 = 81, T__81 = 82, T__82 = 83, T__83 = 84, T__84 = 85, T__85 = 86,
     T__86 = 87, T__87 = 88, T__88 = 89, T__89 = 90, T__90 = 91, T__91 = 92,
     T__92 = 93, T__93 = 94, T__94 = 95, T__95 = 96, T__96 = 97, T__97 = 98,
-    T__98 = 99, T__99 = 100, T__100 = 101, T__101 = 102, DURATION_LITERAL = 103,
-    DECIMAL_LITERAL = 104, FLOAT_LITERAL = 105, INT_LITERAL = 106, STRING_LITERAL = 107,
-    IDENT = 108, DOC_COMMENT = 109, LINE_COMMENT = 110, BLOCK_COMMENT = 111,
-    WS = 112
+    T__98 = 99, T__99 = 100, T__100 = 101, T__101 = 102, T__102 = 103, T__103 = 104,
+    T__104 = 105, T__105 = 106, T__106 = 107, T__107 = 108, T__108 = 109,
+    T__109 = 110, T__110 = 111, T__111 = 112, T__112 = 113, T__113 = 114,
+    T__114 = 115, T__115 = 116, T__116 = 117, T__117 = 118, DURATION_LITERAL = 119,
+    DECIMAL_LITERAL = 120, FLOAT_LITERAL = 121, INT_LITERAL = 122, STRING_LITERAL = 123,
+    IDENT = 124, DOC_COMMENT = 125, LINE_COMMENT = 126, BLOCK_COMMENT = 127,
+    WS = 128
   };
 
   explicit AHFLLexer(antlr4::CharStream *input);
