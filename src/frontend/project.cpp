@@ -1572,6 +1572,20 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
         }
 
         if (in_progress_paths.contains(path_key)) {
+            if (request_source.has_value()) {
+                result.diagnostics.error()
+                    .message("import refers to a source while it is still being loaded: " +
+                             display_path(path))
+                    .range(import_range)
+                    .source(request_source->get())
+                    .emit();
+            } else {
+                result.diagnostics.error()
+                    .message("import refers to a source while it is still being loaded: " +
+                             display_path(path))
+                    .range(import_range)
+                    .emit();
+            }
             return std::nullopt;
         }
 

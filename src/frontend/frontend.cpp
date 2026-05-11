@@ -2283,6 +2283,16 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
         ProgramBuilder builder(result.source);
         result.program =
             builder.build(require(parser.program(), "parser.program() returned no parse tree"));
+        const auto invariant_violations = ast::validate_program_invariants(*result.program);
+        for (const auto &violation : invariant_violations) {
+            result.diagnostics.error()
+                .message("internal AST invariant violation: " + violation.message)
+                .range(violation.range)
+                .emit();
+        }
+        if (!invariant_violations.empty()) {
+            result.program.reset();
+        }
     } catch (const std::exception &exception) {
         result.diagnostics.error()
             .message("parser failed: " + std::string(exception.what()))
