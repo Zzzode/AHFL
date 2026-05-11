@@ -31,11 +31,11 @@ void check(bool condition, const std::string &test_name) {
 // ============================================================================
 
 ExprPtr make_expr_ptr(ExprNode node) {
-    return std::make_unique<Expr>(Expr{std::move(node)});
+    return std::make_unique<Expr>(Expr{std::move(node), {}});
 }
 
 StatementPtr make_stmt_ptr(StatementNode node) {
-    return std::make_unique<Statement>(Statement{std::move(node)});
+    return std::make_unique<Statement>(Statement{std::move(node), {}});
 }
 
 // 构造一个简单的 EchoAgent（Init -> Done，返回 input 的某个字段的值）

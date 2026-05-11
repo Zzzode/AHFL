@@ -331,6 +331,70 @@ template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
     return "invalid";
 }
 
+[[nodiscard]] ir::SymbolRefKind lower_symbol_ref_kind(SymbolKind kind) {
+    switch (kind) {
+    case SymbolKind::Struct:
+    case SymbolKind::Enum:
+    case SymbolKind::TypeAlias:
+        return ir::SymbolRefKind::Type;
+    case SymbolKind::Const:
+        return ir::SymbolRefKind::Const;
+    case SymbolKind::Capability:
+        return ir::SymbolRefKind::Capability;
+    case SymbolKind::Predicate:
+        return ir::SymbolRefKind::Predicate;
+    case SymbolKind::Agent:
+        return ir::SymbolRefKind::Agent;
+    case SymbolKind::Workflow:
+        return ir::SymbolRefKind::Workflow;
+    }
+
+    return ir::SymbolRefKind::Unknown;
+}
+
+[[nodiscard]] ir::TypeRefKind lower_type_ref_kind(TypeKind kind) {
+    switch (kind) {
+    case TypeKind::Any:
+        return ir::TypeRefKind::Any;
+    case TypeKind::Never:
+        return ir::TypeRefKind::Never;
+    case TypeKind::Unit:
+        return ir::TypeRefKind::Unit;
+    case TypeKind::Bool:
+        return ir::TypeRefKind::Bool;
+    case TypeKind::Int:
+        return ir::TypeRefKind::Int;
+    case TypeKind::Float:
+        return ir::TypeRefKind::Float;
+    case TypeKind::String:
+        return ir::TypeRefKind::String;
+    case TypeKind::BoundedString:
+        return ir::TypeRefKind::BoundedString;
+    case TypeKind::UUID:
+        return ir::TypeRefKind::UUID;
+    case TypeKind::Timestamp:
+        return ir::TypeRefKind::Timestamp;
+    case TypeKind::Duration:
+        return ir::TypeRefKind::Duration;
+    case TypeKind::Decimal:
+        return ir::TypeRefKind::Decimal;
+    case TypeKind::Struct:
+        return ir::TypeRefKind::Struct;
+    case TypeKind::Enum:
+        return ir::TypeRefKind::Enum;
+    case TypeKind::Optional:
+        return ir::TypeRefKind::Optional;
+    case TypeKind::List:
+        return ir::TypeRefKind::List;
+    case TypeKind::Set:
+        return ir::TypeRefKind::Set;
+    case TypeKind::Map:
+        return ir::TypeRefKind::Map;
+    }
+
+    return ir::TypeRefKind::Unresolved;
+}
+
 template <typename T> void push_unique_value(std::vector<T> &values, const T &value) {
     for (const auto &existing : values) {
         if (existing == value) {
@@ -454,21 +518,30 @@ class IrLowerer final {
     mutable std::optional<SourceId> current_source_id_;
     mutable std::string current_module_name_;
 
-    template <typename T> [[nodiscard]] ir::ExprPtr make_expr(T node) const {
+    template <typename T>
+    [[nodiscard]] ir::ExprPtr
+    make_expr(T node, std::optional<SourceRange> source_range = std::nullopt) const {
         auto expr = make_owned<ir::Expr>();
         expr->node = std::move(node);
+        expr->source_range = source_range;
         return expr;
     }
 
-    template <typename T> [[nodiscard]] ir::TemporalExprPtr make_temporal(T node) const {
+    template <typename T>
+    [[nodiscard]] ir::TemporalExprPtr
+    make_temporal(T node, std::optional<SourceRange> source_range = std::nullopt) const {
         auto expr = make_owned<ir::TemporalExpr>();
         expr->node = std::move(node);
+        expr->source_range = source_range;
         return expr;
     }
 
-    template <typename T> [[nodiscard]] ir::StatementPtr make_statement(T node) const {
+    template <typename T>
+    [[nodiscard]] ir::StatementPtr
+    make_statement(T node, std::optional<SourceRange> source_range = std::nullopt) const {
         auto statement = make_owned<ir::Statement>();
         statement->node = std::move(node);
+        statement->source_range = source_range;
         return statement;
     }
 
@@ -492,19 +565,28 @@ class IrLowerer final {
         current_module_name_.clear();
     }
 
-    [[nodiscard]] ir::DeclarationProvenance current_provenance() const {
+    [[nodiscard]] ir::DeclarationProvenance
+    current_provenance(std::optional<SourceRange> source_range = std::nullopt) const {
         if (graph_ == nullptr || current_module_name_.empty()) {
-            return {};
+            return ir::DeclarationProvenance{
+                .module_name = {},
+                .source_path = {},
+                .source_range = source_range,
+            };
         }
 
         return ir::DeclarationProvenance{
             .module_name = current_module_name_,
             .source_path = logical_source_path(current_module_name_),
+            .source_range = source_range,
         };
     }
 
-    template <typename DeclT> [[nodiscard]] DeclT with_provenance(DeclT declaration) const {
-        declaration.provenance = current_provenance();
+    template <typename DeclT>
+    [[nodiscard]] DeclT
+    with_provenance(DeclT declaration,
+                    std::optional<SourceRange> source_range = std::nullopt) const {
+        declaration.provenance = current_provenance(source_range);
         return declaration;
     }
 
@@ -554,6 +636,179 @@ class IrLowerer final {
         }
 
         return type->get().describe();
+    }
+
+    [[nodiscard]] ir::TypeRefPtr make_type_ref(ir::TypeRef ref) const {
+        return make_owned<ir::TypeRef>(std::move(ref));
+    }
+
+    [[nodiscard]] ir::SymbolRef symbol_ref_from_symbol(MaybeCRef<Symbol> symbol,
+                                                       ir::SymbolRefKind fallback_kind,
+                                                       std::string_view fallback) const {
+        if (!symbol.has_value()) {
+            return ir::SymbolRef{
+                .kind = fallback_kind,
+                .canonical_name = std::string(fallback),
+                .local_name = std::string(fallback),
+                .module_name = {},
+            };
+        }
+
+        const auto &value = symbol->get();
+        return ir::SymbolRef{
+            .kind = lower_symbol_ref_kind(value.kind),
+            .canonical_name = value.canonical_name,
+            .local_name = value.local_name,
+            .module_name = value.module_name,
+        };
+    }
+
+    [[nodiscard]] ir::SymbolRef symbol_ref_from_reference_here(ReferenceKind kind,
+                                                               SourceRange range,
+                                                               ir::SymbolRefKind fallback_kind,
+                                                               std::string_view fallback) const {
+        return symbol_ref_from_symbol(
+            symbol_from_reference_here(kind, range), fallback_kind, fallback);
+    }
+
+    [[nodiscard]] ir::TypeRef type_ref_from_type(const Type &type) const {
+        ir::TypeRef ref{
+            .kind = lower_type_ref_kind(type.kind),
+            .display_name = type.describe(),
+            .canonical_name = {},
+            .string_bounds = type.string_bounds,
+            .decimal_scale = type.decimal_scale,
+            .first = nullptr,
+            .second = nullptr,
+        };
+
+        if (type.kind == TypeKind::Struct || type.kind == TypeKind::Enum) {
+            ref.canonical_name = type.name;
+        }
+        if (type.first) {
+            ref.first = make_type_ref(type_ref_from_type(*type.first));
+        }
+        if (type.second) {
+            ref.second = make_type_ref(type_ref_from_type(*type.second));
+        }
+
+        return ref;
+    }
+
+    [[nodiscard]] ir::TypeRef type_ref_from_maybe(MaybeCRef<Type> type,
+                                                  std::string_view fallback = "Any") const {
+        if (!type.has_value()) {
+            return ir::TypeRef{
+                .kind = ir::TypeRefKind::Unresolved,
+                .display_name = std::string(fallback),
+            };
+        }
+
+        return type_ref_from_type(type->get());
+    }
+
+    [[nodiscard]] ir::TypeRef named_type_ref_from_syntax(const ast::TypeSyntax &type) const {
+        const auto fallback = type.name ? type.name->spelling() : std::string{"<missing-type>"};
+        MaybeCRef<Symbol> symbol;
+        if (type.name) {
+            symbol = symbol_from_reference_here(ReferenceKind::TypeName, type.name->range);
+        }
+        auto ref = ir::TypeRef{
+            .kind = ir::TypeRefKind::Unresolved,
+            .display_name = std::string(fallback),
+            .canonical_name = {},
+        };
+
+        if (!symbol.has_value()) {
+            return ref;
+        }
+
+        const auto &value = symbol->get();
+        ref.display_name = value.canonical_name;
+        ref.canonical_name = value.canonical_name;
+        if (value.kind == SymbolKind::Struct) {
+            ref.kind = ir::TypeRefKind::Struct;
+        } else if (value.kind == SymbolKind::Enum) {
+            ref.kind = ir::TypeRefKind::Enum;
+        }
+
+        return ref;
+    }
+
+    [[nodiscard]] ir::TypeRef type_ref_from_syntax(const ast::TypeSyntax &type) const {
+        switch (type.kind) {
+        case ast::TypeSyntaxKind::Unit:
+            return ir::TypeRef{.kind = ir::TypeRefKind::Unit, .display_name = type.spelling()};
+        case ast::TypeSyntaxKind::Bool:
+            return ir::TypeRef{.kind = ir::TypeRefKind::Bool, .display_name = type.spelling()};
+        case ast::TypeSyntaxKind::Int:
+            return ir::TypeRef{.kind = ir::TypeRefKind::Int, .display_name = type.spelling()};
+        case ast::TypeSyntaxKind::Float:
+            return ir::TypeRef{.kind = ir::TypeRefKind::Float, .display_name = type.spelling()};
+        case ast::TypeSyntaxKind::String:
+            return ir::TypeRef{.kind = ir::TypeRefKind::String, .display_name = type.spelling()};
+        case ast::TypeSyntaxKind::UUID:
+            return ir::TypeRef{.kind = ir::TypeRefKind::UUID, .display_name = type.spelling()};
+        case ast::TypeSyntaxKind::Timestamp:
+            return ir::TypeRef{
+                .kind = ir::TypeRefKind::Timestamp,
+                .display_name = type.spelling(),
+            };
+        case ast::TypeSyntaxKind::Duration:
+            return ir::TypeRef{
+                .kind = ir::TypeRefKind::Duration,
+                .display_name = type.spelling(),
+            };
+        case ast::TypeSyntaxKind::BoundedString:
+            return ir::TypeRef{
+                .kind = ir::TypeRefKind::BoundedString,
+                .display_name = type.spelling(),
+                .string_bounds = type.string_bounds,
+            };
+        case ast::TypeSyntaxKind::Decimal:
+            return ir::TypeRef{
+                .kind = ir::TypeRefKind::Decimal,
+                .display_name = type.spelling(),
+                .decimal_scale = type.decimal_scale,
+            };
+        case ast::TypeSyntaxKind::Named:
+            return named_type_ref_from_syntax(type);
+        case ast::TypeSyntaxKind::Optional: {
+            auto ref = ir::TypeRef{
+                .kind = ir::TypeRefKind::Optional,
+                .display_name = type.spelling(),
+            };
+            ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
+            return ref;
+        }
+        case ast::TypeSyntaxKind::List: {
+            auto ref = ir::TypeRef{
+                .kind = ir::TypeRefKind::List,
+                .display_name = type.spelling(),
+            };
+            ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
+            return ref;
+        }
+        case ast::TypeSyntaxKind::Set: {
+            auto ref = ir::TypeRef{
+                .kind = ir::TypeRefKind::Set,
+                .display_name = type.spelling(),
+            };
+            ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
+            return ref;
+        }
+        case ast::TypeSyntaxKind::Map: {
+            auto ref = ir::TypeRef{
+                .kind = ir::TypeRefKind::Map,
+                .display_name = type.spelling(),
+            };
+            ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
+            ref.second = type.second ? make_type_ref(type_ref_from_syntax(*type.second)) : nullptr;
+            return ref;
+        }
+        }
+
+        return ir::TypeRef{.kind = ir::TypeRefKind::Unresolved, .display_name = "<invalid-type>"};
     }
 
     [[nodiscard]] std::string render_type_syntax(const ast::TypeSyntax &type) const {
@@ -638,31 +893,35 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::ExprPtr lower_expr(const ast::ExprSyntax &expr) const {
+        const auto make = [this, &expr](auto node) {
+            return make_expr(std::move(node), expr.range);
+        };
+
         switch (expr.kind) {
         case ast::ExprSyntaxKind::BoolLiteral:
-            return make_expr(ir::BoolLiteralExpr{.value = expr.bool_value});
+            return make(ir::BoolLiteralExpr{.value = expr.bool_value});
         case ast::ExprSyntaxKind::IntegerLiteral:
-            return make_expr(ir::IntegerLiteralExpr{
+            return make(ir::IntegerLiteralExpr{
                 .spelling = expr.integer_literal ? expr.integer_literal->spelling : "0",
             });
         case ast::ExprSyntaxKind::FloatLiteral:
-            return make_expr(ir::FloatLiteralExpr{.spelling = expr.text});
+            return make(ir::FloatLiteralExpr{.spelling = expr.text});
         case ast::ExprSyntaxKind::DecimalLiteral:
-            return make_expr(ir::DecimalLiteralExpr{.spelling = expr.text});
+            return make(ir::DecimalLiteralExpr{.spelling = expr.text});
         case ast::ExprSyntaxKind::StringLiteral:
-            return make_expr(ir::StringLiteralExpr{.spelling = expr.text});
+            return make(ir::StringLiteralExpr{.spelling = expr.text});
         case ast::ExprSyntaxKind::DurationLiteral:
-            return make_expr(ir::DurationLiteralExpr{
+            return make(ir::DurationLiteralExpr{
                 .spelling = expr.duration_literal ? expr.duration_literal->spelling : expr.text,
             });
         case ast::ExprSyntaxKind::NoneLiteral:
-            return make_expr(ir::NoneLiteralExpr{});
+            return make(ir::NoneLiteralExpr{});
         case ast::ExprSyntaxKind::Some:
-            return make_expr(ir::SomeExpr{.value = lower_expr(*expr.first)});
+            return make(ir::SomeExpr{.value = lower_expr(*expr.first)});
         case ast::ExprSyntaxKind::Path:
-            return make_expr(ir::PathExpr{.path = lower_path(*expr.path)});
+            return make(ir::PathExpr{.path = lower_path(*expr.path)});
         case ast::ExprSyntaxKind::QualifiedValue:
-            return make_expr(ir::QualifiedValueExpr{.value = render_qualified_value(expr)});
+            return make(ir::QualifiedValueExpr{.value = render_qualified_value(expr)});
         case ast::ExprSyntaxKind::Call: {
             ir::CallExpr call{
                 .callee = render_call_target(*expr.qualified_name),
@@ -672,7 +931,7 @@ class IrLowerer final {
             for (const auto &item : expr.items) {
                 call.arguments.push_back(lower_expr(*item));
             }
-            return make_expr(std::move(call));
+            return make(std::move(call));
         }
         case ast::ExprSyntaxKind::StructLiteral: {
             ir::StructLiteralExpr literal{
@@ -686,7 +945,7 @@ class IrLowerer final {
                     .value = lower_expr(*field->value),
                 });
             }
-            return make_expr(std::move(literal));
+            return make(std::move(literal));
         }
         case ast::ExprSyntaxKind::ListLiteral: {
             ir::ListLiteralExpr literal;
@@ -694,7 +953,7 @@ class IrLowerer final {
             for (const auto &item : expr.items) {
                 literal.items.push_back(lower_expr(*item));
             }
-            return make_expr(std::move(literal));
+            return make(std::move(literal));
         }
         case ast::ExprSyntaxKind::SetLiteral: {
             ir::SetLiteralExpr literal;
@@ -702,7 +961,7 @@ class IrLowerer final {
             for (const auto &item : expr.items) {
                 literal.items.push_back(lower_expr(*item));
             }
-            return make_expr(std::move(literal));
+            return make(std::move(literal));
         }
         case ast::ExprSyntaxKind::MapLiteral: {
             ir::MapLiteralExpr literal;
@@ -713,68 +972,72 @@ class IrLowerer final {
                     .value = lower_expr(*entry->value),
                 });
             }
-            return make_expr(std::move(literal));
+            return make(std::move(literal));
         }
         case ast::ExprSyntaxKind::Unary:
-            return make_expr(ir::UnaryExpr{
+            return make(ir::UnaryExpr{
                 .op = lower_expr_unary_op(expr.unary_op),
                 .operand = lower_expr(*expr.first),
             });
         case ast::ExprSyntaxKind::Binary:
-            return make_expr(ir::BinaryExpr{
+            return make(ir::BinaryExpr{
                 .op = lower_expr_binary_op(expr.binary_op),
                 .lhs = lower_expr(*expr.first),
                 .rhs = lower_expr(*expr.second),
             });
         case ast::ExprSyntaxKind::MemberAccess:
-            return make_expr(ir::MemberAccessExpr{
+            return make(ir::MemberAccessExpr{
                 .base = lower_expr(*expr.first),
                 .member = expr.name,
             });
         case ast::ExprSyntaxKind::IndexAccess:
-            return make_expr(ir::IndexAccessExpr{
+            return make(ir::IndexAccessExpr{
                 .base = lower_expr(*expr.first),
                 .index = lower_expr(*expr.second),
             });
         case ast::ExprSyntaxKind::Group:
-            return make_expr(ir::GroupExpr{.expr = lower_expr(*expr.first)});
+            return make(ir::GroupExpr{.expr = lower_expr(*expr.first)});
         }
 
-        return make_expr(ir::QualifiedValueExpr{.value = "<invalid-expr>"});
+        return make(ir::QualifiedValueExpr{.value = "<invalid-expr>"});
     }
 
     [[nodiscard]] ir::TemporalExprPtr lower_temporal(const ast::TemporalExprSyntax &expr) const {
+        const auto make = [this, &expr](auto node) {
+            return make_temporal(std::move(node), expr.range);
+        };
+
         switch (expr.kind) {
         case ast::TemporalExprSyntaxKind::EmbeddedExpr:
-            return make_temporal(ir::EmbeddedTemporalExpr{.expr = lower_expr(*expr.expr)});
+            return make(ir::EmbeddedTemporalExpr{.expr = lower_expr(*expr.expr)});
         case ast::TemporalExprSyntaxKind::Called:
-            return make_temporal(ir::CalledTemporalExpr{
+            return make(ir::CalledTemporalExpr{
                 .capability = canonical_name_from_reference_here(
                     ReferenceKind::TemporalCapability, expr.range, expr.name),
             });
         case ast::TemporalExprSyntaxKind::InState:
-            return make_temporal(ir::InStateTemporalExpr{.state = expr.name});
+            return make(ir::InStateTemporalExpr{.state = expr.name});
         case ast::TemporalExprSyntaxKind::Running:
-            return make_temporal(ir::RunningTemporalExpr{.node = expr.name});
+            return make(ir::RunningTemporalExpr{.node = expr.name});
         case ast::TemporalExprSyntaxKind::Completed:
-            return make_temporal(ir::CompletedTemporalExpr{
+            return make(ir::CompletedTemporalExpr{
                 .node = expr.name,
                 .state_name = expr.state_name,
             });
         case ast::TemporalExprSyntaxKind::Unary:
-            return make_temporal(ir::TemporalUnaryExpr{
+            return make(ir::TemporalUnaryExpr{
                 .op = lower_temporal_unary_op(expr.unary_op),
                 .operand = lower_temporal(*expr.first),
             });
         case ast::TemporalExprSyntaxKind::Binary:
-            return make_temporal(ir::TemporalBinaryExpr{
+            return make(ir::TemporalBinaryExpr{
                 .op = lower_temporal_binary_op(expr.binary_op),
                 .lhs = lower_temporal(*expr.first),
                 .rhs = lower_temporal(*expr.second),
             });
         }
 
-        return make_temporal(ir::CalledTemporalExpr{.capability = "<invalid-temporal-expr>"});
+        return make(ir::CalledTemporalExpr{.capability = "<invalid-temporal-expr>"});
     }
 
     [[nodiscard]] std::string inferred_statement_type(const ast::LetStmtSyntax &statement) const {
@@ -794,7 +1057,10 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::Block lower_block(const ast::BlockSyntax &block) const {
-        ir::Block ir_block;
+        ir::Block ir_block{
+            .statements = {},
+            .source_range = block.range,
+        };
         ir_block.statements.reserve(block.statements.size());
 
         for (const auto &statement : block.statements) {
@@ -964,20 +1230,24 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::StatementPtr lower_statement(const ast::StatementSyntax &statement) const {
+        const auto make = [this, &statement](auto node) {
+            return make_statement(std::move(node), statement.range);
+        };
+
         switch (statement.kind) {
         case ast::StatementSyntaxKind::Let:
-            return make_statement(ir::LetStatement{
+            return make(ir::LetStatement{
                 .name = statement.let_stmt->name,
                 .type = inferred_statement_type(*statement.let_stmt),
                 .initializer = lower_expr(*statement.let_stmt->initializer),
             });
         case ast::StatementSyntaxKind::Assign:
-            return make_statement(ir::AssignStatement{
+            return make(ir::AssignStatement{
                 .target = lower_path(*statement.assign_stmt->target),
                 .value = lower_expr(*statement.assign_stmt->value),
             });
         case ast::StatementSyntaxKind::If:
-            return make_statement(ir::IfStatement{
+            return make(ir::IfStatement{
                 .condition = lower_expr(*statement.if_stmt->condition),
                 .then_block = make_owned<ir::Block>(lower_block(*statement.if_stmt->then_block)),
                 .else_block = statement.if_stmt->else_block ? make_owned<ir::Block>(lower_block(
@@ -985,24 +1255,24 @@ class IrLowerer final {
                                                             : nullptr,
             });
         case ast::StatementSyntaxKind::Goto:
-            return make_statement(
-                ir::GotoStatement{.target_state = statement.goto_stmt->target_state});
+            return make(ir::GotoStatement{.target_state = statement.goto_stmt->target_state});
         case ast::StatementSyntaxKind::Return:
-            return make_statement(ir::ReturnStatement{
+            return make(ir::ReturnStatement{
                 .value = statement.return_stmt->value ? lower_expr(*statement.return_stmt->value)
                                                       : nullptr,
             });
         case ast::StatementSyntaxKind::Assert:
-            return make_statement(
+            return make(
                 ir::AssertStatement{.condition = lower_expr(*statement.assert_stmt->condition)});
         case ast::StatementSyntaxKind::Expr:
-            return make_statement(ir::ExprStatement{
+            return make(ir::ExprStatement{
                 .expr = lower_expr(*statement.expr_stmt->expr),
             });
         }
 
-        return make_statement(ir::ExprStatement{
-            .expr = make_expr(ir::QualifiedValueExpr{.value = "<invalid-statement>"}),
+        return make(ir::ExprStatement{
+            .expr =
+                make_expr(ir::QualifiedValueExpr{.value = "<invalid-statement>"}, statement.range),
         });
     }
 
@@ -1151,18 +1421,22 @@ class IrLowerer final {
             current_module_name_ = node.name->spelling();
         }
 
-        return with_provenance(ir::ModuleDecl{
-            .provenance = {},
-            .name = node.name->spelling(),
-        });
+        return with_provenance(
+            ir::ModuleDecl{
+                .provenance = {},
+                .name = node.name->spelling(),
+            },
+            node.range);
     }
 
     [[nodiscard]] ir::ImportDecl lower_import(const ast::ImportDecl &node) const {
-        return with_provenance(ir::ImportDecl{
-            .provenance = {},
-            .path = node.path->spelling(),
-            .alias = node.alias.empty() ? std::nullopt : std::make_optional(node.alias),
-        });
+        return with_provenance(
+            ir::ImportDecl{
+                .provenance = {},
+                .path = node.path->spelling(),
+                .alias = node.alias.empty() ? std::nullopt : std::make_optional(node.alias),
+            },
+            node.range);
     }
 
     [[nodiscard]] ir::ConstDecl lower_const(const ast::ConstDecl &node) const {
@@ -1174,20 +1448,33 @@ class IrLowerer final {
             const_type = environment().get_const_type(const_symbol->get().id);
         }
 
-        return with_provenance(ir::ConstDecl{
-            .provenance = {},
-            .name = symbol_name,
-            .type = describe_type(const_type),
-            .value = lower_expr(*node.value),
-        });
+        return with_provenance(
+            ir::ConstDecl{
+                .provenance = {},
+                .name = symbol_name,
+                .type = describe_type(const_type),
+                .value = lower_expr(*node.value),
+                .type_ref = const_type.has_value() ? type_ref_from_type(const_type->get())
+                                                   : type_ref_from_syntax(*node.type),
+                .symbol_ref =
+                    symbol_ref_from_symbol(const_symbol, ir::SymbolRefKind::Const, symbol_name),
+            },
+            node.range);
     }
 
     [[nodiscard]] ir::TypeAliasDecl lower_type_alias(const ast::TypeAliasDecl &node) const {
-        return with_provenance(ir::TypeAliasDecl{
-            .provenance = {},
-            .name = canonical_local_name_here(SymbolNamespace::Types, node.name),
-            .aliased_type = render_type_syntax(*node.aliased_type),
-        });
+        const auto symbol = find_local_symbol_here(SymbolNamespace::Types, node.name);
+        const auto symbol_name = symbol.has_value() ? symbol->get().canonical_name : node.name;
+
+        return with_provenance(
+            ir::TypeAliasDecl{
+                .provenance = {},
+                .name = symbol_name,
+                .aliased_type = render_type_syntax(*node.aliased_type),
+                .aliased_type_ref = type_ref_from_syntax(*node.aliased_type),
+                .symbol_ref = symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Type, symbol_name),
+            },
+            node.range);
     }
 
     [[nodiscard]] ir::StructDecl lower_struct(const ast::StructDecl &node) const {
@@ -1195,26 +1482,33 @@ class IrLowerer final {
         const auto info =
             symbol.has_value() ? environment().get_struct(symbol->get().id) : std::nullopt;
 
-        ir::StructDecl declaration = with_provenance(ir::StructDecl{
-            .provenance = {},
-            .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-            .fields = {},
-        });
+        ir::StructDecl declaration = with_provenance(
+            ir::StructDecl{
+                .provenance = {},
+                .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
+                .fields = {},
+                .symbol_ref = symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Type, node.name),
+            },
+            node.range);
         declaration.fields.reserve(node.fields.size());
 
         for (std::size_t index = 0; index < node.fields.size(); ++index) {
             const auto &field = node.fields[index];
 
             std::string field_type = render_type_syntax(*field->type);
+            auto field_type_ref = type_ref_from_syntax(*field->type);
             if (info.has_value() && index < info->get().fields.size() &&
                 info->get().fields[index].type) {
                 field_type = info->get().fields[index].type->describe();
+                field_type_ref = type_ref_from_type(*info->get().fields[index].type);
             }
 
             declaration.fields.push_back(ir::FieldDecl{
                 .name = field->name,
                 .type = std::move(field_type),
                 .default_value = field->default_value ? lower_expr(*field->default_value) : nullptr,
+                .type_ref = std::move(field_type_ref),
+                .source_range = field->range,
             });
         }
 
@@ -1224,11 +1518,14 @@ class IrLowerer final {
     [[nodiscard]] ir::EnumDecl lower_enum(const ast::EnumDecl &node) const {
         const auto symbol = find_local_symbol_here(SymbolNamespace::Types, node.name);
 
-        ir::EnumDecl declaration = with_provenance(ir::EnumDecl{
-            .provenance = {},
-            .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-            .variants = {},
-        });
+        ir::EnumDecl declaration = with_provenance(
+            ir::EnumDecl{
+                .provenance = {},
+                .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
+                .variants = {},
+                .symbol_ref = symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Type, node.name),
+            },
+            node.range);
         declaration.variants.reserve(node.variants.size());
 
         for (const auto &variant : node.variants) {
@@ -1246,10 +1543,14 @@ class IrLowerer final {
 
         if (capability_info.has_value()) {
             result.reserve(capability_info->get().params.size());
-            for (const auto &param : capability_info->get().params) {
+            for (std::size_t index = 0; index < capability_info->get().params.size(); ++index) {
+                const auto &param = capability_info->get().params[index];
                 result.push_back(ir::ParamDecl{
                     .name = param.name,
                     .type = describe_type(borrow(param.type.get())),
+                    .type_ref = type_ref_from_maybe(borrow(param.type.get())),
+                    .source_range = index < params.size() ? ir::SourceRangeOpt{params[index]->range}
+                                                          : std::nullopt,
                 });
             }
             return result;
@@ -1257,10 +1558,14 @@ class IrLowerer final {
 
         if (predicate_info.has_value()) {
             result.reserve(predicate_info->get().params.size());
-            for (const auto &param : predicate_info->get().params) {
+            for (std::size_t index = 0; index < predicate_info->get().params.size(); ++index) {
+                const auto &param = predicate_info->get().params[index];
                 result.push_back(ir::ParamDecl{
                     .name = param.name,
                     .type = describe_type(borrow(param.type.get())),
+                    .type_ref = type_ref_from_maybe(borrow(param.type.get())),
+                    .source_range = index < params.size() ? ir::SourceRangeOpt{params[index]->range}
+                                                          : std::nullopt,
                 });
             }
             return result;
@@ -1271,6 +1576,8 @@ class IrLowerer final {
             result.push_back(ir::ParamDecl{
                 .name = param->name,
                 .type = render_type_syntax(*param->type),
+                .type_ref = type_ref_from_syntax(*param->type),
+                .source_range = param->range,
             });
         }
 
@@ -1281,26 +1588,40 @@ class IrLowerer final {
         const auto symbol = find_local_symbol_here(SymbolNamespace::Capabilities, node.name);
         const auto info =
             symbol.has_value() ? environment().get_capability(symbol->get().id) : std::nullopt;
+        const auto symbol_name = symbol.has_value() ? symbol->get().canonical_name : node.name;
 
-        return with_provenance(ir::CapabilityDecl{
-            .provenance = {},
-            .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-            .params = lower_params(node.params, info, std::nullopt),
-            .return_type = info.has_value() ? describe_type(borrow(info->get().return_type.get()))
-                                            : render_type_syntax(*node.return_type),
-        });
+        return with_provenance(
+            ir::CapabilityDecl{
+                .provenance = {},
+                .name = symbol_name,
+                .params = lower_params(node.params, info, std::nullopt),
+                .return_type = info.has_value()
+                                   ? describe_type(borrow(info->get().return_type.get()))
+                                   : render_type_syntax(*node.return_type),
+                .return_type_ref = info.has_value()
+                                       ? type_ref_from_maybe(borrow(info->get().return_type.get()))
+                                       : type_ref_from_syntax(*node.return_type),
+                .symbol_ref =
+                    symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Capability, symbol_name),
+            },
+            node.range);
     }
 
     [[nodiscard]] ir::PredicateDecl lower_predicate(const ast::PredicateDecl &node) const {
         const auto symbol = find_local_symbol_here(SymbolNamespace::Predicates, node.name);
         const auto info =
             symbol.has_value() ? environment().get_predicate(symbol->get().id) : std::nullopt;
+        const auto symbol_name = symbol.has_value() ? symbol->get().canonical_name : node.name;
 
-        return with_provenance(ir::PredicateDecl{
-            .provenance = {},
-            .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-            .params = lower_params(node.params, std::nullopt, info),
-        });
+        return with_provenance(
+            ir::PredicateDecl{
+                .provenance = {},
+                .name = symbol_name,
+                .params = lower_params(node.params, std::nullopt, info),
+                .symbol_ref =
+                    symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Predicate, symbol_name),
+            },
+            node.range);
     }
 
     [[nodiscard]] ir::AgentDecl lower_agent(const ast::AgentDecl &node) const {
@@ -1308,36 +1629,63 @@ class IrLowerer final {
         const auto info =
             symbol.has_value() ? environment().get_agent(symbol->get().id) : std::nullopt;
 
-        ir::AgentDecl declaration = with_provenance(ir::AgentDecl{
-            .provenance = {},
-            .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-            .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
-                                           : render_type_syntax(*node.input_type),
-            .context_type = info.has_value() ? describe_type(borrow(info->get().context_type.get()))
-                                             : render_type_syntax(*node.context_type),
-            .output_type = info.has_value() ? describe_type(borrow(info->get().output_type.get()))
-                                            : render_type_syntax(*node.output_type),
-            .states = node.states,
-            .initial_state = node.initial_state,
-            .final_states = node.final_states,
-            .capabilities = {},
-            .quota = {},
-            .transitions = {},
-        });
+        ir::AgentDecl declaration = with_provenance(
+            ir::AgentDecl{
+                .provenance = {},
+                .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
+                .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
+                                               : render_type_syntax(*node.input_type),
+                .context_type = info.has_value()
+                                    ? describe_type(borrow(info->get().context_type.get()))
+                                    : render_type_syntax(*node.context_type),
+                .output_type = info.has_value()
+                                   ? describe_type(borrow(info->get().output_type.get()))
+                                   : render_type_syntax(*node.output_type),
+                .states = node.states,
+                .initial_state = node.initial_state,
+                .final_states = node.final_states,
+                .capabilities = {},
+                .quota = {},
+                .transitions = {},
+                .input_type_ref = info.has_value()
+                                      ? type_ref_from_maybe(borrow(info->get().input_type.get()))
+                                      : type_ref_from_syntax(*node.input_type),
+                .context_type_ref =
+                    info.has_value() ? type_ref_from_maybe(borrow(info->get().context_type.get()))
+                                     : type_ref_from_syntax(*node.context_type),
+                .output_type_ref = info.has_value()
+                                       ? type_ref_from_maybe(borrow(info->get().output_type.get()))
+                                       : type_ref_from_syntax(*node.output_type),
+                .capability_refs = {},
+                .symbol_ref = symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Agent, node.name),
+            },
+            node.range);
 
         if (info.has_value()) {
             declaration.capabilities.reserve(info->get().capability_symbols.size());
+            declaration.capability_refs.reserve(info->get().capability_symbols.size());
             for (const auto capability_symbol : info->get().capability_symbols) {
                 const auto capability = symbols().get(capability_symbol);
                 declaration.capabilities.push_back(capability.has_value()
                                                        ? capability->get().canonical_name
                                                        : "<missing-capability>");
+                declaration.capability_refs.push_back(
+                    symbol_ref_from_symbol(capability,
+                                           ir::SymbolRefKind::Capability,
+                                           capability.has_value() ? capability->get().canonical_name
+                                                                  : "<missing-capability>"));
             }
         } else {
             declaration.capabilities.reserve(node.capabilities.size());
+            declaration.capability_refs.reserve(node.capabilities.size());
             for (const auto &capability : node.capabilities) {
-                declaration.capabilities.push_back(
-                    canonical_local_name_here(SymbolNamespace::Capabilities, capability));
+                const auto symbol =
+                    find_local_symbol_here(SymbolNamespace::Capabilities, capability);
+                const auto name =
+                    symbol.has_value() ? symbol->get().canonical_name : std::string(capability);
+                declaration.capabilities.push_back(name);
+                declaration.capability_refs.push_back(
+                    symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Capability, name));
             }
         }
 
@@ -1372,18 +1720,26 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::ContractDecl lower_contract(const ast::ContractDecl &node) const {
-        ir::ContractDecl declaration = with_provenance(ir::ContractDecl{
-            .provenance = {},
-            .target = canonical_name_from_reference_here(
-                ReferenceKind::ContractTarget, node.target->range, node.target->spelling()),
-            .clauses = {},
-        });
+        const auto target = canonical_name_from_reference_here(
+            ReferenceKind::ContractTarget, node.target->range, node.target->spelling());
+        ir::ContractDecl declaration = with_provenance(
+            ir::ContractDecl{
+                .provenance = {},
+                .target = target,
+                .clauses = {},
+                .target_ref = symbol_ref_from_reference_here(ReferenceKind::ContractTarget,
+                                                             node.target->range,
+                                                             ir::SymbolRefKind::Agent,
+                                                             target),
+            },
+            node.range);
         declaration.clauses.reserve(node.clauses.size());
 
         for (const auto &clause : node.clauses) {
             ir::ContractClause lowered_clause{
                 .kind = lower_contract_clause_kind(clause->kind),
                 .value = ir::ExprPtr{},
+                .source_range = clause->range,
             };
 
             if (clause->expr) {
@@ -1399,12 +1755,19 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::FlowDecl lower_flow(const ast::FlowDecl &node) const {
-        ir::FlowDecl declaration = with_provenance(ir::FlowDecl{
-            .provenance = {},
-            .target = canonical_name_from_reference_here(
-                ReferenceKind::FlowTarget, node.target->range, node.target->spelling()),
-            .state_handlers = {},
-        });
+        const auto target = canonical_name_from_reference_here(
+            ReferenceKind::FlowTarget, node.target->range, node.target->spelling());
+        ir::FlowDecl declaration = with_provenance(
+            ir::FlowDecl{
+                .provenance = {},
+                .target = target,
+                .state_handlers = {},
+                .target_ref = symbol_ref_from_reference_here(ReferenceKind::FlowTarget,
+                                                             node.target->range,
+                                                             ir::SymbolRefKind::Agent,
+                                                             target),
+            },
+            node.range);
         declaration.state_handlers.reserve(node.state_handlers.size());
 
         for (const auto &handler : node.state_handlers) {
@@ -1413,6 +1776,7 @@ class IrLowerer final {
                 .policy = {},
                 .body = lower_block(*handler->body),
                 .summary = {},
+                .source_range = handler->range,
             };
 
             if (handler->policy) {
@@ -1458,19 +1822,30 @@ class IrLowerer final {
             workflow_node_names.push_back(workflow_node->name);
         }
 
-        ir::WorkflowDecl declaration = with_provenance(ir::WorkflowDecl{
-            .provenance = {},
-            .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-            .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
-                                           : render_type_syntax(*node.input_type),
-            .output_type = info.has_value() ? describe_type(borrow(info->get().output_type.get()))
-                                            : render_type_syntax(*node.output_type),
-            .nodes = {},
-            .safety = {},
-            .liveness = {},
-            .return_value = lower_expr(*node.return_value),
-            .return_summary = {},
-        });
+        ir::WorkflowDecl declaration = with_provenance(
+            ir::WorkflowDecl{
+                .provenance = {},
+                .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
+                .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
+                                               : render_type_syntax(*node.input_type),
+                .output_type = info.has_value()
+                                   ? describe_type(borrow(info->get().output_type.get()))
+                                   : render_type_syntax(*node.output_type),
+                .nodes = {},
+                .safety = {},
+                .liveness = {},
+                .return_value = lower_expr(*node.return_value),
+                .return_summary = {},
+                .input_type_ref = info.has_value()
+                                      ? type_ref_from_maybe(borrow(info->get().input_type.get()))
+                                      : type_ref_from_syntax(*node.input_type),
+                .output_type_ref = info.has_value()
+                                       ? type_ref_from_maybe(borrow(info->get().output_type.get()))
+                                       : type_ref_from_syntax(*node.output_type),
+                .symbol_ref =
+                    symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Workflow, node.name),
+            },
+            node.range);
         declaration.return_summary =
             summarize_workflow_expr(*declaration.return_value, workflow_node_names);
 
@@ -1478,14 +1853,21 @@ class IrLowerer final {
         for (const auto &workflow_node : node.nodes) {
             auto input = lower_expr(*workflow_node->input);
             auto input_summary = summarize_workflow_expr(*input, workflow_node_names);
+            const auto target =
+                canonical_name_from_reference_here(ReferenceKind::WorkflowNodeTarget,
+                                                   workflow_node->target->range,
+                                                   workflow_node->target->spelling());
             declaration.nodes.push_back(ir::WorkflowNode{
                 .name = workflow_node->name,
-                .target = canonical_name_from_reference_here(ReferenceKind::WorkflowNodeTarget,
-                                                             workflow_node->target->range,
-                                                             workflow_node->target->spelling()),
+                .target = target,
                 .input = std::move(input),
                 .input_summary = std::move(input_summary),
                 .after = workflow_node->after,
+                .target_ref = symbol_ref_from_reference_here(ReferenceKind::WorkflowNodeTarget,
+                                                             workflow_node->target->range,
+                                                             ir::SymbolRefKind::Agent,
+                                                             target),
+                .source_range = workflow_node->range,
             });
         }
 

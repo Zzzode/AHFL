@@ -56,7 +56,9 @@
 3. JSON 字段名与字段语义
 4. `formal_observations`
 5. flow / workflow summary 的结构化含义
-6. `provenance`、`format_version` 等公共元信息
+6. `TypeRef` / `SymbolRef` 等机器可读伴随字段
+7. `source_range` 等结构化来源定位字段
+8. `provenance`、`format_version` 等公共元信息
 
 ### 2. 文本展示层
 
@@ -88,6 +90,8 @@
 3. 新增 declaration/summary 内的附加信息，只要旧 consumer 仍可忽略
 4. 为已有字段补充更明确的文档说明，但不改变字段语义
 5. 为现有 IR 节点增加新的、可选的辅助 summary
+6. 为旧字符串字段新增 JSON-only 的结构化伴随字段，例如 `type_ref` / `symbol_ref`，前提是旧字符串字段继续保留且语义不变
+7. 为已有 IR object 增加可选 `source_range`，前提是旧字段继续保留且 consumer 可忽略未知字段
 
 这些扩展必须同时满足：
 
@@ -127,6 +131,7 @@
 1. 若 JSON IR 需要 bump 版本，文本 IR 也必须一起 bump
 2. 若文本 IR 只是排版调整，而结构语义不变，则不需要 bump
 3. 若新增字段只出现在 JSON IR，而文本 IR 完全不暴露对应语义，应视为边界不一致，原则上不应接受
+4. JSON-only 的结构化伴随字段是例外：当文本 IR 已通过旧字符串字段暴露同一身份或类型语义时，可不额外改变文本 IR 排版
 
 ## Consumer 建议
 
@@ -175,4 +180,6 @@
 
 1. 当前稳定版本仍为 `ahfl.ir.v1`
 2. `emit-ir` 与 `emit-ir-json` 已共享同一版本标识
-3. flow summary、workflow value summary、project-aware provenance 都已进入同一兼容边界
+3. JSON IR 已为类型和符号身份提供 `TypeRef` / `SymbolRef` 伴随字段，旧字符串字段继续保留
+4. JSON IR 已为 declaration provenance、表达式、语句和关键嵌套节点提供 `source_range`
+5. flow summary、workflow value summary、project-aware provenance 都已进入同一兼容边界

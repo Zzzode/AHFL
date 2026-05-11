@@ -15,28 +15,84 @@
   "declarations": [
     {
       "kind": "module",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 0,
+          "end_offset": 29
+        }
+      },
       "name": "formal::flow_workflow"
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 31,
+          "end_offset": 77
+        }
+      },
       "name": "formal::flow_workflow::Request",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "formal::flow_workflow::Request",
+        "local_name": "Request",
+        "module_name": "formal::flow_workflow"
+      },
       "fields": [
         {
           "name": "allow_fast_track",
           "type": "Bool",
+          "type_ref": {
+            "kind": "bool",
+            "display_name": "Bool"
+          },
+          "source_range": {
+            "begin_offset": 52,
+            "end_offset": 75
+          },
           "default_value": null
         }
       ]
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 79,
+          "end_offset": 123
+        }
+      },
       "name": "formal::flow_workflow::Context",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "formal::flow_workflow::Context",
+        "local_name": "Context",
+        "module_name": "formal::flow_workflow"
+      },
       "fields": [
         {
           "name": "tag",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 100,
+            "end_offset": 121
+          },
           "default_value": {
             "kind": "string_literal",
+            "source_range": {
+              "begin_offset": 114,
+              "end_offset": 120
+            },
             "spelling": "\"seed\""
           }
         }
@@ -44,21 +100,72 @@
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 125,
+          "end_offset": 161
+        }
+      },
       "name": "formal::flow_workflow::Response",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "formal::flow_workflow::Response",
+        "local_name": "Response",
+        "module_name": "formal::flow_workflow"
+      },
       "fields": [
         {
           "name": "tag",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 147,
+            "end_offset": 159
+          },
           "default_value": null
         }
       ]
     },
     {
       "kind": "agent",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 163,
+          "end_offset": 512
+        }
+      },
       "name": "formal::flow_workflow::ReviewAgent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "formal::flow_workflow::ReviewAgent",
+        "local_name": "ReviewAgent",
+        "module_name": "formal::flow_workflow"
+      },
       "input_type": "formal::flow_workflow::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Request",
+        "canonical_name": "formal::flow_workflow::Request"
+      },
       "context_type": "formal::flow_workflow::Context",
+      "context_type_ref": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Context",
+        "canonical_name": "formal::flow_workflow::Context"
+      },
       "output_type": "formal::flow_workflow::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Response",
+        "canonical_name": "formal::flow_workflow::Response"
+      },
       "states": [
         "Init",
         "FastTrack",
@@ -96,10 +203,28 @@
     },
     {
       "kind": "flow",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 514,
+          "end_offset": 857
+        }
+      },
       "target": "formal::flow_workflow::ReviewAgent",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "formal::flow_workflow::ReviewAgent",
+        "local_name": "ReviewAgent",
+        "module_name": "formal::flow_workflow"
+      },
       "state_handlers": [
         {
           "state_name": "Init",
+          "source_range": {
+            "begin_offset": 541,
+            "end_offset": 675
+          },
           "policy": [],
           "summary": {
             "goto_targets": [
@@ -113,11 +238,23 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 552,
+              "end_offset": 675
+            },
             "statements": [
               {
                 "kind": "if",
+                "source_range": {
+                  "begin_offset": 562,
+                  "end_offset": 669
+                },
                 "condition": {
                   "kind": "path",
+                  "source_range": {
+                    "begin_offset": 565,
+                    "end_offset": 587
+                  },
                   "path": {
                     "root_kind": "input",
                     "root_name": "input",
@@ -127,17 +264,33 @@
                   }
                 },
                 "then_block": {
+                  "source_range": {
+                    "begin_offset": 588,
+                    "end_offset": 627
+                  },
                   "statements": [
                     {
                       "kind": "goto",
+                      "source_range": {
+                        "begin_offset": 602,
+                        "end_offset": 617
+                      },
                       "target_state": "FastTrack"
                     }
                   ]
                 },
                 "else_block": {
+                  "source_range": {
+                    "begin_offset": 633,
+                    "end_offset": 669
+                  },
                   "statements": [
                     {
                       "kind": "goto",
+                      "source_range": {
+                        "begin_offset": 647,
+                        "end_offset": 659
+                      },
                       "target_state": "Review"
                     }
                   ]
@@ -148,6 +301,10 @@
         },
         {
           "state_name": "FastTrack",
+          "source_range": {
+            "begin_offset": 681,
+            "end_offset": 723
+          },
           "policy": [],
           "summary": {
             "goto_targets": [
@@ -160,9 +317,17 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 697,
+              "end_offset": 723
+            },
             "statements": [
               {
                 "kind": "goto",
+                "source_range": {
+                  "begin_offset": 707,
+                  "end_offset": 717
+                },
                 "target_state": "Done"
               }
             ]
@@ -170,6 +335,10 @@
         },
         {
           "state_name": "Review",
+          "source_range": {
+            "begin_offset": 729,
+            "end_offset": 768
+          },
           "policy": [],
           "summary": {
             "goto_targets": [
@@ -182,9 +351,17 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 742,
+              "end_offset": 768
+            },
             "statements": [
               {
                 "kind": "goto",
+                "source_range": {
+                  "begin_offset": 752,
+                  "end_offset": 762
+                },
                 "target_state": "Done"
               }
             ]
@@ -192,6 +369,10 @@
         },
         {
           "state_name": "Done",
+          "source_range": {
+            "begin_offset": 774,
+            "end_offset": 855
+          },
           "policy": [],
           "summary": {
             "goto_targets": [],
@@ -202,17 +383,33 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 785,
+              "end_offset": 855
+            },
             "statements": [
               {
                 "kind": "return",
+                "source_range": {
+                  "begin_offset": 795,
+                  "end_offset": 849
+                },
                 "value": {
                   "kind": "struct_literal",
+                  "source_range": {
+                    "begin_offset": 802,
+                    "end_offset": 848
+                  },
                   "type_name": "formal::flow_workflow::Response",
                   "fields": [
                     {
                       "name": "tag",
                       "value": {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 830,
+                          "end_offset": 837
+                        },
                         "path": {
                           "root_kind": "identifier",
                           "root_name": "ctx",
@@ -232,15 +429,53 @@
     },
     {
       "kind": "workflow",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 859,
+          "end_offset": 1217
+        }
+      },
       "name": "formal::flow_workflow::ReviewWorkflow",
+      "symbol_ref": {
+        "kind": "workflow",
+        "canonical_name": "formal::flow_workflow::ReviewWorkflow",
+        "local_name": "ReviewWorkflow",
+        "module_name": "formal::flow_workflow"
+      },
       "input_type": "formal::flow_workflow::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Request",
+        "canonical_name": "formal::flow_workflow::Request"
+      },
       "output_type": "formal::flow_workflow::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Response",
+        "canonical_name": "formal::flow_workflow::Response"
+      },
       "nodes": [
         {
           "name": "first",
+          "source_range": {
+            "begin_offset": 932,
+            "end_offset": 963
+          },
           "target": "formal::flow_workflow::ReviewAgent",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "formal::flow_workflow::ReviewAgent",
+            "local_name": "ReviewAgent",
+            "module_name": "formal::flow_workflow"
+          },
           "input": {
             "kind": "path",
+            "source_range": {
+              "begin_offset": 956,
+              "end_offset": 961
+            },
             "path": {
               "root_kind": "input",
               "root_name": "input",
@@ -260,9 +495,23 @@
         },
         {
           "name": "second",
+          "source_range": {
+            "begin_offset": 968,
+            "end_offset": 1014
+          },
           "target": "formal::flow_workflow::ReviewAgent",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "formal::flow_workflow::ReviewAgent",
+            "local_name": "ReviewAgent",
+            "module_name": "formal::flow_workflow"
+          },
           "input": {
             "kind": "path",
+            "source_range": {
+              "begin_offset": 993,
+              "end_offset": 998
+            },
             "path": {
               "root_kind": "input",
               "root_name": "input",
@@ -286,20 +535,40 @@
       "safety": [
         {
           "kind": "unary",
+          "source_range": {
+            "begin_offset": 1028,
+            "end_offset": 1076
+          },
           "op": "always",
           "operand": {
             "kind": "binary",
+            "source_range": {
+              "begin_offset": 1036,
+              "end_offset": 1075
+            },
             "op": "or",
             "lhs": {
               "kind": "unary",
+              "source_range": {
+                "begin_offset": 1036,
+                "end_offset": 1055
+              },
               "op": "not",
               "operand": {
                 "kind": "running",
+                "source_range": {
+                  "begin_offset": 1040,
+                  "end_offset": 1055
+                },
                 "node": "second"
               }
             },
             "rhs": {
               "kind": "completed",
+              "source_range": {
+                "begin_offset": 1059,
+                "end_offset": 1075
+              },
               "node": "first",
               "state_name": null
             }
@@ -307,22 +576,46 @@
         },
         {
           "kind": "unary",
+          "source_range": {
+            "begin_offset": 1090,
+            "end_offset": 1143
+          },
           "op": "always",
           "operand": {
             "kind": "binary",
+            "source_range": {
+              "begin_offset": 1098,
+              "end_offset": 1142
+            },
             "op": "or",
             "lhs": {
               "kind": "unary",
+              "source_range": {
+                "begin_offset": 1098,
+                "end_offset": 1116
+              },
               "op": "not",
               "operand": {
                 "kind": "running",
+                "source_range": {
+                  "begin_offset": 1102,
+                  "end_offset": 1116
+                },
                 "node": "first"
               }
             },
             "rhs": {
               "kind": "embedded_expr",
+              "source_range": {
+                "begin_offset": 1120,
+                "end_offset": 1142
+              },
               "expr": {
                 "kind": "path",
+                "source_range": {
+                  "begin_offset": 1120,
+                  "end_offset": 1142
+                },
                 "path": {
                   "root_kind": "input",
                   "root_name": "input",
@@ -338,9 +631,17 @@
       "liveness": [
         {
           "kind": "unary",
+          "source_range": {
+            "begin_offset": 1159,
+            "end_offset": 1193
+          },
           "op": "eventually",
           "operand": {
             "kind": "completed",
+            "source_range": {
+              "begin_offset": 1170,
+              "end_offset": 1193
+            },
             "node": "second",
             "state_name": "Done"
           }
@@ -357,6 +658,10 @@
       },
       "return_value": {
         "kind": "path",
+        "source_range": {
+          "begin_offset": 1208,
+          "end_offset": 1214
+        },
         "path": {
           "root_kind": "identifier",
           "root_name": "second",
