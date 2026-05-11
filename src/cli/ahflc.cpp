@@ -76,6 +76,24 @@ lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
     return metadata;
 }
 
+[[nodiscard]] bool emit_selected_backend(std::optional<CommandKind> effective_command,
+                                         const ahfl::ir::Program &program,
+                                         const ahfl::ResolveResult &resolve_result,
+                                         const ahfl::TypeCheckResult &type_check_result,
+                                         const ahfl::handoff::PackageMetadata *package_metadata,
+                                         std::ostream &out) {
+    static_cast<void>(resolve_result);
+    static_cast<void>(type_check_result);
+
+    const auto backend = selected_backend_for_command(effective_command);
+    if (!backend.has_value()) {
+        return false;
+    }
+
+    ahfl::emit_backend(*backend, program, out, package_metadata);
+    return true;
+}
+
 template <typename InputT>
 [[nodiscard]] bool emit_selected_backend(std::optional<CommandKind> effective_command,
                                          const InputT &input,
@@ -88,7 +106,8 @@ template <typename InputT>
         return false;
     }
 
-    ahfl::emit_backend(*backend, input, resolve_result, type_check_result, out, package_metadata);
+    const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+    ahfl::emit_backend(*backend, ir_program, out, package_metadata);
     return true;
 }
 

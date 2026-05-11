@@ -160,11 +160,12 @@ AHFL 当前 backend 相关代码分布在：
 
 1. 扩展 `BackendKind`
 2. 在 `emit_backend(BackendKind, const ir::Program &, ...)` 中新增分支
-3. 继续复用已有的 AST/SourceGraph -> IR overload
+3. 让 CLI pipeline 在 validate 成功后先 lower 成 `ir::Program`，再调用 driver
 
 这一步的设计目标是：
 
 - 所有 backend 仍然共享统一分发入口
+- backend-facing seam 保持 IR-only，不让 AST / SourceGraph 泄漏到 backend driver
 
 不要为了一个新 backend 绕过 `driver.cpp`，直接在 CLI 中调用专用实现。
 
