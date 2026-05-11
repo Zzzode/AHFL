@@ -155,8 +155,9 @@ cmake --build --preset build-format-check  # 仅检查
 # 测试特定版本切片
 ctest --preset test-dev -L ahfl-v0.42
 
-# 重新生成 Parser
-ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
+# 使用锁定的 ANTLR 工具链重新生成 Parser
+ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh
+ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --check
 ```
 
 ## 贡献
