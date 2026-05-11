@@ -155,8 +155,9 @@ cmake --build --preset build-format-check  # Check only
 # Test a specific version slice
 ctest --preset test-dev -L ahfl-v0.42
 
-# Regenerate parser
-ANTLR_JAR=/path/to/antlr-4.x-complete.jar ./scripts/regenerate-parser.sh
+# Regenerate parser using the locked ANTLR toolchain
+ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh
+ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --check
 ```
 
 ## Contributing
