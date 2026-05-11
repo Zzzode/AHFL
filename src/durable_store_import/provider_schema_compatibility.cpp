@@ -14,18 +14,6 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
 }
 
-[[nodiscard]] std::string status_slug(SchemaCompatibilityStatus status) {
-    switch (status) {
-    case SchemaCompatibilityStatus::Compatible:
-        return "compatible";
-    case SchemaCompatibilityStatus::Incompatible:
-        return "incompatible";
-    case SchemaCompatibilityStatus::Unknown:
-        return "unknown";
-    }
-    return "unknown";
-}
-
 } // namespace
 
 ProviderSchemaCompatibilityReportValidationResult

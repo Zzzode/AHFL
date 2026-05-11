@@ -71,7 +71,7 @@ jobs:
           c++ --version
 
       - name: Configure
-        run: cmake --preset dev
+        run: cmake --preset dev -DAHFL_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build --preset build-dev
@@ -209,7 +209,7 @@ jobs:
           c++ --version
 
       - name: Configure
-        run: cmake --preset asan
+        run: cmake --preset asan -DAHFL_WARNINGS_AS_ERRORS=ON
 
       - name: Build
         run: cmake --build --preset build-asan
