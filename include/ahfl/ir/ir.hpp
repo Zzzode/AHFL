@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -28,8 +30,8 @@ namespace ir {
 //
 // IR 与 AST 的关键区别：
 //   1. 使用 std::variant 实现 tagged-union（而非 AST 的 tagged-struct）
-//   2. 类型用字符串表示（已解析的全限定名）
-//   3. 所有声明携带 DeclarationProvenance（来源追踪）
+//   2. 类型/符号同时保留兼容字符串和结构化 TypeRef/SymbolRef
+//   3. 声明和主要可执行节点携带结构化 source range（来源追踪）
 //   4. 包含推导出的分析信息（如 StateHandler::Summary、WorkflowExprSummary）
 //
 // IR 节点层次：
@@ -117,6 +119,62 @@ enum class WorkflowValueSourceKind {
     WorkflowNodeOutput, // 引用某个 node 的输出
 };
 
+/// 符号引用种类
+enum class SymbolRefKind {
+    Unknown,
+    Type,
+    Const,
+    Capability,
+    Predicate,
+    Agent,
+    Workflow,
+};
+
+/// 类型引用种类
+enum class TypeRefKind {
+    Unresolved,
+    Any,
+    Never,
+    Unit,
+    Bool,
+    Int,
+    Float,
+    String,
+    BoundedString,
+    UUID,
+    Timestamp,
+    Duration,
+    Decimal,
+    Struct,
+    Enum,
+    Optional,
+    List,
+    Set,
+    Map,
+};
+
+/// 已解析符号引用。canonical_name 是后端稳定身份，local/module 用于诊断和展示。
+struct SymbolRef {
+    SymbolRefKind kind{SymbolRefKind::Unknown};
+    std::string canonical_name;
+    std::string local_name;
+    std::string module_name;
+};
+
+/// 已解析或结构化的类型引用。
+struct TypeRef;
+using TypeRefPtr = Owned<TypeRef>;
+
+struct TypeRef {
+    TypeRefKind kind{TypeRefKind::Unresolved};
+    std::string display_name;
+    std::string canonical_name;
+    std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
+    std::optional<std::int64_t> decimal_scale;
+    TypeRefPtr first;
+    TypeRefPtr second;
+};
+
 // ----------------------------------------------------------------------------
 // 路径 (Path)
 // ----------------------------------------------------------------------------
@@ -140,6 +198,8 @@ using TemporalExprPtr = Owned<TemporalExpr>;
 
 struct Statement;
 using StatementPtr = Owned<Statement>;
+
+using SourceRangeOpt = std::optional<SourceRange>;
 
 /// none 字面量
 struct NoneLiteralExpr {};
@@ -283,6 +343,7 @@ using ExprNode = std::variant<NoneLiteralExpr,
 /// 表达式包装结构
 struct Expr {
     ExprNode node;
+    SourceRangeOpt source_range;
 };
 
 // ----------------------------------------------------------------------------
@@ -340,6 +401,7 @@ using TemporalExprNode = std::variant<EmbeddedTemporalExpr,
 /// 时序表达式包装结构
 struct TemporalExpr {
     TemporalExprNode node;
+    SourceRangeOpt source_range;
 };
 
 // ----------------------------------------------------------------------------
@@ -349,6 +411,7 @@ struct TemporalExpr {
 /// 语句块: { stmt1; stmt2; ... }
 struct Block {
     std::vector<StatementPtr> statements;
+    SourceRangeOpt source_range;
 };
 
 /// let 绑定语句: let name: Type = initializer;
@@ -403,6 +466,7 @@ using StatementNode = std::variant<LetStatement,
 /// 语句包装结构
 struct Statement {
     StatementNode node;
+    SourceRangeOpt source_range;
 };
 
 // ----------------------------------------------------------------------------
@@ -413,6 +477,7 @@ struct Statement {
 struct DeclarationProvenance {
     std::string module_name; // 所属模块名
     std::string source_path; // 源文件路径
+    SourceRangeOpt source_range;
 };
 
 // ----------------------------------------------------------------------------
@@ -438,6 +503,8 @@ struct ConstDecl {
     std::string name;
     std::string type; // 类型（全限定名）
     ExprPtr value;
+    TypeRef type_ref;
+    SymbolRef symbol_ref;
 };
 
 /// 类型别名: type NewName = ExistingType;
@@ -445,6 +512,8 @@ struct TypeAliasDecl {
     DeclarationProvenance provenance;
     std::string name;
     std::string aliased_type;
+    TypeRef aliased_type_ref;
+    SymbolRef symbol_ref;
 };
 
 /// 结构体字段声明
@@ -452,6 +521,8 @@ struct FieldDecl {
     std::string name;
     std::string type;      // 类型（全限定名）
     ExprPtr default_value; // 可选的默认值
+    TypeRef type_ref;
+    SourceRangeOpt source_range;
 };
 
 /// 结构体声明: struct Name { field1: Type1; ... }
@@ -459,6 +530,7 @@ struct StructDecl {
     DeclarationProvenance provenance;
     std::string name;
     std::vector<FieldDecl> fields;
+    SymbolRef symbol_ref;
 };
 
 /// 枚举声明: enum Name { Variant1; Variant2; }
@@ -466,12 +538,15 @@ struct EnumDecl {
     DeclarationProvenance provenance;
     std::string name;
     std::vector<std::string> variants;
+    SymbolRef symbol_ref;
 };
 
 /// 参数声明
 struct ParamDecl {
     std::string name;
     std::string type;
+    TypeRef type_ref;
+    SourceRangeOpt source_range;
 };
 
 /// 能力声明: capability Name(param1: Type1, ...) -> ReturnType;
@@ -480,6 +555,8 @@ struct CapabilityDecl {
     std::string name;
     std::vector<ParamDecl> params;
     std::string return_type;
+    TypeRef return_type_ref;
+    SymbolRef symbol_ref;
 };
 
 /// 谓词声明: predicate Name(param1: Type1, ...);
@@ -487,6 +564,7 @@ struct PredicateDecl {
     DeclarationProvenance provenance;
     std::string name;
     std::vector<ParamDecl> params;
+    SymbolRef symbol_ref;
 };
 
 /// 配额项
@@ -514,12 +592,18 @@ struct AgentDecl {
     std::vector<std::string> capabilities;   // 可用 capability 列表
     std::vector<QuotaItem> quota;            // 资源配额
     std::vector<TransitionDecl> transitions; // 合法状态转换
+    TypeRef input_type_ref;
+    TypeRef context_type_ref;
+    TypeRef output_type_ref;
+    std::vector<SymbolRef> capability_refs;
+    SymbolRef symbol_ref;
 };
 
 /// 契约子句
 struct ContractClause {
     ContractClauseKind kind{ContractClauseKind::Requires};
     std::variant<ExprPtr, TemporalExprPtr> value; // 普通表达式或时序逻辑表达式
+    SourceRangeOpt source_range;
 };
 
 /// 契约声明: contract for AgentName { requires ...; ensures ...; }
@@ -527,6 +611,7 @@ struct ContractDecl {
     DeclarationProvenance provenance;
     std::string target;                  // 目标 Agent
     std::vector<ContractClause> clauses; // 契约子句列表
+    SymbolRef target_ref;
 };
 
 // ----------------------------------------------------------------------------
@@ -567,6 +652,7 @@ struct StateHandler {
     std::vector<StatePolicyItem> policy; // 执行策略
     Block body;                          // 处理逻辑（语句块）
     Summary summary;                     // 推导出的摘要信息
+    SourceRangeOpt source_range;
 };
 
 /// 流程声明: flow for AgentName { state Init { ... } ... }
@@ -574,6 +660,7 @@ struct FlowDecl {
     DeclarationProvenance provenance;
     std::string target;                       // 目标 Agent
     std::vector<StateHandler> state_handlers; // 各状态的处理器
+    SymbolRef target_ref;
 };
 
 // ----------------------------------------------------------------------------
@@ -599,6 +686,8 @@ struct WorkflowNode {
     ExprPtr input;                     // 传递给 agent 的输入表达式
     WorkflowExprSummary input_summary; // 输入表达式的摘要
     std::vector<std::string> after;    // DAG 依赖（前置节点名列表）
+    SymbolRef target_ref;
+    SourceRangeOpt source_range;
 };
 
 /// 工作流声明 — 多 Agent DAG 编排
@@ -612,6 +701,9 @@ struct WorkflowDecl {
     std::vector<TemporalExprPtr> liveness; // 活性属性
     ExprPtr return_value;                  // 最终返回值表达式
     WorkflowExprSummary return_summary;    // 返回值表达式的摘要
+    TypeRef input_type_ref;
+    TypeRef output_type_ref;
+    SymbolRef symbol_ref;
 };
 
 // ----------------------------------------------------------------------------

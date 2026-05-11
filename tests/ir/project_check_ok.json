@@ -13,7 +13,11 @@
       "kind": "module",
       "provenance": {
         "module_name": "app::main",
-        "source_path": "app/main.ahfl"
+        "source_path": "app/main.ahfl",
+        "source_range": {
+          "begin_offset": 0,
+          "end_offset": 17
+        }
       },
       "name": "app::main"
     },
@@ -21,7 +25,11 @@
       "kind": "import",
       "provenance": {
         "module_name": "app::main",
-        "source_path": "app/main.ahfl"
+        "source_path": "app/main.ahfl",
+        "source_range": {
+          "begin_offset": 18,
+          "end_offset": 45
+        }
       },
       "path": "lib::types",
       "alias": "types"
@@ -30,7 +38,11 @@
       "kind": "import",
       "provenance": {
         "module_name": "app::main",
-        "source_path": "app/main.ahfl"
+        "source_path": "app/main.ahfl",
+        "source_range": {
+          "begin_offset": 46,
+          "end_offset": 75
+        }
       },
       "path": "lib::agents",
       "alias": "agents"
@@ -39,12 +51,26 @@
       "kind": "flow",
       "provenance": {
         "module_name": "app::main",
-        "source_path": "app/main.ahfl"
+        "source_path": "app/main.ahfl",
+        "source_range": {
+          "begin_offset": 77,
+          "end_offset": 255
+        }
       },
       "target": "lib::agents::AliasAgent",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "lib::agents::AliasAgent",
+        "local_name": "AliasAgent",
+        "module_name": "lib::agents"
+      },
       "state_handlers": [
         {
           "state_name": "Init",
+          "source_range": {
+            "begin_offset": 111,
+            "end_offset": 148
+          },
           "policy": [],
           "summary": {
             "goto_targets": [
@@ -57,9 +83,17 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 122,
+              "end_offset": 148
+            },
             "statements": [
               {
                 "kind": "goto",
+                "source_range": {
+                  "begin_offset": 132,
+                  "end_offset": 142
+                },
                 "target_state": "Done"
               }
             ]
@@ -67,6 +101,10 @@
         },
         {
           "state_name": "Done",
+          "source_range": {
+            "begin_offset": 154,
+            "end_offset": 253
+          },
           "policy": [],
           "summary": {
             "goto_targets": [],
@@ -77,17 +115,33 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 165,
+              "end_offset": 253
+            },
             "statements": [
               {
                 "kind": "return",
+                "source_range": {
+                  "begin_offset": 175,
+                  "end_offset": 247
+                },
                 "value": {
                   "kind": "struct_literal",
+                  "source_range": {
+                    "begin_offset": 182,
+                    "end_offset": 246
+                  },
                   "type_name": "lib::types::ResponseAlias",
                   "fields": [
                     {
                       "name": "value",
                       "value": {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 224,
+                          "end_offset": 235
+                        },
                         "path": {
                           "root_kind": "input",
                           "root_name": "input",
@@ -109,17 +163,51 @@
       "kind": "workflow",
       "provenance": {
         "module_name": "app::main",
-        "source_path": "app/main.ahfl"
+        "source_path": "app/main.ahfl",
+        "source_range": {
+          "begin_offset": 257,
+          "end_offset": 453
+        }
       },
       "name": "app::main::MainWorkflow",
+      "symbol_ref": {
+        "kind": "workflow",
+        "canonical_name": "app::main::MainWorkflow",
+        "local_name": "MainWorkflow",
+        "module_name": "app::main"
+      },
       "input_type": "lib::types::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Request",
+        "canonical_name": "lib::types::Request"
+      },
       "output_type": "lib::types::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Response",
+        "canonical_name": "lib::types::Response"
+      },
       "nodes": [
         {
           "name": "run",
+          "source_range": {
+            "begin_offset": 351,
+            "end_offset": 387
+          },
           "target": "lib::agents::AliasAgent",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "lib::agents::AliasAgent",
+            "local_name": "AliasAgent",
+            "module_name": "lib::agents"
+          },
           "input": {
             "kind": "path",
+            "source_range": {
+              "begin_offset": 380,
+              "end_offset": 385
+            },
             "path": {
               "root_kind": "input",
               "root_name": "input",
@@ -142,9 +230,17 @@
       "liveness": [
         {
           "kind": "unary",
+          "source_range": {
+            "begin_offset": 402,
+            "end_offset": 433
+          },
           "op": "eventually",
           "operand": {
             "kind": "completed",
+            "source_range": {
+              "begin_offset": 413,
+              "end_offset": 433
+            },
             "node": "run",
             "state_name": "Done"
           }
@@ -161,6 +257,10 @@
       },
       "return_value": {
         "kind": "path",
+        "source_range": {
+          "begin_offset": 447,
+          "end_offset": 450
+        },
         "path": {
           "root_kind": "identifier",
           "root_name": "run",
@@ -172,7 +272,11 @@
       "kind": "module",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 0,
+          "end_offset": 18
+        }
       },
       "name": "lib::types"
     },
@@ -180,13 +284,31 @@
       "kind": "struct",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 20,
+          "end_offset": 57
+        }
       },
       "name": "lib::types::Request",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "lib::types::Request",
+        "local_name": "Request",
+        "module_name": "lib::types"
+      },
       "fields": [
         {
           "name": "value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 41,
+            "end_offset": 55
+          },
           "default_value": null
         }
       ]
@@ -195,15 +317,37 @@
       "kind": "struct",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 59,
+          "end_offset": 108
+        }
       },
       "name": "lib::types::Context",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "lib::types::Context",
+        "local_name": "Context",
+        "module_name": "lib::types"
+      },
       "fields": [
         {
           "name": "value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 80,
+            "end_offset": 106
+          },
           "default_value": {
             "kind": "string_literal",
+            "source_range": {
+              "begin_offset": 96,
+              "end_offset": 105
+            },
             "spelling": "\"pending\""
           }
         }
@@ -213,13 +357,31 @@
       "kind": "struct",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 110,
+          "end_offset": 148
+        }
       },
       "name": "lib::types::Response",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "lib::types::Response",
+        "local_name": "Response",
+        "module_name": "lib::types"
+      },
       "fields": [
         {
           "name": "value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 132,
+            "end_offset": 146
+          },
           "default_value": null
         }
       ]
@@ -228,34 +390,83 @@
       "kind": "type_alias",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 150,
+          "end_offset": 178
+        }
       },
       "name": "lib::types::RequestAlias",
-      "aliased_type": "lib::types::Request"
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "lib::types::RequestAlias",
+        "local_name": "RequestAlias",
+        "module_name": "lib::types"
+      },
+      "aliased_type": "lib::types::Request",
+      "aliased_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Request",
+        "canonical_name": "lib::types::Request"
+      }
     },
     {
       "kind": "type_alias",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 179,
+          "end_offset": 207
+        }
       },
       "name": "lib::types::ContextAlias",
-      "aliased_type": "lib::types::Context"
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "lib::types::ContextAlias",
+        "local_name": "ContextAlias",
+        "module_name": "lib::types"
+      },
+      "aliased_type": "lib::types::Context",
+      "aliased_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Context",
+        "canonical_name": "lib::types::Context"
+      }
     },
     {
       "kind": "type_alias",
       "provenance": {
         "module_name": "lib::types",
-        "source_path": "lib/types.ahfl"
+        "source_path": "lib/types.ahfl",
+        "source_range": {
+          "begin_offset": 208,
+          "end_offset": 238
+        }
       },
       "name": "lib::types::ResponseAlias",
-      "aliased_type": "lib::types::Response"
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "lib::types::ResponseAlias",
+        "local_name": "ResponseAlias",
+        "module_name": "lib::types"
+      },
+      "aliased_type": "lib::types::Response",
+      "aliased_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Response",
+        "canonical_name": "lib::types::Response"
+      }
     },
     {
       "kind": "module",
       "provenance": {
         "module_name": "lib::agents",
-        "source_path": "lib/agents.ahfl"
+        "source_path": "lib/agents.ahfl",
+        "source_range": {
+          "begin_offset": 0,
+          "end_offset": 19
+        }
       },
       "name": "lib::agents"
     },
@@ -263,7 +474,11 @@
       "kind": "import",
       "provenance": {
         "module_name": "lib::agents",
-        "source_path": "lib/agents.ahfl"
+        "source_path": "lib/agents.ahfl",
+        "source_range": {
+          "begin_offset": 20,
+          "end_offset": 47
+        }
       },
       "path": "lib::types",
       "alias": "types"
@@ -272,27 +487,76 @@
       "kind": "capability",
       "provenance": {
         "module_name": "lib::agents",
-        "source_path": "lib/agents.ahfl"
+        "source_path": "lib/agents.ahfl",
+        "source_range": {
+          "begin_offset": 49,
+          "end_offset": 119
+        }
       },
       "name": "lib::agents::Echo",
+      "symbol_ref": {
+        "kind": "capability",
+        "canonical_name": "lib::agents::Echo",
+        "local_name": "Echo",
+        "module_name": "lib::agents"
+      },
       "params": [
         {
           "name": "request",
-          "type": "lib::types::Request"
+          "type": "lib::types::Request",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "lib::types::Request",
+            "canonical_name": "lib::types::Request"
+          },
+          "source_range": {
+            "begin_offset": 65,
+            "end_offset": 93
+          }
         }
       ],
-      "return_type": "lib::types::Response"
+      "return_type": "lib::types::Response",
+      "return_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Response",
+        "canonical_name": "lib::types::Response"
+      }
     },
     {
       "kind": "agent",
       "provenance": {
         "module_name": "lib::agents",
-        "source_path": "lib/agents.ahfl"
+        "source_path": "lib/agents.ahfl",
+        "source_range": {
+          "begin_offset": 121,
+          "end_offset": 360
+        }
       },
       "name": "lib::agents::AliasAgent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "lib::agents::AliasAgent",
+        "local_name": "AliasAgent",
+        "module_name": "lib::agents"
+      },
       "input_type": "lib::types::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Request",
+        "canonical_name": "lib::types::Request"
+      },
       "context_type": "lib::types::Context",
+      "context_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Context",
+        "canonical_name": "lib::types::Context"
+      },
       "output_type": "lib::types::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Response",
+        "canonical_name": "lib::types::Response"
+      },
       "states": [
         "Init",
         "Done"
@@ -303,6 +567,14 @@
       ],
       "capabilities": [
         "lib::agents::Echo"
+      ],
+      "capability_refs": [
+        {
+          "kind": "capability",
+          "canonical_name": "lib::agents::Echo",
+          "local_name": "Echo",
+          "module_name": "lib::agents"
+        }
       ],
       "quota": [],
       "transitions": [

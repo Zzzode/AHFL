@@ -31,66 +31,200 @@
   "declarations": [
     {
       "kind": "module",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 0,
+          "end_offset": 25
+        }
+      },
       "name": "ir::expr_temporal"
     },
     {
       "kind": "import",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 26,
+          "end_offset": 59
+        }
+      },
       "path": "ir::expr_temporal",
       "alias": "self"
     },
     {
       "kind": "const",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 61,
+          "end_offset": 97
+        }
+      },
       "name": "ir::expr_temporal::DEFAULT_NOTE",
+      "symbol_ref": {
+        "kind": "const",
+        "canonical_name": "ir::expr_temporal::DEFAULT_NOTE",
+        "local_name": "DEFAULT_NOTE",
+        "module_name": "ir::expr_temporal"
+      },
       "type": "String",
+      "type_ref": {
+        "kind": "string",
+        "display_name": "String"
+      },
       "value": {
         "kind": "string_literal",
+        "source_range": {
+          "begin_offset": 90,
+          "end_offset": 96
+        },
         "spelling": "\"seed\""
       }
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 99,
+          "end_offset": 172
+        }
+      },
       "name": "ir::expr_temporal::Request",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::expr_temporal::Request",
+        "local_name": "Request",
+        "module_name": "ir::expr_temporal"
+      },
       "fields": [
         {
           "name": "values",
           "type": "List<Int>",
+          "type_ref": {
+            "kind": "list",
+            "display_name": "List<Int>",
+            "element_type": {
+              "kind": "int",
+              "display_name": "Int"
+            }
+          },
+          "source_range": {
+            "begin_offset": 120,
+            "end_offset": 138
+          },
           "default_value": null
         },
         {
           "name": "attrs",
           "type": "Map<String, String>",
+          "type_ref": {
+            "kind": "map",
+            "display_name": "Map<String, String>",
+            "key_type": {
+              "kind": "string",
+              "display_name": "String"
+            },
+            "value_type": {
+              "kind": "string",
+              "display_name": "String"
+            }
+          },
+          "source_range": {
+            "begin_offset": 143,
+            "end_offset": 170
+          },
           "default_value": null
         }
       ]
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 174,
+          "end_offset": 655
+        }
+      },
       "name": "ir::expr_temporal::Context",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::expr_temporal::Context",
+        "local_name": "Context",
+        "module_name": "ir::expr_temporal"
+      },
       "fields": [
         {
           "name": "note",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 195,
+            "end_offset": 229
+          },
           "default_value": {
             "kind": "qualified_value",
+            "source_range": {
+              "begin_offset": 210,
+              "end_offset": 228
+            },
             "value": "ir::expr_temporal::DEFAULT_NOTE"
           }
         },
         {
           "name": "numbers",
           "type": "List<Int>",
+          "type_ref": {
+            "kind": "list",
+            "display_name": "List<Int>",
+            "element_type": {
+              "kind": "int",
+              "display_name": "Int"
+            }
+          },
+          "source_range": {
+            "begin_offset": 234,
+            "end_offset": 265
+          },
           "default_value": {
             "kind": "list_literal",
+            "source_range": {
+              "begin_offset": 255,
+              "end_offset": 264
+            },
             "items": [
               {
                 "kind": "integer_literal",
+                "source_range": {
+                  "begin_offset": 256,
+                  "end_offset": 257
+                },
                 "spelling": "1"
               },
               {
                 "kind": "integer_literal",
+                "source_range": {
+                  "begin_offset": 259,
+                  "end_offset": 260
+                },
                 "spelling": "2"
               },
               {
                 "kind": "integer_literal",
+                "source_range": {
+                  "begin_offset": 262,
+                  "end_offset": 263
+                },
                 "spelling": "3"
               }
             ]
@@ -99,15 +233,39 @@
         {
           "name": "labels",
           "type": "Set<String>",
+          "type_ref": {
+            "kind": "set",
+            "display_name": "Set<String>",
+            "element_type": {
+              "kind": "string",
+              "display_name": "String"
+            }
+          },
+          "source_range": {
+            "begin_offset": 270,
+            "end_offset": 313
+          },
           "default_value": {
             "kind": "set_literal",
+            "source_range": {
+              "begin_offset": 292,
+              "end_offset": 312
+            },
             "items": [
               {
                 "kind": "string_literal",
+                "source_range": {
+                  "begin_offset": 296,
+                  "end_offset": 303
+                },
                 "spelling": "\"alpha\""
               },
               {
                 "kind": "string_literal",
+                "source_range": {
+                  "begin_offset": 305,
+                  "end_offset": 311
+                },
                 "spelling": "\"beta\""
               }
             ]
@@ -116,16 +274,44 @@
         {
           "name": "lookup",
           "type": "Map<String, String>",
+          "type_ref": {
+            "kind": "map",
+            "display_name": "Map<String, String>",
+            "key_type": {
+              "kind": "string",
+              "display_name": "String"
+            },
+            "value_type": {
+              "kind": "string",
+              "display_name": "String"
+            }
+          },
+          "source_range": {
+            "begin_offset": 318,
+            "end_offset": 380
+          },
           "default_value": {
             "kind": "map_literal",
+            "source_range": {
+              "begin_offset": 348,
+              "end_offset": 379
+            },
             "entries": [
               {
                 "key": {
                   "kind": "string_literal",
+                  "source_range": {
+                    "begin_offset": 352,
+                    "end_offset": 358
+                  },
                   "spelling": "\"seed\""
                 },
                 "value": {
                   "kind": "qualified_value",
+                  "source_range": {
+                    "begin_offset": 360,
+                    "end_offset": 378
+                  },
                   "value": "ir::expr_temporal::DEFAULT_NOTE"
                 }
               }
@@ -135,27 +321,59 @@
         {
           "name": "first_value",
           "type": "Int",
+          "type_ref": {
+            "kind": "int",
+            "display_name": "Int"
+          },
+          "source_range": {
+            "begin_offset": 385,
+            "end_offset": 417
+          },
           "default_value": {
             "kind": "index_access",
+            "source_range": {
+              "begin_offset": 404,
+              "end_offset": 415
+            },
             "base": {
               "kind": "list_literal",
+              "source_range": {
+                "begin_offset": 404,
+                "end_offset": 413
+              },
               "items": [
                 {
                   "kind": "integer_literal",
+                  "source_range": {
+                    "begin_offset": 405,
+                    "end_offset": 406
+                  },
                   "spelling": "1"
                 },
                 {
                   "kind": "integer_literal",
+                  "source_range": {
+                    "begin_offset": 408,
+                    "end_offset": 409
+                  },
                   "spelling": "2"
                 },
                 {
                   "kind": "integer_literal",
+                  "source_range": {
+                    "begin_offset": 411,
+                    "end_offset": 412
+                  },
                   "spelling": "3"
                 }
               ]
             },
             "index": {
               "kind": "integer_literal",
+              "source_range": {
+                "begin_offset": 414,
+                "end_offset": 415
+              },
               "spelling": "0"
             }
           }
@@ -163,18 +381,42 @@
         {
           "name": "mapped_value",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 422,
+            "end_offset": 485
+          },
           "default_value": {
             "kind": "index_access",
+            "source_range": {
+              "begin_offset": 445,
+              "end_offset": 483
+            },
             "base": {
               "kind": "map_literal",
+              "source_range": {
+                "begin_offset": 445,
+                "end_offset": 476
+              },
               "entries": [
                 {
                   "key": {
                     "kind": "string_literal",
+                    "source_range": {
+                      "begin_offset": 449,
+                      "end_offset": 455
+                    },
                     "spelling": "\"seed\""
                   },
                   "value": {
                     "kind": "qualified_value",
+                    "source_range": {
+                      "begin_offset": 457,
+                      "end_offset": 475
+                    },
                     "value": "ir::expr_temporal::DEFAULT_NOTE"
                   }
                 }
@@ -182,6 +424,10 @@
             },
             "index": {
               "kind": "string_literal",
+              "source_range": {
+                "begin_offset": 477,
+                "end_offset": 483
+              },
               "spelling": "\"seed\""
             }
           }
@@ -189,14 +435,31 @@
         {
           "name": "reply",
           "type": "ir::expr_temporal::Response",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "source_range": {
+            "begin_offset": 490,
+            "end_offset": 592
+          },
           "default_value": {
             "kind": "struct_literal",
+            "source_range": {
+              "begin_offset": 508,
+              "end_offset": 591
+            },
             "type_name": "ir::expr_temporal::Response",
             "fields": [
               {
                 "name": "note",
                 "value": {
                   "kind": "qualified_value",
+                  "source_range": {
+                    "begin_offset": 533,
+                    "end_offset": 551
+                  },
                   "value": "ir::expr_temporal::DEFAULT_NOTE"
                 }
               },
@@ -204,6 +467,10 @@
                 "name": "result",
                 "value": {
                   "kind": "qualified_value",
+                  "source_range": {
+                    "begin_offset": 569,
+                    "end_offset": 584
+                  },
                   "value": "ir::expr_temporal::Status::Pending"
                 }
               }
@@ -213,10 +480,30 @@
         {
           "name": "maybe_note",
           "type": "Optional<String>",
+          "type_ref": {
+            "kind": "optional",
+            "display_name": "Optional<String>",
+            "element_type": {
+              "kind": "string",
+              "display_name": "String"
+            }
+          },
+          "source_range": {
+            "begin_offset": 597,
+            "end_offset": 653
+          },
           "default_value": {
             "kind": "some",
+            "source_range": {
+              "begin_offset": 628,
+              "end_offset": 652
+            },
             "value": {
               "kind": "qualified_value",
+              "source_range": {
+                "begin_offset": 633,
+                "end_offset": 651
+              },
               "value": "ir::expr_temporal::DEFAULT_NOTE"
             }
           }
@@ -225,23 +512,68 @@
     },
     {
       "kind": "struct",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 657,
+          "end_offset": 714
+        }
+      },
       "name": "ir::expr_temporal::Response",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::expr_temporal::Response",
+        "local_name": "Response",
+        "module_name": "ir::expr_temporal"
+      },
       "fields": [
         {
           "name": "note",
           "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 679,
+            "end_offset": 692
+          },
           "default_value": null
         },
         {
           "name": "result",
           "type": "ir::expr_temporal::Status",
+          "type_ref": {
+            "kind": "enum",
+            "display_name": "ir::expr_temporal::Status",
+            "canonical_name": "ir::expr_temporal::Status"
+          },
+          "source_range": {
+            "begin_offset": 697,
+            "end_offset": 712
+          },
           "default_value": null
         }
       ]
     },
     {
       "kind": "enum",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 716,
+          "end_offset": 772
+        }
+      },
       "name": "ir::expr_temporal::Status",
+      "symbol_ref": {
+        "kind": "type",
+        "canonical_name": "ir::expr_temporal::Status",
+        "local_name": "Status",
+        "module_name": "ir::expr_temporal"
+      },
       "variants": [
         "Pending",
         "Approved",
@@ -250,32 +582,111 @@
     },
     {
       "kind": "capability",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 774,
+          "end_offset": 822
+        }
+      },
       "name": "ir::expr_temporal::Decide",
+      "symbol_ref": {
+        "kind": "capability",
+        "canonical_name": "ir::expr_temporal::Decide",
+        "local_name": "Decide",
+        "module_name": "ir::expr_temporal"
+      },
       "params": [
         {
           "name": "request",
-          "type": "ir::expr_temporal::Request"
+          "type": "ir::expr_temporal::Request",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "source_range": {
+            "begin_offset": 792,
+            "end_offset": 808
+          }
         }
       ],
-      "return_type": "ir::expr_temporal::Response"
+      "return_type": "ir::expr_temporal::Response",
+      "return_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Response",
+        "canonical_name": "ir::expr_temporal::Response"
+      }
     },
     {
       "kind": "predicate",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 823,
+          "end_offset": 862
+        }
+      },
       "name": "ir::expr_temporal::ready",
+      "symbol_ref": {
+        "kind": "predicate",
+        "canonical_name": "ir::expr_temporal::ready",
+        "local_name": "ready",
+        "module_name": "ir::expr_temporal"
+      },
       "params": [
         {
           "name": "value",
-          "type": "String"
+          "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String"
+          },
+          "source_range": {
+            "begin_offset": 839,
+            "end_offset": 852
+          }
         }
       ],
       "return_type": "Bool"
     },
     {
       "kind": "agent",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 864,
+          "end_offset": 1068
+        }
+      },
       "name": "ir::expr_temporal::ExprAgent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent",
+        "local_name": "ExprAgent",
+        "module_name": "ir::expr_temporal"
+      },
       "input_type": "ir::expr_temporal::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Request",
+        "canonical_name": "ir::expr_temporal::Request"
+      },
       "context_type": "ir::expr_temporal::Context",
+      "context_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Context",
+        "canonical_name": "ir::expr_temporal::Context"
+      },
       "output_type": "ir::expr_temporal::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Response",
+        "canonical_name": "ir::expr_temporal::Response"
+      },
       "states": [
         "Init",
         "Done"
@@ -287,6 +698,14 @@
       "capabilities": [
         "ir::expr_temporal::Decide"
       ],
+      "capability_refs": [
+        {
+          "kind": "capability",
+          "canonical_name": "ir::expr_temporal::Decide",
+          "local_name": "Decide",
+          "module_name": "ir::expr_temporal"
+        }
+      ],
       "quota": [],
       "transitions": [
         {
@@ -297,18 +716,48 @@
     },
     {
       "kind": "contract",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 1070,
+          "end_offset": 1218
+        }
+      },
       "target": "ir::expr_temporal::ExprAgent",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent",
+        "local_name": "ExprAgent",
+        "module_name": "ir::expr_temporal"
+      },
       "clauses": [
         {
           "kind": "requires",
+          "source_range": {
+            "begin_offset": 1105,
+            "end_offset": 1142
+          },
           "expr": {
             "kind": "call",
+            "source_range": {
+              "begin_offset": 1115,
+              "end_offset": 1141
+            },
             "callee": "ir::expr_temporal::ready",
             "arguments": [
               {
                 "kind": "index_access",
+                "source_range": {
+                  "begin_offset": 1121,
+                  "end_offset": 1139
+                },
                 "base": {
                   "kind": "path",
+                  "source_range": {
+                    "begin_offset": 1121,
+                    "end_offset": 1132
+                  },
                   "path": {
                     "root_kind": "input",
                     "root_name": "input",
@@ -319,6 +768,10 @@
                 },
                 "index": {
                   "kind": "string_literal",
+                  "source_range": {
+                    "begin_offset": 1133,
+                    "end_offset": 1139
+                  },
                   "spelling": "\"seed\""
                 }
               }
@@ -327,30 +780,66 @@
         },
         {
           "kind": "invariant",
+          "source_range": {
+            "begin_offset": 1147,
+            "end_offset": 1216
+          },
           "temporal": {
             "kind": "unary",
+            "source_range": {
+              "begin_offset": 1158,
+              "end_offset": 1215
+            },
             "op": "always",
             "operand": {
               "kind": "binary",
+              "source_range": {
+                "begin_offset": 1166,
+                "end_offset": 1214
+              },
               "op": "or",
               "lhs": {
                 "kind": "unary",
+                "source_range": {
+                  "begin_offset": 1166,
+                  "end_offset": 1184
+                },
                 "op": "not",
                 "operand": {
                   "kind": "called",
+                  "source_range": {
+                    "begin_offset": 1170,
+                    "end_offset": 1184
+                  },
                   "capability": "ir::expr_temporal::Decide"
                 }
               },
               "rhs": {
                 "kind": "embedded_expr",
+                "source_range": {
+                  "begin_offset": 1188,
+                  "end_offset": 1214
+                },
                 "expr": {
                   "kind": "call",
+                  "source_range": {
+                    "begin_offset": 1188,
+                    "end_offset": 1214
+                  },
                   "callee": "ir::expr_temporal::ready",
                   "arguments": [
                     {
                       "kind": "index_access",
+                      "source_range": {
+                        "begin_offset": 1194,
+                        "end_offset": 1212
+                      },
                       "base": {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 1194,
+                          "end_offset": 1205
+                        },
                         "path": {
                           "root_kind": "input",
                           "root_name": "input",
@@ -361,6 +850,10 @@
                       },
                       "index": {
                         "kind": "string_literal",
+                        "source_range": {
+                          "begin_offset": 1206,
+                          "end_offset": 1212
+                        },
                         "spelling": "\"seed\""
                       }
                     }
@@ -374,10 +867,28 @@
     },
     {
       "kind": "flow",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 1220,
+          "end_offset": 1904
+        }
+      },
       "target": "ir::expr_temporal::ExprAgent",
+      "target_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent",
+        "local_name": "ExprAgent",
+        "module_name": "ir::expr_temporal"
+      },
       "state_handlers": [
         {
           "state_name": "Init",
+          "source_range": {
+            "begin_offset": 1251,
+            "end_offset": 1775
+          },
           "policy": [],
           "summary": {
             "goto_targets": [
@@ -401,17 +912,33 @@
             "assert_count": 1
           },
           "body": {
+            "source_range": {
+              "begin_offset": 1262,
+              "end_offset": 1775
+            },
             "statements": [
               {
                 "kind": "let",
+                "source_range": {
+                  "begin_offset": 1272,
+                  "end_offset": 1304
+                },
                 "name": "reply",
                 "type": "ir::expr_temporal::Response",
                 "initializer": {
                   "kind": "call",
+                  "source_range": {
+                    "begin_offset": 1284,
+                    "end_offset": 1303
+                  },
                   "callee": "ir::expr_temporal::Decide",
                   "arguments": [
                     {
                       "kind": "path",
+                      "source_range": {
+                        "begin_offset": 1297,
+                        "end_offset": 1302
+                      },
                       "path": {
                         "root_kind": "input",
                         "root_name": "input",
@@ -423,21 +950,45 @@
               },
               {
                 "kind": "assert",
+                "source_range": {
+                  "begin_offset": 1313,
+                  "end_offset": 1445
+                },
                 "condition": {
                   "kind": "binary",
+                  "source_range": {
+                    "begin_offset": 1320,
+                    "end_offset": 1444
+                  },
                   "op": "equal",
                   "lhs": {
                     "kind": "member_access",
+                    "source_range": {
+                      "begin_offset": 1320,
+                      "end_offset": 1422
+                    },
                     "base": {
                       "kind": "group",
+                      "source_range": {
+                        "begin_offset": 1320,
+                        "end_offset": 1417
+                      },
                       "expr": {
                         "kind": "struct_literal",
+                        "source_range": {
+                          "begin_offset": 1321,
+                          "end_offset": 1416
+                        },
                         "type_name": "ir::expr_temporal::Response",
                         "fields": [
                           {
                             "name": "note",
                             "value": {
                               "kind": "qualified_value",
+                              "source_range": {
+                                "begin_offset": 1350,
+                                "end_offset": 1368
+                              },
                               "value": "ir::expr_temporal::DEFAULT_NOTE"
                             }
                           },
@@ -445,6 +996,10 @@
                             "name": "result",
                             "value": {
                               "kind": "qualified_value",
+                              "source_range": {
+                                "begin_offset": 1390,
+                                "end_offset": 1405
+                              },
                               "value": "ir::expr_temporal::Status::Pending"
                             }
                           }
@@ -455,27 +1010,59 @@
                   },
                   "rhs": {
                     "kind": "qualified_value",
+                    "source_range": {
+                      "begin_offset": 1426,
+                      "end_offset": 1444
+                    },
                     "value": "ir::expr_temporal::DEFAULT_NOTE"
                   }
                 }
               },
               {
                 "kind": "if",
+                "source_range": {
+                  "begin_offset": 1455,
+                  "end_offset": 1769
+                },
                 "condition": {
                   "kind": "binary",
+                  "source_range": {
+                    "begin_offset": 1458,
+                    "end_offset": 1505
+                  },
                   "op": "and",
                   "lhs": {
                     "kind": "binary",
+                    "source_range": {
+                      "begin_offset": 1458,
+                      "end_offset": 1483
+                    },
                     "op": "greater",
                     "lhs": {
                       "kind": "group",
+                      "source_range": {
+                        "begin_offset": 1458,
+                        "end_offset": 1479
+                      },
                       "expr": {
                         "kind": "binary",
+                        "source_range": {
+                          "begin_offset": 1459,
+                          "end_offset": 1478
+                        },
                         "op": "add",
                         "lhs": {
                           "kind": "index_access",
+                          "source_range": {
+                            "begin_offset": 1459,
+                            "end_offset": 1473
+                          },
                           "base": {
                             "kind": "path",
+                            "source_range": {
+                              "begin_offset": 1459,
+                              "end_offset": 1471
+                            },
                             "path": {
                               "root_kind": "input",
                               "root_name": "input",
@@ -486,26 +1073,46 @@
                           },
                           "index": {
                             "kind": "integer_literal",
+                            "source_range": {
+                              "begin_offset": 1472,
+                              "end_offset": 1473
+                            },
                             "spelling": "0"
                           }
                         },
                         "rhs": {
                           "kind": "integer_literal",
+                          "source_range": {
+                            "begin_offset": 1477,
+                            "end_offset": 1478
+                          },
                           "spelling": "1"
                         }
                       }
                     },
                     "rhs": {
                       "kind": "integer_literal",
+                      "source_range": {
+                        "begin_offset": 1482,
+                        "end_offset": 1483
+                      },
                       "spelling": "2"
                     }
                   },
                   "rhs": {
                     "kind": "call",
+                    "source_range": {
+                      "begin_offset": 1488,
+                      "end_offset": 1505
+                    },
                     "callee": "ir::expr_temporal::ready",
                     "arguments": [
                       {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 1494,
+                          "end_offset": 1504
+                        },
                         "path": {
                           "root_kind": "identifier",
                           "root_name": "reply",
@@ -518,9 +1125,17 @@
                   }
                 },
                 "then_block": {
+                  "source_range": {
+                    "begin_offset": 1506,
+                    "end_offset": 1575
+                  },
                   "statements": [
                     {
                       "kind": "assign",
+                      "source_range": {
+                        "begin_offset": 1520,
+                        "end_offset": 1542
+                      },
                       "target": {
                         "root_kind": "identifier",
                         "root_name": "ctx",
@@ -530,6 +1145,10 @@
                       },
                       "value": {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 1531,
+                          "end_offset": 1541
+                        },
                         "path": {
                           "root_kind": "identifier",
                           "root_name": "reply",
@@ -541,14 +1160,26 @@
                     },
                     {
                       "kind": "goto",
+                      "source_range": {
+                        "begin_offset": 1555,
+                        "end_offset": 1565
+                      },
                       "target_state": "Done"
                     }
                   ]
                 },
                 "else_block": {
+                  "source_range": {
+                    "begin_offset": 1581,
+                    "end_offset": 1769
+                  },
                   "statements": [
                     {
                       "kind": "assign",
+                      "source_range": {
+                        "begin_offset": 1595,
+                        "end_offset": 1736
+                      },
                       "target": {
                         "root_kind": "identifier",
                         "root_name": "ctx",
@@ -558,23 +1189,47 @@
                       },
                       "value": {
                         "kind": "member_access",
+                        "source_range": {
+                          "begin_offset": 1606,
+                          "end_offset": 1735
+                        },
                         "base": {
                           "kind": "group",
+                          "source_range": {
+                            "begin_offset": 1606,
+                            "end_offset": 1730
+                          },
                           "expr": {
                             "kind": "struct_literal",
+                            "source_range": {
+                              "begin_offset": 1607,
+                              "end_offset": 1729
+                            },
                             "type_name": "ir::expr_temporal::Response",
                             "fields": [
                               {
                                 "name": "note",
                                 "value": {
                                   "kind": "binary",
+                                  "source_range": {
+                                    "begin_offset": 1640,
+                                    "end_offset": 1672
+                                  },
                                   "op": "add",
                                   "lhs": {
                                     "kind": "qualified_value",
+                                    "source_range": {
+                                      "begin_offset": 1640,
+                                      "end_offset": 1658
+                                    },
                                     "value": "ir::expr_temporal::DEFAULT_NOTE"
                                   },
                                   "rhs": {
                                     "kind": "string_literal",
+                                    "source_range": {
+                                      "begin_offset": 1661,
+                                      "end_offset": 1672
+                                    },
                                     "spelling": "\"_fallback\""
                                   }
                                 }
@@ -583,6 +1238,10 @@
                                 "name": "result",
                                 "value": {
                                   "kind": "qualified_value",
+                                  "source_range": {
+                                    "begin_offset": 1698,
+                                    "end_offset": 1714
+                                  },
                                   "value": "ir::expr_temporal::Status::Rejected"
                                 }
                               }
@@ -594,6 +1253,10 @@
                     },
                     {
                       "kind": "goto",
+                      "source_range": {
+                        "begin_offset": 1749,
+                        "end_offset": 1759
+                      },
                       "target_state": "Done"
                     }
                   ]
@@ -604,6 +1267,10 @@
         },
         {
           "state_name": "Done",
+          "source_range": {
+            "begin_offset": 1781,
+            "end_offset": 1902
+          },
           "policy": [],
           "summary": {
             "goto_targets": [],
@@ -614,17 +1281,33 @@
             "assert_count": 0
           },
           "body": {
+            "source_range": {
+              "begin_offset": 1792,
+              "end_offset": 1902
+            },
             "statements": [
               {
                 "kind": "return",
+                "source_range": {
+                  "begin_offset": 1802,
+                  "end_offset": 1896
+                },
                 "value": {
                   "kind": "struct_literal",
+                  "source_range": {
+                    "begin_offset": 1809,
+                    "end_offset": 1895
+                  },
                   "type_name": "ir::expr_temporal::Response",
                   "fields": [
                     {
                       "name": "note",
                       "value": {
                         "kind": "path",
+                        "source_range": {
+                          "begin_offset": 1838,
+                          "end_offset": 1846
+                        },
                         "path": {
                           "root_kind": "identifier",
                           "root_name": "ctx",
@@ -638,6 +1321,10 @@
                       "name": "result",
                       "value": {
                         "kind": "qualified_value",
+                        "source_range": {
+                          "begin_offset": 1868,
+                          "end_offset": 1884
+                        },
                         "value": "ir::expr_temporal::Status::Approved"
                       }
                     }
@@ -651,15 +1338,53 @@
     },
     {
       "kind": "workflow",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 1906,
+          "end_offset": 2143
+        }
+      },
       "name": "ir::expr_temporal::ExprWorkflow",
+      "symbol_ref": {
+        "kind": "workflow",
+        "canonical_name": "ir::expr_temporal::ExprWorkflow",
+        "local_name": "ExprWorkflow",
+        "module_name": "ir::expr_temporal"
+      },
       "input_type": "ir::expr_temporal::Request",
+      "input_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Request",
+        "canonical_name": "ir::expr_temporal::Request"
+      },
       "output_type": "ir::expr_temporal::Response",
+      "output_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Response",
+        "canonical_name": "ir::expr_temporal::Response"
+      },
       "nodes": [
         {
           "name": "run",
+          "source_range": {
+            "begin_offset": 1976,
+            "end_offset": 2009
+          },
           "target": "ir::expr_temporal::ExprAgent",
+          "target_ref": {
+            "kind": "agent",
+            "canonical_name": "ir::expr_temporal::ExprAgent",
+            "local_name": "ExprAgent",
+            "module_name": "ir::expr_temporal"
+          },
           "input": {
             "kind": "path",
+            "source_range": {
+              "begin_offset": 2002,
+              "end_offset": 2007
+            },
             "path": {
               "root_kind": "input",
               "root_name": "input",
@@ -681,23 +1406,47 @@
       "safety": [
         {
           "kind": "unary",
+          "source_range": {
+            "begin_offset": 2022,
+            "end_offset": 2076
+          },
           "op": "always",
           "operand": {
             "kind": "binary",
+            "source_range": {
+              "begin_offset": 2030,
+              "end_offset": 2075
+            },
             "op": "or",
             "lhs": {
               "kind": "unary",
+              "source_range": {
+                "begin_offset": 2030,
+                "end_offset": 2046
+              },
               "op": "not",
               "operand": {
                 "kind": "running",
+                "source_range": {
+                  "begin_offset": 2034,
+                  "end_offset": 2046
+                },
                 "node": "run"
               }
             },
             "rhs": {
               "kind": "unary",
+              "source_range": {
+                "begin_offset": 2050,
+                "end_offset": 2075
+              },
               "op": "eventually",
               "operand": {
                 "kind": "completed",
+                "source_range": {
+                  "begin_offset": 2061,
+                  "end_offset": 2075
+                },
                 "node": "run",
                 "state_name": null
               }
@@ -708,9 +1457,17 @@
       "liveness": [
         {
           "kind": "unary",
+          "source_range": {
+            "begin_offset": 2092,
+            "end_offset": 2123
+          },
           "op": "eventually",
           "operand": {
             "kind": "completed",
+            "source_range": {
+              "begin_offset": 2103,
+              "end_offset": 2123
+            },
             "node": "run",
             "state_name": "Done"
           }
@@ -727,6 +1484,10 @@
       },
       "return_value": {
         "kind": "path",
+        "source_range": {
+          "begin_offset": 2137,
+          "end_offset": 2140
+        },
         "path": {
           "root_kind": "identifier",
           "root_name": "run",

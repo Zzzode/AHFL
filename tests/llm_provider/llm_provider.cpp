@@ -54,28 +54,28 @@ ir::Program build_test_program() {
     // 结构体: ClassifyResult { category: Category, confidence: String }
     ir::StructDecl classify_result;
     classify_result.name = "ClassifyResult";
-    classify_result.fields.push_back(ir::FieldDecl{"category", "Category", nullptr});
-    classify_result.fields.push_back(ir::FieldDecl{"confidence", "String", nullptr});
+    classify_result.fields.push_back(ir::FieldDecl{"category", "Category", nullptr, {}, {}});
+    classify_result.fields.push_back(ir::FieldDecl{"confidence", "String", nullptr, {}, {}});
     program.declarations.push_back(std::move(classify_result));
 
     // Capability: ClassifyMessage(message: String) -> ClassifyResult
     ir::CapabilityDecl classify_cap;
     classify_cap.name = "ClassifyMessage";
-    classify_cap.params.push_back(ir::ParamDecl{"message", "String"});
+    classify_cap.params.push_back(ir::ParamDecl{"message", "String", {}, {}});
     classify_cap.return_type = "ClassifyResult";
     program.declarations.push_back(std::move(classify_cap));
 
     // 结构体: SupportResult { response: String, resolved: Bool }
     ir::StructDecl support_result;
     support_result.name = "SupportResult";
-    support_result.fields.push_back(ir::FieldDecl{"response", "String", nullptr});
-    support_result.fields.push_back(ir::FieldDecl{"resolved", "Bool", nullptr});
+    support_result.fields.push_back(ir::FieldDecl{"response", "String", nullptr, {}, {}});
+    support_result.fields.push_back(ir::FieldDecl{"resolved", "Bool", nullptr, {}, {}});
     program.declarations.push_back(std::move(support_result));
 
     // Capability: HandleTechnical(issue: String) -> SupportResult
     ir::CapabilityDecl handle_tech;
     handle_tech.name = "HandleTechnical";
-    handle_tech.params.push_back(ir::ParamDecl{"issue", "String"});
+    handle_tech.params.push_back(ir::ParamDecl{"issue", "String", {}, {}});
     handle_tech.return_type = "SupportResult";
     program.declarations.push_back(std::move(handle_tech));
 
