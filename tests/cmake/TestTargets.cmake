@@ -76,7 +76,6 @@ add_executable(ahfl_replay_view_tests
 target_link_libraries(ahfl_replay_view_tests
     PRIVATE
         ahfl_replay_view
-        ahfl_ir
 )
 ahfl_apply_project_warnings(ahfl_replay_view_tests)
 
@@ -160,7 +159,6 @@ add_executable(ahfl_schema_compatibility_tests
 )
 target_link_libraries(ahfl_schema_compatibility_tests
     PRIVATE
-        ahfl_durable_store_import
         ahfl_backend_durable_store_import_provider_schema_compatibility_report
 )
 ahfl_apply_project_warnings(ahfl_schema_compatibility_tests)
@@ -270,9 +268,6 @@ add_executable(ahfl_e2e_workflow_tests
 target_link_libraries(ahfl_e2e_workflow_tests
     PRIVATE
         ahfl_runtime
-        ahfl_ir
-        ahfl_semantics
-        ahfl_syntax
 )
 ahfl_apply_project_warnings(ahfl_e2e_workflow_tests)
 
@@ -282,8 +277,5 @@ add_executable(ahfl_llm_provider_tests
 target_link_libraries(ahfl_llm_provider_tests
     PRIVATE
         ahfl_llm_provider
-        ahfl_ir
-        ahfl_semantics
-        ahfl_syntax
 )
 ahfl_apply_project_warnings(ahfl_llm_provider_tests)
