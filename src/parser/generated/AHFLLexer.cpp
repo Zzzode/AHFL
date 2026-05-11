@@ -57,21 +57,21 @@ void ahfllexerLexerInitialize() {
 #endif
   auto staticData = std::make_unique<AHFLLexerStaticData>(
     std::vector<std::string>{
-      "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6", "T__7", "T__8", 
-      "T__9", "T__10", "T__11", "T__12", "T__13", "T__14", "T__15", "T__16", 
-      "T__17", "T__18", "T__19", "T__20", "T__21", "T__22", "T__23", "T__24", 
-      "T__25", "T__26", "T__27", "T__28", "T__29", "T__30", "T__31", "T__32", 
-      "T__33", "T__34", "T__35", "T__36", "T__37", "T__38", "T__39", "T__40", 
-      "T__41", "T__42", "T__43", "T__44", "T__45", "T__46", "T__47", "T__48", 
-      "T__49", "T__50", "T__51", "T__52", "T__53", "T__54", "T__55", "T__56", 
-      "T__57", "T__58", "T__59", "T__60", "T__61", "T__62", "T__63", "T__64", 
-      "T__65", "T__66", "T__67", "T__68", "T__69", "T__70", "T__71", "T__72", 
-      "T__73", "T__74", "T__75", "T__76", "T__77", "T__78", "T__79", "T__80", 
-      "T__81", "T__82", "T__83", "T__84", "T__85", "T__86", "T__87", "T__88", 
-      "T__89", "T__90", "T__91", "T__92", "T__93", "T__94", "T__95", "T__96", 
-      "T__97", "T__98", "T__99", "T__100", "T__101", "DURATION_LITERAL", 
-      "DECIMAL_LITERAL", "FLOAT_LITERAL", "INT_LITERAL", "STRING_LITERAL", 
-      "IDENT", "DOC_COMMENT", "LINE_COMMENT", "BLOCK_COMMENT", "WS", "LETTER", 
+      "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6", "T__7", "T__8",
+      "T__9", "T__10", "T__11", "T__12", "T__13", "T__14", "T__15", "T__16",
+      "T__17", "T__18", "T__19", "T__20", "T__21", "T__22", "T__23", "T__24",
+      "T__25", "T__26", "T__27", "T__28", "T__29", "T__30", "T__31", "T__32",
+      "T__33", "T__34", "T__35", "T__36", "T__37", "T__38", "T__39", "T__40",
+      "T__41", "T__42", "T__43", "T__44", "T__45", "T__46", "T__47", "T__48",
+      "T__49", "T__50", "T__51", "T__52", "T__53", "T__54", "T__55", "T__56",
+      "T__57", "T__58", "T__59", "T__60", "T__61", "T__62", "T__63", "T__64",
+      "T__65", "T__66", "T__67", "T__68", "T__69", "T__70", "T__71", "T__72",
+      "T__73", "T__74", "T__75", "T__76", "T__77", "T__78", "T__79", "T__80",
+      "T__81", "T__82", "T__83", "T__84", "T__85", "T__86", "T__87", "T__88",
+      "T__89", "T__90", "T__91", "T__92", "T__93", "T__94", "T__95", "T__96",
+      "T__97", "T__98", "T__99", "T__100", "T__101", "DURATION_LITERAL",
+      "DECIMAL_LITERAL", "FLOAT_LITERAL", "INT_LITERAL", "STRING_LITERAL",
+      "IDENT", "DOC_COMMENT", "LINE_COMMENT", "BLOCK_COMMENT", "WS", "LETTER",
       "DIGIT", "EXPONENT", "ESCAPE_SEQUENCE"
     },
     std::vector<std::string>{
@@ -81,31 +81,31 @@ void ahfllexerLexerInitialize() {
       "DEFAULT_MODE"
     },
     std::vector<std::string>{
-      "", "'module'", "';'", "'import'", "'as'", "'::'", "','", "'Optional'", 
-      "'<'", "'>'", "'List'", "'Set'", "'Map'", "'Unit'", "'Bool'", "'Int'", 
-      "'Float'", "'String'", "'('", "')'", "'UUID'", "'Timestamp'", "'Duration'", 
-      "'Decimal'", "'const'", "':'", "'='", "'type'", "'struct'", "'{'", 
-      "'}'", "'enum'", "'capability'", "'->'", "'predicate'", "'agent'", 
-      "'input'", "'context'", "'output'", "'states'", "'['", "']'", "'initial'", 
-      "'final'", "'capabilities'", "'quota'", "'max_tool_calls'", "'max_execution_time'", 
-      "'transition'", "'contract'", "'for'", "'requires'", "'ensures'", 
-      "'invariant'", "'forbid'", "'flow'", "'state'", "'with'", "'retry'", 
-      "'retry_on'", "'timeout'", "'workflow'", "'node'", "'after'", "'safety'", 
-      "'liveness'", "'return'", "'let'", "'if'", "'else'", "'goto'", "'assert'", 
-      "'=>'", "'or'", "'||'", "'and'", "'&&'", "'=='", "'!='", "'<='", "'>='", 
-      "'+'", "'-'", "'*'", "'/'", "'%'", "'not'", "'!'", "'.'", "'some'", 
-      "'none'", "'true'", "'false'", "'set'", "'map'", "'until'", "'always'", 
+      "", "'module'", "';'", "'import'", "'as'", "'::'", "','", "'Optional'",
+      "'<'", "'>'", "'List'", "'Set'", "'Map'", "'Unit'", "'Bool'", "'Int'",
+      "'Float'", "'String'", "'('", "')'", "'UUID'", "'Timestamp'", "'Duration'",
+      "'Decimal'", "'const'", "':'", "'='", "'type'", "'struct'", "'{'",
+      "'}'", "'enum'", "'capability'", "'->'", "'predicate'", "'agent'",
+      "'input'", "'context'", "'output'", "'states'", "'['", "']'", "'initial'",
+      "'final'", "'capabilities'", "'quota'", "'max_tool_calls'", "'max_execution_time'",
+      "'transition'", "'contract'", "'for'", "'requires'", "'ensures'",
+      "'invariant'", "'forbid'", "'flow'", "'state'", "'with'", "'retry'",
+      "'retry_on'", "'timeout'", "'workflow'", "'node'", "'after'", "'safety'",
+      "'liveness'", "'return'", "'let'", "'if'", "'else'", "'goto'", "'assert'",
+      "'=>'", "'or'", "'||'", "'and'", "'&&'", "'=='", "'!='", "'<='", "'>='",
+      "'+'", "'-'", "'*'", "'/'", "'%'", "'not'", "'!'", "'.'", "'some'",
+      "'none'", "'true'", "'false'", "'set'", "'map'", "'until'", "'always'",
       "'eventually'", "'next'", "'called'", "'in_state'", "'running'", "'completed'"
     },
     std::vector<std::string>{
-      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", 
-      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", 
-      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", 
-      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", 
-      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", 
-      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", 
-      "", "DURATION_LITERAL", "DECIMAL_LITERAL", "FLOAT_LITERAL", "INT_LITERAL", 
-      "STRING_LITERAL", "IDENT", "DOC_COMMENT", "LINE_COMMENT", "BLOCK_COMMENT", 
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+      "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+      "", "DURATION_LITERAL", "DECIMAL_LITERAL", "FLOAT_LITERAL", "INT_LITERAL",
+      "STRING_LITERAL", "IDENT", "DOC_COMMENT", "LINE_COMMENT", "BLOCK_COMMENT",
       "WS"
     }
   );
@@ -426,7 +426,7 @@ void ahfllexerLexerInitialize() {
 
   const size_t count = staticData->atn->getNumberOfDecisions();
   staticData->decisionToDFA.reserve(count);
-  for (size_t i = 0; i < count; i++) { 
+  for (size_t i = 0; i < count; i++) {
     staticData->decisionToDFA.emplace_back(staticData->atn->getDecisionState(i), i);
   }
   ahfllexerLexerStaticData = staticData.release();
