@@ -1,8 +1,6 @@
 add_library(ahfl_generated_parser STATIC
-    generated/AHFLBaseVisitor.cpp
     generated/AHFLLexer.cpp
     generated/AHFLParser.cpp
-    generated/AHFLVisitor.cpp
 )
 
 target_include_directories(ahfl_generated_parser
