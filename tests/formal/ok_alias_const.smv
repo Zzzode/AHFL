@@ -1,22 +1,26 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Embedded data predicates are exported as environment observation assumptions.
+-- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo => agent ir::alias_const::EchoAgent called ir::alias_const::Echo
--- AHFL_MAP contract_ir_alias_const_EchoAgent_0_atom_0 => observation contract ir::alias_const::EchoAgent[0]
--- AHFL_MAP contract_ir_alias_const_EchoAgent_1_atom_0 => observation contract ir::alias_const::EchoAgent[1]
--- AHFL_MAP agent__ir_alias_const_EchoAgent__state => agent ir::alias_const::EchoAgent state
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__state => workflow ir::alias_const::EchoWorkflow node run state
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__phase => workflow ir::alias_const::EchoWorkflow node run lifecycle phase
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested => workflow ir::alias_const::EchoWorkflow node run environment failure request
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__started => workflow ir::alias_const::EchoWorkflow node run has started
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__running => workflow ir::alias_const::EchoWorkflow node run is running
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__completed => workflow ir::alias_const::EchoWorkflow node run completed
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failed => workflow ir::alias_const::EchoWorkflow node run failed
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovering => workflow ir::alias_const::EchoWorkflow node run recovering
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovered => workflow ir::alias_const::EchoWorkflow node run recovered
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo
--- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown => workflow ir::alias_const::EchoWorkflow node run effect unknown
+-- AHFL_MAP contract_ir_alias_const_EchoAgent_0_atom_0 => observation contract ir::alias_const::EchoAgent[0] @ <unknown>:613-646
+-- AHFL_MAP contract_ir_alias_const_EchoAgent_1_atom_0 => observation contract ir::alias_const::EchoAgent[1] @ <unknown>:651-684
+-- AHFL_MAP agent__ir_alias_const_EchoAgent__state => agent ir::alias_const::EchoAgent state @ <unknown>:374-576
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__state => workflow ir::alias_const::EchoWorkflow node run state @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__phase => workflow ir::alias_const::EchoWorkflow node run lifecycle phase @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested => workflow ir::alias_const::EchoWorkflow node run environment failure request @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__started => workflow ir::alias_const::EchoWorkflow node run has started @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__running => workflow ir::alias_const::EchoWorkflow node run is running @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__completed => workflow ir::alias_const::EchoWorkflow node run completed @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__failed => workflow ir::alias_const::EchoWorkflow node run failed @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovering => workflow ir::alias_const::EchoWorkflow node run recovering @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__recovered => workflow ir::alias_const::EchoWorkflow node run recovered @ <unknown>:993-1026
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ <unknown>:719-828
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__committed => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ <unknown>:719-828 committed
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__failed => workflow ir::alias_const::EchoWorkflow node run calls ir::alias_const::Echo @ <unknown>:719-828 failed
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown => workflow ir::alias_const::EchoWorkflow node run effect unknown @ <unknown>:719-828
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__committed => workflow ir::alias_const::EchoWorkflow node run effect unknown @ <unknown>:719-828 committed
+-- AHFL_MAP workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__failed => workflow ir::alias_const::EchoWorkflow node run effect unknown @ <unknown>:719-828 failed
 MODULE main
 VAR
   agent__ir_alias_const_EchoAgent__state : {Init, Done};
@@ -34,7 +38,11 @@ DEFINE
   workflow__ir_alias_const_EchoWorkflow__node__run__recovering := (workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_RECOVERING | workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_COMPENSATING);
   workflow__ir_alias_const_EchoWorkflow__node__run__recovered := (workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_RECOVERED | workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_COMPENSATED);
   workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo := (workflow__ir_alias_const_EchoWorkflow__node__run__running & (workflow__ir_alias_const_EchoWorkflow__node__run__state = Init));
+  workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__committed := (workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo & !workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested);
+  workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__failed := (workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo & workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested);
   workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown := (workflow__ir_alias_const_EchoWorkflow__node__run__running & (workflow__ir_alias_const_EchoWorkflow__node__run__state = Init));
+  workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__committed := (workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown & !workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested);
+  workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__failed := (workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown & workflow__ir_alias_const_EchoWorkflow__node__run__failure_requested);
   agent__ir_alias_const_EchoAgent__called__ir_alias_const_Echo := (workflow__ir_alias_const_EchoWorkflow__node__run__running & (workflow__ir_alias_const_EchoWorkflow__node__run__state = Init));
 ASSIGN
   init(agent__ir_alias_const_EchoAgent__state) := Init;
@@ -75,4 +83,16 @@ LTLSPEC G ((workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_
 LTLSPEC G ((workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_RECOVERING) -> F (workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_RECOVERED))
 -- workflow ir::alias_const::EchoWorkflow node run recovery[recovered_resumes_running]
 LTLSPEC G ((workflow__ir_alias_const_EchoWorkflow__node__run__phase = AHFL_NODE_RECOVERED) -> F (workflow__ir_alias_const_EchoWorkflow__node__run__running | workflow__ir_alias_const_EchoWorkflow__node__run__completed))
+-- workflow ir::alias_const::EchoWorkflow node run call ir::alias_const::Echo lifecycle[committed_implies_started]
+LTLSPEC G (workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__committed -> workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo)
+-- workflow ir::alias_const::EchoWorkflow node run call ir::alias_const::Echo lifecycle[failed_implies_started]
+LTLSPEC G (workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__failed -> workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo)
+-- workflow ir::alias_const::EchoWorkflow node run call ir::alias_const::Echo lifecycle[commit_fail_exclusive]
+LTLSPEC G (!(workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__committed & workflow__ir_alias_const_EchoWorkflow__node__run__call__ir_alias_const_Echo__failed))
+-- workflow ir::alias_const::EchoWorkflow node run effect unknown lifecycle[committed_implies_started]
+LTLSPEC G (workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__committed -> workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown)
+-- workflow ir::alias_const::EchoWorkflow node run effect unknown lifecycle[failed_implies_started]
+LTLSPEC G (workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__failed -> workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown)
+-- workflow ir::alias_const::EchoWorkflow node run effect unknown lifecycle[commit_fail_exclusive]
+LTLSPEC G (!(workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__committed & workflow__ir_alias_const_EchoWorkflow__node__run__effect__unknown__failed))
 -- workflow ir::alias_const::EchoWorkflow node run call ir::alias_const::Echo effect[profile_missing_or_unknown]: validate-assurance gate

@@ -1,0 +1,47 @@
+module formal::bounded_data_fail;
+
+struct Request {
+    value: Int;
+}
+
+struct Context {
+    value: Int = 0;
+}
+
+struct Response {
+    ok: Bool;
+}
+
+agent BoundedFailAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for BoundedFailAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            ok: true,
+        };
+    }
+}
+
+workflow BoundedFailWorkflow {
+    input: Request;
+    output: Response;
+
+    node run: BoundedFailAgent(input);
+
+    safety: always false;
+
+    return: run;
+}

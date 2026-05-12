@@ -122,7 +122,7 @@
     }
   ],
   "formal_model_profile": {
-    "profile": "finite_control_system_v0",
+    "profile": "finite_effect_recovery_control_v0",
     "selected_backend": "smv",
     "included": [
       "agent_state_space",
@@ -131,18 +131,21 @@
       "workflow_node_lifecycle_phase",
       "compiler_generated_lifecycle_final_dependency_obligations",
       "temporal_control_observations_called_in_state_running_completed",
+      "bounded_boolean_integer_data_predicates",
+      "unbounded_data_observation_assumptions",
+      "counterexample_source_mapping",
       "flow_call_events",
       "capability_effect_events",
+      "call_effect_commit_failure_events",
       "effect_policy_obligation_checks",
+      "capability_effect_classes",
       "recovery_failure_lifecycle_hooks",
-      "generic_failure_environment_inputs",
-      "counterexample_source_mapping",
-      "capability_effect_classes"
+      "generic_failure_environment_inputs"
     ],
     "abstracted": [
       "provider_implementation",
       "capability_return_values",
-      "embedded_data_predicates",
+      "unbounded_or_provider_data_predicates",
       "external_system_state",
       "provider_failure_injection_semantics"
     ],

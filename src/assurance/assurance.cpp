@@ -251,8 +251,25 @@ analyze_capability(const ir::CapabilityDecl &capability,
 }
 
 [[nodiscard]] FormalModelProfile build_formal_model_profile(const AssuranceBundle &bundle) {
+    bool has_effect_events = false;
+    bool requires_checkpoint = false;
+    bool requires_recovery = false;
+
+    for (const auto &summary : bundle.flow_effects) {
+        has_effect_events = has_effect_events || !summary.effect_kinds.empty();
+        requires_checkpoint = requires_checkpoint || summary.requires_checkpoint;
+        requires_recovery = requires_recovery || summary.requires_recovery;
+    }
+
+    std::string profile_name = "finite_control_system_v0";
+    if (requires_recovery) {
+        profile_name = "finite_effect_recovery_control_v0";
+    } else if (has_effect_events) {
+        profile_name = "finite_effect_control_v0";
+    }
+
     FormalModelProfile profile{
-        .profile = "finite_control_system_v0",
+        .profile = std::move(profile_name),
         .selected_backend = "smv",
         .included =
             {
@@ -262,29 +279,19 @@ analyze_capability(const ir::CapabilityDecl &capability,
                 "workflow_node_lifecycle_phase",
                 "compiler_generated_lifecycle_final_dependency_obligations",
                 "temporal_control_observations_called_in_state_running_completed",
-                "flow_call_events",
-                "capability_effect_events",
-                "effect_policy_obligation_checks",
-                "recovery_failure_lifecycle_hooks",
-                "generic_failure_environment_inputs",
+                "bounded_boolean_integer_data_predicates",
+                "unbounded_data_observation_assumptions",
                 "counterexample_source_mapping",
-                "capability_effect_classes",
             },
         .abstracted =
             {
                 "provider_implementation",
                 "capability_return_values",
-                "embedded_data_predicates",
+                "unbounded_or_provider_data_predicates",
                 "external_system_state",
                 "provider_failure_injection_semantics",
             },
-        .runtime_monitored =
-            {
-                "provider_receipts",
-                "checkpoint_records",
-                "audit_events",
-                "failure_events",
-            },
+        .runtime_monitored = {},
         .unsupported =
             {
                 "full_provider_semantics",
@@ -292,6 +299,26 @@ analyze_capability(const ir::CapabilityDecl &capability,
                 "distributed_fairness_proof",
             },
     };
+
+    if (has_effect_events) {
+        push_unique(profile.included, "flow_call_events");
+        push_unique(profile.included, "capability_effect_events");
+        push_unique(profile.included, "call_effect_commit_failure_events");
+        push_unique(profile.included, "effect_policy_obligation_checks");
+        push_unique(profile.included, "capability_effect_classes");
+    }
+
+    if (requires_checkpoint) {
+        push_unique(profile.runtime_monitored, "provider_receipts");
+        push_unique(profile.runtime_monitored, "checkpoint_records");
+        push_unique(profile.runtime_monitored, "audit_events");
+        push_unique(profile.runtime_monitored, "failure_events");
+    }
+
+    if (requires_recovery) {
+        push_unique(profile.included, "recovery_failure_lifecycle_hooks");
+        push_unique(profile.included, "generic_failure_environment_inputs");
+    }
 
     for (const auto &obligation : bundle.policy_obligations) {
         if (!obligation.satisfied) {

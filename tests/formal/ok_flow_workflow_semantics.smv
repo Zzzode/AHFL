@@ -1,26 +1,26 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Embedded data predicates are exported as environment observation assumptions.
+-- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
--- AHFL_MAP workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0 => observation workflow_safety formal::flow_workflow::ReviewWorkflow[1]
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__state => workflow formal::flow_workflow::ReviewWorkflow node first state
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase => workflow formal::flow_workflow::ReviewWorkflow node first lifecycle phase
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node first environment failure request
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__state => workflow formal::flow_workflow::ReviewWorkflow node second state
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase => workflow formal::flow_workflow::ReviewWorkflow node second lifecycle phase
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node second environment failure request
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__started => workflow formal::flow_workflow::ReviewWorkflow node first has started
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__running => workflow formal::flow_workflow::ReviewWorkflow node first is running
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed => workflow formal::flow_workflow::ReviewWorkflow node first completed
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failed => workflow formal::flow_workflow::ReviewWorkflow node first failed
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovering => workflow formal::flow_workflow::ReviewWorkflow node first recovering
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovered => workflow formal::flow_workflow::ReviewWorkflow node first recovered
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__started => workflow formal::flow_workflow::ReviewWorkflow node second has started
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__running => workflow formal::flow_workflow::ReviewWorkflow node second is running
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed => workflow formal::flow_workflow::ReviewWorkflow node second completed
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__failed => workflow formal::flow_workflow::ReviewWorkflow node second failed
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovering => workflow formal::flow_workflow::ReviewWorkflow node second recovering
--- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovered => workflow formal::flow_workflow::ReviewWorkflow node second recovered
+-- AHFL_MAP workflow_formal_flow_workflow_ReviewWorkflow_safety_1_atom_0 => observation workflow_safety formal::flow_workflow::ReviewWorkflow[1] @ <unknown>:1090-1143
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__state => workflow formal::flow_workflow::ReviewWorkflow node first state @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__phase => workflow formal::flow_workflow::ReviewWorkflow node first lifecycle phase @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node first environment failure request @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__state => workflow formal::flow_workflow::ReviewWorkflow node second state @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__phase => workflow formal::flow_workflow::ReviewWorkflow node second lifecycle phase @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__failure_requested => workflow formal::flow_workflow::ReviewWorkflow node second environment failure request @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__started => workflow formal::flow_workflow::ReviewWorkflow node first has started @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__running => workflow formal::flow_workflow::ReviewWorkflow node first is running @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__completed => workflow formal::flow_workflow::ReviewWorkflow node first completed @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__failed => workflow formal::flow_workflow::ReviewWorkflow node first failed @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovering => workflow formal::flow_workflow::ReviewWorkflow node first recovering @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__first__recovered => workflow formal::flow_workflow::ReviewWorkflow node first recovered @ <unknown>:932-963
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__started => workflow formal::flow_workflow::ReviewWorkflow node second has started @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__running => workflow formal::flow_workflow::ReviewWorkflow node second is running @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__completed => workflow formal::flow_workflow::ReviewWorkflow node second completed @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__failed => workflow formal::flow_workflow::ReviewWorkflow node second failed @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovering => workflow formal::flow_workflow::ReviewWorkflow node second recovering @ <unknown>:968-1014
+-- AHFL_MAP workflow__formal_flow_workflow_ReviewWorkflow__node__second__recovered => workflow formal::flow_workflow::ReviewWorkflow node second recovered @ <unknown>:968-1014
 MODULE main
 VAR
   workflow__formal_flow_workflow_ReviewWorkflow__node__first__state : {Init, FastTrack, Review, Done};

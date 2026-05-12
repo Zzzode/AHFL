@@ -1,22 +1,26 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Embedded data predicates are exported as environment observation assumptions.
+-- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide => agent ir::expr_temporal::ExprAgent called ir::expr_temporal::Decide
--- AHFL_MAP contract_ir_expr_temporal_ExprAgent_0_atom_0 => observation contract ir::expr_temporal::ExprAgent[0]
--- AHFL_MAP contract_ir_expr_temporal_ExprAgent_1_atom_0 => observation contract ir::expr_temporal::ExprAgent[1]
--- AHFL_MAP agent__ir_expr_temporal_ExprAgent__state => agent ir::expr_temporal::ExprAgent state
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__state => workflow ir::expr_temporal::ExprWorkflow node run state
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__phase => workflow ir::expr_temporal::ExprWorkflow node run lifecycle phase
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested => workflow ir::expr_temporal::ExprWorkflow node run environment failure request
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__started => workflow ir::expr_temporal::ExprWorkflow node run has started
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__running => workflow ir::expr_temporal::ExprWorkflow node run is running
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__completed => workflow ir::expr_temporal::ExprWorkflow node run completed
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failed => workflow ir::expr_temporal::ExprWorkflow node run failed
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovering => workflow ir::expr_temporal::ExprWorkflow node run recovering
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovered => workflow ir::expr_temporal::ExprWorkflow node run recovered
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide
--- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown => workflow ir::expr_temporal::ExprWorkflow node run effect unknown
+-- AHFL_MAP contract_ir_expr_temporal_ExprAgent_0_atom_0 => observation contract ir::expr_temporal::ExprAgent[0] @ <unknown>:1105-1142
+-- AHFL_MAP contract_ir_expr_temporal_ExprAgent_1_atom_0 => observation contract ir::expr_temporal::ExprAgent[1] @ <unknown>:1147-1216
+-- AHFL_MAP agent__ir_expr_temporal_ExprAgent__state => agent ir::expr_temporal::ExprAgent state @ <unknown>:864-1068
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__state => workflow ir::expr_temporal::ExprWorkflow node run state @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__phase => workflow ir::expr_temporal::ExprWorkflow node run lifecycle phase @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested => workflow ir::expr_temporal::ExprWorkflow node run environment failure request @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__started => workflow ir::expr_temporal::ExprWorkflow node run has started @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__running => workflow ir::expr_temporal::ExprWorkflow node run is running @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__completed => workflow ir::expr_temporal::ExprWorkflow node run completed @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__failed => workflow ir::expr_temporal::ExprWorkflow node run failed @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovering => workflow ir::expr_temporal::ExprWorkflow node run recovering @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__recovered => workflow ir::expr_temporal::ExprWorkflow node run recovered @ <unknown>:1976-2009
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ <unknown>:1251-1775
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__committed => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ <unknown>:1251-1775 committed
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__failed => workflow ir::expr_temporal::ExprWorkflow node run calls ir::expr_temporal::Decide @ <unknown>:1251-1775 failed
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ <unknown>:1251-1775
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ <unknown>:1251-1775 committed
+-- AHFL_MAP workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed => workflow ir::expr_temporal::ExprWorkflow node run effect unknown @ <unknown>:1251-1775 failed
 MODULE main
 VAR
   agent__ir_expr_temporal_ExprAgent__state : {Init, Done};
@@ -34,7 +38,11 @@ DEFINE
   workflow__ir_expr_temporal_ExprWorkflow__node__run__recovering := (workflow__ir_expr_temporal_ExprWorkflow__node__run__phase = AHFL_NODE_RECOVERING | workflow__ir_expr_temporal_ExprWorkflow__node__run__phase = AHFL_NODE_COMPENSATING);
   workflow__ir_expr_temporal_ExprWorkflow__node__run__recovered := (workflow__ir_expr_temporal_ExprWorkflow__node__run__phase = AHFL_NODE_RECOVERED | workflow__ir_expr_temporal_ExprWorkflow__node__run__phase = AHFL_NODE_COMPENSATED);
   workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide := (workflow__ir_expr_temporal_ExprWorkflow__node__run__running & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Init));
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__committed := (workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide & !workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested);
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__failed := (workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide & workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested);
   workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown := (workflow__ir_expr_temporal_ExprWorkflow__node__run__running & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Init));
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed := (workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown & !workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested);
+  workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed := (workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown & workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested);
   agent__ir_expr_temporal_ExprAgent__called__ir_expr_temporal_Decide := (workflow__ir_expr_temporal_ExprWorkflow__node__run__running & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Init));
 ASSIGN
   init(agent__ir_expr_temporal_ExprAgent__state) := Init;
@@ -80,4 +88,16 @@ LTLSPEC G ((workflow__ir_expr_temporal_ExprWorkflow__node__run__phase = AHFL_NOD
 LTLSPEC (G (!workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested) -> (G ((! (workflow__ir_expr_temporal_ExprWorkflow__node__run__running) | F (workflow__ir_expr_temporal_ExprWorkflow__node__run__completed)))))
 -- workflow ir::expr_temporal::ExprWorkflow liveness[0]
 LTLSPEC (G (!workflow__ir_expr_temporal_ExprWorkflow__node__run__failure_requested) -> (F ((workflow__ir_expr_temporal_ExprWorkflow__node__run__completed & (workflow__ir_expr_temporal_ExprWorkflow__node__run__state = Done)))))
+-- workflow ir::expr_temporal::ExprWorkflow node run call ir::expr_temporal::Decide lifecycle[committed_implies_started]
+LTLSPEC G (workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__committed -> workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide)
+-- workflow ir::expr_temporal::ExprWorkflow node run call ir::expr_temporal::Decide lifecycle[failed_implies_started]
+LTLSPEC G (workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__failed -> workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide)
+-- workflow ir::expr_temporal::ExprWorkflow node run call ir::expr_temporal::Decide lifecycle[commit_fail_exclusive]
+LTLSPEC G (!(workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__committed & workflow__ir_expr_temporal_ExprWorkflow__node__run__call__ir_expr_temporal_Decide__failed))
+-- workflow ir::expr_temporal::ExprWorkflow node run effect unknown lifecycle[committed_implies_started]
+LTLSPEC G (workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed -> workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown)
+-- workflow ir::expr_temporal::ExprWorkflow node run effect unknown lifecycle[failed_implies_started]
+LTLSPEC G (workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed -> workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown)
+-- workflow ir::expr_temporal::ExprWorkflow node run effect unknown lifecycle[commit_fail_exclusive]
+LTLSPEC G (!(workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__committed & workflow__ir_expr_temporal_ExprWorkflow__node__run__effect__unknown__failed))
 -- workflow ir::expr_temporal::ExprWorkflow node run call ir::expr_temporal::Decide effect[profile_missing_or_unknown]: validate-assurance gate
