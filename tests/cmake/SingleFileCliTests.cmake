@@ -132,9 +132,21 @@ ahfl_add_output_test(
     "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.smv"
 )
 
+ahfl_add_output_test(
+    ahflc.emit_smv.bounded_data_semantics
+    emit-smv
+    "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.smv"
+)
+
 ahfl_add_check_test(
     ahflc.check.formal_real_smv_control
     "${AHFL_TESTS_DIR}/formal/ok_real_smv_control.ahfl"
+)
+
+ahfl_add_check_test(
+    ahflc.check.formal_bounded_data_semantics
+    "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.ahfl"
 )
 
 add_test(NAME ahflc.verify_formal.fake_pass
@@ -191,12 +203,32 @@ if(AHFL_SMV_CHECKER)
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
     )
 
+    add_test(NAME ahflc.verify_formal.real_smv_bounded_data_semantics
+        COMMAND $<TARGET_FILE:ahflc> verify-formal
+                --model-checker "${AHFL_SMV_CHECKER}"
+                --formal-model-out
+                "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_bounded_data_semantics.verify.smv"
+                "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.ahfl"
+    )
+    set_tests_properties(ahflc.verify_formal.real_smv_bounded_data_semantics PROPERTIES
+        PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+    )
+
     add_test(NAME ahflc.verify_formal.real_smv_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
                 "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/formal/fail_real_smv_control.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/fail_real_smv_control.ahfl"
                 "-DEXPECTED_REGEX=counterexample AHFL mapping"
+                -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+    )
+
+    add_test(NAME ahflc.verify_formal.real_smv_bounded_data_counterexample
+        COMMAND ${CMAKE_COMMAND}
+                "-DAHFLC=$<TARGET_FILE:ahflc>"
+                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/formal/fail_bounded_data_semantics.ahfl"
+                "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/fail_bounded_data_semantics.ahfl"
+                "-DEXPECTED_REGEX=formal verification failed"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
 endif()

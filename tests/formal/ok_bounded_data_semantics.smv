@@ -1,0 +1,74 @@
+-- AHFL restricted SMV backend v0.1
+-- This lowering preserves validated state-machine, flow, and workflow structure.
+-- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
+-- Capability calls/effects are bound to flow handler events where available.
+-- AHFL_MAP agent__formal_bounded_data_semantics_BoundedAgent__state => agent formal::bounded_data_semantics::BoundedAgent state @ <unknown>:151-352
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state => workflow formal::bounded_data_semantics::BoundedWorkflow node run state @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase => workflow formal::bounded_data_semantics::BoundedWorkflow node run lifecycle phase @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested => workflow formal::bounded_data_semantics::BoundedWorkflow node run environment failure request @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__started => workflow formal::bounded_data_semantics::BoundedWorkflow node run has started @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running => workflow formal::bounded_data_semantics::BoundedWorkflow node run is running @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed => workflow formal::bounded_data_semantics::BoundedWorkflow node run completed @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failed => workflow formal::bounded_data_semantics::BoundedWorkflow node run failed @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovering => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovering @ <unknown>:698-728
+-- AHFL_MAP workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovered => workflow formal::bounded_data_semantics::BoundedWorkflow node run recovered @ <unknown>:698-728
+MODULE main
+VAR
+  agent__formal_bounded_data_semantics_BoundedAgent__state : {Init, Done};
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state : {Init, Done};
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase : {AHFL_NODE_IDLE, AHFL_NODE_RUNNING, AHFL_NODE_COMPLETED, AHFL_NODE_FAILED, AHFL_NODE_RECOVERING, AHFL_NODE_RECOVERED, AHFL_NODE_COMPENSATING, AHFL_NODE_COMPENSATED, AHFL_NODE_TERMINAL_FAILED};
+IVAR
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested : boolean;
+DEFINE
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__started := !(workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_IDLE);
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed := (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_COMPLETED | (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RUNNING & (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done)));
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running := (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RUNNING & !((workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done)));
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failed := (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_FAILED | workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_TERMINAL_FAILED);
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovering := (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERING | workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_COMPENSATING);
+  workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__recovered := (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERED | workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_COMPENSATED);
+ASSIGN
+  init(agent__formal_bounded_data_semantics_BoundedAgent__state) := Init;
+  next(agent__formal_bounded_data_semantics_BoundedAgent__state) := case
+    agent__formal_bounded_data_semantics_BoundedAgent__state = Init : Done;
+    agent__formal_bounded_data_semantics_BoundedAgent__state = Done : Done;
+    TRUE : agent__formal_bounded_data_semantics_BoundedAgent__state;
+  esac;
+  init(workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state) := Init;
+  next(workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state) := case
+    !(workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RUNNING) : workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Init : Done;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done : Done;
+    TRUE : workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state;
+  esac;
+  init(workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase) := AHFL_NODE_RUNNING;
+  next(workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase) := case
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_COMPLETED : AHFL_NODE_COMPLETED;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_TERMINAL_FAILED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_COMPENSATED : AHFL_NODE_TERMINAL_FAILED;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_COMPENSATING : AHFL_NODE_COMPENSATED;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERED : AHFL_NODE_RUNNING;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERING : AHFL_NODE_RECOVERED;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_FAILED : AHFL_NODE_RECOVERING;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_IDLE & (TRUE) : AHFL_NODE_RUNNING;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_IDLE : AHFL_NODE_IDLE;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RUNNING & (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done) : AHFL_NODE_COMPLETED;
+    workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RUNNING & workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested : AHFL_NODE_FAILED;
+    TRUE : workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase;
+  esac;
+-- contract formal::bounded_data_semantics::BoundedAgent requires[0] bounded_precondition_assumption: TRUE
+-- contract formal::bounded_data_semantics::BoundedAgent ensures[1]
+LTLSPEC G (((agent__formal_bounded_data_semantics_BoundedAgent__state = Done)) -> (((1 + 1) = 2)))
+-- contract formal::bounded_data_semantics::BoundedAgent invariant[2]
+LTLSPEC G ((TRUE & ((2 > 1))))
+-- workflow formal::bounded_data_semantics::BoundedWorkflow node run lifecycle[completed_final]
+LTLSPEC G (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed -> (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done))
+-- workflow formal::bounded_data_semantics::BoundedWorkflow node run recovery[failed_enters_recovering]
+LTLSPEC G ((workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_FAILED) -> F (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERING))
+-- workflow formal::bounded_data_semantics::BoundedWorkflow node run recovery[recovering_enters_recovered]
+LTLSPEC G ((workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERING) -> F (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERED))
+-- workflow formal::bounded_data_semantics::BoundedWorkflow node run recovery[recovered_resumes_running]
+LTLSPEC G ((workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__phase = AHFL_NODE_RECOVERED) -> F (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running | workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed))
+-- workflow formal::bounded_data_semantics::BoundedWorkflow safety[0]
+LTLSPEC (G (!workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested) -> (G ((! (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__running) | ((1 + 1) = 2)))))
+-- workflow formal::bounded_data_semantics::BoundedWorkflow liveness[0]
+LTLSPEC (G (!workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__failure_requested) -> (F ((workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed & (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done)))))
