@@ -118,14 +118,15 @@ SMV backend 必须把 `called(k)` 绑定到 flow call event，而不能把它作
 - call event 来自 `flow.state_handlers[].summary.called_targets`。
 - call event 在 workflow node `running` 且 node state 等于包含该 call 的 handler state 时成立。
 - `called(k)` 是目标 agent 上相关 call event 的派生谓词。
+- 每个 call/effect event 必须派生 `committed` / `failed` 子事件；二者互斥，且都必须蕴含原始 event。
 
 SMV backend 可以把已声明 capability effect profile 降成 effect event 和有限控制 obligation：
 
 - external side effect、durable write、financial write 可以生成 audit / receipt / idempotency / approval / compensation 相关 `LTLSPEC`。
 - 未声明 effect profile、`unknown` effect 或无法解析的 call target 仍由 `validate-assurance` 作为 production gate 处理。
-- embedded data predicate 是 environment observation assumption；在没有 bounded data semantics 之前，不得把它当作已经由 SMV 证明的 guarantee。
+- bounded boolean/integer expression 可以直接 lower 成 SMV 公式；包含 path、provider return、predicate/capability call、集合/结构体等未界定数据语义的 embedded data predicate 必须保持为 environment observation assumption，不得伪装成已证明的 guarantee。
 
-`verify-formal` 失败时应尽量输出 counterexample 摘要，并把可识别的 SMV symbol 映射回 AHFL 的 workflow node、agent state、call event、effect event 或 observation owner。
+`verify-formal` 失败时应尽量输出 counterexample 摘要，并把可识别的 SMV symbol 映射回 AHFL 的 workflow node、agent state、call event、effect event 或 observation owner；若 IR 保留了 source range，mapping 应携带 source offset 范围。
 
 ## Obligation Synthesis
 
@@ -165,7 +166,11 @@ Bundle 顶层字段：
 
 ## Formal Model Profile
 
-v0.1 固定选择 `finite_control_system_v0`，当前 formal backend 标记为 `smv`。
+v0.1 的 formal backend 标记为 `smv`。Profile 必须按当前 bundle 的 effect/recovery 事实选择：
+
+- 无 capability effect event：`finite_control_system_v0`
+- 有 capability effect event 但没有 durable/financial recovery：`finite_effect_control_v0`
+- 有 durable/financial recovery obligation：`finite_effect_recovery_control_v0`
 
 Included:
 
@@ -175,19 +180,18 @@ Included:
 - workflow node lifecycle phase
 - compiler-generated lifecycle/final/dependency obligations
 - temporal control observations
-- flow call events
-- capability effect events
-- effect policy obligation checks
-- recovery/failure lifecycle hooks
-- generic failure environment inputs
+- bounded boolean/integer data predicates
+- unbounded data observation assumptions
 - counterexample source mapping
-- capability effect classes
+- flow call events、capability effect events、call/effect commit/failure events（当 bundle 含 effect event）
+- effect policy obligation checks、capability effect classes（当 bundle 含 effect event）
+- recovery/failure lifecycle hooks、generic failure environment inputs（当 bundle 含 recovery obligation）
 
 Abstracted:
 
 - provider implementation
 - capability return values
-- embedded data predicates
+- unbounded or provider data predicates
 - external system state
 - provider failure injection semantics
 

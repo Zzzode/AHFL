@@ -1,17 +1,17 @@
 -- AHFL restricted SMV backend v0.1
 -- This lowering preserves validated state-machine, flow, and workflow structure.
--- Embedded data predicates are exported as environment observation assumptions.
+-- Bounded boolean/integer predicates are lowered directly; other data predicates remain environment observation assumptions.
 -- Capability calls/effects are bound to flow handler events where available.
 -- AHFL_MAP agent__lib_agents_AliasAgent__called__lib_agents_Echo => agent lib::agents::AliasAgent called lib::agents::Echo
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__state => workflow app::main::MainWorkflow node run state
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__phase => workflow app::main::MainWorkflow node run lifecycle phase
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failure_requested => workflow app::main::MainWorkflow node run environment failure request
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__started => workflow app::main::MainWorkflow node run has started
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__running => workflow app::main::MainWorkflow node run is running
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__completed => workflow app::main::MainWorkflow node run completed
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failed => workflow app::main::MainWorkflow node run failed
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__recovering => workflow app::main::MainWorkflow node run recovering
--- AHFL_MAP workflow__app_main_MainWorkflow__node__run__recovered => workflow app::main::MainWorkflow node run recovered
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__state => workflow app::main::MainWorkflow node run state @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__phase => workflow app::main::MainWorkflow node run lifecycle phase @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failure_requested => workflow app::main::MainWorkflow node run environment failure request @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__started => workflow app::main::MainWorkflow node run has started @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__running => workflow app::main::MainWorkflow node run is running @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__completed => workflow app::main::MainWorkflow node run completed @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__failed => workflow app::main::MainWorkflow node run failed @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__recovering => workflow app::main::MainWorkflow node run recovering @ app/main.ahfl:351-387
+-- AHFL_MAP workflow__app_main_MainWorkflow__node__run__recovered => workflow app::main::MainWorkflow node run recovered @ app/main.ahfl:351-387
 MODULE main
 VAR
   workflow__app_main_MainWorkflow__node__run__state : {Init, Done};
