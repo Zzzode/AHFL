@@ -1,136 +1,331 @@
 #include "ahfl/formatter/formatter.hpp"
-#include <sstream>
+
+#include "ahfl/frontend/frontend.hpp"
+
 #include <algorithm>
+#include <sstream>
+#include <string_view>
 
 namespace ahfl::formatter {
 
 namespace {
 
-std::string trim_right(const std::string& s) {
-    auto end = s.find_last_not_of(" \t\r\n");
-    return (end == std::string::npos) ? "" : s.substr(0, end + 1);
-}
-
-std::string make_indent(int level, const FormatOptions& opts) {
+std::string make_indent(int level, const FormatOptions &opts) {
     if (opts.use_tabs) {
-        return std::string(static_cast<size_t>(level), '\t');
+        return std::string(static_cast<std::size_t>(level), '\t');
     }
-    return std::string(static_cast<size_t>(level * opts.indent_width), ' ');
+    return std::string(static_cast<std::size_t>(level * opts.indent_width), ' ');
 }
 
-} // anonymous namespace
-
-FormatResult format_source(const std::string& source, const FormatOptions& options) {
+// Fallback formatter: brace-counting for unparseable input
+FormatResult format_source_fallback(const std::string &source, const FormatOptions &options) {
     FormatResult result;
+    std::istringstream stream(source);
+    std::ostringstream out;
+    std::string line;
+    int indent_level = 0;
 
+    while (std::getline(stream, line)) {
+        // Trim trailing whitespace
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\t')) {
+            line.pop_back();
+        }
+        // Trim leading whitespace for re-indentation
+        std::string_view trimmed = line;
+        while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t')) {
+            trimmed.remove_prefix(1);
+        }
+
+        // Adjust indent for closing braces
+        int close_count = 0;
+        for (char c : trimmed) {
+            if (c == '}')
+                ++close_count;
+        }
+        (void)close_count;
+        // If line starts with closing brace, dedent first
+        if (!trimmed.empty() && trimmed.front() == '}') {
+            indent_level = std::max(0, indent_level - 1);
+        }
+
+        if (trimmed.empty()) {
+            out << "\n";
+        } else {
+            out << make_indent(indent_level, options) << trimmed << "\n";
+        }
+
+        // Count braces for next line indent
+        int open_count = 0;
+        for (char c : trimmed) {
+            if (c == '{')
+                ++open_count;
+            else if (c == '}')
+                --open_count;
+        }
+        // If line starts with }, we already decremented
+        if (!trimmed.empty() && trimmed.front() == '}') {
+            indent_level += open_count + 1; // undo the front-} we already handled
+        } else {
+            indent_level = std::max(0, indent_level + open_count);
+        }
+    }
+
+    result.formatted = out.str();
+    if (options.trailing_newline && !result.formatted.empty() && result.formatted.back() != '\n') {
+        result.formatted += "\n";
+    }
+    result.success = true;
+    return result;
+}
+
+// AST-aware formatter
+class AstFormatter {
+  public:
+    explicit AstFormatter(const FormatOptions &opts) : opts_(opts) {}
+
+    std::string format(const ahfl::ast::Program &program) {
+        // Separate imports from other declarations
+        std::vector<const ahfl::ast::ImportDecl *> imports;
+        std::vector<const ahfl::ast::Decl *> others;
+
+        for (const auto &decl : program.declarations) {
+            if (auto *imp = dynamic_cast<const ahfl::ast::ImportDecl *>(decl.get())) {
+                imports.push_back(imp);
+            } else {
+                others.push_back(decl.get());
+            }
+        }
+
+        // Imports (sorted if requested)
+        if (opts_.sort_imports && imports.size() > 1) {
+            std::sort(imports.begin(),
+                      imports.end(),
+                      [](const ahfl::ast::ImportDecl *a, const ahfl::ast::ImportDecl *b) {
+                          return a->path->spelling() < b->path->spelling();
+                      });
+        }
+        for (const auto *imp : imports) {
+            write("import ");
+            write(imp->path->spelling());
+            if (!imp->alias.empty()) {
+                write(" as " + imp->alias);
+            }
+            write(";");
+            newline();
+        }
+
+        // Top-level declarations
+        for (const auto *decl : others) {
+            newline();
+            format_declaration(*decl);
+        }
+
+        return out_.str();
+    }
+
+  private:
+    void format_declaration(const ahfl::ast::Decl &decl) {
+        if (auto *s = dynamic_cast<const ahfl::ast::StructDecl *>(&decl)) {
+            format_struct(*s);
+        } else if (auto *e = dynamic_cast<const ahfl::ast::EnumDecl *>(&decl)) {
+            format_enum(*e);
+        } else if (auto *c = dynamic_cast<const ahfl::ast::CapabilityDecl *>(&decl)) {
+            format_capability(*c);
+        } else if (auto *a = dynamic_cast<const ahfl::ast::AgentDecl *>(&decl)) {
+            format_agent(*a);
+        } else if (auto *w = dynamic_cast<const ahfl::ast::WorkflowDecl *>(&decl)) {
+            format_workflow(*w);
+        } else {
+            // For any other decl type, emit its headline as a comment
+            write("// " + decl.headline());
+            newline();
+        }
+    }
+
+    void format_struct(const ahfl::ast::StructDecl &s) {
+        write("struct " + s.name + " {");
+        newline();
+        indent_++;
+        for (const auto &field : s.fields) {
+            write(make_indent(indent_, opts_));
+            out_ << field->name << ": " << field->type->spelling() << ";";
+            newline();
+        }
+        indent_--;
+        write("}");
+        newline();
+    }
+
+    void format_enum(const ahfl::ast::EnumDecl &e) {
+        write("enum " + e.name + " {");
+        newline();
+        indent_++;
+        for (const auto &variant : e.variants) {
+            write(make_indent(indent_, opts_) + variant->name + ",");
+            newline();
+        }
+        indent_--;
+        write("}");
+        newline();
+    }
+
+    void format_capability(const ahfl::ast::CapabilityDecl &c) {
+        write("capability " + c.name + "(");
+        bool first = true;
+        for (const auto &param : c.params) {
+            if (!first)
+                out_ << ", ";
+            out_ << param->name << ": " << param->type->spelling();
+            first = false;
+        }
+        out_ << ")";
+        if (c.return_type) {
+            out_ << " -> " << c.return_type->spelling();
+        }
+        out_ << ";";
+        newline();
+    }
+
+    void format_agent(const ahfl::ast::AgentDecl &a) {
+        write("agent " + a.name + " {");
+        newline();
+        indent_++;
+
+        // Input/Output/Context types
+        if (a.input_type) {
+            write(make_indent(indent_, opts_) + "input: " + a.input_type->spelling() + ";");
+            newline();
+        }
+        if (a.output_type) {
+            write(make_indent(indent_, opts_) + "output: " + a.output_type->spelling() + ";");
+            newline();
+        }
+        if (a.context_type) {
+            write(make_indent(indent_, opts_) + "context: " + a.context_type->spelling() + ";");
+            newline();
+        }
+
+        // States
+        if (!a.states.empty()) {
+            newline();
+            write(make_indent(indent_, opts_) + "states {");
+            newline();
+            indent_++;
+            for (const auto &state : a.states) {
+                write(make_indent(indent_, opts_) + state + ",");
+                newline();
+            }
+            indent_--;
+            write(make_indent(indent_, opts_) + "}");
+            newline();
+        }
+
+        // Initial state
+        if (!a.initial_state.empty()) {
+            write(make_indent(indent_, opts_) + "initial " + a.initial_state + ";");
+            newline();
+        }
+
+        // Transitions
+        for (const auto &t : a.transitions) {
+            write(make_indent(indent_, opts_) + "transition " + t->from_state + " -> " +
+                  t->to_state + ";");
+            newline();
+        }
+
+        indent_--;
+        write("}");
+        newline();
+    }
+
+    void format_workflow(const ahfl::ast::WorkflowDecl &w) {
+        write("workflow " + w.name + " {");
+        newline();
+        indent_++;
+        for (const auto &node : w.nodes) {
+            write(make_indent(indent_, opts_) + "node " + node->name);
+            if (node->target) {
+                out_ << " : " << node->target->spelling();
+            }
+            out_ << ";";
+            newline();
+        }
+        indent_--;
+        write("}");
+        newline();
+    }
+
+    void write(const std::string &text) {
+        out_ << text;
+    }
+    void newline() {
+        out_ << "\n";
+    }
+
+    const FormatOptions &opts_;
+    std::ostringstream out_;
+    int indent_ = 0;
+};
+
+} // namespace
+
+FormatResult format_source(const std::string &source, const FormatOptions &options) {
+    FormatResult result;
     if (source.empty()) {
         result.success = true;
         result.formatted = options.trailing_newline ? "\n" : "";
         return result;
     }
 
-    std::istringstream iss(source);
-    std::ostringstream oss;
-    std::string line;
-    int indent_level = 0;
-    int lines_changed = 0;
-    std::vector<std::string> original_lines;
-    std::vector<std::string> formatted_lines;
+    // Try AST-aware formatting
+    ahfl::Frontend frontend;
+    auto parse_result = frontend.parse_text("format_input", source);
 
-    while (std::getline(iss, line)) {
-        original_lines.push_back(line);
-
-        // Trim the line
-        auto trimmed = trim_right(line);
-        auto content_start = trimmed.find_first_not_of(" \t");
-        std::string content = (content_start == std::string::npos) ? "" : trimmed.substr(content_start);
-
-        // Decrease indent for closing braces
-        if (!content.empty() && content[0] == '}') {
-            indent_level = std::max(0, indent_level - 1);
+    if (!parse_result.has_errors() && parse_result.program) {
+        AstFormatter formatter(options);
+        result.formatted = formatter.format(*parse_result.program);
+        if (options.trailing_newline && !result.formatted.empty() &&
+            result.formatted.back() != '\n') {
+            result.formatted += "\n";
         }
+        result.success = true;
 
-        // Format the line
-        std::string formatted_line;
-        if (content.empty()) {
-            formatted_line = "";
-        } else {
-            formatted_line = make_indent(indent_level, options) + content;
-        }
-        formatted_lines.push_back(formatted_line);
-
-        // Count opening and closing braces to track indent
-        int opens = static_cast<int>(std::count(content.begin(), content.end(), '{'));
-        int closes = static_cast<int>(std::count(content.begin(), content.end(), '}'));
-
-        // We already decremented for leading }, so only count net opens
-        if (!content.empty() && content[0] == '}') {
-            // Already handled the first close above; count remaining
-            indent_level += opens - (closes - 1);
-        } else {
-            indent_level += opens - closes;
-        }
-        indent_level = std::max(0, indent_level);
+        // Count changed lines
+        auto diffs = compute_diff(source, result.formatted);
+        result.lines_changed = static_cast<int>(diffs.size());
+        return result;
     }
 
-    // Build output
-    for (size_t i = 0; i < formatted_lines.size(); ++i) {
-        oss << formatted_lines[i];
-        if (i + 1 < formatted_lines.size()) {
-            oss << "\n";
-        }
-    }
-
-    // Count changes
-    for (size_t i = 0; i < original_lines.size() && i < formatted_lines.size(); ++i) {
-        if (original_lines[i] != formatted_lines[i]) {
-            lines_changed++;
-        }
-    }
-
-    result.formatted = oss.str();
-    if (options.trailing_newline && !result.formatted.empty() && result.formatted.back() != '\n') {
-        result.formatted += "\n";
-    }
-    result.lines_changed = lines_changed;
-    result.success = true;
-    return result;
+    // Fallback to brace-counting for unparseable input
+    return format_source_fallback(source, options);
 }
 
-bool check_formatting(const std::string& source, const FormatOptions& options) {
+bool check_formatting(const std::string &source, const FormatOptions &options) {
     auto result = format_source(source, options);
-    if (!result.success) return false;
-    return result.formatted == source;
+    return result.success && result.formatted == source;
 }
 
-std::vector<FormatDiff> compute_diff(const std::string& original, const std::string& formatted) {
+std::vector<FormatDiff> compute_diff(const std::string &original, const std::string &formatted) {
     std::vector<FormatDiff> diffs;
-
-    std::istringstream iss_orig(original);
-    std::istringstream iss_fmt(formatted);
-    std::string orig_line;
-    std::string fmt_line;
+    std::istringstream orig_stream(original);
+    std::istringstream fmt_stream(formatted);
+    std::string orig_line, fmt_line;
     int line_num = 1;
 
-    bool have_orig = true;
-    bool have_fmt = true;
+    while (true) {
+        bool have_orig = static_cast<bool>(std::getline(orig_stream, orig_line));
+        bool have_fmt = static_cast<bool>(std::getline(fmt_stream, fmt_line));
 
-    while (have_orig || have_fmt) {
-        have_orig = static_cast<bool>(std::getline(iss_orig, orig_line));
-        have_fmt = static_cast<bool>(std::getline(iss_fmt, fmt_line));
+        if (!have_orig && !have_fmt)
+            break;
 
-        if (!have_orig && !have_fmt) break;
+        std::string o = have_orig ? orig_line : "";
+        std::string f = have_fmt ? fmt_line : "";
 
-        std::string ol = have_orig ? orig_line : "";
-        std::string fl = have_fmt ? fmt_line : "";
-
-        if (ol != fl) {
-            diffs.push_back({line_num, ol, fl});
+        if (o != f) {
+            diffs.push_back({line_num, std::move(o), std::move(f)});
         }
-
-        orig_line.clear();
-        fmt_line.clear();
-        line_num++;
+        ++line_num;
     }
 
     return diffs;

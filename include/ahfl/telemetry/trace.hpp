@@ -2,14 +2,15 @@
 
 #include <chrono>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace ahfl::telemetry {
 
 struct SpanContext {
-    std::string trace_id;   // 32 hex chars
-    std::string span_id;    // 16 hex chars
+    std::string trace_id; // 32 hex chars
+    std::string span_id;  // 16 hex chars
     uint8_t flags = 0;
 };
 
@@ -23,23 +24,36 @@ struct Span {
 };
 
 class TraceExporter {
-public:
+  public:
     virtual ~TraceExporter() = default;
-    virtual void export_span(const Span& span) = 0;
+    virtual void export_span(const Span &span) = 0;
     [[nodiscard]] virtual std::size_t span_count() const = 0;
 };
 
 class InMemoryTraceExporter final : public TraceExporter {
-public:
-    void export_span(const Span& span) override;
+  public:
+    void export_span(const Span &span) override;
     [[nodiscard]] std::size_t span_count() const override;
-    [[nodiscard]] const std::vector<Span>& spans() const;
+    [[nodiscard]] const std::vector<Span> &spans() const;
     void clear();
-private:
+
+  private:
     std::vector<Span> spans_;
 };
 
+class FileTraceExporter final : public TraceExporter {
+  public:
+    explicit FileTraceExporter(std::string path);
+    void export_span(const Span &span) override;
+    [[nodiscard]] std::size_t span_count() const override;
+
+  private:
+    std::string path_;
+    std::size_t count_ = 0;
+    mutable std::mutex mutex_;
+};
+
 [[nodiscard]] Span create_span(std::string name, std::string parent_span_id = "");
-void end_span(Span& span);
+void end_span(Span &span);
 
 } // namespace ahfl::telemetry

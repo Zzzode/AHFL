@@ -2,6 +2,7 @@
 
 #include <random>
 #include <sstream>
+#include <unordered_map>
 
 namespace ahfl::telemetry {
 
@@ -30,7 +31,7 @@ bool is_valid_hex(std::string_view s) {
 
 } // namespace
 
-std::string serialize_traceparent(const TraceContext& ctx) {
+std::string serialize_traceparent(const TraceContext &ctx) {
     std::string result;
     result.reserve(55); // 2 + 1 + 32 + 1 + 16 + 1 + 2 = 55
     result += ctx.version;
@@ -60,8 +61,8 @@ std::optional<TraceContext> parse_traceparent(std::string_view header) {
     ctx.trace_flags = std::string(header.substr(53, 2));
 
     // Validate hex
-    if (!is_valid_hex(ctx.version) || !is_valid_hex(ctx.trace_id) ||
-        !is_valid_hex(ctx.parent_id) || !is_valid_hex(ctx.trace_flags)) {
+    if (!is_valid_hex(ctx.version) || !is_valid_hex(ctx.trace_id) || !is_valid_hex(ctx.parent_id) ||
+        !is_valid_hex(ctx.trace_flags)) {
         return std::nullopt;
     }
 
@@ -75,6 +76,19 @@ TraceContext generate_context() {
     ctx.parent_id = generate_hex_id(16);
     ctx.trace_flags = "01";
     return ctx;
+}
+
+void inject_trace_context(const TraceContext &ctx,
+                          std::unordered_map<std::string, std::string> &headers) {
+    headers["traceparent"] = serialize_traceparent(ctx);
+}
+
+std::optional<TraceContext>
+extract_trace_context(const std::unordered_map<std::string, std::string> &headers) {
+    auto it = headers.find("traceparent");
+    if (it == headers.end())
+        return std::nullopt;
+    return parse_traceparent(it->second);
 }
 
 } // namespace ahfl::telemetry
