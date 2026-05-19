@@ -1,0 +1,73 @@
+{
+  "Agent": {
+    "prefix": "agent",
+    "body": [
+      "agent ${1:AgentName} {",
+      "    input: ${2:InputType};",
+      "    context: ${3:ContextType};",
+      "    output: ${4:OutputType};",
+      "    states: [${5:Init, Done}];",
+      "    initial: ${6:Init};",
+      "    final: [${7:Done}];",
+      "    capabilities: [${8:}];",
+      "    transition ${9:Init} -> ${10:Done};",
+      "}"
+    ],
+    "description": "Define a new AHFL agent"
+  },
+  "Workflow": {
+    "prefix": "workflow",
+    "body": [
+      "workflow ${1:WorkflowName} {",
+      "    input: ${2:InputType};",
+      "    output: ${3:OutputType};",
+      "    node ${4:step}: ${5:AgentName}(input);",
+      "    return: ${6:step};",
+      "}"
+    ],
+    "description": "Define a new AHFL workflow"
+  },
+  "Capability": {
+    "prefix": "capability",
+    "body": [
+      "capability ${1:CapName}(request: ${2:RequestType}) -> ${3:ResponseType};"
+    ],
+    "description": "Define a new AHFL capability"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:StructName} {",
+      "    ${2:field}: ${3:Type};",
+      "}"
+    ],
+    "description": "Define a new AHFL struct"
+  },
+  "Contract": {
+    "prefix": "contract",
+    "body": [
+      "contract for ${1:AgentName} {",
+      "    requires: ${2:precondition};",
+      "    ensures: ${3:postcondition};",
+      "    invariant: ${4:always condition};",
+      "}"
+    ],
+    "description": "Define a contract for an agent"
+  },
+  "Flow": {
+    "prefix": "flow",
+    "body": [
+      "flow for ${1:AgentName} {",
+      "    state ${2:Init} {",
+      "        ${3:// logic}",
+      "        goto ${4:Done};",
+      "    }",
+      "",
+      "    state ${5:Done} {",
+      "        return ${6:output};",
+      "    }",
+      "}"
+    ],
+    "description": "Define a flow implementation for an agent"
+  }
+}
