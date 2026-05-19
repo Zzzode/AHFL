@@ -1082,6 +1082,51 @@ target_link_libraries(ahfl_backend_package_review
 
 ahfl_apply_project_warnings(ahfl_backend_package_review)
 
+add_library(ahfl_backend_wasm STATIC
+    wasm_backend.cpp
+    wasm_runtime.cpp
+)
+
+target_include_directories(ahfl_backend_wasm
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+ahfl_apply_project_warnings(ahfl_backend_wasm)
+
+add_library(ahfl_backend_k8s_crd STATIC
+    k8s_crd.cpp
+)
+
+target_include_directories(ahfl_backend_k8s_crd
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+ahfl_apply_project_warnings(ahfl_backend_k8s_crd)
+
+add_library(ahfl_backend_openapi_spec STATIC
+    openapi_spec.cpp
+)
+
+target_include_directories(ahfl_backend_openapi_spec
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+ahfl_apply_project_warnings(ahfl_backend_openapi_spec)
+
+add_library(ahfl_backend_terraform_gen STATIC
+    terraform_gen.cpp
+)
+
+target_include_directories(ahfl_backend_terraform_gen
+    PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+)
+
+ahfl_apply_project_warnings(ahfl_backend_terraform_gen)
+
 add_library(ahfl_backend STATIC
     driver.cpp
 )
@@ -1184,6 +1229,10 @@ target_link_libraries(ahfl_backend
         ahfl_backend_assurance
         ahfl_backend_summary
         ahfl_backend_smv
+        ahfl_backend_wasm
+        ahfl_backend_k8s_crd
+        ahfl_backend_openapi_spec
+        ahfl_backend_terraform_gen
 )
 
 ahfl_apply_project_warnings(ahfl_backend)
