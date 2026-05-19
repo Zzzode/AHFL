@@ -15,8 +15,7 @@ struct AdjacencyGraph {
     std::unordered_map<std::string, std::vector<std::string>> edges;
 };
 
-[[nodiscard]] AdjacencyGraph
-build_graph(const BmcStateMachine &machine) {
+[[nodiscard]] AdjacencyGraph build_graph(const BmcStateMachine &machine) {
     AdjacencyGraph g;
     for (const auto &t : machine.transitions) {
         g.edges[t.from].push_back(t.to);
@@ -31,8 +30,7 @@ struct PropertyInfo {
     bool is_never{false}; // true = "never(X)", false = "reachable(X)"
 };
 
-[[nodiscard]] std::vector<PropertyInfo>
-parse_properties(const std::vector<std::string> &props) {
+[[nodiscard]] std::vector<PropertyInfo> parse_properties(const std::vector<std::string> &props) {
     std::vector<PropertyInfo> result;
     for (const auto &p : props) {
         if (p.size() > 6 && p.substr(0, 6) == "never(") {
@@ -56,12 +54,11 @@ struct BfsResult {
     std::size_t max_depth_reached{0};
 };
 
-[[nodiscard]] BfsResult
-bfs_check(const AdjacencyGraph &graph,
-          const std::string &start,
-          std::size_t max_depth,
-          const std::unordered_set<std::string> &bad_states,
-          const std::string &property_name) {
+[[nodiscard]] BfsResult bfs_check(const AdjacencyGraph &graph,
+                                  const std::string &start,
+                                  std::size_t max_depth,
+                                  const std::unordered_set<std::string> &bad_states,
+                                  const std::string &property_name) {
     BfsResult res;
     // BFS with depth tracking and parent map
     std::queue<std::pair<std::string, std::size_t>> frontier;
@@ -116,10 +113,9 @@ bfs_check(const AdjacencyGraph &graph,
 }
 
 /// Check reachability from ALL states (for k-induction)
-[[nodiscard]] bool
-all_states_safe(const AdjacencyGraph &graph,
-                const std::vector<std::string> &all_states,
-                const std::unordered_set<std::string> &bad_states) {
+[[nodiscard]] bool all_states_safe(const AdjacencyGraph &graph,
+                                   const std::vector<std::string> &all_states,
+                                   const std::unordered_set<std::string> &bad_states) {
     for (const auto &state : all_states) {
         if (bad_states.count(state) != 0) {
             return false;
@@ -138,8 +134,7 @@ all_states_safe(const AdjacencyGraph &graph,
 
 } // namespace
 
-[[nodiscard]] BmcResult
-run_bmc(const BmcStateMachine &machine, const BmcOptions &options) {
+[[nodiscard]] BmcResult run_bmc(const BmcStateMachine &machine, const BmcOptions &options) {
     auto start_time = std::chrono::steady_clock::now();
     BmcResult result;
 
@@ -147,7 +142,8 @@ run_bmc(const BmcStateMachine &machine, const BmcOptions &options) {
         result.status = BmcStatus::Error;
         result.error_message = "Invalid state machine: no states or no initial state";
         auto end_time = std::chrono::steady_clock::now();
-        result.elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(end_time - start_time).count();
         return result;
     }
 
@@ -172,12 +168,13 @@ run_bmc(const BmcStateMachine &machine, const BmcOptions &options) {
         result.status = BmcStatus::Safe;
         result.bound_reached = options.max_bound;
         auto end_time = std::chrono::steady_clock::now();
-        result.elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(end_time - start_time).count();
         return result;
     }
 
-    auto bfs = bfs_check(graph, machine.initial_state, options.max_bound,
-                          bad_states, property_desc);
+    auto bfs =
+        bfs_check(graph, machine.initial_state, options.max_bound, bad_states, property_desc);
 
     if (bfs.found_bad) {
         result.status = BmcStatus::Unsafe;
@@ -198,8 +195,7 @@ run_bmc(const BmcStateMachine &machine, const BmcOptions &options) {
     return result;
 }
 
-[[nodiscard]] BmcResult
-run_k_induction(const BmcStateMachine &machine, const BmcOptions &options) {
+[[nodiscard]] BmcResult run_k_induction(const BmcStateMachine &machine, const BmcOptions &options) {
     auto start_time = std::chrono::steady_clock::now();
     BmcResult result;
 
@@ -207,7 +203,8 @@ run_k_induction(const BmcStateMachine &machine, const BmcOptions &options) {
         result.status = BmcStatus::Error;
         result.error_message = "Invalid state machine: no states or no initial state";
         auto end_time = std::chrono::steady_clock::now();
-        result.elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(end_time - start_time).count();
         return result;
     }
 
@@ -225,13 +222,13 @@ run_k_induction(const BmcStateMachine &machine, const BmcOptions &options) {
         result.status = BmcStatus::Safe;
         result.bound_reached = options.max_bound;
         auto end_time = std::chrono::steady_clock::now();
-        result.elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(end_time - start_time).count();
         return result;
     }
 
     // Base case: check reachability from initial state
-    auto bfs = bfs_check(graph, machine.initial_state, options.max_bound,
-                          bad_states, "");
+    auto bfs = bfs_check(graph, machine.initial_state, options.max_bound, bad_states, "");
 
     if (bfs.found_bad) {
         // Bad state reachable from initial — unsafe
@@ -243,7 +240,8 @@ run_k_induction(const BmcStateMachine &machine, const BmcOptions &options) {
         cex.violated_property = "k-induction base case failure";
         result.counterexample = std::move(cex);
         auto end_time = std::chrono::steady_clock::now();
-        result.elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(end_time - start_time).count();
         return result;
     }
 
@@ -263,12 +261,25 @@ run_k_induction(const BmcStateMachine &machine, const BmcOptions &options) {
     return result;
 }
 
-[[nodiscard]] BmcResult
-run_cegar(const BmcStateMachine & /*machine*/, const BmcOptions & /*options*/) {
+[[nodiscard]] BmcResult run_cegar(const BmcStateMachine &machine, const BmcOptions &options) {
     auto start_time = std::chrono::steady_clock::now();
     BmcResult result;
+
+    if (machine.states.empty() || machine.initial_state.empty()) {
+        result.status = BmcStatus::Error;
+        result.error_message = "Invalid state machine: no states or no initial state";
+        auto end_time = std::chrono::steady_clock::now();
+        result.elapsed_ms =
+            std::chrono::duration<double, std::milli>(end_time - start_time).count();
+        return result;
+    }
+
+    // CEGAR requires SAT solver integration for sound counterexample validation.
+    // Without a SAT backend, we conservatively report Unknown.
     result.status = BmcStatus::Unknown;
-    result.error_message = "CEGAR not yet implemented — requires SAT solver integration";
+    result.bound_reached = options.max_bound;
+    result.error_message = "CEGAR: requires SAT solver backend for sound verification";
+
     auto end_time = std::chrono::steady_clock::now();
     result.elapsed_ms = std::chrono::duration<double, std::milli>(end_time - start_time).count();
     return result;

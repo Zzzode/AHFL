@@ -1,8 +1,149 @@
 #include "ahfl/formal/nuxmv_backend.hpp"
 
+#include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 namespace ahfl::formal {
+
+namespace {
+
+namespace fs = std::filesystem;
+
+/// Locate the nuXmv binary on PATH or via environment variable.
+std::string find_nuxmv_binary() {
+    // Check environment variable first
+    const char *env = std::getenv("AHFL_NUXMV_PATH");
+    if (env && *env && fs::exists(env)) {
+        return env;
+    }
+
+    // Also check NuSMV as fallback
+    const char *nusmv_env = std::getenv("AHFL_NUSMV_PATH");
+    if (nusmv_env && *nusmv_env && fs::exists(nusmv_env)) {
+        return nusmv_env;
+    }
+
+    // Search PATH for nuXmv or NuSMV
+    const char *path_env = std::getenv("PATH");
+    if (!path_env)
+        return "";
+
+    std::string path_str(path_env);
+    std::istringstream iss(path_str);
+    std::string dir;
+
+    while (std::getline(iss, dir, ':')) {
+        auto nuxmv_path = fs::path(dir) / "nuXmv";
+        if (fs::exists(nuxmv_path)) {
+            return nuxmv_path.string();
+        }
+        auto nuxmv_lower = fs::path(dir) / "nuxmv";
+        if (fs::exists(nuxmv_lower)) {
+            return nuxmv_lower.string();
+        }
+        auto nusmv_path = fs::path(dir) / "NuSMV";
+        if (fs::exists(nusmv_path)) {
+            return nusmv_path.string();
+        }
+        auto nusmv_lower = fs::path(dir) / "nusmv";
+        if (fs::exists(nusmv_lower)) {
+            return nusmv_lower.string();
+        }
+    }
+
+    return "";
+}
+
+/// Write model text to a temporary file and return its path.
+std::string write_temp_model(const std::string &model_text) {
+    auto tmp_dir = fs::temp_directory_path() / "ahfl_formal";
+    fs::create_directories(tmp_dir);
+
+    auto path = tmp_dir / "model.smv";
+    std::ofstream ofs(path, std::ios::trunc);
+    ofs << model_text;
+    ofs.close();
+    return path.string();
+}
+
+/// Shell-quote a path for safe use in commands.
+std::string shell_quote(const std::string &value) {
+    std::string quoted = "'";
+    for (char c : value) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(c);
+        }
+    }
+    quoted += "'";
+    return quoted;
+}
+
+/// Parse nuXmv/NuSMV output for verification results.
+/// Expected output contains lines like:
+///   -- specification G (state != bad_state)  is true
+///   -- specification F (state = target)  is false
+///   -- as demonstrated by the following execution sequence
+struct ParsedResult {
+    std::size_t properties_checked = 0;
+    std::size_t properties_passed = 0;
+    std::string counterexample_trace;
+    std::string error;
+};
+
+ParsedResult parse_verification_output(const std::string &output) {
+    ParsedResult parsed;
+    std::istringstream iss(output);
+    std::string line;
+    bool in_counterexample = false;
+
+    while (std::getline(iss, line)) {
+        // Check for property results
+        if (line.find("-- specification") != std::string::npos ||
+            line.find("-- LTL specification") != std::string::npos) {
+            parsed.properties_checked++;
+            if (line.find("is true") != std::string::npos) {
+                parsed.properties_passed++;
+            } else if (line.find("is false") != std::string::npos) {
+                in_counterexample = true;
+            }
+        }
+
+        // Collect counterexample trace
+        if (in_counterexample) {
+            if (line.find("-> State:") != std::string::npos ||
+                line.find("-> Input:") != std::string::npos ||
+                line.find("state =") != std::string::npos) {
+                parsed.counterexample_trace += line + "\n";
+            }
+            // End of counterexample (next specification or empty section)
+            if (!parsed.counterexample_trace.empty() &&
+                (line.find("-- specification") != std::string::npos ||
+                 line.find("-- LTL specification") != std::string::npos)) {
+                in_counterexample = false;
+            }
+        }
+
+        // Check for errors
+        if (line.find("file") != std::string::npos && line.find("error") != std::string::npos) {
+            parsed.error += line + "\n";
+        }
+        if (line.find("*** PARSE ERROR") != std::string::npos ||
+            line.find("TYPE ERROR") != std::string::npos) {
+            parsed.error += line + "\n";
+        }
+    }
+
+    return parsed;
+}
+
+} // namespace
 
 [[nodiscard]] ModelCheckerKind NuXmvBackend::kind() const {
     return ModelCheckerKind::NuXmv;
@@ -16,8 +157,7 @@ namespace ahfl::formal {
     return ".smv";
 }
 
-[[nodiscard]] ModelEmissionResult
-NuXmvBackend::emit_model(const BmcStateMachine &machine) {
+[[nodiscard]] ModelEmissionResult NuXmvBackend::emit_model(const BmcStateMachine &machine) {
     ModelEmissionResult result;
 
     if (machine.states.empty()) {
@@ -67,13 +207,90 @@ NuXmvBackend::emit_model(const BmcStateMachine &machine) {
     return result;
 }
 
-[[nodiscard]] VerificationSummary
-NuXmvBackend::verify(const std::string & /*model_text*/) {
+[[nodiscard]] VerificationSummary NuXmvBackend::verify(const std::string &model_text) {
     VerificationSummary summary;
-    summary.all_passed = false;
-    summary.properties_checked = 0;
-    summary.properties_passed = 0;
-    summary.error_message = "External nuXmv binary not available";
+
+    // Find the nuXmv/NuSMV binary
+    auto binary = find_nuxmv_binary();
+    if (binary.empty()) {
+        summary.all_passed = false;
+        summary.properties_checked = 0;
+        summary.properties_passed = 0;
+        summary.error_message = "nuXmv/NuSMV binary not found. Set AHFL_NUXMV_PATH or ensure "
+                                "nuXmv/NuSMV is on PATH.";
+        return summary;
+    }
+
+    // Write model to temp file
+    auto model_path = write_temp_model(model_text);
+
+    // Build verification command
+    // Use batch mode: nuXmv -source <cmd_file> <model_file>
+    // Or simpler: pipe commands via stdin
+    auto cmd_path = fs::temp_directory_path() / "ahfl_formal" / "verify_cmd.txt";
+    {
+        std::ofstream cmd_file(cmd_path, std::ios::trunc);
+        cmd_file << "read_model -i " << model_path << "\n";
+        cmd_file << "flatten_hierarchy\n";
+        cmd_file << "encode_variables\n";
+        cmd_file << "build_model\n";
+        cmd_file << "check_ltlspec\n";
+        cmd_file << "quit\n";
+    }
+
+    std::string command =
+        shell_quote(binary) + " -source " + shell_quote(cmd_path.string()) + " 2>&1";
+
+    FILE *pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        summary.all_passed = false;
+        summary.error_message = "Failed to execute nuXmv process";
+        return summary;
+    }
+
+    std::string output;
+    std::array<char, 4096> buffer{};
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        output += buffer.data();
+    }
+
+    int exit_code = pclose(pipe);
+
+    // Clean up temp files
+    std::error_code ec;
+    fs::remove(model_path, ec);
+    fs::remove(cmd_path, ec);
+
+    // Parse the output
+    auto parsed = parse_verification_output(output);
+
+    summary.properties_checked = parsed.properties_checked;
+    summary.properties_passed = parsed.properties_passed;
+
+    if (!parsed.error.empty()) {
+        summary.all_passed = false;
+        summary.error_message = parsed.error;
+    } else if (parsed.properties_checked == 0 && exit_code != 0) {
+        summary.all_passed = false;
+        summary.error_message = "nuXmv exited with code " + std::to_string(exit_code);
+        if (!output.empty()) {
+            // Include first few lines of output for diagnostics
+            std::istringstream oss(output);
+            std::string line;
+            int lines = 0;
+            while (std::getline(oss, line) && lines < 5) {
+                summary.error_message += "\n" + line;
+                lines++;
+            }
+        }
+    } else {
+        summary.all_passed = (parsed.properties_passed == parsed.properties_checked);
+    }
+
+    if (!parsed.counterexample_trace.empty()) {
+        summary.error_message += "\nCounterexample:\n" + parsed.counterexample_trace;
+    }
+
     return summary;
 }
 

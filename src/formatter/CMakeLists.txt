@@ -5,7 +5,7 @@ add_library(ahfl_formatter STATIC
 
 target_link_libraries(ahfl_formatter
     PUBLIC
-        ahfl_support
+        ahfl_syntax
 )
 
 ahfl_apply_project_warnings(ahfl_formatter)
