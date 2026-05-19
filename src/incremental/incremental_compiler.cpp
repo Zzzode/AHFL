@@ -1,90 +1,165 @@
-#include <ahfl/incremental/incremental_compiler.hpp>
+#include "ahfl/incremental/incremental_compiler.hpp"
+
+#include "ahfl/frontend/frontend.hpp"
+#include "ahfl/ir/ir.hpp"
+#include "ahfl/semantics/resolver.hpp"
+#include "ahfl/semantics/typecheck.hpp"
 
 #include <algorithm>
+#include <fstream>
+#include <functional>
+#include <sstream>
+#include <string>
 #include <unordered_set>
 
 namespace ahfl::incremental {
 
-IncrementalCompiler::IncrementalCompiler(DependencyGraph& graph, IrCache& cache)
-    : graph_(graph), cache_(cache) {}
+namespace {
 
-[[nodiscard]] std::vector<CompileResult> IncrementalCompiler::compile_changed(
-    const std::vector<std::string>& changed_paths) {
+std::uint64_t compute_content_hash(const std::string &file_path) {
+    std::ifstream ifs(file_path, std::ios::binary);
+    if (!ifs)
+        return 0;
+    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    return std::hash<std::string>{}(content);
+}
 
-    // 1. Find all transitively affected modules
-    std::unordered_set<std::string> to_recompile;
-    std::vector<std::string> worklist(changed_paths.begin(), changed_paths.end());
+// Compute transitive dependents via BFS
+std::vector<std::string> transitive_dependents(const DependencyGraph &graph,
+                                               const std::string &path) {
+    std::unordered_set<std::string> visited;
+    std::vector<std::string> queue;
+    queue.push_back(path);
+    visited.insert(path);
 
-    while (!worklist.empty()) {
-        auto current = worklist.back();
-        worklist.pop_back();
-        if (to_recompile.insert(current).second) {
-            auto deps = graph_.dependents_of(current);
-            for (const auto& dep : deps) {
-                if (to_recompile.count(dep) == 0) {
-                    worklist.push_back(dep);
-                }
+    for (std::size_t i = 0; i < queue.size(); ++i) {
+        auto deps = graph.dependents_of(queue[i]);
+        for (const auto &dep : deps) {
+            if (visited.insert(dep).second) {
+                queue.push_back(dep);
             }
         }
     }
 
-    // 2. Get topological order and filter to affected modules
-    auto topo = graph_.topological_order();
+    // Remove the original path from the result
+    std::vector<std::string> result;
+    for (std::size_t i = 1; i < queue.size(); ++i) {
+        result.push_back(queue[i]);
+    }
+    return result;
+}
+
+} // namespace
+
+IncrementalCompiler::IncrementalCompiler(DependencyGraph &graph, IrCache &cache)
+    : graph_(graph), cache_(cache) {}
+
+std::vector<CompileResult>
+IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_paths) {
+
+    std::vector<CompileResult> results;
+
+    // Compute all affected modules (changed + transitive dependents)
+    std::vector<std::string> affected;
+    for (const auto &path : changed_paths) {
+        affected.push_back(path);
+        auto dependents = transitive_dependents(graph_, path);
+        for (const auto &dep : dependents) {
+            if (std::find(affected.begin(), affected.end(), dep) == affected.end()) {
+                affected.push_back(dep);
+            }
+        }
+    }
+
+    // Sort in topological order for correct compilation
+    auto topo_order = graph_.topological_order();
     std::vector<std::string> ordered;
-    for (const auto& mod : topo) {
-        if (to_recompile.count(mod) > 0) {
+    for (const auto &mod : topo_order) {
+        if (std::find(affected.begin(), affected.end(), mod) != affected.end()) {
             ordered.push_back(mod);
         }
     }
 
-    // 3. For each module, check cache and decide
-    std::vector<CompileResult> results;
-    for (const auto& mod_path : ordered) {
+    // Compile each module
+    for (const auto &mod_path : ordered) {
         ++stats_.modules_checked;
 
-        // Look up a dummy hash (changed modules get hash 0 to force recompile)
-        std::uint64_t hash = 0;
-        // If it's not in the direct changed set, use existing hash
-        bool directly_changed = std::find(changed_paths.begin(), changed_paths.end(), mod_path)
-                                != changed_paths.end();
-
-        if (!directly_changed) {
-            // Use a new hash to signal dependency changed
-            hash = 1;
-        }
-
-        auto lookup = cache_.lookup(mod_path, hash);
-
-        if (lookup.kind == CacheHitKind::Hit) {
+        // Check cache validity
+        auto content_hash = compute_content_hash(mod_path);
+        auto cached = cache_.lookup(mod_path, content_hash);
+        if (cached.kind == CacheHitKind::Hit) {
             ++stats_.cache_hits;
-            results.push_back(CompileResult{
-                CompileStatus::UpToDate, mod_path, ""});
-        } else {
-            ++stats_.cache_misses;
-            ++stats_.modules_recompiled;
-
-            // Store a new dummy cache entry
-            CacheEntry new_entry;
-            new_entry.module_path = mod_path;
-            new_entry.content_hash = hash;
-            new_entry.serialized_ir = R"({"module":")" + mod_path + R"(","ir":"compiled"})";
-            new_entry.cached_at = std::chrono::system_clock::now();
-            cache_.store(std::move(new_entry));
-
-            results.push_back(CompileResult{
-                CompileStatus::Recompiled, mod_path, ""});
+            results.push_back(CompileResult{CompileStatus::UpToDate, mod_path, ""});
+            continue;
         }
+        ++stats_.cache_misses;
+
+        // Run real compilation pipeline
+        std::string serialized_ir;
+        CompileStatus status = CompileStatus::Recompiled;
+        std::string error_msg;
+
+        ahfl::Frontend frontend;
+        auto parse_result = frontend.parse_file(mod_path);
+        if (parse_result.has_errors() || !parse_result.program) {
+            std::ostringstream err;
+            for (const auto &diag : parse_result.diagnostics.entries()) {
+                err << diag.message << "; ";
+            }
+            status = CompileStatus::Failed;
+            error_msg = err.str();
+        } else {
+            ahfl::Resolver resolver;
+            auto resolve_result = resolver.resolve(*parse_result.program);
+            if (resolve_result.has_errors()) {
+                std::ostringstream err;
+                for (const auto &diag : resolve_result.diagnostics.entries()) {
+                    err << diag.message << "; ";
+                }
+                status = CompileStatus::Failed;
+                error_msg = err.str();
+            } else {
+                ahfl::TypeChecker checker;
+                auto tc_result = checker.check(*parse_result.program, resolve_result);
+                if (tc_result.has_errors()) {
+                    std::ostringstream err;
+                    for (const auto &diag : tc_result.diagnostics.entries()) {
+                        err << diag.message << "; ";
+                    }
+                    status = CompileStatus::Failed;
+                    error_msg = err.str();
+                } else {
+                    auto ir_program =
+                        ahfl::lower_program_ir(*parse_result.program, resolve_result, tc_result);
+                    std::ostringstream ir_json;
+                    ahfl::print_program_ir_json(ir_program, ir_json);
+                    serialized_ir = ir_json.str();
+                }
+            }
+        }
+
+        // Always cache the result (even failures) so repeated builds with
+        // the same content hash get a cache hit.
+        CacheEntry new_entry;
+        new_entry.module_path = mod_path;
+        new_entry.content_hash = content_hash;
+        new_entry.serialized_ir = serialized_ir;
+        new_entry.cached_at = std::chrono::system_clock::now();
+        cache_.store(std::move(new_entry));
+
+        ++stats_.modules_recompiled;
+        results.push_back(CompileResult{status, mod_path, error_msg});
     }
 
     return results;
 }
 
-[[nodiscard]] IncrementalStats IncrementalCompiler::stats() const {
+IncrementalStats IncrementalCompiler::stats() const {
     return stats_;
 }
 
 void IncrementalCompiler::reset_stats() {
-    stats_ = IncrementalStats{};
+    stats_ = {};
 }
 
 } // namespace ahfl::incremental

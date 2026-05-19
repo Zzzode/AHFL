@@ -1,13 +1,13 @@
 #pragma once
-#include <string>
-#include <vector>
 #include <chrono>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace ahfl::runtime {
 
 struct ResourceQuota {
-    size_t max_memory_bytes = 256 * 1024 * 1024;  // 256 MB
+    size_t max_memory_bytes = 256 * 1024 * 1024; // 256 MB
     size_t max_threads = 8;
     std::chrono::seconds max_cpu_time{60};
 };
@@ -47,20 +47,27 @@ struct SandboxViolation {
 };
 
 class Sandbox {
-public:
+  public:
     explicit Sandbox(SandboxConfig config);
 
-    [[nodiscard]] bool check_network_access(const std::string& host, uint16_t port) const;
-    [[nodiscard]] bool check_fs_read(const std::string& path) const;
-    [[nodiscard]] bool check_fs_write(const std::string& path) const;
+    [[nodiscard]] bool check_network_access(const std::string &host, uint16_t port) const;
+    [[nodiscard]] bool check_fs_read(const std::string &path) const;
+    [[nodiscard]] bool check_fs_write(const std::string &path) const;
     [[nodiscard]] bool check_memory(size_t bytes) const;
     [[nodiscard]] bool check_thread_count(size_t count) const;
 
-    [[nodiscard]] const SandboxConfig& config() const;
+    [[nodiscard]] const SandboxConfig &config() const;
 
-private:
+    struct EnforcementResult {
+        bool success = true;
+        std::string error;
+    };
+    [[nodiscard]] EnforcementResult enforce() const;
+
+  private:
     SandboxConfig config_;
-    [[nodiscard]] bool path_matches(const std::string& path, const std::vector<std::string>& allowed) const;
+    [[nodiscard]] bool path_matches(const std::string &path,
+                                    const std::vector<std::string> &allowed) const;
 };
 
 } // namespace ahfl::runtime
