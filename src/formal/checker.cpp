@@ -1,6 +1,8 @@
 #include "ahfl/formal/checker.hpp"
 
 #include "ahfl/backends/smv.hpp"
+#include "ahfl/formal/counterexample.hpp"
+#include "ahfl/formal/counterexample_json.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -309,6 +311,7 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
         const auto model_text = model_content.str();
         symbol_mappings = parse_symbol_mappings(model_text);
         result.expected_specification_count = count_expected_specifications(model_text);
+        result.model_content = model_text;
 
         std::ofstream model(result.model_path);
         if (!model) {
@@ -330,6 +333,16 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
 
     if (!result.failing_specifications.empty()) {
         result.status = FormalVerificationStatus::Failed;
+
+        if (options.explain) {
+            const auto structured_mappings = parse_structured_symbol_mappings(result.model_content);
+            const auto trace = parse_counterexample_trace(result.output, structured_mappings);
+            if (trace.has_value()) {
+                const auto explanation = explain_counterexample(*trace);
+                result.structured_explanation_json = counterexample_to_json(*trace, explanation);
+            }
+        }
+
         return result;
     }
 
