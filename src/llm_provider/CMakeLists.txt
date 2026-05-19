@@ -4,6 +4,12 @@ add_library(ahfl_llm_provider STATIC
     prompt_builder.cpp
     response_parser.cpp
     llm_capability_provider.cpp
+    streaming.cpp
+    tool_calling.cpp
+    provider_registry.cpp
+    token_budget.cpp
+    response_cache.cpp
+    prompt_template.cpp
 )
 
 target_link_libraries(ahfl_llm_provider
