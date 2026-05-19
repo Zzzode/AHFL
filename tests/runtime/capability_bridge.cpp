@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <variant>
 
@@ -98,6 +99,7 @@ void test_retry_success_on_second() {
     CapabilityBinding binding;
     binding.name = "flaky";
     binding.retry.max_retries = 2;
+    binding.retry.initial_delay = std::chrono::milliseconds{0};
     binding.handler = [&call_count](const std::vector<Value> & /*args*/) -> CapabilityCallResult {
         ++call_count;
         if (call_count == 1) {
@@ -135,6 +137,7 @@ void test_retry_exhausted() {
     CapabilityBinding binding;
     binding.name = "always_fail";
     binding.retry.max_retries = 2;
+    binding.retry.initial_delay = std::chrono::milliseconds{0};
     binding.handler = [&call_count](const std::vector<Value> & /*args*/) -> CapabilityCallResult {
         ++call_count;
         return CapabilityCallResult{
@@ -173,41 +176,97 @@ void test_as_invoker_works() {
 }
 
 // ============================================================================
-// Test 7: http_capability_stub
+// Test 7: http_capability_binding_construction
 // ============================================================================
 
-void test_http_capability_stub() {
+void test_http_capability_binding() {
     HTTPCapabilityConfig config;
     config.url = "https://example.com/api";
+    config.method = "PUT";
+    config.retry.max_retries = 3;
+    config.timeout.deadline = std::chrono::milliseconds{5000};
     auto binding = make_http_capability("http_call", std::move(config));
 
+    check(binding.name == "http_call", "http_binding.name");
+    check(binding.retry.max_retries == 3, "http_binding.retry");
+    check(binding.timeout.deadline == std::chrono::milliseconds{5000}, "http_binding.timeout");
+    check(binding.handler != nullptr, "http_binding.has_handler");
+
+    // Invoking will fail (no real server) but should produce a meaningful error
     CapabilityRegistry registry;
     registry.register_capability(std::move(binding));
-
     auto result = registry.invoke("http_call", {});
-
-    check(result.status == CapabilityCallStatus::Error, "http_stub.status_error");
-    check(result.error_message == "HTTP capability not connected", "http_stub.message");
+    check(result.status != CapabilityCallStatus::Success, "http_binding.not_success");
+    check(!result.error_message.empty(), "http_binding.has_error");
 }
 
 // ============================================================================
-// Test 8: grpc_capability_stub
+// Test 8: grpc_capability_json_transcoding
 // ============================================================================
 
-void test_grpc_capability_stub() {
+void test_grpc_capability_json_transcoding() {
     GRPCCapabilityConfig config;
-    config.endpoint = "localhost:50051";
+    config.endpoint = "http://localhost:50051";
     config.service = "TestService";
     config.method = "TestMethod";
+    config.retry.max_retries = 1;
     auto binding = make_grpc_capability("grpc_call", std::move(config));
+
+    check(binding.name == "grpc_call", "grpc_transcoding.name");
+    check(binding.retry.max_retries == 1, "grpc_transcoding.retry");
+    check(binding.handler != nullptr, "grpc_transcoding.has_handler");
+
+    // Invoking will fail (no real server) but should produce a meaningful error
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_call", {});
+    check(result.status != CapabilityCallStatus::Success, "grpc_transcoding.not_success");
+    check(!result.error_message.empty(), "grpc_transcoding.has_error");
+}
+
+// ============================================================================
+// Test 11: circuit_breaker_state_transitions
+// ============================================================================
+
+void test_circuit_breaker_state_transitions() {
+    CircuitBreakerConfig cb_config;
+    cb_config.failure_threshold = 3;
+    cb_config.recovery_window = std::chrono::seconds{1};
+    cb_config.enabled = true;
+
+    // Create a capability that always fails
+    int call_count = 0;
+    CapabilityBinding binding;
+    binding.name = "cb_test";
+    binding.retry.max_retries = 0; // no retries — one call per invoke
+    binding.circuit_breaker = cb_config;
+    binding.circuit_state = std::make_shared<CircuitBreakerState>(cb_config);
+    binding.handler = [&call_count](const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        ++call_count;
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message = "always fails",
+            .attempts = 1,
+        };
+    };
 
     CapabilityRegistry registry;
     registry.register_capability(std::move(binding));
 
-    auto result = registry.invoke("grpc_call", {});
+    // First 3 calls should go through (failure_threshold = 3)
+    auto r1 = registry.invoke("cb_test", {});
+    check(r1.status == CapabilityCallStatus::Error, "cb.r1_error");
+    auto r2 = registry.invoke("cb_test", {});
+    check(r2.status == CapabilityCallStatus::Error, "cb.r2_error");
+    auto r3 = registry.invoke("cb_test", {});
+    check(r3.status == CapabilityCallStatus::Error, "cb.r3_error");
+    check(call_count == 3, "cb.3_calls_made");
 
-    check(result.status == CapabilityCallStatus::Error, "grpc_stub.status_error");
-    check(result.error_message == "gRPC capability not connected", "grpc_stub.message");
+    // 4th call: circuit should be open now
+    auto r4 = registry.invoke("cb_test", {});
+    check(r4.status == CapabilityCallStatus::CircuitOpen, "cb.r4_circuit_open");
+    check(call_count == 3, "cb.no_4th_call"); // handler was NOT called
 }
 
 // ============================================================================
@@ -300,8 +359,9 @@ int main() {
     test_retry_success_on_second();
     test_retry_exhausted();
     test_as_invoker_works();
-    test_http_capability_stub();
-    test_grpc_capability_stub();
+    test_http_capability_binding();
+    test_grpc_capability_json_transcoding();
+    test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
     test_eval_with_capability_call();
 
