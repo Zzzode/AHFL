@@ -21,6 +21,10 @@ endfunction()
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/TestTargets.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/ProjectTests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/SingleFileCliTests.cmake")
+
+include("${CMAKE_CURRENT_LIST_DIR}/fuzz/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/bench/CMakeLists.txt")
+
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/LabelTests.cmake")
 
 get_property(ahfl_all_tests DIRECTORY PROPERTY TESTS)

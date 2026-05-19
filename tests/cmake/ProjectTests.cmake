@@ -3887,3 +3887,131 @@ add_test(NAME ahfl.runtime.e2e_workflow
 add_test(NAME ahfl.llm_provider.all
     COMMAND $<TARGET_FILE:ahfl_llm_provider_tests>
 )
+
+add_test(NAME ahfl.runtime.http_transport_all
+    COMMAND $<TARGET_FILE:ahfl_http_transport_tests>
+)
+
+add_test(NAME ahfl.runtime.grpc_transport_all
+    COMMAND $<TARGET_FILE:ahfl_grpc_transport_tests>
+)
+
+add_test(NAME ahfl.json.value_all
+    COMMAND $<TARGET_FILE:ahfl_json_value_tests>
+)
+
+add_test(NAME ahfl.secret.provider_all
+    COMMAND $<TARGET_FILE:ahfl_secret_provider_tests>
+)
+
+add_test(NAME ahfl.secret.vault_rotation_all
+    COMMAND $<TARGET_FILE:ahfl_vault_rotation_tests>
+)
+
+add_test(NAME ahfl.passes.pass_manager_all
+    COMMAND $<TARGET_FILE:ahfl_pass_manager_tests>
+)
+
+add_test(NAME ahfl.llm_provider.streaming_all
+    COMMAND $<TARGET_FILE:ahfl_streaming_tests>
+)
+
+add_test(NAME ahfl.lsp.json_rpc_all
+    COMMAND $<TARGET_FILE:ahfl_lsp_json_rpc_tests>
+)
+
+add_test(NAME ahfl.lsp.handler_all
+    COMMAND $<TARGET_FILE:ahfl_lsp_handler_tests>
+)
+
+add_test(NAME ahfl.runtime.connection_pool_all
+    COMMAND $<TARGET_FILE:ahfl_connection_pool_tests>
+)
+
+add_test(NAME ahfl.frontend.error_recovery_all
+    COMMAND $<TARGET_FILE:ahfl_error_recovery_tests>
+)
+
+add_test(NAME ahfl.support.thread_pool_all
+    COMMAND $<TARGET_FILE:ahfl_thread_pool_tests>
+)
+
+add_test(NAME ahfl.support.version_all
+    COMMAND $<TARGET_FILE:ahfl_version_tests>
+)
+
+add_test(NAME ahfl.formal.bmc_all
+    COMMAND $<TARGET_FILE:ahfl_bmc_tests>
+)
+
+add_test(NAME ahfl.formal.model_checker_backends_all
+    COMMAND $<TARGET_FILE:ahfl_model_checker_tests>
+)
+
+add_test(NAME ahfl.formal.integration_improvement_all
+    COMMAND $<TARGET_FILE:ahfl_formal_integration_tests>
+)
+
+add_test(NAME ahfl.formal.counterexample_parse_all
+    COMMAND $<TARGET_FILE:ahfl_counterexample_parse_tests>
+)
+
+add_test(NAME ahfl.runtime.parallel_scheduler_all
+    COMMAND $<TARGET_FILE:ahfl_parallel_scheduler_tests>
+)
+
+add_test(NAME ahfl.runtime.sandbox_all
+    COMMAND $<TARGET_FILE:ahfl_sandbox_tests>
+)
+
+add_test(NAME ahfl.runtime.distributed_all
+    COMMAND $<TARGET_FILE:ahfl_distributed_tests>
+)
+
+add_test(NAME ahfl.formatter.formatter_all
+    COMMAND $<TARGET_FILE:ahfl_formatter_tests>
+)
+
+add_test(NAME ahfl.repl.repl_all
+    COMMAND $<TARGET_FILE:ahfl_repl_tests>
+)
+
+add_test(NAME ahfl.dap.basic_all
+    COMMAND $<TARGET_FILE:ahfl_dap_tests>
+)
+
+add_test(NAME ahfl.telemetry.telemetry_all
+    COMMAND $<TARGET_FILE:ahfl_telemetry_tests>
+)
+
+add_test(NAME ahfl.profiling.profiling_all
+    COMMAND $<TARGET_FILE:ahfl_profiling_tests>
+)
+
+add_test(NAME ahfl.abi.compat_all
+    COMMAND $<TARGET_FILE:ahfl_abi_tests>
+)
+
+add_test(NAME ahfl.incremental.incremental_all
+    COMMAND $<TARGET_FILE:ahfl_incremental_tests>
+)
+
+add_test(NAME ahfl.backends.wasm_all
+    COMMAND $<TARGET_FILE:ahfl_wasm_backend_tests>
+)
+
+add_test(NAME ahfl.backends.targets_all
+    COMMAND $<TARGET_FILE:ahfl_target_backends_tests>
+)
+
+add_test(NAME ahfl.package.package_all
+    COMMAND $<TARGET_FILE:ahfl_package_tests>
+)
+
+add_test(NAME ahfl.property.lowering_equiv
+    COMMAND $<TARGET_FILE:ahfl_property_lowering_tests>
+)
+
+add_test(NAME ahfl.property.smv_syntax
+    COMMAND $<TARGET_FILE:ahfl_property_smv_tests>
+)
