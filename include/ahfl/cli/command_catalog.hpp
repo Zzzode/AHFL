@@ -131,6 +131,8 @@ struct CommandLineOptions {
     std::optional<std::string_view> run_id;
     std::optional<std::string_view> model_checker;
     std::optional<std::string_view> formal_model_out;
+    bool explain_requested{false};
+    bool optimize_requested{false};
     std::vector<std::string_view> search_roots;
     std::vector<std::string_view> positional;
 };
