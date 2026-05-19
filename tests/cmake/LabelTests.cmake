@@ -1894,3 +1894,196 @@ ahfl_label_tests(
     TESTS
         ahfl.llm_provider.all
 )
+
+ahfl_label_tests(
+    LABELS ahfl-v0.57 v0.57-http-transport
+    TESTS
+        ahfl.runtime.http_transport_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.57 v0.57-grpc-transport
+    TESTS
+        ahfl.runtime.grpc_transport_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-json-dom
+    TESTS
+        ahfl.json.value_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-secret
+    TESTS
+        ahfl.secret.provider_all
+        ahfl.secret.vault_rotation_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-passes
+    TESTS
+        ahfl.passes.pass_manager_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-llm-streaming
+    TESTS
+        ahfl.llm_provider.streaming_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-lsp
+    TESTS
+        ahfl.lsp.json_rpc_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-lsp-handlers
+    TESTS
+        ahfl.lsp.handler_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.58 v0.58-connection-pool
+    TESTS
+        ahfl.runtime.connection_pool_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-error-recovery
+    TESTS
+        ahfl.frontend.error_recovery_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-support-lib
+    TESTS
+        ahfl.support.thread_pool_all
+        ahfl.support.version_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-bmc
+    TESTS
+        ahfl.formal.bmc_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-model-checker
+    TESTS
+        ahfl.formal.model_checker_backends_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-integration
+    TESTS
+        ahfl.formal.integration_improvement_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formal-counterexample
+    TESTS
+        ahfl.formal.counterexample_parse_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-parallel-scheduler
+    TESTS
+        ahfl.runtime.parallel_scheduler_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-sandbox
+    TESTS
+        ahfl.runtime.sandbox_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-distributed
+    TESTS
+        ahfl.runtime.distributed_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-formatter
+    TESTS
+        ahfl.formatter.formatter_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-repl
+    TESTS
+        ahfl.repl.repl_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-dap
+    TESTS
+        ahfl.dap.basic_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-telemetry
+    TESTS
+        ahfl.telemetry.telemetry_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-profiling
+    TESTS
+        ahfl.profiling.profiling_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-abi
+    TESTS
+        ahfl.abi.compat_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-incremental
+    TESTS
+        ahfl.incremental.incremental_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-wasm-backend
+    TESTS
+        ahfl.backends.wasm_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-target-backends
+    TESTS
+        ahfl.backends.targets_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-fuzzing
+    TESTS
+        ahfl.fuzz.parser_check
+        ahfl.fuzz.typecheck_check
+        ahfl.fuzz.smv_emitter_check
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-benchmarks
+    TESTS
+        ahfl.bench.compile_time
+        ahfl.bench.memory_usage
+        ahfl.bench.smv_size
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-package
+    TESTS
+        ahfl.package.package_all
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-property-testing
+    TESTS
+        ahfl.property.lowering_equiv
+        ahfl.property.smv_syntax
+)

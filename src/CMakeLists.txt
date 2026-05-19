@@ -5,6 +5,8 @@ target_include_directories(ahfl_support
 )
 ahfl_enable_cxx23(ahfl_support)
 
+add_subdirectory(support)
+add_subdirectory(json)
 add_subdirectory(parser)
 add_subdirectory(frontend)
 add_subdirectory(semantics)
@@ -27,10 +29,23 @@ add_subdirectory(runtime)
 add_subdirectory(llm_provider)
 add_subdirectory(backends)
 add_subdirectory(formal)
+add_subdirectory(secret)
+add_subdirectory(passes)
+add_subdirectory(lsp)
+add_subdirectory(formatter)
+add_subdirectory(repl)
+add_subdirectory(dap)
+add_subdirectory(telemetry)
+add_subdirectory(profiling)
+add_subdirectory(abi)
+add_subdirectory(incremental)
+add_subdirectory(testing)
+add_subdirectory(package)
 
 add_library(ahfl_compiler INTERFACE)
 target_link_libraries(ahfl_compiler
     INTERFACE
+        ahfl_support_lib
         ahfl_handoff
         ahfl_dry_run
         ahfl_evaluator
@@ -49,6 +64,19 @@ target_link_libraries(ahfl_compiler
         ahfl_formal
         ahfl_llm_provider
         ahfl_backend
+        ahfl_json
+        ahfl_secret
+        ahfl_passes
+        ahfl_lsp
+        ahfl_formatter
+        ahfl_repl
+        ahfl_dap
+        ahfl_telemetry
+        ahfl_profiling
+        ahfl_abi
+        ahfl_incremental
+        ahfl_testing
+        ahfl_package
 )
 
 add_library(ahfl_frontend INTERFACE)

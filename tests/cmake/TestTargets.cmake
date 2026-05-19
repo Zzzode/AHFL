@@ -279,3 +279,302 @@ target_link_libraries(ahfl_llm_provider_tests
         ahfl_llm_provider
 )
 ahfl_apply_project_warnings(ahfl_llm_provider_tests)
+
+add_executable(ahfl_value_json_tests
+    evaluator/value_json.cpp
+)
+target_link_libraries(ahfl_value_json_tests
+    PRIVATE
+        ahfl_evaluator
+)
+ahfl_apply_project_warnings(ahfl_value_json_tests)
+
+add_executable(ahfl_counterexample_parse_tests
+    formal/counterexample_parse.cpp
+)
+target_link_libraries(ahfl_counterexample_parse_tests
+    PRIVATE
+        ahfl_formal
+)
+ahfl_apply_project_warnings(ahfl_counterexample_parse_tests)
+
+add_executable(ahfl_http_transport_tests
+    runtime/http_transport.cpp
+)
+target_link_libraries(ahfl_http_transport_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_http_transport_tests)
+
+add_executable(ahfl_grpc_transport_tests
+    runtime/grpc_transport.cpp
+)
+target_link_libraries(ahfl_grpc_transport_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_grpc_transport_tests)
+
+add_executable(ahfl_json_value_tests
+    json/json_value.cpp
+)
+target_link_libraries(ahfl_json_value_tests
+    PRIVATE
+        ahfl_json
+)
+ahfl_apply_project_warnings(ahfl_json_value_tests)
+
+add_executable(ahfl_secret_provider_tests
+    secret/secret_provider.cpp
+)
+target_link_libraries(ahfl_secret_provider_tests
+    PRIVATE
+        ahfl_secret
+)
+ahfl_apply_project_warnings(ahfl_secret_provider_tests)
+
+add_executable(ahfl_vault_rotation_tests
+    secret/vault_rotation.cpp
+)
+target_link_libraries(ahfl_vault_rotation_tests
+    PRIVATE
+        ahfl_secret
+)
+ahfl_apply_project_warnings(ahfl_vault_rotation_tests)
+
+add_executable(ahfl_pass_manager_tests
+    passes/pass_manager.cpp
+)
+target_link_libraries(ahfl_pass_manager_tests
+    PRIVATE
+        ahfl_passes
+)
+ahfl_apply_project_warnings(ahfl_pass_manager_tests)
+
+add_executable(ahfl_streaming_tests
+    llm_provider/streaming.cpp
+)
+target_link_libraries(ahfl_streaming_tests
+    PRIVATE
+        ahfl_llm_provider
+)
+ahfl_apply_project_warnings(ahfl_streaming_tests)
+
+add_executable(ahfl_lsp_json_rpc_tests
+    lsp/json_rpc.cpp
+)
+target_link_libraries(ahfl_lsp_json_rpc_tests
+    PRIVATE
+        ahfl_lsp
+)
+ahfl_apply_project_warnings(ahfl_lsp_json_rpc_tests)
+
+add_executable(ahfl_lsp_handler_tests
+    lsp/server_handlers.cpp
+)
+target_link_libraries(ahfl_lsp_handler_tests
+    PRIVATE
+        ahfl_lsp
+)
+ahfl_apply_project_warnings(ahfl_lsp_handler_tests)
+
+add_executable(ahfl_connection_pool_tests
+    runtime/connection_pool.cpp
+)
+target_link_libraries(ahfl_connection_pool_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_connection_pool_tests)
+
+add_executable(ahfl_error_recovery_tests
+    frontend/error_recovery.cpp
+)
+target_link_libraries(ahfl_error_recovery_tests
+    PRIVATE
+        ahfl_frontend_lib
+)
+ahfl_apply_project_warnings(ahfl_error_recovery_tests)
+
+add_executable(ahfl_thread_pool_tests
+    support/thread_pool.cpp
+)
+target_link_libraries(ahfl_thread_pool_tests
+    PRIVATE
+        ahfl_support_lib
+)
+ahfl_apply_project_warnings(ahfl_thread_pool_tests)
+
+add_executable(ahfl_version_tests
+    support/version.cpp
+)
+target_link_libraries(ahfl_version_tests
+    PRIVATE
+        ahfl_support_lib
+)
+ahfl_apply_project_warnings(ahfl_version_tests)
+
+add_executable(ahfl_bmc_tests
+    formal/bmc.cpp
+)
+target_link_libraries(ahfl_bmc_tests
+    PRIVATE
+        ahfl_formal
+)
+ahfl_apply_project_warnings(ahfl_bmc_tests)
+
+add_executable(ahfl_model_checker_tests
+    formal/model_checker_backends.cpp
+)
+target_link_libraries(ahfl_model_checker_tests
+    PRIVATE
+        ahfl_formal
+)
+ahfl_apply_project_warnings(ahfl_model_checker_tests)
+
+add_executable(ahfl_formal_integration_tests
+    formal/integration_improvement.cpp
+)
+target_link_libraries(ahfl_formal_integration_tests
+    PRIVATE
+        ahfl_formal
+)
+ahfl_apply_project_warnings(ahfl_formal_integration_tests)
+
+add_executable(ahfl_parallel_scheduler_tests
+    runtime/parallel_scheduler.cpp
+)
+target_link_libraries(ahfl_parallel_scheduler_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_parallel_scheduler_tests)
+
+add_executable(ahfl_sandbox_tests
+    runtime/sandbox.cpp
+)
+target_link_libraries(ahfl_sandbox_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_sandbox_tests)
+
+add_executable(ahfl_distributed_tests
+    runtime/distributed.cpp
+)
+target_link_libraries(ahfl_distributed_tests
+    PRIVATE
+        ahfl_runtime
+)
+ahfl_apply_project_warnings(ahfl_distributed_tests)
+
+add_executable(ahfl_formatter_tests
+    formatter/formatter.cpp
+)
+target_link_libraries(ahfl_formatter_tests
+    PRIVATE
+        ahfl_formatter
+)
+ahfl_apply_project_warnings(ahfl_formatter_tests)
+
+add_executable(ahfl_repl_tests
+    repl/repl.cpp
+)
+target_link_libraries(ahfl_repl_tests
+    PRIVATE
+        ahfl_repl
+)
+ahfl_apply_project_warnings(ahfl_repl_tests)
+
+add_executable(ahfl_dap_tests
+    dap/dap_basic.cpp
+)
+target_link_libraries(ahfl_dap_tests
+    PRIVATE
+        ahfl_dap
+)
+ahfl_apply_project_warnings(ahfl_dap_tests)
+
+add_executable(ahfl_telemetry_tests
+    telemetry/telemetry.cpp
+)
+target_link_libraries(ahfl_telemetry_tests
+    PRIVATE
+        ahfl_telemetry
+)
+ahfl_apply_project_warnings(ahfl_telemetry_tests)
+
+add_executable(ahfl_profiling_tests
+    profiling/profiling.cpp
+)
+target_link_libraries(ahfl_profiling_tests
+    PRIVATE
+        ahfl_profiling
+)
+ahfl_apply_project_warnings(ahfl_profiling_tests)
+
+add_executable(ahfl_abi_tests
+    abi/abi_compat.cpp
+)
+target_link_libraries(ahfl_abi_tests
+    PRIVATE
+        ahfl_abi
+)
+ahfl_apply_project_warnings(ahfl_abi_tests)
+
+add_executable(ahfl_incremental_tests
+    incremental/incremental.cpp
+)
+target_link_libraries(ahfl_incremental_tests
+    PRIVATE
+        ahfl_incremental
+)
+ahfl_apply_project_warnings(ahfl_incremental_tests)
+
+add_executable(ahfl_wasm_backend_tests
+    backends/wasm_backend.cpp
+)
+target_link_libraries(ahfl_wasm_backend_tests
+    PRIVATE
+        ahfl_backend_wasm
+)
+ahfl_apply_project_warnings(ahfl_wasm_backend_tests)
+
+add_executable(ahfl_target_backends_tests
+    backends/target_backends.cpp
+)
+target_link_libraries(ahfl_target_backends_tests
+    PRIVATE
+        ahfl_backend_k8s_crd
+        ahfl_backend_openapi_spec
+        ahfl_backend_terraform_gen
+)
+ahfl_apply_project_warnings(ahfl_target_backends_tests)
+
+add_executable(ahfl_package_tests
+    package/package.cpp
+)
+target_link_libraries(ahfl_package_tests
+    PRIVATE
+        ahfl_package
+)
+ahfl_apply_project_warnings(ahfl_package_tests)
+
+add_executable(ahfl_property_lowering_tests
+    property/lowering_equiv.cpp
+)
+target_link_libraries(ahfl_property_lowering_tests
+    PRIVATE
+        ahfl_testing
+)
+ahfl_apply_project_warnings(ahfl_property_lowering_tests)
+
+add_executable(ahfl_property_smv_tests
+    property/smv_syntax.cpp
+)
+target_link_libraries(ahfl_property_smv_tests
+    PRIVATE
+        ahfl_testing
+)
+ahfl_apply_project_warnings(ahfl_property_smv_tests)
