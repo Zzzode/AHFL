@@ -19,6 +19,7 @@ enum class FormalVerificationStatus {
 struct FormalCheckerOptions {
     std::optional<std::string> checker_path;
     std::optional<std::filesystem::path> model_output_path;
+    bool explain = false;
 };
 
 struct FormalVerificationResult {
@@ -32,8 +33,10 @@ struct FormalVerificationResult {
     std::vector<std::string> failing_specifications;
     std::vector<std::string> counterexample_excerpt;
     std::vector<std::string> counterexample_mappings;
+    std::string model_content;
     std::string output;
     std::string error_message;
+    std::optional<std::string> structured_explanation_json;
 };
 
 [[nodiscard]] bool is_formal_verification_success(const FormalVerificationResult &result);

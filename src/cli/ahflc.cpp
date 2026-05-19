@@ -5,6 +5,7 @@
 #include "ahfl/dry_run/runner.hpp"
 #include "ahfl/formal/checker.hpp"
 #include "ahfl/frontend/frontend.hpp"
+#include "ahfl/passes/pass_manager.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"
@@ -130,8 +131,19 @@ template <typename InputT>
     if (options.formal_model_out.has_value()) {
         formal_options.model_output_path = std::filesystem::path(*options.formal_model_out);
     }
+    formal_options.explain = options.explain_requested;
 
     const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
+
+    if (options.explain_requested && result.status == ahfl::formal::FormalVerificationStatus::Failed) {
+        if (result.structured_explanation_json.has_value()) {
+            std::cout << *result.structured_explanation_json << '\n';
+        } else {
+            ahfl::formal::print_formal_verification_report(result, std::cerr);
+        }
+        return 1;
+    }
+
     ahfl::formal::print_formal_verification_report(
         result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);
     return ahfl::formal::is_formal_verification_success(result) ? 0 : 1;
@@ -269,6 +281,10 @@ run_analysis_pipeline(const CommandLineOptions &options,
 
     if (package_metadata != nullptr) {
         auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+        if (options.optimize_requested) {
+            auto pm = ahfl::passes::create_default_pipeline();
+            static_cast<void>(pm->run(ir_program));
+        }
         auto metadata_validation =
             ahfl::handoff::validate_package_metadata(ir_program, *package_metadata);
         render_diagnostics(metadata_validation, std::nullopt, std::cerr);
@@ -472,6 +488,16 @@ run_analysis_pipeline(const CommandLineOptions &options,
             continue;
         }
 
+        if (argument == "--explain") {
+            options.explain_requested = true;
+            continue;
+        }
+
+        if (argument == "--optimize" || argument == "-O") {
+            options.optimize_requested = true;
+            continue;
+        }
+
         const auto command = command_token_to_kind(argument);
         if (command.has_value() && !options.selected_command.has_value() &&
             options.positional.empty()) {
@@ -589,6 +615,12 @@ int run_cli(std::span<const std::string_view> arguments) {
 
     if (options.formal_model_out.has_value() && effective_command != CommandKind::VerifyFormal) {
         std::cerr << "error: --formal-model-out is only supported with verify-formal\n";
+        print_usage(std::cerr);
+        return 2;
+    }
+
+    if (options.explain_requested && effective_command != CommandKind::VerifyFormal) {
+        std::cerr << "error: --explain is only supported with verify-formal\n";
         print_usage(std::cerr);
         return 2;
     }
