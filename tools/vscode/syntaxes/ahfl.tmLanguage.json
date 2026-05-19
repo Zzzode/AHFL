@@ -1,0 +1,74 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AHFL",
+  "scopeName": "source.ahfl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#keywords" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#types" },
+    { "include": "#declarations" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.ahfl", "match": "//.*$" },
+        { "name": "comment.block.ahfl", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.ahfl",
+          "match": "\\b(if|else|match|for|while|return|goto|let)\\b"
+        },
+        {
+          "name": "keyword.declaration.ahfl",
+          "match": "\\b(agent|workflow|capability|contract|flow|struct|type|module|import)\\b"
+        },
+        {
+          "name": "keyword.other.ahfl",
+          "match": "\\b(input|output|context|states|initial|final|capabilities|transition|node|requires|ensures|invariant|always|eventually|never|called|quota)\\b"
+        },
+        {
+          "name": "constant.language.ahfl",
+          "match": "\\b(true|false|null)\\b"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.ahfl",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.ahfl", "match": "\\\\." }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.ahfl", "match": "\\b[0-9]+(\\.[0-9]+)?\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.ahfl",
+          "match": "\\b(String|Int|Float|Bool|Duration|List|Map|Option|Result)\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "entity.name.type.ahfl",
+          "match": "(?<=\\b(agent|workflow|struct|type|capability)\\s+)[A-Z][A-Za-z0-9_]*"
+        }
+      ]
+    }
+  }
+}

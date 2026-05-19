@@ -1,0 +1,39 @@
+{
+  "name": "ahfl-language",
+  "displayName": "AHFL Language Support",
+  "description": "Language support for AHFL (Agent Handoff Flow Language)",
+  "version": "0.1.0",
+  "publisher": "ahfl",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Snippets", "Linters"],
+  "activationEvents": ["onLanguage:ahfl"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "ahfl",
+      "aliases": ["AHFL", "ahfl"],
+      "extensions": [".ahfl"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "ahfl",
+      "scopeName": "source.ahfl",
+      "path": "./syntaxes/ahfl.tmLanguage.json"
+    }],
+    "snippets": [{
+      "language": "ahfl",
+      "path": "./snippets/ahfl.json"
+    }]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "vscode-languageclient": "^9.0.1"
+  }
+}
