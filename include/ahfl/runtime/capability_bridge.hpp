@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -20,6 +23,7 @@ enum class CapabilityCallStatus {
     Error,
     Timeout,
     RetryExhausted,
+    CircuitOpen,
 };
 
 // Capability 调用结果
@@ -42,12 +46,40 @@ struct TimeoutConfig {
     std::chrono::milliseconds deadline{30000};
 };
 
+// Circuit Breaker 配置
+struct CircuitBreakerConfig {
+    std::size_t failure_threshold{5};
+    std::chrono::seconds recovery_window{30};
+    bool enabled{false};
+};
+
+// Circuit Breaker 状态（线程安全，通过 shared_ptr 共享给 handler lambda）
+class CircuitBreakerState {
+  public:
+    enum class State { Closed, Open, HalfOpen };
+
+    explicit CircuitBreakerState(CircuitBreakerConfig config) : config_(config) {}
+
+    [[nodiscard]] State current_state();
+    void record_success();
+    void record_failure();
+
+  private:
+    CircuitBreakerConfig config_;
+    std::mutex mutex_;
+    State state_{State::Closed};
+    std::size_t failure_count_{0};
+    std::chrono::steady_clock::time_point opened_at_{};
+};
+
 // 单个 Capability 的绑定定义
 struct CapabilityBinding {
     std::string name;
     std::function<CapabilityCallResult(const std::vector<Value> &args)> handler;
     RetryConfig retry;
     TimeoutConfig timeout;
+    CircuitBreakerConfig circuit_breaker;
+    std::shared_ptr<CircuitBreakerState> circuit_state;
 };
 
 // Capability 注册中心
@@ -68,28 +100,30 @@ class CapabilityRegistry {
   private:
     std::unordered_map<std::string, CapabilityBinding> bindings_;
 
-    [[nodiscard]] CapabilityCallResult invoke_with_retry(const CapabilityBinding &binding,
+    [[nodiscard]] CapabilityCallResult invoke_with_retry(CapabilityBinding &binding,
                                                          const std::vector<Value> &args);
 };
 
-// HTTP Capability 工厂 (stub)
+// HTTP Capability 工厂
 struct HTTPCapabilityConfig {
     std::string url;
     std::string method{"POST"};
     std::unordered_map<std::string, std::string> headers;
     RetryConfig retry;
     TimeoutConfig timeout;
+    CircuitBreakerConfig circuit_breaker;
 };
 [[nodiscard]] CapabilityBinding make_http_capability(const std::string &name,
                                                      HTTPCapabilityConfig config);
 
-// gRPC Capability 工厂 (stub)
+// gRPC Capability 工厂 (JSON Transcoding mode)
 struct GRPCCapabilityConfig {
     std::string endpoint;
     std::string service;
     std::string method;
     RetryConfig retry;
     TimeoutConfig timeout;
+    CircuitBreakerConfig circuit_breaker;
 };
 [[nodiscard]] CapabilityBinding make_grpc_capability(const std::string &name,
                                                      GRPCCapabilityConfig config);
