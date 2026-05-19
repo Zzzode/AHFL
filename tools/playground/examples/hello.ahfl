@@ -1,0 +1,48 @@
+// Hello World - Basic AHFL Agent
+
+agent Greeter {
+    states {
+        idle,
+        greeting,
+        done
+    }
+
+    transitions {
+        idle -> greeting on receive_name,
+        greeting -> done on greet_complete
+    }
+
+    capabilities {
+        text_generation
+    }
+}
+
+struct GreetRequest {
+    name: String;
+    language: String;
+}
+
+struct GreetResponse {
+    message: String;
+    timestamp: Int;
+}
+
+workflow HelloWorkflow {
+    input: GreetRequest;
+    output: GreetResponse;
+
+    node prepare {
+        input: GreetRequest;
+        output: String;
+    }
+
+    node generate {
+        input: String;
+        output: GreetResponse;
+        capability: text_generation;
+    }
+
+    flow {
+        prepare -> generate
+    }
+}

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AHFL Playground</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: #2d2d2d;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #404040;
+        }
+        header h1 { font-size: 18px; color: #569cd6; }
+        .toolbar { display: flex; gap: 8px; }
+        .toolbar button {
+            background: #0e639c;
+            color: white;
+            border: none;
+            padding: 6px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .toolbar button:hover { background: #1177bb; }
+        .toolbar select {
+            background: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .panel-header {
+            background: #252526;
+            padding: 8px 16px;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+            border-bottom: 1px solid #404040;
+        }
+        .panel-content {
+            flex: 1;
+            overflow: auto;
+            padding: 16px;
+            font-family: 'Fira Code', 'Cascadia Code', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        #editor { background: #1e1e1e; }
+        #output { background: #1a1a1a; }
+        .divider {
+            width: 2px;
+            background: #404040;
+            cursor: col-resize;
+        }
+        #editor textarea {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            color: #d4d4d4;
+            border: none;
+            resize: none;
+            outline: none;
+            font-family: inherit;
+            font-size: inherit;
+            line-height: inherit;
+        }
+        #output-content {
+            white-space: pre-wrap;
+        }
+        .error { color: #f48771; }
+        .success { color: #89d185; }
+        .info { color: #569cd6; }
+        footer {
+            background: #007acc;
+            padding: 4px 16px;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>AHFL Playground</h1>
+        <div class="toolbar">
+            <select id="examples">
+                <option value="">Load Example...</option>
+                <option value="hello">Hello Agent</option>
+                <option value="workflow">Basic Workflow</option>
+            </select>
+            <button id="btn-compile">Compile</button>
+            <button id="btn-verify">Verify</button>
+            <button id="btn-format">Format</button>
+        </div>
+    </header>
+    <main>
+        <div class="panel">
+            <div class="panel-header">Source</div>
+            <div class="panel-content" id="editor">
+                <textarea id="source" spellcheck="false" placeholder="// Write AHFL code here..."></textarea>
+            </div>
+        </div>
+        <div class="divider"></div>
+        <div class="panel">
+            <div class="panel-header">Output</div>
+            <div class="panel-content" id="output">
+                <div id="output-content" class="info">Ready. Write some AHFL code and click Compile.</div>
+            </div>
+        </div>
+    </main>
+    <footer>
+        <span>AHFL Compiler v0.59 (WASM)</span>
+        <span id="status">Ready</span>
+    </footer>
+    <script type="module" src="src/compiler.ts"></script>
+</body>
+</html>
