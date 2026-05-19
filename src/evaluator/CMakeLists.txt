@@ -1,5 +1,6 @@
 add_library(ahfl_evaluator STATIC
     value.cpp
+    value_json.cpp
     eval_context.cpp
     evaluator.cpp
     executor.cpp

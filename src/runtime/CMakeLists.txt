@@ -3,6 +3,13 @@ add_library(ahfl_runtime STATIC
     workflow_runtime.cpp
     capability_bridge.cpp
     capability_eval.cpp
+    connection_pool.cpp
+    http_transport.cpp
+    grpc_transport.cpp
+    parallel_scheduler.cpp
+    data_pipeline.cpp
+    sandbox.cpp
+    distributed.cpp
 )
 
 target_link_libraries(ahfl_runtime
