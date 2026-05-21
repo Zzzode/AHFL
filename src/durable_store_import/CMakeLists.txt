@@ -1,46 +1,61 @@
-add_library(ahfl_durable_store_import STATIC
+set(AHFL_DURABLE_STORE_IMPORT_CORE_SOURCES
     adapter_execution.cpp
     decision.cpp
     decision_review.cpp
-    provider_approval_workflow.cpp
-    provider_config.cpp
-    provider_conformance.cpp
     receipt.cpp
     receipt_persistence.cpp
     receipt_persistence_response.cpp
     receipt_persistence_response_review.cpp
     receipt_persistence_review.cpp
-    provider_adapter.cpp
-    provider_driver.cpp
-    provider_host_execution.cpp
-    provider_local_filesystem_alpha.cpp
-    provider_audit.cpp
-    provider_compatibility.cpp
-    provider_local_host_execution.cpp
-    provider_local_host_harness.cpp
-    provider_production_readiness.cpp
-    provider_registry.cpp
-    provider_runtime.cpp
-    provider_sdk_adapter.cpp
-    provider_sdk_interface.cpp
-    provider_sdk_mock_adapter.cpp
-    provider_sdk_payload.cpp
-    provider_secret.cpp
-    provider_sdk.cpp
-    provider_retry.cpp
-    provider_recovery.cpp
-    provider_failure_taxonomy.cpp
-    provider_schema_compatibility.cpp
-    provider_commit.cpp
-    provider_config_bundle_validation.cpp
-    provider_opt_in_guard.cpp
-    provider_runtime_policy.cpp
-    provider_production_integration_dry_run.cpp
-    provider_release_evidence_archive.cpp
     recovery_preview.cpp
     receipt_review.cpp
     request.cpp
     review.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_BINDING_SOURCES
+    provider/binding.cpp
+    provider/artifacts.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_RUNTIME_SOURCES
+    provider/runtime.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_EXECUTION_SOURCES
+    provider/execution.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_SDK_SOURCES
+    provider/sdk.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_CONFIGURATION_SOURCES
+    provider/configuration.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_RELIABILITY_SOURCES
+    provider/reliability.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_GOVERNANCE_SOURCES
+    provider/governance.cpp
+)
+
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_PRODUCTION_SOURCES
+    provider/production.cpp
+)
+
+add_library(ahfl_durable_store_import STATIC
+    ${AHFL_DURABLE_STORE_IMPORT_CORE_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_BINDING_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_RUNTIME_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_EXECUTION_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_SDK_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_CONFIGURATION_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_RELIABILITY_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_GOVERNANCE_SOURCES}
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_PRODUCTION_SOURCES}
 )
 
 target_link_libraries(ahfl_durable_store_import
