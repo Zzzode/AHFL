@@ -7,16 +7,12 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include "ahfl/support/overloaded.hpp"
 
 namespace ahfl {
 
 namespace {
 
-template <typename... Ts> struct Overloaded : Ts... {
-    using Ts::operator()...;
-};
-
-template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
 
 void line(std::ostream &out, int indent_level, std::string_view text) {
     out << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';

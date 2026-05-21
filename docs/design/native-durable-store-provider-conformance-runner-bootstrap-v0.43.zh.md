@@ -75,6 +75,6 @@ ahfl.durable-store-import-provider-conformance-report.v1
 | 文件 | 角色 |
 |------|------|
 | `include/ahfl/durable_store_import/provider_conformance.hpp` | 数据结构定义 |
-| `include/ahfl/backends/durable_store_import_provider_conformance_report.hpp` | Print 函数声明 |
+| `include/ahfl/durable_store_import/artifacts.hpp` | Print 函数声明 |
 | `src/durable_store_import/provider_conformance.cpp` | 验证与构建逻辑 |
-| `src/backends/durable_store_import_provider_conformance_report.cpp` | Print 实现 |
+| `src/durable_store_import/artifacts.cpp` | Print 实现 |

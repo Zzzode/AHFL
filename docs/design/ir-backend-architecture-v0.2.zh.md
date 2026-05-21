@@ -293,17 +293,25 @@ program_ir.formal_observations = collect_formal_observations(program_ir)
 
 - `BackendKind::Ir`
 - `BackendKind::IrJson`
+- `BackendKind::NativeJson`
+- `BackendKind::ExecutionPlan`
+- `BackendKind::PackageReview`
+- `BackendKind::Summary`
 - `BackendKind::Smv`
+- `BackendKind::AssuranceJson`
 
 driver 只暴露一组 backend-facing 入口：
 
 1. 直接消费 `ir::Program`
+2. 通过 `BackendRegistry` 查找已注册的 core backend
+3. `emit_backend(...)` 返回布尔状态，调用方必须处理未注册 backend
 
 其设计意图是：
 
 1. backend 的公共 seam 固定在 IR，不让 AST / SourceGraph 泄漏给 backend。
 2. CLI 可以用统一入口分发 backend。
 3. lowering 逻辑集中在 CLI pipeline 和 IR 层，而不是散落到各 backend。
+4. core backend 分发必须 fail-closed，而不是静默吞掉未注册 backend。
 
 ### driver 该做什么
 
@@ -318,7 +326,20 @@ driver 只暴露一组 backend-facing 入口：
 - 直接读取文件
 - 在 driver 内部写 backend-specific 语义分支
 
-## 当前三个 backend 的边界
+## Backend 与 Artifact Pipeline 的边界
+
+当前仓库存在四类相邻但不同的输出层：
+
+1. Core backend：消费 `ir::Program`，通过 `BackendKind` / `BackendRegistry` / `emit_backend(...)` 分发。
+2. Runtime artifact pipeline：消费 package metadata、execution plan、dry-run trace、runtime session、checkpoint、persistence、durable-store 等 machine artifact，由 `dispatch_package_command(...)` 显式分发。
+3. Durable store import artifact emitter：消费 `ahfl::durable_store_import` 领域模型，位于 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/durable_store_import/artifacts.cpp`，由 `ahfl_durable_store_import_artifacts` 构建目标承载。
+4. Target generator：消费目标平台专用 config，例如 WASM、K8s CRD、OpenAPI、Terraform。
+
+这四类不能被混称为同一种 backend。若一个输出需要沿 runtime artifact chain 逐层构造状态，它应落在 package pipeline；若它只把稳定 IR 渲染成目标格式，它才应接入 core backend registry。
+
+`src/backends` 不承载 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等 artifact printer。这些 printer 不是 compiler backend：它们不消费 `ir::Program`，而是序列化 durable-store import 的领域 artifact。把它们收敛到 `src/durable_store_import/artifacts.cpp` 可以让 backend Module 保持 IR-facing，让 durable-store import Module 自己拥有 artifact 输出 Locality，同时避免每个 artifact 一对浅 header/source。
+
+## 当前 core backend 的边界
 
 ### 1. Text IR
 
@@ -350,6 +371,12 @@ SMV 具体语义边界由 [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.m
 1. SMV 是 IR 之上的具体 emitter。
 2. 它可以使用 `formal_observations`，但不拥有 observation 模型本身。
 3. 它不应越过 IR 回头读 AST 或 parse tree。
+
+### 4. Native / execution / review / assurance 输出
+
+`NativeJson`、`ExecutionPlan`、`PackageReview` 与 `AssuranceJson` 仍以 `ir::Program` 为入口。它们可以投影到 handoff 或 assurance 子模型，但不应从 CLI、AST 或项目描述符重新推导语义。
+
+其中 `emit-execution-plan` 在带 package metadata 的 CLI 路径下可走 package pipeline，以便输出诊断；在无 package metadata 的路径下仍保留 core backend fallback。
 
 ## 扩展落点指南
 
@@ -386,11 +413,10 @@ SMV 具体语义边界由 [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.m
 
 建议顺序：
 
-1. 复用现有 `emit_backend(...)` driver。
-2. 明确它消费的是：
-   - `ir::Program`
-   - 还是某个更窄的 backend-specific 子模型。
-3. 若它需要的语义已有多个 backend 会共享，先把该语义推进 IR。
+1. 先判断它是 core backend、runtime artifact pipeline，还是 target generator。
+2. 若是 core backend，扩展 `BackendKind` 并通过 `BackendRegistrar` 注册到 `BackendRegistry`。
+3. 若是 runtime artifact pipeline，沿已有 artifact chain 增加 helper / printer / dispatcher；durable-store import printer 必须放在 `artifacts.hpp` / `artifacts.cpp` 这个 seam 下，不要放回 `src/backends`。
+4. 若它需要的语义已有多个 backend 会共享，先把该语义推进 IR。
 
 ## 推荐阅读顺序
 
@@ -418,3 +444,5 @@ SMV 具体语义边界由 [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.m
 3. observation 命名由 IR 统一定义，不由 backend 各自发明。
 4. backend 只消费稳定语义结果，不回头接触 parser、AST 或文件系统。
 5. 若某项语义不能稳定进入 IR，就说明它还没有准备好成为 backend 约束。
+6. CLI 必须显式区分 core backend command 与 package pipeline command，不能靠“dispatcher 试试看”来决定语义路径。
+7. Durable-store import artifact printer 必须链接到 `ahfl_durable_store_import_artifacts`，不能作为 `ahfl_backend_*` target 进入 backend aggregate。

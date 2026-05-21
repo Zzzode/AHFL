@@ -145,6 +145,21 @@ AHFL/
 2. 不在这一层承载 CLI 参数解析或 runtime deployment 细节
 3. 不把 handoff package 反向塞回 `ir` 或 `backends` 的私有实现
 
+### `include/ahfl/durable_store_import` + `src/durable_store_import`
+
+放 durable-store import 的领域模型、validator、builder 与 artifact printer：
+
+- request / review / decision / receipt
+- provider driver / runtime / SDK / host execution 相关 artifact
+- `artifacts.hpp` / `artifacts.cpp` 下的 JSON / review printer
+
+要求：
+
+1. 领域模型与校验留在 `durable_store_import` Module 内
+2. artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，由 `ahfl_durable_store_import_artifacts` 承载
+3. 不把 request / review / decision / receipt / provider SDK adapter printer 放回 `backends`
+4. 不在 artifact printer 中执行网络、secret、host env、filesystem write 等副作用
+
 ### `include/ahfl/backends` + `src/backends`
 
 放 backend driver 与 backend-specific lowering：
@@ -157,6 +172,7 @@ AHFL/
 
 1. 只消费 validate 后语义模型与稳定 IR
 2. 抽象边界必须有文档，不允许藏在 emitter 实现里
+3. 不承载 durable-store import artifact printer；这些属于 `durable_store_import` 的 `artifacts.hpp` / `artifacts.cpp` seam
 
 ### `src/cli`
 

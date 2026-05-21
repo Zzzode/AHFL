@@ -49,9 +49,9 @@ ahflc emit-durable-store-import-provider-config-bundle-validation-report \
 
 ```
 include/ahfl/durable_store_import/provider_config_bundle_validation.hpp
-include/ahfl/backends/durable_store_import_provider_config_bundle_validation_report.hpp
+include/ahfl/durable_store_import/artifacts.hpp
 src/durable_store_import/provider_config_bundle_validation.cpp
-src/backends/durable_store_import_provider_config_bundle_validation_report.cpp
+src/durable_store_import/artifacts.cpp
 tests/config_bundle/config_bundle_validation.cpp
 ```
 

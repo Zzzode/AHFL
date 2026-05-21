@@ -159,7 +159,7 @@ add_executable(ahfl_schema_compatibility_tests
 )
 target_link_libraries(ahfl_schema_compatibility_tests
     PRIVATE
-        ahfl_backend_durable_store_import_provider_schema_compatibility_report
+        ahfl_durable_store_import_artifacts
 )
 ahfl_apply_project_warnings(ahfl_schema_compatibility_tests)
 
@@ -540,6 +540,25 @@ target_link_libraries(ahfl_wasm_backend_tests
         ahfl_backend_wasm
 )
 ahfl_apply_project_warnings(ahfl_wasm_backend_tests)
+
+add_executable(ahfl_backend_registry_tests
+    backends/registry.cpp
+)
+target_link_libraries(ahfl_backend_registry_tests
+    PRIVATE
+        ahfl_backend
+)
+ahfl_apply_project_warnings(ahfl_backend_registry_tests)
+
+add_executable(ahfl_cli_command_routing_tests
+    cli/command_routing.cpp
+    ${PROJECT_SOURCE_DIR}/src/cli/command_catalog.cpp
+)
+target_link_libraries(ahfl_cli_command_routing_tests
+    PRIVATE
+        ahfl_support
+)
+ahfl_apply_project_warnings(ahfl_cli_command_routing_tests)
 
 add_executable(ahfl_target_backends_tests
     backends/target_backends.cpp

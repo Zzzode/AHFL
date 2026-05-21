@@ -1,6 +1,7 @@
 #include "ahfl/assurance/assurance.hpp"
 
 #include "ahfl/support/json.hpp"
+#include "ahfl/support/overloaded.hpp"
 
 #include <algorithm>
 #include <map>
@@ -11,11 +12,6 @@
 namespace ahfl::assurance {
 namespace {
 
-template <typename... Ts> struct Overloaded : Ts... {
-    using Ts::operator()...;
-};
-
-template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
 
 [[nodiscard]] std::string_view effect_kind_name(ir::CapabilityEffectKind kind) {
     switch (kind) {

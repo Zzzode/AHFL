@@ -215,8 +215,7 @@ future consumer 目前应采用下列迁移原则：
    - `tests/durable_store_import/request.cpp`
 3. CLI / backend 输出
    - `src/cli/ahflc.cpp`
-   - `src/backends/durable_store_import_request.cpp`
-   - `src/backends/durable_store_import_review.cpp`
+   - `src/durable_store_import/artifacts.cpp`
 4. golden / label / CI
    - `tests/durable_store_import/`
    - `tests/cmake/SingleFileCliTests.cmake`

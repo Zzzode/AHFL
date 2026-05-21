@@ -4000,6 +4000,14 @@ add_test(NAME ahfl.backends.wasm_all
     COMMAND $<TARGET_FILE:ahfl_wasm_backend_tests>
 )
 
+add_test(NAME ahfl.backends.registry_all
+    COMMAND $<TARGET_FILE:ahfl_backend_registry_tests>
+)
+
+add_test(NAME ahfl.cli.command_routing_all
+    COMMAND $<TARGET_FILE:ahfl_cli_command_routing_tests>
+)
+
 add_test(NAME ahfl.backends.targets_all
     COMMAND $<TARGET_FILE:ahfl_target_backends_tests>
 )

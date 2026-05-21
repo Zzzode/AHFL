@@ -143,6 +143,13 @@ AHFL 当前 backend 相关代码分布在：
 - `include/ahfl/backends/<name>.hpp`
 - `src/backends/<name>.cpp`
 
+这里的“backend”只指消费 `ir::Program` 的 compiler-facing emitter。若输出消费的是 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等领域 artifact，它不是 backend；它应放在：
+
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
+
+并由 `ahfl_durable_store_import_artifacts` 构建目标承载。不要为每一种 durable-store import artifact 新增一对 header/source；新增 printer 应扩展这个 artifact emitter Module 的门面和实现。
+
 其核心职责应是：
 
 1. 消费 `ir::Program`
@@ -156,16 +163,18 @@ AHFL 当前 backend 相关代码分布在：
 
 ## 第四步：接入 driver
 
-新增 backend 后，应按统一方式接入：
+新增 core backend 后，应按统一方式接入：
 
 1. 扩展 `BackendKind`
-2. 在 `emit_backend(BackendKind, const ir::Program &, ...)` 中新增分支
+2. 在 `src/backends/driver.cpp` 中用 `BackendRegistrar` 注册 `BackendEntry`
 3. 让 CLI pipeline 在 validate 成功后先 lower 成 `ir::Program`，再调用 driver
+4. 检查 `emit_backend(...)` 的布尔返回值，未注册 backend 必须作为错误处理
 
 这一步的设计目标是：
 
 - 所有 backend 仍然共享统一分发入口
 - backend-facing seam 保持 IR-only，不让 AST / SourceGraph 泄漏到 backend driver
+- registry 是 fail-closed 分发点，而不是 best-effort 输出
 
 不要为了一个新 backend 绕过 `driver.cpp`，直接在 CLI 中调用专用实现。
 
@@ -175,7 +184,8 @@ CLI 接入应尽量是薄的一层：
 
 1. 增加 action flag
 2. 更新 usage
-3. 在 validate 成功后调用 `emit_backend(...)`
+3. 在 command catalog 中把命令映射到 `core_backend_for_command(...)`
+4. 在 validate 成功后调用 `emit_backend(...)`
 
 CLI 仍然不应理解：
 
@@ -183,6 +193,8 @@ CLI 仍然不应理解：
 - 某个 backend 的私有语义判定
 
 如果新增 backend 需要 CLI 写一大段专属编排，通常说明 backend/driver 边界还没抽清。
+
+若新增的是 runtime-adjacent artifact command，不要接入 `BackendKind`。它应沿 `dispatch_package_command(...)` 所代表的 package pipeline 扩展，并显式声明自己消费哪一层 artifact。Durable-store import artifact printer 不能放在 `src/backends`，也不能新增 `ahfl_backend_durable_store_import_*` target。
 
 ## 新 backend 的最小测试面
 
@@ -257,6 +269,7 @@ CLI 仍然不应理解：
 
 1. CLI 变成实现层
 2. project-aware 和单文件路径容易分叉失控
+3. core backend command 与 runtime artifact command 的路由变成隐式试探
 
 ### 3. 把 backend 私有抽象偷偷塞成 IR 唯一语义
 
@@ -282,10 +295,11 @@ CLI 仍然不应理解：
 4. 至少一个 golden
 5. 若涉及共享边界变化，补 IR/JSON golden
 6. 一篇 design 或 reference 文档
+7. registry / command routing 覆盖，确认命令不会静默落空
 
 若是抽象语义 backend，通常还应补：
 
-7. 单独的 boundary 文档
+8. 单独的 boundary 文档
 
 ## V0.6 Runtime-Adjacent 扩展模板
 
@@ -296,7 +310,7 @@ CLI 仍然不应理解：
   -> 若需要共享 planning 语义，先扩 handoff::ExecutionPlan
   -> 若需要共享 dry-run 输入，先扩 CapabilityMockSet / DryRunRequest
   -> 若需要共享 review 结果，先扩 DryRunTrace
-  -> 再扩 helper / runner / backend
+  -> 再扩 helper / runner / artifact printer
   -> 接入 CLI / golden / labels
   -> 更新 compatibility / consumer matrix / contributor docs
 ```
@@ -309,6 +323,8 @@ CLI 仍然不应理解：
 4. 新增 mock 输入字段时，必须同步更新 mock parser、compatibility 文档与 `tests/dry_run/`
 5. 新增 trace 稳定字段时，必须同步更新 trace compatibility 文档与 `tests/trace/`
 6. 不要把 secret、endpoint、tenant、region 或 deployment 配置塞进 plan / trace 公共层
+7. 不要把 runtime artifact command 加入 `BackendKind`，除非它已经退化成纯 `ir::Program` emitter
+8. Durable-store import artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，链接 `ahfl_durable_store_import_artifacts`
 
 ## 当前参考实现
 
