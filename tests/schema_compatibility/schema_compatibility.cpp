@@ -1,6 +1,6 @@
 #include "ahfl/durable_store_import/artifacts.hpp"
-#include "ahfl/durable_store_import/provider_artifacts.hpp"
-#include "ahfl/durable_store_import/provider_schema_compatibility.hpp"
+#include "ahfl/durable_store_import/provider/artifacts.hpp"
+#include "ahfl/durable_store_import/provider/governance/schema_compatibility.hpp"
 
 #include <cassert>
 #include <cstddef>

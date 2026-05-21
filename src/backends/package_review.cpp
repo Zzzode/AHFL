@@ -1,5 +1,7 @@
 #include "ahfl/backends/package_review.hpp"
+#include "printer_helpers.hpp"
 
+#include "ahfl/support/overloaded.hpp"
 #include <cstddef>
 #include <ostream>
 #include <string>
@@ -7,16 +9,12 @@
 #include <utility>
 #include <variant>
 #include <vector>
-#include "ahfl/support/overloaded.hpp"
 
 namespace ahfl {
 
 namespace {
 
-
-void line(std::ostream &out, int indent_level, std::string_view text) {
-    out << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
-}
+using backend_printer::line;
 
 [[nodiscard]] std::string executable_kind_name(handoff::ExecutableKind kind) {
     switch (kind) {

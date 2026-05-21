@@ -3,7 +3,7 @@
 
 // ---- provider_config.cpp ----
 
-#include "ahfl/durable_store_import/provider_config.hpp"
+#include "ahfl/durable_store_import/provider/configuration/config.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
@@ -561,7 +561,7 @@ build_provider_config_readiness_review(const ProviderConfigSnapshotPlaceholder &
 
 // ---- provider_secret.cpp ----
 
-#include "ahfl/durable_store_import/provider_secret.hpp"
+#include "ahfl/durable_store_import/provider/configuration/secret.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
@@ -1098,7 +1098,7 @@ build_provider_secret_policy_review(const ProviderSecretResolverResponsePlacehol
 
 // ---- provider_config_bundle_validation.cpp ----
 
-#include "ahfl/durable_store_import/provider_config_bundle_validation.hpp"
+#include "ahfl/durable_store_import/provider/configuration/config_bundle_validation.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>

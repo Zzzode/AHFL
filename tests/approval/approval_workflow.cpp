@@ -1,4 +1,4 @@
-#include "ahfl/durable_store_import/provider_approval_workflow.hpp"
+#include "ahfl/durable_store_import/provider/production/approval_workflow.hpp"
 
 #include <cassert>
 #include <iostream>
