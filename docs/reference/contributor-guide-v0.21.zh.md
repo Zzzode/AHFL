@@ -38,14 +38,14 @@ ctest --preset test-dev --output-on-failure -L ahfl-v0.21
 
 ### 2. 改 provider write attempt JSON 输出
 
-- `include/ahfl/backends/durable_store_import_provider_write_attempt.hpp`
-- `src/backends/durable_store_import_provider_write_attempt.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/*.durable-store-import-provider-write-attempt.json`
 
 ### 3. 改 provider recovery handoff 文本输出
 
-- `include/ahfl/backends/durable_store_import_provider_recovery_handoff.hpp`
-- `src/backends/durable_store_import_provider_recovery_handoff.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/*.durable-store-import-provider-recovery-handoff`
 
 ### 4. 改 CLI / golden / label / CI

@@ -132,7 +132,7 @@ ProjectInput
   -> Resolver::resolve(graph)
   -> TypeChecker::check(graph, ...)
   -> Validator::validate(graph, ...)
-  -> emit_backend(...) / summary
+  -> core backend / package pipeline / summary
 ```
 
 这条主链有几个刻意设计：
@@ -167,7 +167,7 @@ parse_file
   -> resolve(program)
   -> typecheck(program, ...)
   -> validate(program, ...)
-  -> emit_backend(...) / summary
+  -> core backend / package pipeline / summary
 ```
 
 和 project-aware 模式相比，差别主要在：
@@ -190,17 +190,21 @@ parse_file
 
 ## emit_backend 的位置
 
-CLI 当前所有 backend 导出都统一经由：
+CLI 当前把输出命令显式分成两类：
 
-- `emit_backend(BackendKind, ...)`
+1. Core backend command：经由 `core_backend_for_command(...)` 映射到 `BackendKind`，再调用 `emit_backend(BackendKind, ...)`。
+2. Package pipeline command：经由 `handles_package_command(...)` 判定后调用 `dispatch_package_command(...)`，沿 execution plan / runtime session / journal / replay / checkpoint / persistence / durable-store artifact chain 生成输出。
 
-在单文件和 project-aware 模式下都一致。
+在单文件和 project-aware 模式下，validate 成功之前不会进入这两类输出路径。
+
+Durable-store import 的 request / review / decision / receipt / provider SDK adapter 等输出属于 package pipeline artifact，不属于 compiler backend。CLI 可以继续通过 package pipeline 暴露这些 machine artifact，但对应 printer 应集中在 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/durable_store_import/artifacts.cpp`，并通过 `ahfl_durable_store_import_artifacts` 链接，而不是依赖 `src/backends`、`ahfl_backend_*` target，或为每个 artifact 增加一对浅 header/source。
 
 这条边界非常重要，因为它保证：
 
 1. CLI 不关心具体是文本 IR、JSON IR 还是 SMV。
-2. lowering 到 IR 的逻辑集中在 IR/backend 层，而不是 CLI。
-3. 新 backend 加入后，只需在 driver 和 CLI action 映射处补一层，而不是重写主链。
+2. lowering 到 IR 的逻辑集中在 IR/backend 层，而不是散落到各 emitter。
+3. runtime-adjacent command 不会伪装成 core backend，而是显式经过 package pipeline。
+4. `emit_backend(...)` 的未注册状态必须被调用方处理，不能静默当作成功。
 
 ## summary 输出的设计
 
@@ -258,9 +262,10 @@ project-aware 模式输出：
 
 建议顺序：
 
-1. 先在 `BackendKind` 和 driver 中加入新 backend。
-2. 再在 CLI 中加入 action flag 和 usage 文本。
-3. 让 CLI 仍通过统一 `emit_backend(...)` 入口调用。
+1. 先判断命令属于 core backend 还是 package pipeline。
+2. Core backend：在 `BackendKind` 和 driver registry 中加入新 backend，再接入 `core_backend_for_command(...)`。
+3. Package pipeline：先扩展 artifact helper / printer，再接入 `dispatch_package_command(...)`；durable-store import printer 放在 `artifacts.hpp` / `artifacts.cpp` seam。
+4. 再在 CLI 中加入 action flag、usage 文本、golden 与标签。
 
 ### 新增 project-aware 选项
 

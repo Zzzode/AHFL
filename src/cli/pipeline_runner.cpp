@@ -245,18 +245,31 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
     {CommandKind::EmitExecutionPlan, invoke_execution_plan_command},
 };
 
-[[nodiscard]] std::optional<int>
-dispatch_package_command_impl(CommandKind command, const PackagePipelineContext &context) {
+[[nodiscard]] const PackageCommandDispatchEntry *find_package_command(CommandKind command) {
     for (const auto &entry : kPackageCommandDispatch) {
         if (entry.kind == command) {
-            return entry.handler(context);
+            return &entry;
         }
     }
 
-    return std::nullopt;
+    return nullptr;
+}
+
+[[nodiscard]] std::optional<int>
+dispatch_package_command_impl(CommandKind command, const PackagePipelineContext &context) {
+    const auto *entry = find_package_command(command);
+    if (entry == nullptr) {
+        return std::nullopt;
+    }
+
+    return entry->handler(context);
 }
 
 } // namespace
+
+bool handles_package_command(CommandKind command) {
+    return find_package_command(command) != nullptr;
+}
 
 std::optional<int> dispatch_package_command(CommandKind command,
                                             const ahfl::ir::Program &program,

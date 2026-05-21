@@ -773,7 +773,7 @@ void print_usage_line(std::ostream &out, CommandKind command) {
 }
 
 [[nodiscard]] std::optional<ahfl::BackendKind>
-selected_backend_for_command(std::optional<CommandKind> command) {
+core_backend_for_command(std::optional<CommandKind> command) {
     if (!command.has_value()) {
         return std::nullopt;
     }
@@ -798,6 +798,10 @@ selected_backend_for_command(std::optional<CommandKind> command) {
     default:
         return std::nullopt;
     }
+}
+
+[[nodiscard]] bool is_core_backend_command(CommandKind command) {
+    return core_backend_for_command(command).has_value();
 }
 
 void set_command_option(CommandLineOptions &options, CommandKind command) {

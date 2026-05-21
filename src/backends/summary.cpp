@@ -5,15 +5,11 @@
 #include <string_view>
 #include <variant>
 
+#include "ahfl/support/overloaded.hpp"
 namespace ahfl {
 
 namespace {
 
-template <typename... Ts> struct Overloaded : Ts... {
-    using Ts::operator()...;
-};
-
-template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
 
 struct SummaryStats {
     std::size_t declarations_with_provenance{0};

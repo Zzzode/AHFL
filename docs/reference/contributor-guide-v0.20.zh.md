@@ -41,13 +41,12 @@ ctest --preset test-dev --output-on-failure -L ahfl-v0.20
 
 - `include/ahfl/durable_store_import/recovery_preview.hpp`
 - `src/durable_store_import/recovery_preview.cpp`
-- `src/backends/durable_store_import_recovery_preview.cpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/*.durable-store-import-recovery-preview`
 
 ### 3. 改 CLI / backend 输出
 
-- `include/ahfl/backends/durable_store_import_adapter_execution.hpp`
-- `include/ahfl/backends/durable_store_import_recovery_preview.hpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
 - `src/backends/CMakeLists.txt`
 - `src/cli/command_catalog.cpp`
 - `src/cli/pipeline_runner.cpp`

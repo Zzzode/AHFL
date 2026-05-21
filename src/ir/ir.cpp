@@ -1,6 +1,8 @@
 #include "ahfl/ir/ir.hpp"
 
 #include "ahfl/frontend/frontend.hpp"
+#include "ahfl/support/overloaded.hpp"
+#include "ahfl/support/string_utils.hpp"
 
 #include <cctype>
 #include <cstddef>
@@ -15,54 +17,6 @@
 namespace ahfl {
 
 namespace {
-
-template <typename... Ts> struct Overloaded : Ts... {
-    using Ts::operator()...;
-};
-
-template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
-
-[[nodiscard]] std::string join(const std::vector<std::string> &parts, std::string_view delimiter) {
-    std::ostringstream builder;
-
-    for (std::size_t index = 0; index < parts.size(); ++index) {
-        if (index != 0) {
-            builder << delimiter;
-        }
-
-        builder << parts[index];
-    }
-
-    return builder.str();
-}
-
-[[nodiscard]] std::string sanitize_identifier(std::string_view name) {
-    std::string sanitized;
-    sanitized.reserve(name.size() + 2);
-
-    for (const auto character : name) {
-        if (std::isalnum(static_cast<unsigned char>(character)) != 0) {
-            sanitized.push_back(character);
-        } else {
-            sanitized.push_back('_');
-        }
-    }
-
-    while (sanitized.find("__") != std::string::npos) {
-        sanitized.replace(sanitized.find("__"), 2, "_");
-    }
-
-    if (sanitized.empty()) {
-        return "id";
-    }
-
-    if (std::isdigit(static_cast<unsigned char>(sanitized.front())) != 0) {
-        sanitized.insert(sanitized.begin(), 'n');
-        sanitized.insert(sanitized.begin() + 1, '_');
-    }
-
-    return sanitized;
-}
 
 [[nodiscard]] bool paths_equal(const ir::Path &lhs, const ir::Path &rhs) {
     return lhs.root_kind == rhs.root_kind && lhs.root_name == rhs.root_name &&

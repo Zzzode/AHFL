@@ -38,14 +38,14 @@ ctest --preset test-dev --output-on-failure -L ahfl-v0.22
 
 ### 2. 改 provider driver binding JSON 输出
 
-- `include/ahfl/backends/durable_store_import_provider_driver_binding.hpp`
-- `src/backends/durable_store_import_provider_driver_binding.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/*.durable-store-import-provider-driver-binding.json`
 
 ### 3. 改 provider driver readiness 文本输出
 
-- `include/ahfl/backends/durable_store_import_provider_driver_readiness.hpp`
-- `src/backends/durable_store_import_provider_driver_readiness.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/*.durable-store-import-provider-driver-readiness`
 
 ### 4. 改 CLI / golden / label / CI

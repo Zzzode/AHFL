@@ -159,7 +159,8 @@ enum class CommandListKind {
 [[nodiscard]] bool supports_capability_inputs(std::optional<CommandKind> command);
 [[nodiscard]] bool is_command_requiring_package(CommandKind command);
 [[nodiscard]] std::optional<ahfl::BackendKind>
-selected_backend_for_command(std::optional<CommandKind> command);
+core_backend_for_command(std::optional<CommandKind> command);
+[[nodiscard]] bool is_core_backend_command(CommandKind command);
 
 void set_command_option(CommandLineOptions &options, CommandKind command);
 void print_usage(std::ostream &out);

@@ -20,6 +20,8 @@ struct Program;
 
 namespace ahfl::cli {
 
+[[nodiscard]] bool handles_package_command(CommandKind command);
+
 [[nodiscard]] std::optional<int>
 dispatch_package_command(CommandKind command,
                          const ahfl::ir::Program &program,

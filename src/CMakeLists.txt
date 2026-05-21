@@ -60,6 +60,7 @@ target_link_libraries(ahfl_compiler
         ahfl_persistence_export
         ahfl_store_import
         ahfl_durable_store_import
+        ahfl_durable_store_import_artifacts
         ahfl_assurance
         ahfl_formal
         ahfl_llm_provider

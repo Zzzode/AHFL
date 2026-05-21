@@ -31,14 +31,15 @@ using ahfl::cli::command_token_to_kind;
 using ahfl::cli::CommandKind;
 using ahfl::cli::CommandLineOptions;
 using ahfl::cli::CommandListKind;
+using ahfl::cli::core_backend_for_command;
 using ahfl::cli::count_enabled_actions;
 using ahfl::cli::format_comma_or_commands;
+using ahfl::cli::handles_package_command;
 using ahfl::cli::infer_effective_command;
 using ahfl::cli::is_action_enabled;
 using ahfl::cli::is_command_requiring_package;
 using ahfl::cli::is_package_supported_command;
 using ahfl::cli::print_usage;
-using ahfl::cli::selected_backend_for_command;
 using ahfl::cli::set_command_option;
 using ahfl::cli::supports_capability_inputs;
 
@@ -79,39 +80,49 @@ lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
     return metadata;
 }
 
-[[nodiscard]] bool emit_selected_backend(std::optional<CommandKind> effective_command,
-                                         const ahfl::ir::Program &program,
-                                         const ahfl::ResolveResult &resolve_result,
-                                         const ahfl::TypeCheckResult &type_check_result,
-                                         const ahfl::handoff::PackageMetadata *package_metadata,
-                                         std::ostream &out) {
+[[nodiscard]] std::optional<int>
+emit_core_backend(std::optional<CommandKind> effective_command,
+                  const ahfl::ir::Program &program,
+                  const ahfl::ResolveResult &resolve_result,
+                  const ahfl::TypeCheckResult &type_check_result,
+                  const ahfl::handoff::PackageMetadata *package_metadata,
+                  std::ostream &out) {
     static_cast<void>(resolve_result);
     static_cast<void>(type_check_result);
 
-    const auto backend = selected_backend_for_command(effective_command);
+    const auto backend = core_backend_for_command(effective_command);
     if (!backend.has_value()) {
-        return false;
+        return std::nullopt;
     }
 
-    ahfl::emit_backend(*backend, program, out, package_metadata);
-    return true;
+    if (!ahfl::emit_backend(*backend, program, out, package_metadata)) {
+        std::cerr << "internal error: core backend command ";
+        if (effective_command.has_value()) {
+            std::cerr << "'" << command_name(*effective_command) << "' ";
+        }
+        std::cerr << "has no registered backend\n";
+        return 1;
+    }
+
+    return 0;
 }
 
 template <typename InputT>
-[[nodiscard]] bool emit_selected_backend(std::optional<CommandKind> effective_command,
-                                         const InputT &input,
-                                         const ahfl::ResolveResult &resolve_result,
-                                         const ahfl::TypeCheckResult &type_check_result,
-                                         const ahfl::handoff::PackageMetadata *package_metadata,
-                                         std::ostream &out) {
-    const auto backend = selected_backend_for_command(effective_command);
+[[nodiscard]] std::optional<int>
+emit_core_backend(std::optional<CommandKind> effective_command,
+                  const InputT &input,
+                  const ahfl::ResolveResult &resolve_result,
+                  const ahfl::TypeCheckResult &type_check_result,
+                  const ahfl::handoff::PackageMetadata *package_metadata,
+                  std::ostream &out) {
+    const auto backend = core_backend_for_command(effective_command);
     if (!backend.has_value()) {
-        return false;
+        return std::nullopt;
     }
 
     const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
-    ahfl::emit_backend(*backend, ir_program, out, package_metadata);
-    return true;
+    return emit_core_backend(
+        effective_command, ir_program, resolve_result, type_check_result, package_metadata, out);
 }
 
 [[nodiscard]] int validate_assurance_program(const ahfl::ir::Program &program) {
@@ -135,7 +146,8 @@ template <typename InputT>
 
     const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
 
-    if (options.explain_requested && result.status == ahfl::formal::FormalVerificationStatus::Failed) {
+    if (options.explain_requested &&
+        result.status == ahfl::formal::FormalVerificationStatus::Failed) {
         if (result.structured_explanation_json.has_value()) {
             std::cout << *result.structured_explanation_json << '\n';
         } else {
@@ -300,7 +312,7 @@ run_analysis_pipeline(const CommandLineOptions &options,
             return verify_formal_program(ir_program, options);
         }
 
-        if (effective_command.has_value()) {
+        if (effective_command.has_value() && handles_package_command(*effective_command)) {
             if (const auto command_status =
                     ahfl::cli::dispatch_package_command(*effective_command,
                                                         ir_program,
@@ -310,15 +322,20 @@ run_analysis_pipeline(const CommandLineOptions &options,
                 command_status.has_value()) {
                 return *command_status;
             }
+
+            std::cerr << "internal error: package pipeline command '"
+                      << command_name(*effective_command) << "' has no dispatcher\n";
+            return 1;
         }
 
-        if (emit_selected_backend(effective_command,
-                                  ir_program,
-                                  resolve_result,
-                                  type_check_result,
-                                  &metadata_validation.metadata,
-                                  std::cout)) {
-            return 0;
+        if (const auto backend_status = emit_core_backend(effective_command,
+                                                          ir_program,
+                                                          resolve_result,
+                                                          type_check_result,
+                                                          &metadata_validation.metadata,
+                                                          std::cout);
+            backend_status.has_value()) {
+            return *backend_status;
         }
     }
 
@@ -332,13 +349,14 @@ run_analysis_pipeline(const CommandLineOptions &options,
         return verify_formal_program(ir_program, options);
     }
 
-    if (emit_selected_backend(effective_command,
-                              input,
-                              resolve_result,
-                              type_check_result,
-                              package_metadata,
-                              std::cout)) {
-        return 0;
+    if (const auto backend_status = emit_core_backend(effective_command,
+                                                      input,
+                                                      resolve_result,
+                                                      type_check_result,
+                                                      package_metadata,
+                                                      std::cout);
+        backend_status.has_value()) {
+        return *backend_status;
     }
 
     if (!is_action_enabled(options, CommandKind::DumpTypes)) {

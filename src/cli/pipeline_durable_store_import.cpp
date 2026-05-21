@@ -2,22 +2,7 @@
 
 #include "cli_pipeline_artifacts.hpp"
 
-#include "ahfl/backends/durable_store_import_adapter_execution.hpp"
-#include "ahfl/backends/durable_store_import_decision.hpp"
-#include "ahfl/backends/durable_store_import_decision_review.hpp"
-#include "ahfl/backends/durable_store_import_provider_driver_binding.hpp"
-#include "ahfl/backends/durable_store_import_provider_driver_readiness.hpp"
-#include "ahfl/backends/durable_store_import_provider_recovery_handoff.hpp"
-#include "ahfl/backends/durable_store_import_provider_write_attempt.hpp"
-#include "ahfl/backends/durable_store_import_receipt.hpp"
-#include "ahfl/backends/durable_store_import_receipt_persistence_request.hpp"
-#include "ahfl/backends/durable_store_import_receipt_persistence_response.hpp"
-#include "ahfl/backends/durable_store_import_receipt_persistence_response_review.hpp"
-#include "ahfl/backends/durable_store_import_receipt_persistence_review.hpp"
-#include "ahfl/backends/durable_store_import_receipt_review.hpp"
-#include "ahfl/backends/durable_store_import_recovery_preview.hpp"
-#include "ahfl/backends/durable_store_import_request.hpp"
-#include "ahfl/backends/durable_store_import_review.hpp"
+#include "ahfl/durable_store_import/artifacts.hpp"
 
 #include "ahfl/durable_store_import/adapter_execution.hpp"
 #include "ahfl/durable_store_import/decision.hpp"
