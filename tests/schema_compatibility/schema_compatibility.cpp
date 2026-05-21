@@ -1,5 +1,5 @@
+#include "ahfl/durable_store_import/artifacts.hpp"
 #include "ahfl/durable_store_import/provider_schema_compatibility.hpp"
-#include "ahfl/backends/durable_store_import_provider_schema_compatibility_report.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -38,9 +38,12 @@ int test_all_compatible() {
 
     std::vector<ReferenceVersionCheck> reference_checks;
 
-    auto result = build_provider_schema_compatibility_report(
-        version_checks, source_chain_checks, reference_checks,
-        "app::main::TestWorkflow", "session-001", std::nullopt);
+    auto result = build_provider_schema_compatibility_report(version_checks,
+                                                             source_chain_checks,
+                                                             reference_checks,
+                                                             "app::main::TestWorkflow",
+                                                             "session-001",
+                                                             std::nullopt);
 
     if (result.has_errors()) {
         result.diagnostics.render(std::cerr);
@@ -55,8 +58,7 @@ int test_all_compatible() {
 
     // 验证 JSON 输出可以正常执行
     std::ostringstream oss;
-    ahfl::print_durable_store_import_provider_schema_compatibility_report_json(
-        *result.report, oss);
+    ahfl::print_durable_store_import_provider_schema_compatibility_report_json(*result.report, oss);
     assert(!oss.str().empty());
 
     std::cout << "PASS: test_all_compatible\n";
@@ -81,9 +83,12 @@ int test_incompatible_version() {
     std::vector<SourceChainCheck> source_chain_checks;
     std::vector<ReferenceVersionCheck> reference_checks;
 
-    auto result = build_provider_schema_compatibility_report(
-        version_checks, source_chain_checks, reference_checks,
-        "app::main::TestWorkflow", "session-002", std::nullopt);
+    auto result = build_provider_schema_compatibility_report(version_checks,
+                                                             source_chain_checks,
+                                                             reference_checks,
+                                                             "app::main::TestWorkflow",
+                                                             "session-002",
+                                                             std::nullopt);
 
     if (result.has_errors()) {
         result.diagnostics.render(std::cerr);
@@ -128,9 +133,12 @@ int test_source_chain_incompatible() {
 
     std::vector<ReferenceVersionCheck> reference_checks;
 
-    auto result = build_provider_schema_compatibility_report(
-        version_checks, source_chain_checks, reference_checks,
-        "app::main::TestWorkflow", "session-003", std::nullopt);
+    auto result = build_provider_schema_compatibility_report(version_checks,
+                                                             source_chain_checks,
+                                                             reference_checks,
+                                                             "app::main::TestWorkflow",
+                                                             "session-003",
+                                                             std::nullopt);
 
     if (result.has_errors()) {
         result.diagnostics.render(std::cerr);
@@ -154,8 +162,7 @@ int test_empty_identity_fields() {
     std::vector<ReferenceVersionCheck> reference_checks;
 
     auto result = build_provider_schema_compatibility_report(
-        version_checks, source_chain_checks, reference_checks,
-        "", "session-004", std::nullopt);
+        version_checks, source_chain_checks, reference_checks, "", "session-004", std::nullopt);
 
     assert(result.has_errors());
 
@@ -186,11 +193,16 @@ int main(int argc, char *argv[]) {
     // 支持通过命令行参数选择单个测试用例（CTest 集成）
     if (argc == 2) {
         std::string cmd = argv[1];
-        if (cmd == "test-all-compatible") return test_all_compatible();
-        if (cmd == "test-incompatible-version") return test_incompatible_version();
-        if (cmd == "test-source-chain-incompatible") return test_source_chain_incompatible();
-        if (cmd == "test-empty-identity-fields") return test_empty_identity_fields();
-        if (cmd == "test-validation-wrong-format-version") return test_validation_wrong_format_version();
+        if (cmd == "test-all-compatible")
+            return test_all_compatible();
+        if (cmd == "test-incompatible-version")
+            return test_incompatible_version();
+        if (cmd == "test-source-chain-incompatible")
+            return test_source_chain_incompatible();
+        if (cmd == "test-empty-identity-fields")
+            return test_empty_identity_fields();
+        if (cmd == "test-validation-wrong-format-version")
+            return test_validation_wrong_format_version();
         std::cerr << "unknown test: " << cmd << "\n";
         return 1;
     }

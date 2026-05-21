@@ -18,9 +18,9 @@ enum class BackendKind {
     AssuranceJson,
 };
 
-void emit_backend(BackendKind kind,
-                  const ir::Program &program,
-                  std::ostream &out,
-                  const handoff::PackageMetadata *package_metadata = nullptr);
+[[nodiscard]] bool emit_backend(BackendKind kind,
+                                const ir::Program &program,
+                                std::ostream &out,
+                                const handoff::PackageMetadata *package_metadata = nullptr);
 
 } // namespace ahfl

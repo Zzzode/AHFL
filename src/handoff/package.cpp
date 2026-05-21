@@ -7,16 +7,12 @@
 #include <unordered_set>
 #include <utility>
 #include <variant>
+#include "ahfl/support/overloaded.hpp"
 
 namespace ahfl::handoff {
 
 namespace {
 
-template <typename... Ts> struct Overloaded : Ts... {
-    using Ts::operator()...;
-};
-
-template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
 
 [[nodiscard]] std::string display_name(std::string_view canonical_name) {
     const auto separator = canonical_name.rfind("::");

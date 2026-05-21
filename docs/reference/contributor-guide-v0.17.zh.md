@@ -65,7 +65,7 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.17'
 
 - `include/ahfl/durable_store_import/receipt_review.hpp`
 - `src/durable_store_import/receipt_review.cpp`
-- `src/backends/durable_store_import_receipt_review.cpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/decision.cpp`
 - `tests/durable_store_import/*.durable-store-import-receipt-review`
 
@@ -73,10 +73,8 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.17'
 
 通常要改的文件：
 
-- `include/ahfl/backends/durable_store_import_receipt.hpp`
-- `include/ahfl/backends/durable_store_import_receipt_review.hpp`
-- `src/backends/durable_store_import_receipt.cpp`
-- `src/backends/durable_store_import_receipt_review.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `src/cli/ahflc.cpp`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`

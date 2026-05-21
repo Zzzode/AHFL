@@ -54,7 +54,7 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.15'
 
 - `include/ahfl/durable_store_import/request.hpp`
 - `src/durable_store_import/request.cpp`
-- `src/backends/durable_store_import_request.cpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/request.cpp`
 - `tests/durable_store_import/*.durable-store-import-request.json`
 
@@ -64,7 +64,7 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.15'
 
 - `include/ahfl/durable_store_import/review.hpp`
 - `src/durable_store_import/review.cpp`
-- `src/backends/durable_store_import_review.cpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/request.cpp`
 - `tests/durable_store_import/*.durable-store-import-review`
 
@@ -72,10 +72,8 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.15'
 
 通常要改的文件：
 
-- `include/ahfl/backends/durable_store_import_request.hpp`
-- `include/ahfl/backends/durable_store_import_review.hpp`
-- `src/backends/durable_store_import_request.cpp`
-- `src/backends/durable_store_import_review.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `src/cli/ahflc.cpp`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`

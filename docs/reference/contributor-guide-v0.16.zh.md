@@ -56,7 +56,7 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.16'
 
 - `include/ahfl/durable_store_import/decision.hpp`
 - `src/durable_store_import/decision.cpp`
-- `src/backends/durable_store_import_decision.cpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/decision.cpp`
 - `tests/durable_store_import/*.durable-store-import-decision.json`
 
@@ -66,7 +66,7 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.16'
 
 - `include/ahfl/durable_store_import/decision_review.hpp`
 - `src/durable_store_import/decision_review.cpp`
-- `src/backends/durable_store_import_decision_review.cpp`
+- `src/durable_store_import/artifacts.cpp`
 - `tests/durable_store_import/decision.cpp`
 - `tests/durable_store_import/*.durable-store-import-decision-review`
 
@@ -74,10 +74,8 @@ ctest --preset test-dev --output-on-failure -L 'ahfl-v0.16'
 
 通常要改的文件：
 
-- `include/ahfl/backends/durable_store_import_decision.hpp`
-- `include/ahfl/backends/durable_store_import_decision_review.hpp`
-- `src/backends/durable_store_import_decision.cpp`
-- `src/backends/durable_store_import_decision_review.cpp`
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/durable_store_import/artifacts.cpp`
 - `src/cli/ahflc.cpp`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`

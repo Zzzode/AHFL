@@ -8,16 +8,12 @@
 #include <variant>
 
 #include "ahfl/support/json.hpp"
+#include "ahfl/support/overloaded.hpp"
 
 namespace ahfl {
 
 namespace {
 
-template <typename... Ts> struct Overloaded : Ts... {
-    using Ts::operator()...;
-};
-
-template <typename... Ts> Overloaded(Ts...) -> Overloaded<Ts...>;
 
 [[nodiscard]] std::string_view path_root_kind_name(ir::PathRootKind kind) {
     switch (kind) {
