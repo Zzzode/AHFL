@@ -1,4 +1,5 @@
 #include "ahfl/backends/summary.hpp"
+#include "printer_helpers.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -10,6 +11,7 @@ namespace ahfl {
 
 namespace {
 
+using backend_printer::line;
 
 struct SummaryStats {
     std::size_t declarations_with_provenance{0};
@@ -153,10 +155,6 @@ void accumulate_workflow_reads(const ir::WorkflowExprSummary &summary,
     }
 
     return stats;
-}
-
-void line(std::ostream &out, int indent_level, std::string_view text) {
-    out << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
 }
 
 [[nodiscard]] std::string bool_name(bool value) {

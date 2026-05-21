@@ -3,7 +3,7 @@
 
 // ---- provider_production_readiness.cpp ----
 
-#include "ahfl/durable_store_import/provider_production_readiness.hpp"
+#include "ahfl/durable_store_import/provider/production/production_readiness.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
@@ -278,7 +278,7 @@ build_provider_production_readiness_report(const ProviderProductionReadinessRevi
 
 // ---- provider_release_evidence_archive.cpp ----
 
-#include "ahfl/durable_store_import/provider_release_evidence_archive.hpp"
+#include "ahfl/durable_store_import/provider/production/release_evidence_archive.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
@@ -544,7 +544,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
 
 // ---- provider_approval_workflow.cpp ----
 
-#include "ahfl/durable_store_import/provider_approval_workflow.hpp"
+#include "ahfl/durable_store_import/provider/production/approval_workflow.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
@@ -812,7 +812,7 @@ ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
 
 // ---- provider_opt_in_guard.cpp ----
 
-#include "ahfl/durable_store_import/provider_opt_in_guard.hpp"
+#include "ahfl/durable_store_import/provider/production/opt_in_guard.hpp"
 
 #include <string>
 
@@ -1016,7 +1016,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
 
 // ---- provider_runtime_policy.cpp ----
 
-#include "ahfl/durable_store_import/provider_runtime_policy.hpp"
+#include "ahfl/durable_store_import/provider/production/runtime_policy.hpp"
 
 #include <string>
 #include <utility>
@@ -1253,7 +1253,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
 
 // ---- provider_production_integration_dry_run.cpp ----
 
-#include "ahfl/durable_store_import/provider_production_integration_dry_run.hpp"
+#include "ahfl/durable_store_import/provider/production/production_integration_dry_run.hpp"
 
 #include <string>
 #include <utility>

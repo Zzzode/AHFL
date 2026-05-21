@@ -3,7 +3,7 @@
 
 // ---- provider_runtime.cpp ----
 
-#include "ahfl/durable_store_import/provider_runtime.hpp"
+#include "ahfl/durable_store_import/provider/runtime/runtime.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
@@ -647,7 +647,7 @@ build_provider_runtime_readiness_review(const ProviderRuntimePreflightPlan &plan
 
 // ---- provider_sdk.cpp ----
 
-#include "ahfl/durable_store_import/provider_sdk.hpp"
+#include "ahfl/durable_store_import/provider/runtime/sdk.hpp"
 #include "ahfl/validation/common.hpp"
 
 #include <string>
