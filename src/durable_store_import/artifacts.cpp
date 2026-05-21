@@ -3,36 +3,7 @@
 #include "ahfl/durable_store_import/adapter_execution.hpp"
 #include "ahfl/durable_store_import/decision.hpp"
 #include "ahfl/durable_store_import/decision_review.hpp"
-#include "ahfl/durable_store_import/provider_adapter.hpp"
-#include "ahfl/durable_store_import/provider_approval_workflow.hpp"
-#include "ahfl/durable_store_import/provider_audit.hpp"
-#include "ahfl/durable_store_import/provider_commit.hpp"
-#include "ahfl/durable_store_import/provider_compatibility.hpp"
-#include "ahfl/durable_store_import/provider_config.hpp"
-#include "ahfl/durable_store_import/provider_config_bundle_validation.hpp"
-#include "ahfl/durable_store_import/provider_conformance.hpp"
-#include "ahfl/durable_store_import/provider_driver.hpp"
-#include "ahfl/durable_store_import/provider_failure_taxonomy.hpp"
-#include "ahfl/durable_store_import/provider_host_execution.hpp"
-#include "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp"
-#include "ahfl/durable_store_import/provider_local_host_execution.hpp"
-#include "ahfl/durable_store_import/provider_local_host_harness.hpp"
-#include "ahfl/durable_store_import/provider_opt_in_guard.hpp"
-#include "ahfl/durable_store_import/provider_production_integration_dry_run.hpp"
-#include "ahfl/durable_store_import/provider_production_readiness.hpp"
-#include "ahfl/durable_store_import/provider_recovery.hpp"
-#include "ahfl/durable_store_import/provider_registry.hpp"
-#include "ahfl/durable_store_import/provider_release_evidence_archive.hpp"
-#include "ahfl/durable_store_import/provider_retry.hpp"
-#include "ahfl/durable_store_import/provider_runtime.hpp"
-#include "ahfl/durable_store_import/provider_runtime_policy.hpp"
-#include "ahfl/durable_store_import/provider_schema_compatibility.hpp"
-#include "ahfl/durable_store_import/provider_sdk.hpp"
-#include "ahfl/durable_store_import/provider_sdk_adapter.hpp"
-#include "ahfl/durable_store_import/provider_sdk_interface.hpp"
-#include "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp"
-#include "ahfl/durable_store_import/provider_sdk_payload.hpp"
-#include "ahfl/durable_store_import/provider_secret.hpp"
+#include "ahfl/durable_store_import/provider.hpp"
 #include "ahfl/durable_store_import/receipt.hpp"
 #include "ahfl/durable_store_import/receipt_persistence.hpp"
 #include "ahfl/durable_store_import/receipt_persistence_response.hpp"
@@ -51,13 +22,66 @@
 #include <string>
 #include <string_view>
 
+namespace ahfl::durable_store_import_artifacts_detail {
+
+#define AHFL_ARTIFACT_PRINT_ENUM(value, ...)                                                       \
+    do {                                                                                           \
+        switch (value) { __VA_ARGS__; }                                                            \
+    } while (false)
+
+#define AHFL_ARTIFACT_ENUM_CASE(enumerator, wire_name)                                             \
+    case enumerator:                                                                               \
+        write_string(wire_name);                                                                   \
+        return
+
+#define AHFL_ARTIFACT_OSTREAM_ENUM_CASE(enumerator, wire_name)                                     \
+    case enumerator:                                                                               \
+        out << wire_name;                                                                          \
+        return
+
+class ArtifactJsonWriter : protected PrettyJsonWriter {
+  protected:
+    explicit ArtifactJsonWriter(std::ostream &out) : PrettyJsonWriter(out) {}
+
+    using PrettyJsonWriter::print_array;
+    using PrettyJsonWriter::print_object;
+    using PrettyJsonWriter::write_string;
+
+    void write_bool(bool value) {
+        out_ << (value ? "true" : "false");
+    }
+
+    void write_null() {
+        out_ << "null";
+    }
+
+    void print_optional_string(const std::optional<std::string> &value) {
+        if (value.has_value()) {
+            write_string(*value);
+            return;
+        }
+        write_null();
+    }
+
+    template <typename Value, typename PrintValue>
+    void print_optional(const std::optional<Value> &value, PrintValue print_value) {
+        if (value.has_value()) {
+            print_value(*value);
+            return;
+        }
+        write_null();
+    }
+};
+
+} // namespace ahfl::durable_store_import_artifacts_detail
+
 namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_adapter_execution {
 namespace {
 
-class DurableStoreImportAdapterExecutionJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportAdapterExecutionJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportAdapterExecutionJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::AdapterExecutionReceipt &receipt) {
         print_object(0, [&](const auto &field) {
@@ -86,22 +110,13 @@ class DurableStoreImportAdapterExecutionJsonPrinter final : private PrettyJsonWr
                 write_string(receipt.source_durable_store_import_request_format_version);
             });
             field("source_package_identity", [&]() {
-                if (receipt.source_package_identity.has_value()) {
-                    print_package_identity(*receipt.source_package_identity, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.source_package_identity,
+                               [&](const auto &value) { print_package_identity(value, 1); });
             });
             field("workflow_canonical_name",
                   [&]() { write_string(receipt.workflow_canonical_name); });
             field("session_id", [&]() { write_string(receipt.session_id); });
-            field("run_id", [&]() {
-                if (receipt.run_id.has_value()) {
-                    write_string(*receipt.run_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("run_id", [&]() { print_optional_string(receipt.run_id); });
             field("input_fixture", [&]() { write_string(receipt.input_fixture); });
             field("durable_store_import_decision_identity",
                   [&]() { write_string(receipt.durable_store_import_decision_identity); });
@@ -122,25 +137,16 @@ class DurableStoreImportAdapterExecutionJsonPrinter final : private PrettyJsonWr
             field("response_boundary_kind",
                   [&]() { print_response_boundary_kind(receipt.response_boundary_kind); });
             field("acknowledged_for_response",
-                  [&]() { out_ << (receipt.acknowledged_for_response ? "true" : "false"); });
+                  [&]() { write_bool(receipt.acknowledged_for_response); });
             field("store_kind", [&]() { print_store_kind(receipt.store_kind); });
             field("local_fake_store_contract_version",
                   [&]() { write_string(receipt.local_fake_store_contract_version); });
             field("mutation_intent", [&]() { print_mutation_intent(receipt.mutation_intent, 1); });
             field("mutation_status", [&]() { print_mutation_status(receipt.mutation_status); });
-            field("persistence_id", [&]() {
-                if (receipt.persistence_id.has_value()) {
-                    write_string(*receipt.persistence_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("persistence_id", [&]() { print_optional_string(receipt.persistence_id); });
             field("failure_attribution", [&]() {
-                if (receipt.failure_attribution.has_value()) {
-                    print_failure_attribution(*receipt.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
@@ -156,121 +162,111 @@ class DurableStoreImportAdapterExecutionJsonPrinter final : private PrettyJsonWr
     }
 
     void print_response_status(durable_store_import::PersistenceResponseStatus status) {
-        switch (status) {
-        case durable_store_import::PersistenceResponseStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Accepted,
+                                    "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Deferred,
+                                    "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Rejected,
+                                    "rejected"));
     }
 
     void print_response_outcome(durable_store_import::PersistenceResponseOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest:
-            write_string("accept_persistence_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest:
-            write_string("block_blocked_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest:
-            write_string("defer_deferred_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::RejectFailedRequest:
-            write_string("reject_failed_request");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest,
+                "accept_persistence_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest,
+                "block_blocked_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest,
+                "defer_deferred_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::RejectFailedRequest,
+                "reject_failed_request"));
     }
 
     void print_response_boundary_kind(durable_store_import::PersistenceResponseBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::PersistenceResponseBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::PersistenceResponseBoundaryKind::AdapterResponseConsumable:
-            write_string("adapter_response_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseBoundaryKind::LocalContractOnly,
+                "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseBoundaryKind::AdapterResponseConsumable,
+                "adapter_response_consumable"));
     }
 
     void print_store_kind(durable_store_import::AdapterExecutionStoreKind kind) {
-        switch (kind) {
-        case durable_store_import::AdapterExecutionStoreKind::LocalFakeDurableStore:
-            write_string("local_fake_durable_store");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterExecutionStoreKind::LocalFakeDurableStore,
+                "local_fake_durable_store"));
     }
 
     void print_mutation_intent_kind(durable_store_import::StoreMutationIntentKind kind) {
-        switch (kind) {
-        case durable_store_import::StoreMutationIntentKind::PersistReceipt:
-            write_string("persist_receipt");
-            return;
-        case durable_store_import::StoreMutationIntentKind::NoopBlocked:
-            write_string("noop_blocked");
-            return;
-        case durable_store_import::StoreMutationIntentKind::NoopDeferred:
-            write_string("noop_deferred");
-            return;
-        case durable_store_import::StoreMutationIntentKind::NoopRejected:
-            write_string("noop_rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationIntentKind::PersistReceipt,
+                                    "persist_receipt");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationIntentKind::NoopBlocked,
+                                    "noop_blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationIntentKind::NoopDeferred,
+                                    "noop_deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationIntentKind::NoopRejected,
+                                    "noop_rejected"));
     }
 
     void print_mutation_status(durable_store_import::StoreMutationStatus status) {
-        switch (status) {
-        case durable_store_import::StoreMutationStatus::Persisted:
-            write_string("persisted");
-            return;
-        case durable_store_import::StoreMutationStatus::NotMutated:
-            write_string("not_mutated");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationStatus::Persisted,
+                                    "persisted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationStatus::NotMutated,
+                                    "not_mutated"));
     }
 
     void print_capability(durable_store_import::AdapterCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor:
-            write_string("consume_store_import_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeExportManifest:
-            write_string("consume_export_manifest");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor:
-            write_string("consume_persistence_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext:
-            write_string("consume_human_review_context");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord:
-            write_string("consume_checkpoint_record");
-            return;
-        case durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState:
-            write_string("preserve_partial_workflow_state");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor,
+                "consume_store_import_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeExportManifest,
+                "consume_export_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor,
+                "consume_persistence_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext,
+                "consume_human_review_context");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord,
+                "consume_checkpoint_record");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState,
+                "preserve_partial_workflow_state"));
     }
 
     void print_failure_kind(durable_store_import::AdapterExecutionFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::AdapterExecutionFailureKind::SourceResponseBlocked:
-            write_string("source_response_blocked");
-            return;
-        case durable_store_import::AdapterExecutionFailureKind::SourceResponseDeferred:
-            write_string("source_response_deferred");
-            return;
-        case durable_store_import::AdapterExecutionFailureKind::SourceResponseRejected:
-            write_string("source_response_rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterExecutionFailureKind::SourceResponseBlocked,
+                "source_response_blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterExecutionFailureKind::SourceResponseDeferred,
+                "source_response_deferred");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterExecutionFailureKind::SourceResponseRejected,
+                "source_response_rejected"));
     }
 
     void print_mutation_intent(const durable_store_import::StoreMutationIntent &intent,
@@ -283,7 +279,7 @@ class DurableStoreImportAdapterExecutionJsonPrinter final : private PrettyJsonWr
                   [&]() { write_string(intent.target_receipt_identity); });
             field("target_planned_durable_identity",
                   [&]() { write_string(intent.target_planned_durable_identity); });
-            field("mutates_store", [&]() { out_ << (intent.mutates_store ? "true" : "false"); });
+            field("mutates_store", [&]() { write_bool(intent.mutates_store); });
         });
     }
 
@@ -293,11 +289,8 @@ class DurableStoreImportAdapterExecutionJsonPrinter final : private PrettyJsonWr
             field("kind", [&]() { print_failure_kind(failure.kind); });
             field("message", [&]() { write_string(failure.message); });
             field("required_capability", [&]() {
-                if (failure.required_capability.has_value()) {
-                    print_capability(*failure.required_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(failure.required_capability,
+                               [&](const auto &value) { print_capability(value); });
             });
         });
     }
@@ -316,9 +309,9 @@ namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_deci
 
 namespace {
 
-class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportDecisionJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportDecisionJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit DurableStoreImportDecisionJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::Decision &decision) {
         print_object(0, [&](const auto &field) {
@@ -345,22 +338,13 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
             field("source_export_manifest_format_version",
                   [&]() { write_string(decision.source_export_manifest_format_version); });
             field("source_package_identity", [&]() {
-                if (decision.source_package_identity.has_value()) {
-                    print_package_identity(*decision.source_package_identity, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(decision.source_package_identity,
+                               [&](const auto &value) { print_package_identity(value, 1); });
             });
             field("workflow_canonical_name",
                   [&]() { write_string(decision.workflow_canonical_name); });
             field("session_id", [&]() { write_string(decision.session_id); });
-            field("run_id", [&]() {
-                if (decision.run_id.has_value()) {
-                    write_string(*decision.run_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("run_id", [&]() { print_optional_string(decision.run_id); });
             field("input_fixture", [&]() { write_string(decision.input_fixture); });
             field("workflow_status", [&]() { print_workflow_status(decision.workflow_status); });
             field("checkpoint_status",
@@ -372,11 +356,8 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
                   [&]() { print_descriptor_status(decision.descriptor_status); });
             field("request_status", [&]() { print_request_status(decision.request_status); });
             field("workflow_failure_summary", [&]() {
-                if (decision.workflow_failure_summary.has_value()) {
-                    print_failure_summary(*decision.workflow_failure_summary, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(decision.workflow_failure_summary,
+                               [&](const auto &value) { print_failure_summary(value, 1); });
             });
             field("export_package_identity",
                   [&]() { write_string(decision.export_package_identity); });
@@ -395,20 +376,14 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
             field("decision_status", [&]() { print_decision_status(decision.decision_status); });
             field("decision_outcome", [&]() { print_decision_outcome(decision.decision_outcome); });
             field("accepted_for_future_execution",
-                  [&]() { out_ << (decision.accepted_for_future_execution ? "true" : "false"); });
+                  [&]() { write_bool(decision.accepted_for_future_execution); });
             field("next_required_adapter_capability", [&]() {
-                if (decision.next_required_adapter_capability.has_value()) {
-                    print_adapter_capability(*decision.next_required_adapter_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(decision.next_required_adapter_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
             field("decision_blocker", [&]() {
-                if (decision.decision_blocker.has_value()) {
-                    print_decision_blocker(*decision.decision_blocker, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(decision.decision_blocker,
+                               [&](const auto &value) { print_decision_blocker(value, 1); });
             });
         });
         out_ << '\n';
@@ -439,208 +414,162 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
                     return;
                 }
             });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("node_name", [&]() { print_optional_string(summary.node_name); });
             field("message", [&]() { write_string(summary.message); });
         });
     }
 
     void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Completed, "completed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Failed, "failed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Partial, "partial"));
     }
 
     void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::ReadyToPersist,
+                                    "ready_to_persist");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport,
+                "ready_to_export");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_descriptor::PersistenceDescriptorStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_manifest_status(persistence_export::PersistenceExportManifestStatus status) {
-        switch (status) {
-        case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::ReadyToImport,
+                "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_export::PersistenceExportManifestStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_descriptor_status(store_import::StoreImportDescriptorStatus status) {
-        switch (status) {
-        case store_import::StoreImportDescriptorStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case store_import::StoreImportDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::ReadyToImport,
+                                    "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_status(durable_store_import::RequestStatus status) {
-        switch (status) {
-        case durable_store_import::RequestStatus::ReadyForAdapter:
-            write_string("ready_for_adapter");
-            return;
-        case durable_store_import::RequestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::RequestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case durable_store_import::RequestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case durable_store_import::RequestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::ReadyForAdapter,
+                                    "ready_for_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_boundary_kind(durable_store_import::RequestBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::RequestBoundaryKind::LocalIntentOnly:
-            write_string("local_intent_only");
-            return;
-        case durable_store_import::RequestBoundaryKind::AdapterContractConsumable:
-            write_string("adapter_contract_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestBoundaryKind::LocalIntentOnly,
+                                    "local_intent_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestBoundaryKind::AdapterContractConsumable,
+                "adapter_contract_consumable"));
     }
 
     void print_decision_boundary_kind(durable_store_import::DecisionBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::DecisionBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::DecisionBoundaryKind::AdapterDecisionConsumable:
-            write_string("adapter_decision_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionBoundaryKind::LocalContractOnly,
+                                    "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::DecisionBoundaryKind::AdapterDecisionConsumable,
+                "adapter_decision_consumable"));
     }
 
     void print_decision_status(durable_store_import::DecisionStatus status) {
-        switch (status) {
-        case durable_store_import::DecisionStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::DecisionStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::DecisionStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::DecisionStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Accepted, "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Rejected, "rejected"));
     }
 
     void print_decision_outcome(durable_store_import::DecisionOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::DecisionOutcome::AcceptRequest:
-            write_string("accept_request");
-            return;
-        case durable_store_import::DecisionOutcome::BlockRequest:
-            write_string("block_request");
-            return;
-        case durable_store_import::DecisionOutcome::DeferPartialRequest:
-            write_string("defer_partial_request");
-            return;
-        case durable_store_import::DecisionOutcome::RejectFailedRequest:
-            write_string("reject_failed_request");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionOutcome::AcceptRequest,
+                                    "accept_request");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionOutcome::BlockRequest,
+                                    "block_request");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionOutcome::DeferPartialRequest,
+                                    "defer_partial_request");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionOutcome::RejectFailedRequest,
+                                    "reject_failed_request"));
     }
 
     void print_adapter_capability(durable_store_import::AdapterCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor:
-            write_string("consume_store_import_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeExportManifest:
-            write_string("consume_export_manifest");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor:
-            write_string("consume_persistence_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext:
-            write_string("consume_human_review_context");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord:
-            write_string("consume_checkpoint_record");
-            return;
-        case durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState:
-            write_string("preserve_partial_workflow_state");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor,
+                "consume_store_import_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeExportManifest,
+                "consume_export_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor,
+                "consume_persistence_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext,
+                "consume_human_review_context");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord,
+                "consume_checkpoint_record");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState,
+                "preserve_partial_workflow_state"));
     }
 
     void print_decision_blocker(const durable_store_import::DecisionBlocker &blocker,
@@ -664,11 +593,8 @@ class DurableStoreImportDecisionJsonPrinter final : private PrettyJsonWriter {
             });
             field("message", [&]() { write_string(blocker.message); });
             field("required_capability", [&]() {
-                if (blocker.required_capability.has_value()) {
-                    print_adapter_capability(*blocker.required_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(blocker.required_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
         });
     }
@@ -1031,32 +957,26 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_selection(durable_store_import::ProviderSelectionStatus status, std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ProviderSelectionStatus::Selected:
-        out << "selected";
-        return;
-    case durable_store_import::ProviderSelectionStatus::FallbackSelected:
-        out << "fallback_selected";
-        return;
-    case durable_store_import::ProviderSelectionStatus::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        status,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderSelectionStatus::Selected,
+                                        "selected");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSelectionStatus::FallbackSelected, "fallback_selected");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderSelectionStatus::Blocked,
+                                        "blocked"));
 }
 
 void print_negotiation(durable_store_import::ProviderCapabilityNegotiationStatus status,
                        std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ProviderCapabilityNegotiationStatus::Compatible:
-        out << "compatible";
-        return;
-    case durable_store_import::ProviderCapabilityNegotiationStatus::Degraded:
-        out << "degraded";
-        return;
-    case durable_store_import::ProviderCapabilityNegotiationStatus::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        status,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderCapabilityNegotiationStatus::Compatible, "compatible");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderCapabilityNegotiationStatus::Degraded, "degraded");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderCapabilityNegotiationStatus::Blocked, "blocked"));
 }
 
 } // namespace
@@ -1085,9 +1005,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_compatibility_report {
 namespace {
 
-class CompatibilityReportJsonPrinter final : private PrettyJsonWriter {
+class CompatibilityReportJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit CompatibilityReportJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit CompatibilityReportJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderCompatibilityReport &report) {
         print_object(0, [&](const auto &field) {
@@ -1101,14 +1021,13 @@ class CompatibilityReportJsonPrinter final : private PrettyJsonWriter {
                 write_string(report.durable_store_import_provider_compatibility_report_identity);
             });
             field("status", [&]() { print_status(report.status); });
-            field("mock_adapter_compatible",
-                  [&]() { out_ << (report.mock_adapter_compatible ? "true" : "false"); });
+            field("mock_adapter_compatible", [&]() { write_bool(report.mock_adapter_compatible); });
             field("local_filesystem_alpha_compatible",
-                  [&]() { out_ << (report.local_filesystem_alpha_compatible ? "true" : "false"); });
+                  [&]() { write_bool(report.local_filesystem_alpha_compatible); });
             field("capability_matrix_complete",
-                  [&]() { out_ << (report.capability_matrix_complete ? "true" : "false"); });
+                  [&]() { write_bool(report.capability_matrix_complete); });
             field("external_service_required",
-                  [&]() { out_ << (report.external_service_required ? "true" : "false"); });
+                  [&]() { write_bool(report.external_service_required); });
             field("compatibility_summary", [&]() { write_string(report.compatibility_summary); });
         });
         out_ << '\n';
@@ -1116,25 +1035,14 @@ class CompatibilityReportJsonPrinter final : private PrettyJsonWriter {
 
   private:
     void print_status(durable_store_import::ProviderCompatibilityStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderCompatibilityStatus::Passed:
-            write_string("passed");
-            return;
-        case durable_store_import::ProviderCompatibilityStatus::Failed:
-            write_string("failed");
-            return;
-        case durable_store_import::ProviderCompatibilityStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
-    }
-
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderCompatibilityStatus::Passed,
+                                    "passed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderCompatibilityStatus::Failed,
+                                    "failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderCompatibilityStatus::Blocked,
+                                    "blocked"));
     }
 };
 
@@ -1151,9 +1059,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_compatibility_test_manifest {
 namespace {
 
-class ManifestJsonPrinter final : private PrettyJsonWriter {
+class ManifestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit ManifestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ManifestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderCompatibilityTestManifest &manifest) {
         print_object(0, [&](const auto &field) {
@@ -1167,28 +1075,20 @@ class ManifestJsonPrinter final : private PrettyJsonWriter {
                 write_string(
                     manifest.durable_store_import_provider_compatibility_test_manifest_identity);
             });
-            field("includes_mock_adapter",
-                  [&]() { out_ << (manifest.includes_mock_adapter ? "true" : "false"); });
+            field("includes_mock_adapter", [&]() { write_bool(manifest.includes_mock_adapter); });
             field("includes_local_filesystem_alpha",
-                  [&]() { out_ << (manifest.includes_local_filesystem_alpha ? "true" : "false"); });
+                  [&]() { write_bool(manifest.includes_local_filesystem_alpha); });
             field("provider_count", [&]() { out_ << manifest.provider_count; });
             field("fixture_count", [&]() { out_ << manifest.fixture_count; });
             field("capability_matrix_reference",
                   [&]() { write_string(manifest.capability_matrix_reference); });
             field("external_service_required",
-                  [&]() { out_ << (manifest.external_service_required ? "true" : "false"); });
+                  [&]() { write_bool(manifest.external_service_required); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
 };
 
 } // namespace
@@ -1206,17 +1106,13 @@ namespace {
 
 void print_validation_status(durable_store_import::ConfigValidationStatus status,
                              std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ConfigValidationStatus::Valid:
-        out << "valid";
-        return;
-    case durable_store_import::ConfigValidationStatus::Invalid:
-        out << "invalid";
-        return;
-    case durable_store_import::ConfigValidationStatus::Missing:
-        out << "missing";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(status,
+                             AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+                                 durable_store_import::ConfigValidationStatus::Valid, "valid");
+                             AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+                                 durable_store_import::ConfigValidationStatus::Invalid, "invalid");
+                             AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+                                 durable_store_import::ConfigValidationStatus::Missing, "missing"));
 }
 
 } // namespace
@@ -1271,9 +1167,9 @@ void print_durable_store_import_provider_config_bundle_validation_report(
 namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_provider_config_load {
 namespace {
 
-class ProviderConfigLoadJsonPrinter final : private PrettyJsonWriter {
+class ProviderConfigLoadJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit ProviderConfigLoadJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ProviderConfigLoadJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderConfigLoadPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -1330,14 +1226,6 @@ class ProviderConfigLoadJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     template <typename Field>
     void print_side_effect_fields(const Field &field,
                                   bool reads_secret_material,
@@ -1348,43 +1236,33 @@ class ProviderConfigLoadJsonPrinter final : private PrettyJsonWriter {
                                   bool writes_host_filesystem,
                                   bool materializes_sdk_request_payload,
                                   bool invokes_provider_sdk) {
-        field("reads_secret_material",
-              [&]() { out_ << (reads_secret_material ? "true" : "false"); });
-        field("materializes_secret_value",
-              [&]() { out_ << (materializes_secret_value ? "true" : "false"); });
+        field("reads_secret_material", [&]() { write_bool(reads_secret_material); });
+        field("materializes_secret_value", [&]() { write_bool(materializes_secret_value); });
         field("materializes_credential_material",
-              [&]() { out_ << (materializes_credential_material ? "true" : "false"); });
-        field("opens_network_connection",
-              [&]() { out_ << (opens_network_connection ? "true" : "false"); });
-        field("reads_host_environment",
-              [&]() { out_ << (reads_host_environment ? "true" : "false"); });
-        field("writes_host_filesystem",
-              [&]() { out_ << (writes_host_filesystem ? "true" : "false"); });
+              [&]() { write_bool(materializes_credential_material); });
+        field("opens_network_connection", [&]() { write_bool(opens_network_connection); });
+        field("reads_host_environment", [&]() { write_bool(reads_host_environment); });
+        field("writes_host_filesystem", [&]() { write_bool(writes_host_filesystem); });
         field("materializes_sdk_request_payload",
-              [&]() { out_ << (materializes_sdk_request_payload ? "true" : "false"); });
-        field("invokes_provider_sdk", [&]() { out_ << (invokes_provider_sdk ? "true" : "false"); });
+              [&]() { write_bool(materializes_sdk_request_payload); });
+        field("invokes_provider_sdk", [&]() { write_bool(invokes_provider_sdk); });
     }
 
     void print_interface_status(durable_store_import::ProviderSdkAdapterInterfaceStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked, "blocked"));
     }
 
     void print_status(durable_store_import::ProviderConfigStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderConfigStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderConfigStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderConfigStatus::Ready, "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderConfigStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_operation(durable_store_import::ProviderConfigOperationKind kind) {
@@ -1406,23 +1284,23 @@ class ProviderConfigLoadJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_failure_kind(durable_store_import::ProviderConfigFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderConfigFailureKind::AdapterInterfaceNotReady:
-            write_string("adapter_interface_not_ready");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::ConfigLoadNotReady:
-            write_string("config_load_not_ready");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::MissingConfigProfile:
-            write_string("missing_config_profile");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::IncompatibleConfigSchema:
-            write_string("incompatible_config_schema");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::UnsupportedConfigProfile:
-            write_string("unsupported_config_profile");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::AdapterInterfaceNotReady,
+                "adapter_interface_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::ConfigLoadNotReady,
+                "config_load_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::MissingConfigProfile,
+                "missing_config_profile");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::IncompatibleConfigSchema,
+                "incompatible_config_schema");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::UnsupportedConfigProfile,
+                "unsupported_config_profile"));
     }
 
     void print_profile(const durable_store_import::ProviderConfigProfileDescriptor &profile,
@@ -1431,14 +1309,12 @@ class ProviderConfigLoadJsonPrinter final : private PrettyJsonWriter {
             field("profile_key", [&]() { write_string(profile.profile_key); });
             field("provider_key", [&]() { write_string(profile.provider_key); });
             field("config_schema_version", [&]() { write_string(profile.config_schema_version); });
-            field("requires_secret_handle",
-                  [&]() { out_ << (profile.requires_secret_handle ? "true" : "false"); });
+            field("requires_secret_handle", [&]() { write_bool(profile.requires_secret_handle); });
             field("materializes_secret_value",
-                  [&]() { out_ << (profile.materializes_secret_value ? "true" : "false"); });
-            field("contains_endpoint_uri",
-                  [&]() { out_ << (profile.contains_endpoint_uri ? "true" : "false"); });
+                  [&]() { write_bool(profile.materializes_secret_value); });
+            field("contains_endpoint_uri", [&]() { write_bool(profile.contains_endpoint_uri); });
             field("opens_network_connection",
-                  [&]() { out_ << (profile.opens_network_connection ? "true" : "false"); });
+                  [&]() { write_bool(profile.opens_network_connection); });
         });
     }
 
@@ -1470,46 +1346,44 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_status(durable_store_import::ProviderConfigStatus status, std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ProviderConfigStatus::Ready:
-        out << "ready";
-        return;
-    case durable_store_import::ProviderConfigStatus::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        status,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderConfigStatus::Ready, "ready");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderConfigStatus::Blocked,
+                                        "blocked"));
 }
 
 void print_operation(durable_store_import::ProviderConfigOperationKind kind, std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderConfigOperationKind::PlanProviderConfigLoad:
-        out << "plan_provider_config_load";
-        return;
-    case durable_store_import::ProviderConfigOperationKind::PlanProviderConfigSnapshotPlaceholder:
-        out << "plan_provider_config_snapshot_placeholder";
-        return;
-    case durable_store_import::ProviderConfigOperationKind::NoopAdapterInterfaceNotReady:
-        out << "noop_adapter_interface_not_ready";
-        return;
-    case durable_store_import::ProviderConfigOperationKind::NoopConfigLoadNotReady:
-        out << "noop_config_load_not_ready";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderConfigOperationKind::PlanProviderConfigLoad,
+            "plan_provider_config_load");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderConfigOperationKind::
+                                            PlanProviderConfigSnapshotPlaceholder,
+                                        "plan_provider_config_snapshot_placeholder");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderConfigOperationKind::NoopAdapterInterfaceNotReady,
+            "noop_adapter_interface_not_ready");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderConfigOperationKind::NoopConfigLoadNotReady,
+            "noop_config_load_not_ready"));
 }
 
 void print_next_action(durable_store_import::ProviderConfigReadinessNextActionKind kind,
                        std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderConfigReadinessNextActionKind::ReadyForSecretHandleResolver:
-        out << "ready_for_secret_handle_resolver";
-        return;
-    case durable_store_import::ProviderConfigReadinessNextActionKind::WaitForAdapterInterface:
-        out << "wait_for_adapter_interface";
-        return;
-    case durable_store_import::ProviderConfigReadinessNextActionKind::ManualReviewRequired:
-        out << "manual_review_required";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderConfigReadinessNextActionKind::
+                ReadyForSecretHandleResolver,
+            "ready_for_secret_handle_resolver");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderConfigReadinessNextActionKind::WaitForAdapterInterface,
+            "wait_for_adapter_interface");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderConfigReadinessNextActionKind::ManualReviewRequired,
+            "manual_review_required"));
 }
 
 void print_failure(const durable_store_import::ProviderConfigReadinessReview &review,
@@ -1580,9 +1454,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_config_snapshot {
 namespace {
 
-class ProviderConfigSnapshotJsonPrinter final : private PrettyJsonWriter {
+class ProviderConfigSnapshotJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit ProviderConfigSnapshotJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ProviderConfigSnapshotJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderConfigSnapshotPlaceholder &placeholder) {
         print_object(0, [&](const auto &field) {
@@ -1615,23 +1489,20 @@ class ProviderConfigSnapshotJsonPrinter final : private PrettyJsonWriter {
             field("config_schema_version",
                   [&]() { write_string(placeholder.config_schema_version); });
             field("reads_secret_material",
-                  [&]() { out_ << (placeholder.reads_secret_material ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.reads_secret_material); });
             field("materializes_secret_value",
-                  [&]() { out_ << (placeholder.materializes_secret_value ? "true" : "false"); });
-            field("materializes_credential_material", [&]() {
-                out_ << (placeholder.materializes_credential_material ? "true" : "false");
-            });
+                  [&]() { write_bool(placeholder.materializes_secret_value); });
+            field("materializes_credential_material",
+                  [&]() { write_bool(placeholder.materializes_credential_material); });
             field("opens_network_connection",
-                  [&]() { out_ << (placeholder.opens_network_connection ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.opens_network_connection); });
             field("reads_host_environment",
-                  [&]() { out_ << (placeholder.reads_host_environment ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.reads_host_environment); });
             field("writes_host_filesystem",
-                  [&]() { out_ << (placeholder.writes_host_filesystem ? "true" : "false"); });
-            field("materializes_sdk_request_payload", [&]() {
-                out_ << (placeholder.materializes_sdk_request_payload ? "true" : "false");
-            });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (placeholder.invokes_provider_sdk ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.writes_host_filesystem); });
+            field("materializes_sdk_request_payload",
+                  [&]() { write_bool(placeholder.materializes_sdk_request_payload); });
+            field("invokes_provider_sdk", [&]() { write_bool(placeholder.invokes_provider_sdk); });
             field("failure_attribution",
                   [&]() { print_failure(placeholder.failure_attribution, 1); });
         });
@@ -1639,23 +1510,12 @@ class ProviderConfigSnapshotJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderConfigStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderConfigStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderConfigStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderConfigStatus::Ready, "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderConfigStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_operation(durable_store_import::ProviderConfigOperationKind kind) {
@@ -1677,23 +1537,23 @@ class ProviderConfigSnapshotJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_failure_kind(durable_store_import::ProviderConfigFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderConfigFailureKind::AdapterInterfaceNotReady:
-            write_string("adapter_interface_not_ready");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::ConfigLoadNotReady:
-            write_string("config_load_not_ready");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::MissingConfigProfile:
-            write_string("missing_config_profile");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::IncompatibleConfigSchema:
-            write_string("incompatible_config_schema");
-            return;
-        case durable_store_import::ProviderConfigFailureKind::UnsupportedConfigProfile:
-            write_string("unsupported_config_profile");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::AdapterInterfaceNotReady,
+                "adapter_interface_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::ConfigLoadNotReady,
+                "config_load_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::MissingConfigProfile,
+                "missing_config_profile");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::IncompatibleConfigSchema,
+                "incompatible_config_schema");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderConfigFailureKind::UnsupportedConfigProfile,
+                "unsupported_config_profile"));
     }
 
     void print_failure(
@@ -1725,17 +1585,12 @@ namespace {
 
 // 辅助函数：输出检查结果
 void print_result(durable_store_import::ConformanceCheckResult result, std::ostream &out) {
-    switch (result) {
-    case durable_store_import::ConformanceCheckResult::Pass:
-        out << "pass";
-        return;
-    case durable_store_import::ConformanceCheckResult::Fail:
-        out << "fail";
-        return;
-    case durable_store_import::ConformanceCheckResult::Skipped:
-        out << "skipped";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        result,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ConformanceCheckResult::Pass, "pass");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ConformanceCheckResult::Fail, "fail");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ConformanceCheckResult::Skipped,
+                                        "skipped"));
 }
 
 } // namespace
@@ -1776,10 +1631,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_driver_binding {
 namespace {
 
-class DurableStoreImportProviderDriverBindingJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportProviderDriverBindingJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportProviderDriverBindingJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderDriverBindingPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -1815,113 +1670,97 @@ class DurableStoreImportProviderDriverBindingJsonPrinter final : private PrettyJ
             field("binding_status", [&]() { print_binding_status(plan.binding_status); });
             field("operation_descriptor_identity",
                   [&]() { print_optional_string(plan.operation_descriptor_identity); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (plan.invokes_provider_sdk ? "true" : "false"); });
+            field("invokes_provider_sdk", [&]() { write_bool(plan.invokes_provider_sdk); });
             field("failure_attribution", [&]() {
-                if (plan.failure_attribution.has_value()) {
-                    print_failure_attribution(*plan.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(plan.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_driver_kind(durable_store_import::ProviderDriverKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderDriverKind::ProviderNeutralPreviewDriver:
-            write_string("provider_neutral_preview_driver");
-            return;
-        case durable_store_import::ProviderDriverKind::AwsObjectStorePreviewDriver:
-            write_string("aws_object_store_preview_driver");
-            return;
-        case durable_store_import::ProviderDriverKind::GcpObjectStorePreviewDriver:
-            write_string("gcp_object_store_preview_driver");
-            return;
-        case durable_store_import::ProviderDriverKind::AzureObjectStorePreviewDriver:
-            write_string("azure_object_store_preview_driver");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverKind::ProviderNeutralPreviewDriver,
+                "provider_neutral_preview_driver");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverKind::AwsObjectStorePreviewDriver,
+                "aws_object_store_preview_driver");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverKind::GcpObjectStorePreviewDriver,
+                "gcp_object_store_preview_driver");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverKind::AzureObjectStorePreviewDriver,
+                "azure_object_store_preview_driver"));
     }
 
     void print_capability(durable_store_import::ProviderDriverCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::ProviderDriverCapabilityKind::LoadSecretFreeProfile:
-            write_string("load_secret_free_profile");
-            return;
-        case durable_store_import::ProviderDriverCapabilityKind::TranslateWriteIntent:
-            write_string("translate_write_intent");
-            return;
-        case durable_store_import::ProviderDriverCapabilityKind::TranslateRetryPlaceholder:
-            write_string("translate_retry_placeholder");
-            return;
-        case durable_store_import::ProviderDriverCapabilityKind::TranslateResumePlaceholder:
-            write_string("translate_resume_placeholder");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverCapabilityKind::LoadSecretFreeProfile,
+                "load_secret_free_profile");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverCapabilityKind::TranslateWriteIntent,
+                "translate_write_intent");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverCapabilityKind::TranslateRetryPlaceholder,
+                "translate_retry_placeholder");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverCapabilityKind::TranslateResumePlaceholder,
+                "translate_resume_placeholder"));
     }
 
     void print_operation_kind(durable_store_import::ProviderDriverOperationKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderDriverOperationKind::TranslateProviderPersistReceipt:
-            write_string("translate_provider_persist_receipt");
-            return;
-        case durable_store_import::ProviderDriverOperationKind::NoopSourceNotPlanned:
-            write_string("noop_source_not_planned");
-            return;
-        case durable_store_import::ProviderDriverOperationKind::NoopProfileMismatch:
-            write_string("noop_profile_mismatch");
-            return;
-        case durable_store_import::ProviderDriverOperationKind::NoopUnsupportedDriverCapability:
-            write_string("noop_unsupported_driver_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverOperationKind::TranslateProviderPersistReceipt,
+                "translate_provider_persist_receipt");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverOperationKind::NoopSourceNotPlanned,
+                "noop_source_not_planned");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverOperationKind::NoopProfileMismatch,
+                "noop_profile_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverOperationKind::NoopUnsupportedDriverCapability,
+                "noop_unsupported_driver_capability"));
     }
 
     void print_binding_status(durable_store_import::ProviderDriverBindingStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderDriverBindingStatus::Bound:
-            write_string("bound");
-            return;
-        case durable_store_import::ProviderDriverBindingStatus::NotBound:
-            write_string("not_bound");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderDriverBindingStatus::Bound,
+                                    "bound");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderDriverBindingStatus::NotBound,
+                                    "not_bound"));
     }
 
     void print_planning_status(durable_store_import::ProviderWritePlanningStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderWritePlanningStatus::Planned:
-            write_string("planned");
-            return;
-        case durable_store_import::ProviderWritePlanningStatus::NotPlanned:
-            write_string("not_planned");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWritePlanningStatus::Planned,
+                                    "planned");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWritePlanningStatus::NotPlanned,
+                                    "not_planned"));
     }
 
     void print_failure_kind(durable_store_import::ProviderDriverBindingFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderDriverBindingFailureKind::SourceWriteAttemptNotPlanned:
-            write_string("source_write_attempt_not_planned");
-            return;
-        case durable_store_import::ProviderDriverBindingFailureKind::DriverProfileMismatch:
-            write_string("driver_profile_mismatch");
-            return;
-        case durable_store_import::ProviderDriverBindingFailureKind::UnsupportedDriverCapability:
-            write_string("unsupported_driver_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderDriverBindingFailureKind::
+                                        SourceWriteAttemptNotPlanned,
+                                    "source_write_attempt_not_planned");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverBindingFailureKind::DriverProfileMismatch,
+                "driver_profile_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderDriverBindingFailureKind::UnsupportedDriverCapability,
+                "unsupported_driver_capability"));
     }
 
     void print_driver_profile(const durable_store_import::ProviderDriverProfile &profile,
@@ -1935,20 +1774,15 @@ class DurableStoreImportProviderDriverBindingJsonPrinter final : private PrettyJ
             field("provider_namespace", [&]() { write_string(profile.provider_namespace); });
             field("secret_free_config_ref",
                   [&]() { write_string(profile.secret_free_config_ref); });
-            field("credential_free",
-                  [&]() { out_ << (profile.credential_free ? "true" : "false"); });
-            field("supports_secret_free_profile_load", [&]() {
-                out_ << (profile.supports_secret_free_profile_load ? "true" : "false");
-            });
-            field("supports_write_intent_translation", [&]() {
-                out_ << (profile.supports_write_intent_translation ? "true" : "false");
-            });
-            field("supports_retry_placeholder_translation", [&]() {
-                out_ << (profile.supports_retry_placeholder_translation ? "true" : "false");
-            });
-            field("supports_resume_placeholder_translation", [&]() {
-                out_ << (profile.supports_resume_placeholder_translation ? "true" : "false");
-            });
+            field("credential_free", [&]() { write_bool(profile.credential_free); });
+            field("supports_secret_free_profile_load",
+                  [&]() { write_bool(profile.supports_secret_free_profile_load); });
+            field("supports_write_intent_translation",
+                  [&]() { write_bool(profile.supports_write_intent_translation); });
+            field("supports_retry_placeholder_translation",
+                  [&]() { write_bool(profile.supports_retry_placeholder_translation); });
+            field("supports_resume_placeholder_translation",
+                  [&]() { write_bool(profile.supports_resume_placeholder_translation); });
             field("credential_reference",
                   [&]() { print_optional_string(profile.credential_reference); });
             field("endpoint_uri", [&]() { print_optional_string(profile.endpoint_uri); });
@@ -1968,11 +1802,8 @@ class DurableStoreImportProviderDriverBindingJsonPrinter final : private PrettyJ
             field("kind", [&]() { print_failure_kind(failure.kind); });
             field("message", [&]() { write_string(failure.message); });
             field("missing_capability", [&]() {
-                if (failure.missing_capability.has_value()) {
-                    print_capability(*failure.missing_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(failure.missing_capability,
+                               [&](const auto &value) { print_capability(value); });
             });
         });
     }
@@ -2137,9 +1968,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_execution_audit_event {
 namespace {
 
-class AuditEventJsonPrinter final : private PrettyJsonWriter {
+class AuditEventJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit AuditEventJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit AuditEventJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderExecutionAuditEvent &event) {
         print_object(0, [&](const auto &field) {
@@ -2157,40 +1988,24 @@ class AuditEventJsonPrinter final : private PrettyJsonWriter {
             field("redaction_policy_version",
                   [&]() { write_string(event.redaction_policy_version); });
             field("event_summary", [&]() { write_string(event.event_summary); });
-            field("secret_free", [&]() { out_ << (event.secret_free ? "true" : "false"); });
-            field("raw_telemetry_persisted",
-                  [&]() { out_ << (event.raw_telemetry_persisted ? "true" : "false"); });
+            field("secret_free", [&]() { write_bool(event.secret_free); });
+            field("raw_telemetry_persisted", [&]() { write_bool(event.raw_telemetry_persisted); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_outcome(durable_store_import::ProviderAuditOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::ProviderAuditOutcome::Success:
-            write_string("success");
-            return;
-        case durable_store_import::ProviderAuditOutcome::Failure:
-            write_string("failure");
-            return;
-        case durable_store_import::ProviderAuditOutcome::RetryPending:
-            write_string("retry_pending");
-            return;
-        case durable_store_import::ProviderAuditOutcome::RecoveryPending:
-            write_string("recovery_pending");
-            return;
-        case durable_store_import::ProviderAuditOutcome::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Success, "success");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Failure, "failure");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::RetryPending,
+                                    "retry_pending");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::RecoveryPending,
+                                    "recovery_pending");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Blocked,
+                                    "blocked"));
     }
 };
 
@@ -2207,9 +2022,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_failure_taxonomy_report {
 namespace {
 
-class FailureTaxonomyJsonPrinter final : private PrettyJsonWriter {
+class FailureTaxonomyJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit FailureTaxonomyJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit FailureTaxonomyJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderFailureTaxonomyReport &report) {
         print_object(0, [&](const auto &field) {
@@ -2233,156 +2048,119 @@ class FailureTaxonomyJsonPrinter final : private PrettyJsonWriter {
             field("recovery_review_failure_summary",
                   [&]() { write_string(report.recovery_review_failure_summary); });
             field("secret_bearing_error_persisted",
-                  [&]() { out_ << (report.secret_bearing_error_persisted ? "true" : "false"); });
+                  [&]() { write_bool(report.secret_bearing_error_persisted); });
             field("raw_provider_error_persisted",
-                  [&]() { out_ << (report.raw_provider_error_persisted ? "true" : "false"); });
+                  [&]() { write_bool(report.raw_provider_error_persisted); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_kind(durable_store_import::ProviderFailureKindV1 kind) {
-        switch (kind) {
-        case durable_store_import::ProviderFailureKindV1::None:
-            write_string("none");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Authentication:
-            write_string("authentication");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Authorization:
-            write_string("authorization");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Network:
-            write_string("network");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Throttling:
-            write_string("throttling");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Conflict:
-            write_string("conflict");
-            return;
-        case durable_store_import::ProviderFailureKindV1::SchemaMismatch:
-            write_string("schema_mismatch");
-            return;
-        case durable_store_import::ProviderFailureKindV1::ProviderInternal:
-            write_string("provider_internal");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Unknown:
-            write_string("unknown");
-            return;
-        case durable_store_import::ProviderFailureKindV1::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::None, "none");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Authentication,
+                                    "authentication");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Authorization,
+                                    "authorization");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Network,
+                                    "network");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Throttling,
+                                    "throttling");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Conflict,
+                                    "conflict");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::SchemaMismatch,
+                                    "schema_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::ProviderInternal,
+                                    "provider_internal");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Unknown,
+                                    "unknown");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Blocked,
+                                    "blocked"));
     }
 
     void print_category(durable_store_import::ProviderFailureCategoryV1 category) {
-        switch (category) {
-        case durable_store_import::ProviderFailureCategoryV1::None:
-            write_string("none");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Security:
-            write_string("security");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Transport:
-            write_string("transport");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::RateLimit:
-            write_string("rate_limit");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Consistency:
-            write_string("consistency");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Contract:
-            write_string("contract");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Provider:
-            write_string("provider");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Unknown:
-            write_string("unknown");
-            return;
-        case durable_store_import::ProviderFailureCategoryV1::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            category,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::None, "none");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Security,
+                                    "security");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Transport,
+                                    "transport");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::RateLimit,
+                                    "rate_limit");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Consistency,
+                                    "consistency");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Contract,
+                                    "contract");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Provider,
+                                    "provider");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Unknown,
+                                    "unknown");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureCategoryV1::Blocked,
+                                    "blocked"));
     }
 
     void print_retryability(durable_store_import::ProviderFailureRetryabilityV1 retryability) {
-        switch (retryability) {
-        case durable_store_import::ProviderFailureRetryabilityV1::NotApplicable:
-            write_string("not_applicable");
-            return;
-        case durable_store_import::ProviderFailureRetryabilityV1::Retryable:
-            write_string("retryable");
-            return;
-        case durable_store_import::ProviderFailureRetryabilityV1::NonRetryable:
-            write_string("non_retryable");
-            return;
-        case durable_store_import::ProviderFailureRetryabilityV1::DuplicateReviewRequired:
-            write_string("duplicate_review_required");
-            return;
-        case durable_store_import::ProviderFailureRetryabilityV1::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            retryability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureRetryabilityV1::NotApplicable,
+                "not_applicable");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureRetryabilityV1::Retryable,
+                                    "retryable");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureRetryabilityV1::NonRetryable, "non_retryable");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureRetryabilityV1::DuplicateReviewRequired,
+                "duplicate_review_required");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureRetryabilityV1::Blocked,
+                                    "blocked"));
     }
 
     void print_action(durable_store_import::ProviderFailureOperatorActionV1 action) {
-        switch (action) {
-        case durable_store_import::ProviderFailureOperatorActionV1::None:
-            write_string("none");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::RotateCredentials:
-            write_string("rotate_credentials");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::GrantPermission:
-            write_string("grant_permission");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::RetryLater:
-            write_string("retry_later");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::InspectDuplicate:
-            write_string("inspect_duplicate");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::FixSchema:
-            write_string("fix_schema");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::EscalateProvider:
-            write_string("escalate_provider");
-            return;
-        case durable_store_import::ProviderFailureOperatorActionV1::ManualReview:
-            write_string("manual_review");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            action,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderFailureOperatorActionV1::None,
+                                    "none");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::RotateCredentials,
+                "rotate_credentials");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::GrantPermission,
+                "grant_permission");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::RetryLater, "retry_later");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::InspectDuplicate,
+                "inspect_duplicate");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::FixSchema, "fix_schema");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::EscalateProvider,
+                "escalate_provider");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureOperatorActionV1::ManualReview,
+                "manual_review"));
     }
 
     void print_sensitivity(durable_store_import::ProviderFailureSecuritySensitivityV1 sensitivity) {
-        switch (sensitivity) {
-        case durable_store_import::ProviderFailureSecuritySensitivityV1::None:
-            write_string("none");
-            return;
-        case durable_store_import::ProviderFailureSecuritySensitivityV1::SecretRelated:
-            write_string("secret_related");
-            return;
-        case durable_store_import::ProviderFailureSecuritySensitivityV1::PermissionRelated:
-            write_string("permission_related");
-            return;
-        case durable_store_import::ProviderFailureSecuritySensitivityV1::NonSensitive:
-            write_string("non_sensitive");
-            return;
-        case durable_store_import::ProviderFailureSecuritySensitivityV1::Unknown:
-            write_string("unknown");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            sensitivity,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureSecuritySensitivityV1::None, "none");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureSecuritySensitivityV1::SecretRelated,
+                "secret_related");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureSecuritySensitivityV1::PermissionRelated,
+                "permission_related");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureSecuritySensitivityV1::NonSensitive,
+                "non_sensitive");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderFailureSecuritySensitivityV1::Unknown, "unknown"));
     }
 };
 
@@ -2400,59 +2178,44 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_kind(durable_store_import::ProviderFailureKindV1 kind, std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderFailureKindV1::None:
-        out << "none";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Authentication:
-        out << "authentication";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Authorization:
-        out << "authorization";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Network:
-        out << "network";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Throttling:
-        out << "throttling";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Conflict:
-        out << "conflict";
-        return;
-    case durable_store_import::ProviderFailureKindV1::SchemaMismatch:
-        out << "schema_mismatch";
-        return;
-    case durable_store_import::ProviderFailureKindV1::ProviderInternal:
-        out << "provider_internal";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Unknown:
-        out << "unknown";
-        return;
-    case durable_store_import::ProviderFailureKindV1::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::None, "none");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Authentication,
+                                        "authentication");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Authorization,
+                                        "authorization");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Network,
+                                        "network");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Throttling,
+                                        "throttling");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Conflict,
+                                        "conflict");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::SchemaMismatch,
+                                        "schema_mismatch");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderFailureKindV1::ProviderInternal, "provider_internal");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Unknown,
+                                        "unknown");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderFailureKindV1::Blocked,
+                                        "blocked"));
 }
 
 void print_retryability(durable_store_import::ProviderFailureRetryabilityV1 retryability,
                         std::ostream &out) {
-    switch (retryability) {
-    case durable_store_import::ProviderFailureRetryabilityV1::NotApplicable:
-        out << "not_applicable";
-        return;
-    case durable_store_import::ProviderFailureRetryabilityV1::Retryable:
-        out << "retryable";
-        return;
-    case durable_store_import::ProviderFailureRetryabilityV1::NonRetryable:
-        out << "non_retryable";
-        return;
-    case durable_store_import::ProviderFailureRetryabilityV1::DuplicateReviewRequired:
-        out << "duplicate_review_required";
-        return;
-    case durable_store_import::ProviderFailureRetryabilityV1::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        retryability,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderFailureRetryabilityV1::NotApplicable, "not_applicable");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderFailureRetryabilityV1::Retryable, "retryable");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderFailureRetryabilityV1::NonRetryable, "non_retryable");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderFailureRetryabilityV1::DuplicateReviewRequired,
+            "duplicate_review_required");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderFailureRetryabilityV1::Blocked, "blocked"));
 }
 
 } // namespace
@@ -2480,9 +2243,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_fixture_matrix {
 namespace {
 
-class FixtureMatrixJsonPrinter final : private PrettyJsonWriter {
+class FixtureMatrixJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit FixtureMatrixJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit FixtureMatrixJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderFixtureMatrix &matrix) {
         print_object(0, [&](const auto &field) {
@@ -2495,34 +2258,23 @@ class FixtureMatrixJsonPrinter final : private PrettyJsonWriter {
             field("fixture_matrix_identity", [&]() {
                 write_string(matrix.durable_store_import_provider_fixture_matrix_identity);
             });
-            field("covers_mock_adapter",
-                  [&]() { out_ << (matrix.covers_mock_adapter ? "true" : "false"); });
+            field("covers_mock_adapter", [&]() { write_bool(matrix.covers_mock_adapter); });
             field("covers_local_filesystem_alpha",
-                  [&]() { out_ << (matrix.covers_local_filesystem_alpha ? "true" : "false"); });
-            field("covers_success_fixture",
-                  [&]() { out_ << (matrix.covers_success_fixture ? "true" : "false"); });
-            field("covers_timeout_fixture",
-                  [&]() { out_ << (matrix.covers_timeout_fixture ? "true" : "false"); });
-            field("covers_conflict_fixture",
-                  [&]() { out_ << (matrix.covers_conflict_fixture ? "true" : "false"); });
+                  [&]() { write_bool(matrix.covers_local_filesystem_alpha); });
+            field("covers_success_fixture", [&]() { write_bool(matrix.covers_success_fixture); });
+            field("covers_timeout_fixture", [&]() { write_bool(matrix.covers_timeout_fixture); });
+            field("covers_conflict_fixture", [&]() { write_bool(matrix.covers_conflict_fixture); });
             field("covers_schema_mismatch_fixture",
-                  [&]() { out_ << (matrix.covers_schema_mismatch_fixture ? "true" : "false"); });
+                  [&]() { write_bool(matrix.covers_schema_mismatch_fixture); });
             field("provider_count", [&]() { out_ << matrix.provider_count; });
             field("fixture_count", [&]() { out_ << matrix.fixture_count; });
             field("external_service_required",
-                  [&]() { out_ << (matrix.external_service_required ? "true" : "false"); });
+                  [&]() { write_bool(matrix.external_service_required); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
 };
 
 } // namespace
@@ -2538,10 +2290,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_host_execution {
 namespace {
 
-class DurableStoreImportProviderHostExecutionJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportProviderHostExecutionJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportProviderHostExecutionJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderHostExecutionPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -2579,47 +2331,29 @@ class DurableStoreImportProviderHostExecutionJsonPrinter final : private PrettyJ
             field("provider_host_receipt_placeholder_identity", [&]() {
                 print_optional_string(plan.provider_host_receipt_placeholder_identity);
             });
-            field("starts_host_process",
-                  [&]() { out_ << (plan.starts_host_process ? "true" : "false"); });
-            field("reads_host_environment",
-                  [&]() { out_ << (plan.reads_host_environment ? "true" : "false"); });
-            field("opens_network_connection",
-                  [&]() { out_ << (plan.opens_network_connection ? "true" : "false"); });
+            field("starts_host_process", [&]() { write_bool(plan.starts_host_process); });
+            field("reads_host_environment", [&]() { write_bool(plan.reads_host_environment); });
+            field("opens_network_connection", [&]() { write_bool(plan.opens_network_connection); });
             field("materializes_sdk_request_payload",
-                  [&]() { out_ << (plan.materializes_sdk_request_payload ? "true" : "false"); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (plan.invokes_provider_sdk ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (plan.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_sdk_request_payload); });
+            field("invokes_provider_sdk", [&]() { write_bool(plan.invokes_provider_sdk); });
+            field("writes_host_filesystem", [&]() { write_bool(plan.writes_host_filesystem); });
             field("failure_attribution", [&]() {
-                if (plan.failure_attribution.has_value()) {
-                    print_failure_attribution(*plan.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(plan.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_envelope_status(durable_store_import::ProviderSdkEnvelopeStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkEnvelopeStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkEnvelopeStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkEnvelopeStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkEnvelopeStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_capability(durable_store_import::ProviderHostExecutionCapabilityKind capability) {
@@ -2654,28 +2388,26 @@ class DurableStoreImportProviderHostExecutionJsonPrinter final : private PrettyJ
     }
 
     void print_execution_status(durable_store_import::ProviderHostExecutionStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderHostExecutionStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderHostExecutionStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderHostExecutionStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderHostExecutionStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderHostExecutionFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderHostExecutionFailureKind::SdkHandoffNotReady:
-            write_string("sdk_handoff_not_ready");
-            return;
-        case durable_store_import::ProviderHostExecutionFailureKind::HostPolicyMismatch:
-            write_string("host_policy_mismatch");
-            return;
-        case durable_store_import::ProviderHostExecutionFailureKind::UnsupportedHostCapability:
-            write_string("unsupported_host_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderHostExecutionFailureKind::SdkHandoffNotReady,
+                "sdk_handoff_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderHostExecutionFailureKind::HostPolicyMismatch,
+                "host_policy_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderHostExecutionFailureKind::UnsupportedHostCapability,
+                "unsupported_host_capability"));
     }
 
     void print_policy(const durable_store_import::ProviderHostExecutionPolicy &policy,
@@ -2690,9 +2422,8 @@ class DurableStoreImportProviderHostExecutionJsonPrinter final : private PrettyJ
             field("execution_profile_ref", [&]() { write_string(policy.execution_profile_ref); });
             field("sandbox_policy_ref", [&]() { write_string(policy.sandbox_policy_ref); });
             field("timeout_policy_ref", [&]() { write_string(policy.timeout_policy_ref); });
-            field("credential_free",
-                  [&]() { out_ << (policy.credential_free ? "true" : "false"); });
-            field("network_free", [&]() { out_ << (policy.network_free ? "true" : "false"); });
+            field("credential_free", [&]() { write_bool(policy.credential_free); });
+            field("network_free", [&]() { write_bool(policy.network_free); });
             field("supports_local_host_execution_descriptor_planning", [&]() {
                 out_ << (policy.supports_local_host_execution_descriptor_planning ? "true"
                                                                                   : "false");
@@ -2727,11 +2458,8 @@ class DurableStoreImportProviderHostExecutionJsonPrinter final : private PrettyJ
             field("kind", [&]() { print_failure_kind(failure.kind); });
             field("message", [&]() { write_string(failure.message); });
             field("missing_capability", [&]() {
-                if (failure.missing_capability.has_value()) {
-                    print_capability(*failure.missing_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(failure.missing_capability,
+                               [&](const auto &value) { print_capability(value); });
             });
         });
     }
@@ -2919,9 +2647,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_local_filesystem_alpha_plan {
 namespace {
 
-class AlphaPlanJsonPrinter final : private PrettyJsonWriter {
+class AlphaPlanJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit AlphaPlanJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit AlphaPlanJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderLocalFilesystemAlphaPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -2936,12 +2664,11 @@ class AlphaPlanJsonPrinter final : private PrettyJsonWriter {
             });
             field("plan_status", [&]() { print_status(plan.plan_status); });
             field("provider_key", [&]() { write_string(plan.provider_key); });
-            field("real_provider_alpha",
-                  [&]() { out_ << (plan.real_provider_alpha ? "true" : "false"); });
+            field("real_provider_alpha", [&]() { write_bool(plan.real_provider_alpha); });
             field("fake_adapter_default_path_preserved",
-                  [&]() { out_ << (plan.fake_adapter_default_path_preserved ? "true" : "false"); });
-            field("opt_in_required", [&]() { out_ << (plan.opt_in_required ? "true" : "false"); });
-            field("opt_in_enabled", [&]() { out_ << (plan.opt_in_enabled ? "true" : "false"); });
+                  [&]() { write_bool(plan.fake_adapter_default_path_preserved); });
+            field("opt_in_required", [&]() { write_bool(plan.opt_in_required); });
+            field("opt_in_enabled", [&]() { write_bool(plan.opt_in_enabled); });
             field("target_directory", [&]() { print_optional_string(plan.target_directory); });
             field("target_object_name", [&]() { write_string(plan.target_object_name); });
             field("planned_payload_digest", [&]() { write_string(plan.planned_payload_digest); });
@@ -2951,14 +2678,6 @@ class AlphaPlanJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderLocalFilesystemAlphaStatus status) {
         write_string(status == durable_store_import::ProviderLocalFilesystemAlphaStatus::Ready
                          ? "ready"
@@ -2966,20 +2685,20 @@ class AlphaPlanJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_failure_kind(durable_store_import::ProviderLocalFilesystemAlphaFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::MockReadinessNotReady:
-            write_string("mock_readiness_not_ready");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::AlphaPlanNotReady:
-            write_string("alpha_plan_not_ready");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::OptInRequired:
-            write_string("opt_in_required");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::FilesystemWriteFailed:
-            write_string("filesystem_write_failed");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderLocalFilesystemAlphaFailureKind::
+                                        MockReadinessNotReady,
+                                    "mock_readiness_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaFailureKind::AlphaPlanNotReady,
+                "alpha_plan_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaFailureKind::OptInRequired,
+                "opt_in_required");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderLocalFilesystemAlphaFailureKind::
+                                        FilesystemWriteFailed,
+                                    "filesystem_write_failed"));
     }
 
     void print_failure(
@@ -3058,9 +2777,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_local_filesystem_alpha_result {
 namespace {
 
-class AlphaResultJsonPrinter final : private PrettyJsonWriter {
+class AlphaResultJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit AlphaResultJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit AlphaResultJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderLocalFilesystemAlphaResult &result) {
         print_object(0, [&](const auto &field) {
@@ -3079,23 +2798,14 @@ class AlphaResultJsonPrinter final : private PrettyJsonWriter {
             field("provider_commit_reference",
                   [&]() { write_string(result.provider_commit_reference); });
             field("provider_result_digest", [&]() { write_string(result.provider_result_digest); });
-            field("wrote_local_file",
-                  [&]() { out_ << (result.wrote_local_file ? "true" : "false"); });
-            field("opt_in_used", [&]() { out_ << (result.opt_in_used ? "true" : "false"); });
+            field("wrote_local_file", [&]() { write_bool(result.wrote_local_file); });
+            field("opt_in_used", [&]() { write_bool(result.opt_in_used); });
             field("failure_attribution", [&]() { print_failure(result.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderLocalFilesystemAlphaStatus status) {
         write_string(status == durable_store_import::ProviderLocalFilesystemAlphaStatus::Ready
                          ? "ready"
@@ -3103,37 +2813,35 @@ class AlphaResultJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_result(durable_store_import::ProviderLocalFilesystemAlphaResultKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalFilesystemAlphaResultKind::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaResultKind::DryRunOnly:
-            write_string("dry_run_only");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaResultKind::WriteFailed:
-            write_string("write_failed");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaResultKind::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaResultKind::Accepted, "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaResultKind::DryRunOnly,
+                "dry_run_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaResultKind::WriteFailed,
+                "write_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaResultKind::Blocked, "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderLocalFilesystemAlphaFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::MockReadinessNotReady:
-            write_string("mock_readiness_not_ready");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::AlphaPlanNotReady:
-            write_string("alpha_plan_not_ready");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::OptInRequired:
-            write_string("opt_in_required");
-            return;
-        case durable_store_import::ProviderLocalFilesystemAlphaFailureKind::FilesystemWriteFailed:
-            write_string("filesystem_write_failed");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderLocalFilesystemAlphaFailureKind::
+                                        MockReadinessNotReady,
+                                    "mock_readiness_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaFailureKind::AlphaPlanNotReady,
+                "alpha_plan_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalFilesystemAlphaFailureKind::OptInRequired,
+                "opt_in_required");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderLocalFilesystemAlphaFailureKind::
+                                        FilesystemWriteFailed,
+                                    "filesystem_write_failed"));
     }
 
     void print_failure(
@@ -3165,10 +2873,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 class DurableStoreImportProviderLocalHostExecutionReceiptJsonPrinter final
-    : private PrettyJsonWriter {
+    : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportProviderLocalHostExecutionReceiptJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderLocalHostExecutionReceipt &receipt) {
         print_object(0, [&](const auto &field) {
@@ -3213,47 +2921,30 @@ class DurableStoreImportProviderLocalHostExecutionReceiptJsonPrinter final
             field("provider_local_host_execution_receipt_identity", [&]() {
                 print_optional_string(receipt.provider_local_host_execution_receipt_identity);
             });
-            field("starts_host_process",
-                  [&]() { out_ << (receipt.starts_host_process ? "true" : "false"); });
-            field("reads_host_environment",
-                  [&]() { out_ << (receipt.reads_host_environment ? "true" : "false"); });
+            field("starts_host_process", [&]() { write_bool(receipt.starts_host_process); });
+            field("reads_host_environment", [&]() { write_bool(receipt.reads_host_environment); });
             field("opens_network_connection",
-                  [&]() { out_ << (receipt.opens_network_connection ? "true" : "false"); });
+                  [&]() { write_bool(receipt.opens_network_connection); });
             field("materializes_sdk_request_payload",
-                  [&]() { out_ << (receipt.materializes_sdk_request_payload ? "true" : "false"); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (receipt.invokes_provider_sdk ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (receipt.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(receipt.materializes_sdk_request_payload); });
+            field("invokes_provider_sdk", [&]() { write_bool(receipt.invokes_provider_sdk); });
+            field("writes_host_filesystem", [&]() { write_bool(receipt.writes_host_filesystem); });
             field("failure_attribution", [&]() {
-                if (receipt.failure_attribution.has_value()) {
-                    print_failure_attribution(*receipt.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_host_execution_status(durable_store_import::ProviderHostExecutionStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderHostExecutionStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderHostExecutionStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderHostExecutionStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderHostExecutionStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_operation_kind(durable_store_import::ProviderLocalHostExecutionOperationKind kind) {
@@ -3270,22 +2961,21 @@ class DurableStoreImportProviderLocalHostExecutionReceiptJsonPrinter final
     }
 
     void print_execution_status(durable_store_import::ProviderLocalHostExecutionStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderLocalHostExecutionStatus::SimulatedReady:
-            write_string("simulated_ready");
-            return;
-        case durable_store_import::ProviderLocalHostExecutionStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostExecutionStatus::SimulatedReady,
+                "simulated_ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderLocalHostExecutionStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderLocalHostExecutionFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalHostExecutionFailureKind::HostExecutionNotReady:
-            write_string("host_execution_not_ready");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostExecutionFailureKind::HostExecutionNotReady,
+                "host_execution_not_ready"));
     }
 
     void print_failure_attribution(
@@ -3455,9 +3145,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_local_host_harness_record {
 namespace {
 
-class HarnessRecordJsonPrinter final : private PrettyJsonWriter {
+class HarnessRecordJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit HarnessRecordJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit HarnessRecordJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderLocalHostHarnessExecutionRecord &record) {
         print_object(0, [&](const auto &field) {
@@ -3479,8 +3169,8 @@ class HarnessRecordJsonPrinter final : private PrettyJsonWriter {
             field("record_status", [&]() { print_status(record.record_status); });
             field("outcome_kind", [&]() { print_outcome(record.outcome_kind); });
             field("exit_code", [&]() { out_ << record.exit_code; });
-            field("timed_out", [&]() { out_ << (record.timed_out ? "true" : "false"); });
-            field("sandbox_denied", [&]() { out_ << (record.sandbox_denied ? "true" : "false"); });
+            field("timed_out", [&]() { write_bool(record.timed_out); });
+            field("sandbox_denied", [&]() { write_bool(record.sandbox_denied); });
             field("captured_diagnostic_summary",
                   [&]() { write_string(record.captured_diagnostic_summary); });
             field("captured_stdout_excerpt",
@@ -3488,25 +3178,15 @@ class HarnessRecordJsonPrinter final : private PrettyJsonWriter {
             field("captured_stderr_excerpt",
                   [&]() { print_optional_string(record.captured_stderr_excerpt); });
             field("opens_network_connection",
-                  [&]() { out_ << (record.opens_network_connection ? "true" : "false"); });
-            field("reads_secret_material",
-                  [&]() { out_ << (record.reads_secret_material ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (record.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(record.opens_network_connection); });
+            field("reads_secret_material", [&]() { write_bool(record.reads_secret_material); });
+            field("writes_host_filesystem", [&]() { write_bool(record.writes_host_filesystem); });
             field("failure_attribution", [&]() { print_failure(record.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderLocalHostHarnessStatus status) {
         write_string(status == durable_store_import::ProviderLocalHostHarnessStatus::Ready
                          ? "ready"
@@ -3532,43 +3212,38 @@ class HarnessRecordJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_outcome(durable_store_import::ProviderLocalHostHarnessOutcomeKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalHostHarnessOutcomeKind::Succeeded:
-            write_string("succeeded");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessOutcomeKind::Failed:
-            write_string("failed");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessOutcomeKind::TimedOut:
-            write_string("timed_out");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessOutcomeKind::SandboxDenied:
-            write_string("sandbox_denied");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessOutcomeKind::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessOutcomeKind::Succeeded, "succeeded");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessOutcomeKind::Failed, "failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessOutcomeKind::TimedOut, "timed_out");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessOutcomeKind::SandboxDenied,
+                "sandbox_denied");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessOutcomeKind::Blocked, "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderLocalHostHarnessFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::SecretPolicyNotReady:
-            write_string("secret_policy_not_ready");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::HarnessRequestNotReady:
-            write_string("harness_request_not_ready");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::NonzeroExit:
-            write_string("nonzero_exit");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::SandboxDenied:
-            write_string("sandbox_denied");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::SecretPolicyNotReady,
+                "secret_policy_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::HarnessRequestNotReady,
+                "harness_request_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::NonzeroExit,
+                "nonzero_exit");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::SandboxDenied,
+                "sandbox_denied"));
     }
 
     void print_failure(
@@ -3600,9 +3275,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_local_host_harness_request {
 namespace {
 
-class HarnessRequestJsonPrinter final : private PrettyJsonWriter {
+class HarnessRequestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit HarnessRequestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit HarnessRequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderLocalHostHarnessExecutionRequest &request) {
         print_object(0, [&](const auto &field) {
@@ -3626,25 +3301,15 @@ class HarnessRequestJsonPrinter final : private PrettyJsonWriter {
             field("timeout_milliseconds", [&]() { out_ << request.timeout_milliseconds; });
             field("fixture_kind", [&]() { print_fixture(request.fixture_kind); });
             field("opens_network_connection",
-                  [&]() { out_ << (request.opens_network_connection ? "true" : "false"); });
-            field("reads_secret_material",
-                  [&]() { out_ << (request.reads_secret_material ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (request.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(request.opens_network_connection); });
+            field("reads_secret_material", [&]() { write_bool(request.reads_secret_material); });
+            field("writes_host_filesystem", [&]() { write_bool(request.writes_host_filesystem); });
             field("failure_attribution", [&]() { print_failure(request.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderLocalHostHarnessStatus status) {
         write_string(status == durable_store_import::ProviderLocalHostHarnessStatus::Ready
                          ? "ready"
@@ -3670,52 +3335,47 @@ class HarnessRequestJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_fixture(durable_store_import::ProviderLocalHostHarnessFixtureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalHostHarnessFixtureKind::Success:
-            write_string("success");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFixtureKind::NonzeroExit:
-            write_string("nonzero_exit");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFixtureKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFixtureKind::SandboxDenied:
-            write_string("sandbox_denied");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFixtureKind::Success, "success");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFixtureKind::NonzeroExit,
+                "nonzero_exit");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFixtureKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFixtureKind::SandboxDenied,
+                "sandbox_denied"));
     }
 
     void print_failure_kind(durable_store_import::ProviderLocalHostHarnessFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::SecretPolicyNotReady:
-            write_string("secret_policy_not_ready");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::HarnessRequestNotReady:
-            write_string("harness_request_not_ready");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::NonzeroExit:
-            write_string("nonzero_exit");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderLocalHostHarnessFailureKind::SandboxDenied:
-            write_string("sandbox_denied");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::SecretPolicyNotReady,
+                "secret_policy_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::HarnessRequestNotReady,
+                "harness_request_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::NonzeroExit,
+                "nonzero_exit");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostHarnessFailureKind::SandboxDenied,
+                "sandbox_denied"));
     }
 
     void print_sandbox(const durable_store_import::ProviderLocalHostHarnessSandboxPolicy &policy,
                        int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("test_only", [&]() { out_ << (policy.test_only ? "true" : "false"); });
-            field("allow_network", [&]() { out_ << (policy.allow_network ? "true" : "false"); });
-            field("allow_secret", [&]() { out_ << (policy.allow_secret ? "true" : "false"); });
-            field("allow_filesystem_write",
-                  [&]() { out_ << (policy.allow_filesystem_write ? "true" : "false"); });
-            field("allow_host_environment",
-                  [&]() { out_ << (policy.allow_host_environment ? "true" : "false"); });
+            field("test_only", [&]() { write_bool(policy.test_only); });
+            field("allow_network", [&]() { write_bool(policy.allow_network); });
+            field("allow_secret", [&]() { write_bool(policy.allow_secret); });
+            field("allow_filesystem_write", [&]() { write_bool(policy.allow_filesystem_write); });
+            field("allow_host_environment", [&]() { write_bool(policy.allow_host_environment); });
         });
     }
 
@@ -3755,23 +3415,19 @@ void print_status(durable_store_import::ProviderLocalHostHarnessStatus status, s
 
 void print_outcome(durable_store_import::ProviderLocalHostHarnessOutcomeKind kind,
                    std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderLocalHostHarnessOutcomeKind::Succeeded:
-        out << "succeeded";
-        return;
-    case durable_store_import::ProviderLocalHostHarnessOutcomeKind::Failed:
-        out << "failed";
-        return;
-    case durable_store_import::ProviderLocalHostHarnessOutcomeKind::TimedOut:
-        out << "timed_out";
-        return;
-    case durable_store_import::ProviderLocalHostHarnessOutcomeKind::SandboxDenied:
-        out << "sandbox_denied";
-        return;
-    case durable_store_import::ProviderLocalHostHarnessOutcomeKind::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderLocalHostHarnessOutcomeKind::Succeeded, "succeeded");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderLocalHostHarnessOutcomeKind::Failed, "failed");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderLocalHostHarnessOutcomeKind::TimedOut, "timed_out");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderLocalHostHarnessOutcomeKind::SandboxDenied,
+            "sandbox_denied");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderLocalHostHarnessOutcomeKind::Blocked, "blocked"));
 }
 
 void print_next(durable_store_import::ProviderLocalHostHarnessNextActionKind kind,
@@ -3825,40 +3481,32 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_outcome(durable_store_import::ProviderAuditOutcome outcome, std::ostream &out) {
-    switch (outcome) {
-    case durable_store_import::ProviderAuditOutcome::Success:
-        out << "success";
-        return;
-    case durable_store_import::ProviderAuditOutcome::Failure:
-        out << "failure";
-        return;
-    case durable_store_import::ProviderAuditOutcome::RetryPending:
-        out << "retry_pending";
-        return;
-    case durable_store_import::ProviderAuditOutcome::RecoveryPending:
-        out << "recovery_pending";
-        return;
-    case durable_store_import::ProviderAuditOutcome::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        outcome,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Success,
+                                        "success");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Failure,
+                                        "failure");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderAuditOutcome::RetryPending,
+                                        "retry_pending");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderAuditOutcome::RecoveryPending,
+                                        "recovery_pending");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Blocked,
+                                        "blocked"));
 }
 
 void print_next(durable_store_import::ProviderAuditNextActionKind action, std::ostream &out) {
-    switch (action) {
-    case durable_store_import::ProviderAuditNextActionKind::Archive:
-        out << "archive";
-        return;
-    case durable_store_import::ProviderAuditNextActionKind::RetryWithIdempotency:
-        out << "retry_with_idempotency";
-        return;
-    case durable_store_import::ProviderAuditNextActionKind::RecoveryReview:
-        out << "recovery_review";
-        return;
-    case durable_store_import::ProviderAuditNextActionKind::OperatorReview:
-        out << "operator_review";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        action,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderAuditNextActionKind::Archive,
+                                        "archive");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderAuditNextActionKind::RetryWithIdempotency,
+            "retry_with_idempotency");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderAuditNextActionKind::RecoveryReview, "recovery_review");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderAuditNextActionKind::OperatorReview, "operator_review"));
 }
 
 } // namespace
@@ -3972,9 +3620,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_production_readiness_evidence {
 namespace {
 
-class EvidenceJsonPrinter final : private PrettyJsonWriter {
+class EvidenceJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit EvidenceJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit EvidenceJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderProductionReadinessEvidence &evidence) {
         print_object(0, [&](const auto &field) {
@@ -3989,15 +3637,15 @@ class EvidenceJsonPrinter final : private PrettyJsonWriter {
                     evidence.durable_store_import_provider_production_readiness_evidence_identity);
             });
             field("security_evidence_passed",
-                  [&]() { out_ << (evidence.security_evidence_passed ? "true" : "false"); });
+                  [&]() { write_bool(evidence.security_evidence_passed); });
             field("recovery_evidence_passed",
-                  [&]() { out_ << (evidence.recovery_evidence_passed ? "true" : "false"); });
+                  [&]() { write_bool(evidence.recovery_evidence_passed); });
             field("compatibility_evidence_passed",
-                  [&]() { out_ << (evidence.compatibility_evidence_passed ? "true" : "false"); });
+                  [&]() { write_bool(evidence.compatibility_evidence_passed); });
             field("observability_evidence_passed",
-                  [&]() { out_ << (evidence.observability_evidence_passed ? "true" : "false"); });
+                  [&]() { write_bool(evidence.observability_evidence_passed); });
             field("registry_evidence_passed",
-                  [&]() { out_ << (evidence.registry_evidence_passed ? "true" : "false"); });
+                  [&]() { write_bool(evidence.registry_evidence_passed); });
             field("blocking_issue_count", [&]() { out_ << evidence.blocking_issue_count; });
             field("evidence_summary", [&]() { write_string(evidence.evidence_summary); });
         });
@@ -4005,13 +3653,6 @@ class EvidenceJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
 };
 
 } // namespace
@@ -4028,17 +3669,15 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_gate(durable_store_import::ProviderProductionReleaseGate gate, std::ostream &out) {
-    switch (gate) {
-    case durable_store_import::ProviderProductionReleaseGate::ReadyForProductionReview:
-        out << "ready_for_production_review";
-        return;
-    case durable_store_import::ProviderProductionReleaseGate::Conditional:
-        out << "conditional";
-        return;
-    case durable_store_import::ProviderProductionReleaseGate::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        gate,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderProductionReleaseGate::ReadyForProductionReview,
+            "ready_for_production_review");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderProductionReleaseGate::Conditional, "conditional");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderProductionReleaseGate::Blocked, "blocked"));
 }
 
 } // namespace
@@ -4063,9 +3702,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_production_readiness_review {
 namespace {
 
-class ReadinessReviewJsonPrinter final : private PrettyJsonWriter {
+class ReadinessReviewJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit ReadinessReviewJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ReadinessReviewJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderProductionReadinessReview &review) {
         print_object(0, [&](const auto &field) {
@@ -4089,25 +3728,15 @@ class ReadinessReviewJsonPrinter final : private PrettyJsonWriter {
 
   private:
     void print_gate(durable_store_import::ProviderProductionReleaseGate gate) {
-        switch (gate) {
-        case durable_store_import::ProviderProductionReleaseGate::ReadyForProductionReview:
-            write_string("ready_for_production_review");
-            return;
-        case durable_store_import::ProviderProductionReleaseGate::Conditional:
-            write_string("conditional");
-            return;
-        case durable_store_import::ProviderProductionReleaseGate::Blocked:
-            write_string("blocked");
-            return;
-        }
-    }
-
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
+        AHFL_ARTIFACT_PRINT_ENUM(
+            gate,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderProductionReleaseGate::ReadyForProductionReview,
+                "ready_for_production_review");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderProductionReleaseGate::Conditional, "conditional");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderProductionReleaseGate::Blocked,
+                                    "blocked"));
     }
 };
 
@@ -4273,9 +3902,9 @@ void print_durable_store_import_provider_recovery_handoff(
 namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_provider_registry {
 namespace {
 
-class RegistryJsonPrinter final : private PrettyJsonWriter {
+class RegistryJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit RegistryJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit RegistryJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderRegistry &registry) {
         print_object(0, [&](const auto &field) {
@@ -4291,12 +3920,11 @@ class RegistryJsonPrinter final : private PrettyJsonWriter {
             field("primary_provider_id", [&]() { write_string(registry.primary_provider_id); });
             field("fallback_provider_id", [&]() { write_string(registry.fallback_provider_id); });
             field("mock_adapter_registered",
-                  [&]() { out_ << (registry.mock_adapter_registered ? "true" : "false"); });
-            field("local_filesystem_alpha_registered", [&]() {
-                out_ << (registry.local_filesystem_alpha_registered ? "true" : "false");
-            });
+                  [&]() { write_bool(registry.mock_adapter_registered); });
+            field("local_filesystem_alpha_registered",
+                  [&]() { write_bool(registry.local_filesystem_alpha_registered); });
             field("unaudited_fallback_allowed",
-                  [&]() { out_ << (registry.unaudited_fallback_allowed ? "true" : "false"); });
+                  [&]() { write_bool(registry.unaudited_fallback_allowed); });
             field("registered_provider_count",
                   [&]() { out_ << registry.registered_provider_count; });
         });
@@ -4304,13 +3932,6 @@ class RegistryJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
 };
 
 } // namespace
@@ -4402,10 +4023,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_runtime_preflight {
 namespace {
 
-class DurableStoreImportProviderRuntimePreflightJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportProviderRuntimePreflightJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportProviderRuntimePreflightJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderRuntimePreflightPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -4439,86 +4060,68 @@ class DurableStoreImportProviderRuntimePreflightJsonPrinter final : private Pret
             field("preflight_status", [&]() { print_preflight_status(plan.preflight_status); });
             field("sdk_invocation_envelope_identity",
                   [&]() { print_optional_string(plan.sdk_invocation_envelope_identity); });
-            field("loads_runtime_config",
-                  [&]() { out_ << (plan.loads_runtime_config ? "true" : "false"); });
-            field("resolves_secret_handles",
-                  [&]() { out_ << (plan.resolves_secret_handles ? "true" : "false"); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (plan.invokes_provider_sdk ? "true" : "false"); });
+            field("loads_runtime_config", [&]() { write_bool(plan.loads_runtime_config); });
+            field("resolves_secret_handles", [&]() { write_bool(plan.resolves_secret_handles); });
+            field("invokes_provider_sdk", [&]() { write_bool(plan.invokes_provider_sdk); });
             field("failure_attribution", [&]() {
-                if (plan.failure_attribution.has_value()) {
-                    print_failure_attribution(*plan.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(plan.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_binding_status(durable_store_import::ProviderDriverBindingStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderDriverBindingStatus::Bound:
-            write_string("bound");
-            return;
-        case durable_store_import::ProviderDriverBindingStatus::NotBound:
-            write_string("not_bound");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderDriverBindingStatus::Bound,
+                                    "bound");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderDriverBindingStatus::NotBound,
+                                    "not_bound"));
     }
 
     void print_capability(durable_store_import::ProviderRuntimeCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::ProviderRuntimeCapabilityKind::LoadSecretFreeRuntimeProfile:
-            write_string("load_secret_free_runtime_profile");
-            return;
-        case durable_store_import::ProviderRuntimeCapabilityKind::ResolveSecretHandlePlaceholder:
-            write_string("resolve_secret_handle_placeholder");
-            return;
-        case durable_store_import::ProviderRuntimeCapabilityKind::LoadConfigSnapshotPlaceholder:
-            write_string("load_config_snapshot_placeholder");
-            return;
-        case durable_store_import::ProviderRuntimeCapabilityKind::PlanSdkInvocationEnvelope:
-            write_string("plan_sdk_invocation_envelope");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderRuntimeCapabilityKind::LoadSecretFreeRuntimeProfile,
+                "load_secret_free_runtime_profile");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderRuntimeCapabilityKind::ResolveSecretHandlePlaceholder,
+                "resolve_secret_handle_placeholder");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderRuntimeCapabilityKind::LoadConfigSnapshotPlaceholder,
+                "load_config_snapshot_placeholder");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderRuntimeCapabilityKind::PlanSdkInvocationEnvelope,
+                "plan_sdk_invocation_envelope"));
     }
 
     void print_operation_kind(durable_store_import::ProviderRuntimeOperationKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderRuntimeOperationKind::PlanProviderSdkInvocationEnvelope:
-            write_string("plan_provider_sdk_invocation_envelope");
-            return;
-        case durable_store_import::ProviderRuntimeOperationKind::NoopDriverBindingNotReady:
-            write_string("noop_driver_binding_not_ready");
-            return;
-        case durable_store_import::ProviderRuntimeOperationKind::NoopRuntimeProfileMismatch:
-            write_string("noop_runtime_profile_mismatch");
-            return;
-        case durable_store_import::ProviderRuntimeOperationKind::NoopUnsupportedRuntimeCapability:
-            write_string("noop_unsupported_runtime_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderRuntimeOperationKind::
+                                        PlanProviderSdkInvocationEnvelope,
+                                    "plan_provider_sdk_invocation_envelope");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderRuntimeOperationKind::NoopDriverBindingNotReady,
+                "noop_driver_binding_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderRuntimeOperationKind::NoopRuntimeProfileMismatch,
+                "noop_runtime_profile_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderRuntimeOperationKind::
+                                        NoopUnsupportedRuntimeCapability,
+                                    "noop_unsupported_runtime_capability"));
     }
 
     void print_preflight_status(durable_store_import::ProviderRuntimePreflightStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderRuntimePreflightStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderRuntimePreflightStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderRuntimePreflightStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderRuntimePreflightStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderRuntimePreflightFailureKind kind) {
@@ -4550,20 +4153,15 @@ class DurableStoreImportProviderRuntimePreflightJsonPrinter final : private Pret
                   [&]() { write_string(profile.secret_resolver_policy_ref); });
             field("config_snapshot_policy_ref",
                   [&]() { write_string(profile.config_snapshot_policy_ref); });
-            field("credential_free",
-                  [&]() { out_ << (profile.credential_free ? "true" : "false"); });
-            field("supports_secret_free_runtime_profile_load", [&]() {
-                out_ << (profile.supports_secret_free_runtime_profile_load ? "true" : "false");
-            });
-            field("supports_secret_handle_placeholder_resolution", [&]() {
-                out_ << (profile.supports_secret_handle_placeholder_resolution ? "true" : "false");
-            });
-            field("supports_config_snapshot_placeholder_load", [&]() {
-                out_ << (profile.supports_config_snapshot_placeholder_load ? "true" : "false");
-            });
-            field("supports_sdk_invocation_envelope_planning", [&]() {
-                out_ << (profile.supports_sdk_invocation_envelope_planning ? "true" : "false");
-            });
+            field("credential_free", [&]() { write_bool(profile.credential_free); });
+            field("supports_secret_free_runtime_profile_load",
+                  [&]() { write_bool(profile.supports_secret_free_runtime_profile_load); });
+            field("supports_secret_handle_placeholder_resolution",
+                  [&]() { write_bool(profile.supports_secret_handle_placeholder_resolution); });
+            field("supports_config_snapshot_placeholder_load",
+                  [&]() { write_bool(profile.supports_config_snapshot_placeholder_load); });
+            field("supports_sdk_invocation_envelope_planning",
+                  [&]() { write_bool(profile.supports_sdk_invocation_envelope_planning); });
             field("credential_reference",
                   [&]() { print_optional_string(profile.credential_reference); });
             field("secret_value", [&]() { print_optional_string(profile.secret_value); });
@@ -4587,11 +4185,8 @@ class DurableStoreImportProviderRuntimePreflightJsonPrinter final : private Pret
             field("kind", [&]() { print_failure_kind(failure.kind); });
             field("message", [&]() { write_string(failure.message); });
             field("missing_capability", [&]() {
-                if (failure.missing_capability.has_value()) {
-                    print_capability(*failure.missing_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(failure.missing_capability,
+                               [&](const auto &value) { print_capability(value); });
             });
         });
     }
@@ -4765,9 +4360,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_schema_compatibility_report {
 namespace {
 
-class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
+class SchemaCompatibilityReportJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit SchemaCompatibilityReportJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit SchemaCompatibilityReportJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSchemaCompatibilityReport &report) {
         print_object(0, [&](const auto &field) {
@@ -4784,8 +4379,7 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
             field("incompatible_count", [&]() { out_ << report.incompatible_count; });
             field("unknown_count", [&]() { out_ << report.unknown_count; });
             field("compatibility_summary", [&]() { write_string(report.compatibility_summary); });
-            field("has_schema_drift",
-                  [&]() { out_ << (report.has_schema_drift ? "true" : "false"); });
+            field("has_schema_drift", [&]() { write_bool(report.has_schema_drift); });
             field("drift_details", [&]() { print_optional_string(report.drift_details); });
         });
         out_ << '\n';
@@ -4793,25 +4387,14 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
 
   private:
     void print_status(durable_store_import::SchemaCompatibilityStatus status) {
-        switch (status) {
-        case durable_store_import::SchemaCompatibilityStatus::Compatible:
-            write_string("compatible");
-            return;
-        case durable_store_import::SchemaCompatibilityStatus::Incompatible:
-            write_string("incompatible");
-            return;
-        case durable_store_import::SchemaCompatibilityStatus::Unknown:
-            write_string("unknown");
-            return;
-        }
-    }
-
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::SchemaCompatibilityStatus::Compatible,
+                                    "compatible");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::SchemaCompatibilityStatus::Incompatible,
+                                    "incompatible");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::SchemaCompatibilityStatus::Unknown,
+                                    "unknown"));
     }
 
     void
@@ -4849,8 +4432,7 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
                               [&]() { write_string(check.source_format_version); });
                         field("expected_source_format_version",
                               [&]() { write_string(check.expected_source_format_version); });
-                        field("is_compatible",
-                              [&]() { out_ << (check.is_compatible ? "true" : "false"); });
+                        field("is_compatible", [&]() { write_bool(check.is_compatible); });
                         field("incompatibility_reason",
                               [&]() { print_optional_string(check.incompatibility_reason); });
                     });
@@ -4872,8 +4454,7 @@ class SchemaCompatibilityReportJsonPrinter final : private PrettyJsonWriter {
                               [&]() { write_string(check.referenced_format_version); });
                         field("expected_format_version",
                               [&]() { write_string(check.expected_format_version); });
-                        field("is_compatible",
-                              [&]() { out_ << (check.is_compatible ? "true" : "false"); });
+                        field("is_compatible", [&]() { write_bool(check.is_compatible); });
                         field("incompatibility_reason",
                               [&]() { print_optional_string(check.incompatibility_reason); });
                     });
@@ -4896,9 +4477,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_sdk_adapter_interface {
 namespace {
 
-class ProviderSdkAdapterInterfaceJsonPrinter final : private PrettyJsonWriter {
+class ProviderSdkAdapterInterfaceJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit ProviderSdkAdapterInterfaceJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ProviderSdkAdapterInterfaceJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkAdapterInterfacePlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -4940,19 +4521,14 @@ class ProviderSdkAdapterInterfaceJsonPrinter final : private PrettyJsonWriter {
             field("normalized_error_kind",
                   [&]() { print_normalized_error_kind(plan.normalized_error_kind); });
             field("returns_placeholder_result",
-                  [&]() { out_ << (plan.returns_placeholder_result ? "true" : "false"); });
+                  [&]() { write_bool(plan.returns_placeholder_result); });
             field("materializes_sdk_request_payload",
-                  [&]() { out_ << (plan.materializes_sdk_request_payload ? "true" : "false"); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (plan.invokes_provider_sdk ? "true" : "false"); });
-            field("opens_network_connection",
-                  [&]() { out_ << (plan.opens_network_connection ? "true" : "false"); });
-            field("reads_secret_material",
-                  [&]() { out_ << (plan.reads_secret_material ? "true" : "false"); });
-            field("reads_host_environment",
-                  [&]() { out_ << (plan.reads_host_environment ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (plan.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_sdk_request_payload); });
+            field("invokes_provider_sdk", [&]() { write_bool(plan.invokes_provider_sdk); });
+            field("opens_network_connection", [&]() { write_bool(plan.opens_network_connection); });
+            field("reads_secret_material", [&]() { write_bool(plan.reads_secret_material); });
+            field("reads_host_environment", [&]() { write_bool(plan.reads_host_environment); });
+            field("writes_host_filesystem", [&]() { write_bool(plan.writes_host_filesystem); });
             field("provider_endpoint_uri",
                   [&]() { print_optional_string(plan.provider_endpoint_uri); });
             field("credential_reference",
@@ -4962,45 +4538,29 @@ class ProviderSdkAdapterInterfaceJsonPrinter final : private PrettyJsonWriter {
             field("sdk_response_payload",
                   [&]() { print_optional_string(plan.sdk_response_payload); });
             field("failure_attribution", [&]() {
-                if (plan.failure_attribution.has_value()) {
-                    print_failure_attribution(*plan.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(plan.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_adapter_status(durable_store_import::ProviderSdkAdapterStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkAdapterStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterStatus::Ready, "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_interface_status(durable_store_import::ProviderSdkAdapterInterfaceStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked, "blocked"));
     }
 
     void print_operation_kind(durable_store_import::ProviderSdkAdapterInterfaceOperationKind kind) {
@@ -5022,29 +4582,28 @@ class ProviderSdkAdapterInterfaceJsonPrinter final : private PrettyJsonWriter {
 
     void
     print_support_status(durable_store_import::ProviderSdkAdapterCapabilitySupportStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Supported:
-            write_string("supported");
-            return;
-        case durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Unsupported:
-            write_string("unsupported");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Supported,
+                "supported");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Unsupported,
+                "unsupported"));
     }
 
     void
     print_normalized_error_kind(durable_store_import::ProviderSdkAdapterNormalizedErrorKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkAdapterNormalizedErrorKind::None:
-            write_string("none");
-            return;
-        case durable_store_import::ProviderSdkAdapterNormalizedErrorKind::UnsupportedCapability:
-            write_string("unsupported_capability");
-            return;
-        case durable_store_import::ProviderSdkAdapterNormalizedErrorKind::SdkAdapterRequestNotReady:
-            write_string("sdk_adapter_request_not_ready");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterNormalizedErrorKind::None, "none");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterNormalizedErrorKind::UnsupportedCapability,
+                "unsupported_capability");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterNormalizedErrorKind::
+                                        SdkAdapterRequestNotReady,
+                                    "sdk_adapter_request_not_ready"));
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkAdapterInterfaceFailureKind kind) {
@@ -5070,7 +4629,7 @@ class ProviderSdkAdapterInterfaceJsonPrinter final : private PrettyJsonWriter {
             field("output_contract_format_version",
                   [&]() { write_string(descriptor.output_contract_format_version); });
             field("supports_placeholder_response",
-                  [&]() { out_ << (descriptor.supports_placeholder_response ? "true" : "false"); });
+                  [&]() { write_bool(descriptor.supports_placeholder_response); });
         });
     }
 
@@ -5099,14 +4658,12 @@ namespace {
 
 void print_status(durable_store_import::ProviderSdkAdapterInterfaceStatus status,
                   std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready:
-        out << "ready";
-        return;
-    case durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        status,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterInterfaceStatus::Ready, "ready");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterInterfaceStatus::Blocked, "blocked"));
 }
 
 void print_operation(durable_store_import::ProviderSdkAdapterInterfaceOperationKind kind,
@@ -5128,29 +4685,28 @@ void print_operation(durable_store_import::ProviderSdkAdapterInterfaceOperationK
 
 void print_support(durable_store_import::ProviderSdkAdapterCapabilitySupportStatus status,
                    std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Supported:
-        out << "supported";
-        return;
-    case durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Unsupported:
-        out << "unsupported";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        status,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Supported,
+            "supported");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterCapabilitySupportStatus::Unsupported,
+            "unsupported"));
 }
 
 void print_error(durable_store_import::ProviderSdkAdapterNormalizedErrorKind kind,
                  std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderSdkAdapterNormalizedErrorKind::None:
-        out << "none";
-        return;
-    case durable_store_import::ProviderSdkAdapterNormalizedErrorKind::UnsupportedCapability:
-        out << "unsupported_capability";
-        return;
-    case durable_store_import::ProviderSdkAdapterNormalizedErrorKind::SdkAdapterRequestNotReady:
-        out << "sdk_adapter_request_not_ready";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterNormalizedErrorKind::None, "none");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterNormalizedErrorKind::UnsupportedCapability,
+            "unsupported_capability");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkAdapterNormalizedErrorKind::SdkAdapterRequestNotReady,
+            "sdk_adapter_request_not_ready"));
 }
 
 void print_next_action(durable_store_import::ProviderSdkAdapterInterfaceReviewNextActionKind kind,
@@ -5383,9 +4939,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_sdk_adapter_request {
 namespace {
 
-class ProviderSdkAdapterRequestJsonPrinter final : private PrettyJsonWriter {
+class ProviderSdkAdapterRequestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit ProviderSdkAdapterRequestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ProviderSdkAdapterRequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkAdapterRequestPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -5430,17 +4986,12 @@ class ProviderSdkAdapterRequestJsonPrinter final : private PrettyJsonWriter {
                 print_optional_string(plan.provider_sdk_adapter_response_placeholder_identity);
             });
             field("materializes_sdk_request_payload",
-                  [&]() { out_ << (plan.materializes_sdk_request_payload ? "true" : "false"); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (plan.invokes_provider_sdk ? "true" : "false"); });
-            field("opens_network_connection",
-                  [&]() { out_ << (plan.opens_network_connection ? "true" : "false"); });
-            field("reads_secret_material",
-                  [&]() { out_ << (plan.reads_secret_material ? "true" : "false"); });
-            field("reads_host_environment",
-                  [&]() { out_ << (plan.reads_host_environment ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (plan.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_sdk_request_payload); });
+            field("invokes_provider_sdk", [&]() { write_bool(plan.invokes_provider_sdk); });
+            field("opens_network_connection", [&]() { write_bool(plan.opens_network_connection); });
+            field("reads_secret_material", [&]() { write_bool(plan.reads_secret_material); });
+            field("reads_host_environment", [&]() { write_bool(plan.reads_host_environment); });
+            field("writes_host_filesystem", [&]() { write_bool(plan.writes_host_filesystem); });
             field("provider_endpoint_uri",
                   [&]() { print_optional_string(plan.provider_endpoint_uri); });
             field("object_path", [&]() { print_optional_string(plan.object_path); });
@@ -5450,45 +5001,30 @@ class ProviderSdkAdapterRequestJsonPrinter final : private PrettyJsonWriter {
             field("sdk_response_payload",
                   [&]() { print_optional_string(plan.sdk_response_payload); });
             field("failure_attribution", [&]() {
-                if (plan.failure_attribution.has_value()) {
-                    print_failure_attribution(*plan.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(plan.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_local_host_status(durable_store_import::ProviderLocalHostExecutionStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderLocalHostExecutionStatus::SimulatedReady:
-            write_string("simulated_ready");
-            return;
-        case durable_store_import::ProviderLocalHostExecutionStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderLocalHostExecutionStatus::SimulatedReady,
+                "simulated_ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderLocalHostExecutionStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_status(durable_store_import::ProviderSdkAdapterStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkAdapterStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterStatus::Ready, "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_operation_kind(durable_store_import::ProviderSdkAdapterOperationKind kind) {
@@ -5510,14 +5046,14 @@ class ProviderSdkAdapterRequestJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkAdapterFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkAdapterFailureKind::LocalHostExecutionNotReady:
-            write_string("local_host_execution_not_ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterFailureKind::SdkAdapterRequestNotReady:
-            write_string("sdk_adapter_request_not_ready");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterFailureKind::LocalHostExecutionNotReady,
+                "local_host_execution_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterFailureKind::SdkAdapterRequestNotReady,
+                "sdk_adapter_request_not_ready"));
     }
 
     void print_failure_attribution(
@@ -5543,10 +5079,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_sdk_adapter_response_placeholder {
 namespace {
 
-class ProviderSdkAdapterResponsePlaceholderJsonPrinter final : private PrettyJsonWriter {
+class ProviderSdkAdapterResponsePlaceholderJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit ProviderSdkAdapterResponsePlaceholderJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkAdapterResponsePlaceholder &placeholder) {
         print_object(0, [&](const auto &field) {
@@ -5593,48 +5129,32 @@ class ProviderSdkAdapterResponsePlaceholderJsonPrinter final : private PrettyJso
                 print_optional_string(
                     placeholder.provider_sdk_adapter_response_placeholder_identity);
             });
-            field("materializes_sdk_request_payload", [&]() {
-                out_ << (placeholder.materializes_sdk_request_payload ? "true" : "false");
-            });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (placeholder.invokes_provider_sdk ? "true" : "false"); });
+            field("materializes_sdk_request_payload",
+                  [&]() { write_bool(placeholder.materializes_sdk_request_payload); });
+            field("invokes_provider_sdk", [&]() { write_bool(placeholder.invokes_provider_sdk); });
             field("opens_network_connection",
-                  [&]() { out_ << (placeholder.opens_network_connection ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.opens_network_connection); });
             field("reads_secret_material",
-                  [&]() { out_ << (placeholder.reads_secret_material ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.reads_secret_material); });
             field("reads_host_environment",
-                  [&]() { out_ << (placeholder.reads_host_environment ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.reads_host_environment); });
             field("writes_host_filesystem",
-                  [&]() { out_ << (placeholder.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.writes_host_filesystem); });
             field("failure_attribution", [&]() {
-                if (placeholder.failure_attribution.has_value()) {
-                    print_failure_attribution(*placeholder.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(placeholder.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderSdkAdapterStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkAdapterStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterStatus::Ready, "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkAdapterStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_operation_kind(durable_store_import::ProviderSdkAdapterOperationKind kind) {
@@ -5656,14 +5176,14 @@ class ProviderSdkAdapterResponsePlaceholderJsonPrinter final : private PrettyJso
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkAdapterFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkAdapterFailureKind::LocalHostExecutionNotReady:
-            write_string("local_host_execution_not_ready");
-            return;
-        case durable_store_import::ProviderSdkAdapterFailureKind::SdkAdapterRequestNotReady:
-            write_string("sdk_adapter_request_not_ready");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterFailureKind::LocalHostExecutionNotReady,
+                "local_host_execution_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkAdapterFailureKind::SdkAdapterRequestNotReady,
+                "sdk_adapter_request_not_ready"));
     }
 
     void print_failure_attribution(
@@ -5689,10 +5209,10 @@ void print_durable_store_import_provider_sdk_adapter_response_placeholder_json(
 namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_provider_sdk_envelope {
 namespace {
 
-class DurableStoreImportProviderSdkEnvelopeJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportProviderSdkEnvelopeJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportProviderSdkEnvelopeJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkRequestEnvelopePlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -5727,53 +5247,37 @@ class DurableStoreImportProviderSdkEnvelopeJsonPrinter final : private PrettyJso
             field("host_handoff_descriptor_identity",
                   [&]() { print_optional_string(plan.host_handoff_descriptor_identity); });
             field("materializes_sdk_request_payload",
-                  [&]() { out_ << (plan.materializes_sdk_request_payload ? "true" : "false"); });
-            field("starts_host_process",
-                  [&]() { out_ << (plan.starts_host_process ? "true" : "false"); });
-            field("opens_network_connection",
-                  [&]() { out_ << (plan.opens_network_connection ? "true" : "false"); });
-            field("invokes_provider_sdk",
-                  [&]() { out_ << (plan.invokes_provider_sdk ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_sdk_request_payload); });
+            field("starts_host_process", [&]() { write_bool(plan.starts_host_process); });
+            field("opens_network_connection", [&]() { write_bool(plan.opens_network_connection); });
+            field("invokes_provider_sdk", [&]() { write_bool(plan.invokes_provider_sdk); });
             field("failure_attribution", [&]() {
-                if (plan.failure_attribution.has_value()) {
-                    print_failure_attribution(*plan.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(plan.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_preflight_status(durable_store_import::ProviderRuntimePreflightStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderRuntimePreflightStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderRuntimePreflightStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderRuntimePreflightStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderRuntimePreflightStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_capability(durable_store_import::ProviderSdkEnvelopeCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::ProviderSdkEnvelopeCapabilityKind::PlanSecretFreeRequestEnvelope:
-            write_string("plan_secret_free_request_envelope");
-            return;
-        case durable_store_import::ProviderSdkEnvelopeCapabilityKind::PlanHostHandoffDescriptor:
-            write_string("plan_host_handoff_descriptor");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkEnvelopeCapabilityKind::
+                                        PlanSecretFreeRequestEnvelope,
+                                    "plan_secret_free_request_envelope");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkEnvelopeCapabilityKind::PlanHostHandoffDescriptor,
+                "plan_host_handoff_descriptor"));
     }
 
     void print_operation_kind(durable_store_import::ProviderSdkEnvelopeOperationKind kind) {
@@ -5795,28 +5299,26 @@ class DurableStoreImportProviderSdkEnvelopeJsonPrinter final : private PrettyJso
     }
 
     void print_envelope_status(durable_store_import::ProviderSdkEnvelopeStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSdkEnvelopeStatus::Ready:
-            write_string("ready");
-            return;
-        case durable_store_import::ProviderSdkEnvelopeStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkEnvelopeStatus::Ready,
+                                    "ready");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSdkEnvelopeStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkEnvelopeFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkEnvelopeFailureKind::RuntimePreflightNotReady:
-            write_string("runtime_preflight_not_ready");
-            return;
-        case durable_store_import::ProviderSdkEnvelopeFailureKind::EnvelopePolicyMismatch:
-            write_string("envelope_policy_mismatch");
-            return;
-        case durable_store_import::ProviderSdkEnvelopeFailureKind::UnsupportedEnvelopeCapability:
-            write_string("unsupported_envelope_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkEnvelopeFailureKind::RuntimePreflightNotReady,
+                "runtime_preflight_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkEnvelopeFailureKind::EnvelopePolicyMismatch,
+                "envelope_policy_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkEnvelopeFailureKind::UnsupportedEnvelopeCapability,
+                "unsupported_envelope_capability"));
     }
 
     void print_policy(const durable_store_import::ProviderSdkEnvelopePolicy &policy,
@@ -5831,14 +5333,11 @@ class DurableStoreImportProviderSdkEnvelopeJsonPrinter final : private PrettyJso
                   [&]() { write_string(policy.secret_free_request_schema_ref); });
             field("host_handoff_policy_ref",
                   [&]() { write_string(policy.host_handoff_policy_ref); });
-            field("credential_free",
-                  [&]() { out_ << (policy.credential_free ? "true" : "false"); });
-            field("supports_secret_free_request_envelope_planning", [&]() {
-                out_ << (policy.supports_secret_free_request_envelope_planning ? "true" : "false");
-            });
-            field("supports_host_handoff_descriptor_planning", [&]() {
-                out_ << (policy.supports_host_handoff_descriptor_planning ? "true" : "false");
-            });
+            field("credential_free", [&]() { write_bool(policy.credential_free); });
+            field("supports_secret_free_request_envelope_planning",
+                  [&]() { write_bool(policy.supports_secret_free_request_envelope_planning); });
+            field("supports_host_handoff_descriptor_planning",
+                  [&]() { write_bool(policy.supports_host_handoff_descriptor_planning); });
             field("credential_reference",
                   [&]() { print_optional_string(policy.credential_reference); });
             field("secret_value", [&]() { print_optional_string(policy.secret_value); });
@@ -5863,11 +5362,8 @@ class DurableStoreImportProviderSdkEnvelopeJsonPrinter final : private PrettyJso
             field("kind", [&]() { print_failure_kind(failure.kind); });
             field("message", [&]() { write_string(failure.message); });
             field("missing_capability", [&]() {
-                if (failure.missing_capability.has_value()) {
-                    print_capability(*failure.missing_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(failure.missing_capability,
+                               [&](const auto &value) { print_capability(value); });
             });
         });
     }
@@ -6046,9 +5542,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_sdk_mock_adapter_contract {
 namespace {
 
-class MockContractJsonPrinter final : private PrettyJsonWriter {
+class MockContractJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit MockContractJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit MockContractJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkMockAdapterContract &contract) {
         print_object(0, [&](const auto &field) {
@@ -6071,28 +5567,18 @@ class MockContractJsonPrinter final : private PrettyJsonWriter {
             field("provider_request_payload_schema_ref",
                   [&]() { write_string(contract.provider_request_payload_schema_ref); });
             field("payload_digest", [&]() { write_string(contract.payload_digest); });
-            field("fake_provider_only",
-                  [&]() { out_ << (contract.fake_provider_only ? "true" : "false"); });
+            field("fake_provider_only", [&]() { write_bool(contract.fake_provider_only); });
             field("opens_network_connection",
-                  [&]() { out_ << (contract.opens_network_connection ? "true" : "false"); });
-            field("reads_secret_material",
-                  [&]() { out_ << (contract.reads_secret_material ? "true" : "false"); });
+                  [&]() { write_bool(contract.opens_network_connection); });
+            field("reads_secret_material", [&]() { write_bool(contract.reads_secret_material); });
             field("invokes_real_provider_sdk",
-                  [&]() { out_ << (contract.invokes_real_provider_sdk ? "true" : "false"); });
+                  [&]() { write_bool(contract.invokes_real_provider_sdk); });
             field("failure_attribution", [&]() { print_failure(contract.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderSdkMockAdapterStatus status) {
         write_string(status == durable_store_import::ProviderSdkMockAdapterStatus::Ready
                          ? "ready"
@@ -6100,69 +5586,61 @@ class MockContractJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_operation(durable_store_import::ProviderSdkMockAdapterOperationKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::PlanMockAdapterContract:
-            write_string("plan_mock_adapter_contract");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::RunMockAdapter:
-            write_string("run_mock_adapter");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::NoopPayloadNotReady:
-            write_string("noop_payload_not_ready");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::NoopContractNotReady:
-            write_string("noop_contract_not_ready");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::PlanMockAdapterContract,
+                "plan_mock_adapter_contract");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::RunMockAdapter,
+                "run_mock_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::NoopPayloadNotReady,
+                "noop_payload_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::NoopContractNotReady,
+                "noop_contract_not_ready"));
     }
 
     void print_scenario(durable_store_import::ProviderSdkMockAdapterScenarioKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Success:
-            write_string("success");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure:
-            write_string("failure");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle:
-            write_string("throttle");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict:
-            write_string("conflict");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch:
-            write_string("schema_mismatch");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Success, "success");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure, "failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle, "throttle");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict, "conflict");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch,
+                "schema_mismatch"));
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkMockAdapterFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::PayloadNotReady:
-            write_string("payload_not_ready");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::ContractNotReady:
-            write_string("contract_not_ready");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::ProviderFailure:
-            write_string("provider_failure");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::Throttle:
-            write_string("throttle");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::Conflict:
-            write_string("conflict");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::SchemaMismatch:
-            write_string("schema_mismatch");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::PayloadNotReady,
+                "payload_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::ContractNotReady,
+                "contract_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::ProviderFailure,
+                "provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::Throttle, "throttle");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::Conflict, "conflict");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::SchemaMismatch,
+                "schema_mismatch"));
     }
 
     void print_failure(
@@ -6193,9 +5671,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_sdk_mock_adapter_execution {
 namespace {
 
-class MockExecutionJsonPrinter final : private PrettyJsonWriter {
+class MockExecutionJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit MockExecutionJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit MockExecutionJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkMockAdapterExecutionResult &result) {
         print_object(0, [&](const auto &field) {
@@ -6219,25 +5697,16 @@ class MockExecutionJsonPrinter final : private PrettyJsonWriter {
             field("provider_status_code", [&]() { out_ << result.provider_status_code; });
             field("normalized_message", [&]() { write_string(result.normalized_message); });
             field("opens_network_connection",
-                  [&]() { out_ << (result.opens_network_connection ? "true" : "false"); });
-            field("reads_secret_material",
-                  [&]() { out_ << (result.reads_secret_material ? "true" : "false"); });
+                  [&]() { write_bool(result.opens_network_connection); });
+            field("reads_secret_material", [&]() { write_bool(result.reads_secret_material); });
             field("invokes_real_provider_sdk",
-                  [&]() { out_ << (result.invokes_real_provider_sdk ? "true" : "false"); });
+                  [&]() { write_bool(result.invokes_real_provider_sdk); });
             field("failure_attribution", [&]() { print_failure(result.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderSdkMockAdapterStatus status) {
         write_string(status == durable_store_import::ProviderSdkMockAdapterStatus::Ready
                          ? "ready"
@@ -6245,95 +5714,87 @@ class MockExecutionJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_operation(durable_store_import::ProviderSdkMockAdapterOperationKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::PlanMockAdapterContract:
-            write_string("plan_mock_adapter_contract");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::RunMockAdapter:
-            write_string("run_mock_adapter");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::NoopPayloadNotReady:
-            write_string("noop_payload_not_ready");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterOperationKind::NoopContractNotReady:
-            write_string("noop_contract_not_ready");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::PlanMockAdapterContract,
+                "plan_mock_adapter_contract");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::RunMockAdapter,
+                "run_mock_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::NoopPayloadNotReady,
+                "noop_payload_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterOperationKind::NoopContractNotReady,
+                "noop_contract_not_ready"));
     }
 
     void print_scenario(durable_store_import::ProviderSdkMockAdapterScenarioKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Success:
-            write_string("success");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure:
-            write_string("failure");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle:
-            write_string("throttle");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict:
-            write_string("conflict");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch:
-            write_string("schema_mismatch");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Success, "success");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Failure, "failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Throttle, "throttle");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::Conflict, "conflict");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterScenarioKind::SchemaMismatch,
+                "schema_mismatch"));
     }
 
     void print_normalized(durable_store_import::ProviderSdkMockAdapterNormalizedResultKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::ProviderFailure:
-            write_string("provider_failure");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Throttled:
-            write_string("throttled");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Conflict:
-            write_string("conflict");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::SchemaMismatch:
-            write_string("schema_mismatch");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Accepted,
+                "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::ProviderFailure,
+                "provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Timeout,
+                "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Throttled,
+                "throttled");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Conflict,
+                "conflict");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::SchemaMismatch,
+                "schema_mismatch");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Blocked,
+                "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkMockAdapterFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::PayloadNotReady:
-            write_string("payload_not_ready");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::ContractNotReady:
-            write_string("contract_not_ready");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::ProviderFailure:
-            write_string("provider_failure");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::Timeout:
-            write_string("timeout");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::Throttle:
-            write_string("throttle");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::Conflict:
-            write_string("conflict");
-            return;
-        case durable_store_import::ProviderSdkMockAdapterFailureKind::SchemaMismatch:
-            write_string("schema_mismatch");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::PayloadNotReady,
+                "payload_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::ContractNotReady,
+                "contract_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::ProviderFailure,
+                "provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::Timeout, "timeout");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::Throttle, "throttle");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::Conflict, "conflict");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkMockAdapterFailureKind::SchemaMismatch,
+                "schema_mismatch"));
     }
 
     void print_failure(
@@ -6371,44 +5832,40 @@ void print_status(durable_store_import::ProviderSdkMockAdapterStatus status, std
 
 void print_normalized(durable_store_import::ProviderSdkMockAdapterNormalizedResultKind kind,
                       std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Accepted:
-        out << "accepted";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::ProviderFailure:
-        out << "provider_failure";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Timeout:
-        out << "timeout";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Throttled:
-        out << "throttled";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Conflict:
-        out << "conflict";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::SchemaMismatch:
-        out << "schema_mismatch";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Accepted, "accepted");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::ProviderFailure,
+            "provider_failure");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Timeout, "timeout");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Throttled,
+            "throttled");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Conflict, "conflict");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::SchemaMismatch,
+            "schema_mismatch");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNormalizedResultKind::Blocked, "blocked"));
 }
 
 void print_next(durable_store_import::ProviderSdkMockAdapterNextActionKind kind,
                 std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderSdkMockAdapterNextActionKind::ReadyForRealAdapterParity:
-        out << "ready_for_real_adapter_parity";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNextActionKind::WaitForPayload:
-        out << "wait_for_payload";
-        return;
-    case durable_store_import::ProviderSdkMockAdapterNextActionKind::ManualReviewRequired:
-        out << "manual_review_required";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNextActionKind::ReadyForRealAdapterParity,
+            "ready_for_real_adapter_parity");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNextActionKind::WaitForPayload,
+            "wait_for_payload");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkMockAdapterNextActionKind::ManualReviewRequired,
+            "manual_review_required"));
 }
 
 } // namespace
@@ -6444,17 +5901,17 @@ void print_status(durable_store_import::ProviderSdkPayloadStatus status, std::os
 }
 
 void print_next(durable_store_import::ProviderSdkPayloadNextActionKind kind, std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderSdkPayloadNextActionKind::ReadyForMockAdapter:
-        out << "ready_for_mock_adapter";
-        return;
-    case durable_store_import::ProviderSdkPayloadNextActionKind::WaitForLocalHarness:
-        out << "wait_for_local_harness";
-        return;
-    case durable_store_import::ProviderSdkPayloadNextActionKind::ManualReviewRequired:
-        out << "manual_review_required";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkPayloadNextActionKind::ReadyForMockAdapter,
+            "ready_for_mock_adapter");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkPayloadNextActionKind::WaitForLocalHarness,
+            "wait_for_local_harness");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSdkPayloadNextActionKind::ManualReviewRequired,
+            "manual_review_required"));
 }
 
 } // namespace
@@ -6490,9 +5947,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_sdk_payload_plan {
 namespace {
 
-class PayloadPlanJsonPrinter final : private PrettyJsonWriter {
+class PayloadPlanJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit PayloadPlanJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit PayloadPlanJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSdkPayloadMaterializationPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -6509,16 +5966,15 @@ class PayloadPlanJsonPrinter final : private PrettyJsonWriter {
             });
             field("operation_kind", [&]() { print_operation(plan.operation_kind); });
             field("payload_status", [&]() { print_status(plan.payload_status); });
-            field("fake_provider_only",
-                  [&]() { out_ << (plan.fake_provider_only ? "true" : "false"); });
+            field("fake_provider_only", [&]() { write_bool(plan.fake_provider_only); });
             field("provider_request_payload_schema_ref",
                   [&]() { write_string(plan.provider_request_payload_schema_ref); });
             field("payload_digest", [&]() { write_string(plan.payload_digest); });
             field("redaction_summary", [&]() { print_redaction(plan.redaction_summary, 1); });
             field("materializes_sdk_request_payload",
-                  [&]() { out_ << (plan.materializes_sdk_request_payload ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_sdk_request_payload); });
             field("persists_materialized_payload",
-                  [&]() { out_ << (plan.persists_materialized_payload ? "true" : "false"); });
+                  [&]() { write_bool(plan.persists_materialized_payload); });
             field("raw_payload", [&]() { print_optional_string(plan.raw_payload); });
             field("failure_attribution", [&]() { print_failure(plan.failure_attribution, 1); });
         });
@@ -6526,14 +5982,6 @@ class PayloadPlanJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderSdkPayloadStatus status) {
         write_string(status == durable_store_import::ProviderSdkPayloadStatus::Ready ? "ready"
                                                                                      : "blocked");
@@ -6552,26 +6000,25 @@ class PayloadPlanJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_failure_kind(durable_store_import::ProviderSdkPayloadFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSdkPayloadFailureKind::HarnessNotReady:
-            write_string("harness_not_ready");
-            return;
-        case durable_store_import::ProviderSdkPayloadFailureKind::ForbiddenPayloadMaterial:
-            write_string("forbidden_payload_material");
-            return;
-        case durable_store_import::ProviderSdkPayloadFailureKind::UnsupportedProviderSchema:
-            write_string("unsupported_provider_schema");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkPayloadFailureKind::HarnessNotReady,
+                "harness_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkPayloadFailureKind::ForbiddenPayloadMaterial,
+                "forbidden_payload_material");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSdkPayloadFailureKind::UnsupportedProviderSchema,
+                "unsupported_provider_schema"));
     }
 
     void print_redaction(const durable_store_import::ProviderSdkPayloadRedactionSummary &summary,
                          int indent_level) {
         print_object(indent_level, [&](const auto &field) {
-            field("secret_free", [&]() { out_ << (summary.secret_free ? "true" : "false"); });
-            field("credential_free",
-                  [&]() { out_ << (summary.credential_free ? "true" : "false"); });
-            field("token_free", [&]() { out_ << (summary.token_free ? "true" : "false"); });
+            field("secret_free", [&]() { write_bool(summary.secret_free); });
+            field("credential_free", [&]() { write_bool(summary.credential_free); });
+            field("token_free", [&]() { write_bool(summary.token_free); });
             field("redacted_field_count", [&]() { out_ << summary.redacted_field_count; });
             field("summary", [&]() { write_string(summary.summary); });
         });
@@ -6609,49 +6056,48 @@ void print_status(durable_store_import::ProviderSecretStatus status, std::ostrea
 }
 
 void print_operation(durable_store_import::ProviderSecretOperationKind kind, std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderSecretOperationKind::PlanSecretResolverRequest:
-        out << "plan_secret_resolver_request";
-        return;
-    case durable_store_import::ProviderSecretOperationKind::PlanSecretResolverResponsePlaceholder:
-        out << "plan_secret_resolver_response_placeholder";
-        return;
-    case durable_store_import::ProviderSecretOperationKind::NoopConfigSnapshotNotReady:
-        out << "noop_config_snapshot_not_ready";
-        return;
-    case durable_store_import::ProviderSecretOperationKind::NoopSecretResolverRequestNotReady:
-        out << "noop_secret_resolver_request_not_ready";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSecretOperationKind::PlanSecretResolverRequest,
+            "plan_secret_resolver_request");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderSecretOperationKind::
+                                            PlanSecretResolverResponsePlaceholder,
+                                        "plan_secret_resolver_response_placeholder");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSecretOperationKind::NoopConfigSnapshotNotReady,
+            "noop_config_snapshot_not_ready");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSecretOperationKind::NoopSecretResolverRequestNotReady,
+            "noop_secret_resolver_request_not_ready"));
 }
 
 void print_lifecycle(durable_store_import::ProviderCredentialLifecycleState state,
                      std::ostream &out) {
-    switch (state) {
-    case durable_store_import::ProviderCredentialLifecycleState::HandlePlanned:
-        out << "handle_planned";
-        return;
-    case durable_store_import::ProviderCredentialLifecycleState::PlaceholderPendingResolution:
-        out << "placeholder_pending_resolution";
-        return;
-    case durable_store_import::ProviderCredentialLifecycleState::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        state,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderCredentialLifecycleState::HandlePlanned,
+            "handle_planned");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderCredentialLifecycleState::PlaceholderPendingResolution,
+            "placeholder_pending_resolution");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderCredentialLifecycleState::Blocked, "blocked"));
 }
 
 void print_next(durable_store_import::ProviderSecretPolicyNextActionKind kind, std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderSecretPolicyNextActionKind::ReadyForLocalHostHarness:
-        out << "ready_for_local_host_harness";
-        return;
-    case durable_store_import::ProviderSecretPolicyNextActionKind::WaitForConfigSnapshot:
-        out << "wait_for_config_snapshot";
-        return;
-    case durable_store_import::ProviderSecretPolicyNextActionKind::ManualReviewRequired:
-        out << "manual_review_required";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSecretPolicyNextActionKind::ReadyForLocalHostHarness,
+            "ready_for_local_host_harness");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSecretPolicyNextActionKind::WaitForConfigSnapshot,
+            "wait_for_config_snapshot");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderSecretPolicyNextActionKind::ManualReviewRequired,
+            "manual_review_required"));
 }
 
 void print_failure(const durable_store_import::ProviderSecretPolicyReview &review,
@@ -6718,9 +6164,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_secret_resolver_request {
 namespace {
 
-class SecretRequestJsonPrinter final : private PrettyJsonWriter {
+class SecretRequestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit SecretRequestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit SecretRequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSecretResolverRequestPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -6753,22 +6199,16 @@ class SecretRequestJsonPrinter final : private PrettyJsonWriter {
             field("provider_secret_resolver_response_placeholder_identity", [&]() {
                 write_string(plan.provider_secret_resolver_response_placeholder_identity);
             });
-            field("reads_secret_material",
-                  [&]() { out_ << (plan.reads_secret_material ? "true" : "false"); });
+            field("reads_secret_material", [&]() { write_bool(plan.reads_secret_material); });
             field("materializes_secret_value",
-                  [&]() { out_ << (plan.materializes_secret_value ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_secret_value); });
             field("materializes_credential_material",
-                  [&]() { out_ << (plan.materializes_credential_material ? "true" : "false"); });
-            field("materializes_token_value",
-                  [&]() { out_ << (plan.materializes_token_value ? "true" : "false"); });
-            field("opens_network_connection",
-                  [&]() { out_ << (plan.opens_network_connection ? "true" : "false"); });
-            field("reads_host_environment",
-                  [&]() { out_ << (plan.reads_host_environment ? "true" : "false"); });
-            field("writes_host_filesystem",
-                  [&]() { out_ << (plan.writes_host_filesystem ? "true" : "false"); });
-            field("invokes_secret_manager",
-                  [&]() { out_ << (plan.invokes_secret_manager ? "true" : "false"); });
+                  [&]() { write_bool(plan.materializes_credential_material); });
+            field("materializes_token_value", [&]() { write_bool(plan.materializes_token_value); });
+            field("opens_network_connection", [&]() { write_bool(plan.opens_network_connection); });
+            field("reads_host_environment", [&]() { write_bool(plan.reads_host_environment); });
+            field("writes_host_filesystem", [&]() { write_bool(plan.writes_host_filesystem); });
+            field("invokes_secret_manager", [&]() { write_bool(plan.invokes_secret_manager); });
             field("secret_value", [&]() { print_optional_string(plan.secret_value); });
             field("credential_material",
                   [&]() { print_optional_string(plan.credential_material); });
@@ -6781,14 +6221,6 @@ class SecretRequestJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_config_status(durable_store_import::ProviderConfigStatus status) {
         write_string(status == durable_store_import::ProviderConfigStatus::Ready ? "ready"
                                                                                  : "blocked");
@@ -6818,17 +6250,17 @@ class SecretRequestJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_failure_kind(durable_store_import::ProviderSecretFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSecretFailureKind::ConfigSnapshotNotReady:
-            write_string("config_snapshot_not_ready");
-            return;
-        case durable_store_import::ProviderSecretFailureKind::SecretResolverRequestNotReady:
-            write_string("secret_resolver_request_not_ready");
-            return;
-        case durable_store_import::ProviderSecretFailureKind::SecretPolicyViolation:
-            write_string("secret_policy_violation");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSecretFailureKind::ConfigSnapshotNotReady,
+                "config_snapshot_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSecretFailureKind::SecretResolverRequestNotReady,
+                "secret_resolver_request_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSecretFailureKind::SecretPolicyViolation,
+                "secret_policy_violation"));
     }
 
     void print_handle(const durable_store_import::ProviderSecretHandleReference &handle,
@@ -6839,12 +6271,10 @@ class SecretRequestJsonPrinter final : private PrettyJsonWriter {
             field("provider_key", [&]() { write_string(handle.provider_key); });
             field("profile_key", [&]() { write_string(handle.profile_key); });
             field("purpose", [&]() { write_string(handle.purpose); });
-            field("contains_secret_value",
-                  [&]() { out_ << (handle.contains_secret_value ? "true" : "false"); });
+            field("contains_secret_value", [&]() { write_bool(handle.contains_secret_value); });
             field("contains_credential_material",
-                  [&]() { out_ << (handle.contains_credential_material ? "true" : "false"); });
-            field("contains_token_value",
-                  [&]() { out_ << (handle.contains_token_value ? "true" : "false"); });
+                  [&]() { write_bool(handle.contains_credential_material); });
+            field("contains_token_value", [&]() { write_bool(handle.contains_token_value); });
         });
     }
 
@@ -6875,9 +6305,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_secret_resolver_response {
 namespace {
 
-class SecretResponseJsonPrinter final : private PrettyJsonWriter {
+class SecretResponseJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit SecretResponseJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit SecretResponseJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSecretResolverResponsePlaceholder &placeholder) {
         print_object(0, [&](const auto &field) {
@@ -6912,22 +6342,21 @@ class SecretResponseJsonPrinter final : private PrettyJsonWriter {
             field("credential_lifecycle_state",
                   [&]() { print_lifecycle(placeholder.credential_lifecycle_state); });
             field("reads_secret_material",
-                  [&]() { out_ << (placeholder.reads_secret_material ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.reads_secret_material); });
             field("materializes_secret_value",
-                  [&]() { out_ << (placeholder.materializes_secret_value ? "true" : "false"); });
-            field("materializes_credential_material", [&]() {
-                out_ << (placeholder.materializes_credential_material ? "true" : "false");
-            });
+                  [&]() { write_bool(placeholder.materializes_secret_value); });
+            field("materializes_credential_material",
+                  [&]() { write_bool(placeholder.materializes_credential_material); });
             field("materializes_token_value",
-                  [&]() { out_ << (placeholder.materializes_token_value ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.materializes_token_value); });
             field("opens_network_connection",
-                  [&]() { out_ << (placeholder.opens_network_connection ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.opens_network_connection); });
             field("reads_host_environment",
-                  [&]() { out_ << (placeholder.reads_host_environment ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.reads_host_environment); });
             field("writes_host_filesystem",
-                  [&]() { out_ << (placeholder.writes_host_filesystem ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.writes_host_filesystem); });
             field("invokes_secret_manager",
-                  [&]() { out_ << (placeholder.invokes_secret_manager ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.invokes_secret_manager); });
             field("failure_attribution",
                   [&]() { print_failure(placeholder.failure_attribution, 1); });
         });
@@ -6935,14 +6364,6 @@ class SecretResponseJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderSecretStatus status) {
         write_string(status == durable_store_import::ProviderSecretStatus::Ready ? "ready"
                                                                                  : "blocked");
@@ -6967,31 +6388,30 @@ class SecretResponseJsonPrinter final : private PrettyJsonWriter {
     }
 
     void print_lifecycle(durable_store_import::ProviderCredentialLifecycleState state) {
-        switch (state) {
-        case durable_store_import::ProviderCredentialLifecycleState::HandlePlanned:
-            write_string("handle_planned");
-            return;
-        case durable_store_import::ProviderCredentialLifecycleState::PlaceholderPendingResolution:
-            write_string("placeholder_pending_resolution");
-            return;
-        case durable_store_import::ProviderCredentialLifecycleState::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            state,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderCredentialLifecycleState::HandlePlanned,
+                "handle_planned");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderCredentialLifecycleState::
+                                        PlaceholderPendingResolution,
+                                    "placeholder_pending_resolution");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderCredentialLifecycleState::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderSecretFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderSecretFailureKind::ConfigSnapshotNotReady:
-            write_string("config_snapshot_not_ready");
-            return;
-        case durable_store_import::ProviderSecretFailureKind::SecretResolverRequestNotReady:
-            write_string("secret_resolver_request_not_ready");
-            return;
-        case durable_store_import::ProviderSecretFailureKind::SecretPolicyViolation:
-            write_string("secret_policy_violation");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSecretFailureKind::ConfigSnapshotNotReady,
+                "config_snapshot_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSecretFailureKind::SecretResolverRequestNotReady,
+                "secret_resolver_request_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderSecretFailureKind::SecretPolicyViolation,
+                "secret_policy_violation"));
     }
 
     void print_handle(const durable_store_import::ProviderSecretHandleReference &handle,
@@ -7002,12 +6422,10 @@ class SecretResponseJsonPrinter final : private PrettyJsonWriter {
             field("provider_key", [&]() { write_string(handle.provider_key); });
             field("profile_key", [&]() { write_string(handle.profile_key); });
             field("purpose", [&]() { write_string(handle.purpose); });
-            field("contains_secret_value",
-                  [&]() { out_ << (handle.contains_secret_value ? "true" : "false"); });
+            field("contains_secret_value", [&]() { write_bool(handle.contains_secret_value); });
             field("contains_credential_material",
-                  [&]() { out_ << (handle.contains_credential_material ? "true" : "false"); });
-            field("contains_token_value",
-                  [&]() { out_ << (handle.contains_token_value ? "true" : "false"); });
+                  [&]() { write_bool(handle.contains_credential_material); });
+            field("contains_token_value", [&]() { write_bool(handle.contains_token_value); });
         });
     }
 
@@ -7039,9 +6457,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_selection_plan {
 namespace {
 
-class SelectionPlanJsonPrinter final : private PrettyJsonWriter {
+class SelectionPlanJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit SelectionPlanJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit SelectionPlanJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderSelectionPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -7056,10 +6474,8 @@ class SelectionPlanJsonPrinter final : private PrettyJsonWriter {
             field("selected_provider_id", [&]() { write_string(plan.selected_provider_id); });
             field("fallback_provider_id", [&]() { write_string(plan.fallback_provider_id); });
             field("selection_status", [&]() { print_status(plan.selection_status); });
-            field("degradation_allowed",
-                  [&]() { out_ << (plan.degradation_allowed ? "true" : "false"); });
-            field("requires_operator_review",
-                  [&]() { out_ << (plan.requires_operator_review ? "true" : "false"); });
+            field("degradation_allowed", [&]() { write_bool(plan.degradation_allowed); });
+            field("requires_operator_review", [&]() { write_bool(plan.requires_operator_review); });
             field("fallback_policy", [&]() { write_string(plan.fallback_policy); });
             field("capability_gap_summary", [&]() { write_string(plan.capability_gap_summary); });
         });
@@ -7068,25 +6484,14 @@ class SelectionPlanJsonPrinter final : private PrettyJsonWriter {
 
   private:
     void print_status(durable_store_import::ProviderSelectionStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderSelectionStatus::Selected:
-            write_string("selected");
-            return;
-        case durable_store_import::ProviderSelectionStatus::FallbackSelected:
-            write_string("fallback_selected");
-            return;
-        case durable_store_import::ProviderSelectionStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
-    }
-
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSelectionStatus::Selected,
+                                    "selected");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSelectionStatus::FallbackSelected,
+                                    "fallback_selected");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderSelectionStatus::Blocked,
+                                    "blocked"));
     }
 };
 
@@ -7103,9 +6508,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_telemetry_summary {
 namespace {
 
-class TelemetrySummaryJsonPrinter final : private PrettyJsonWriter {
+class TelemetrySummaryJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit TelemetrySummaryJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit TelemetrySummaryJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderTelemetrySummary &summary) {
         print_object(0, [&](const auto &field) {
@@ -7120,48 +6525,31 @@ class TelemetrySummaryJsonPrinter final : private PrettyJsonWriter {
             });
             field("outcome", [&]() { print_outcome(summary.outcome); });
             field("provider_write_attempted",
-                  [&]() { out_ << (summary.provider_write_attempted ? "true" : "false"); });
+                  [&]() { write_bool(summary.provider_write_attempted); });
             field("provider_write_committed",
-                  [&]() { out_ << (summary.provider_write_committed ? "true" : "false"); });
-            field("retry_recommended",
-                  [&]() { out_ << (summary.retry_recommended ? "true" : "false"); });
-            field("recovery_required",
-                  [&]() { out_ << (summary.recovery_required ? "true" : "false"); });
+                  [&]() { write_bool(summary.provider_write_committed); });
+            field("retry_recommended", [&]() { write_bool(summary.retry_recommended); });
+            field("recovery_required", [&]() { write_bool(summary.recovery_required); });
             field("telemetry_summary", [&]() { write_string(summary.telemetry_summary); });
-            field("secret_free", [&]() { out_ << (summary.secret_free ? "true" : "false"); });
+            field("secret_free", [&]() { write_bool(summary.secret_free); });
             field("raw_telemetry_persisted",
-                  [&]() { out_ << (summary.raw_telemetry_persisted ? "true" : "false"); });
+                  [&]() { write_bool(summary.raw_telemetry_persisted); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_outcome(durable_store_import::ProviderAuditOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::ProviderAuditOutcome::Success:
-            write_string("success");
-            return;
-        case durable_store_import::ProviderAuditOutcome::Failure:
-            write_string("failure");
-            return;
-        case durable_store_import::ProviderAuditOutcome::RetryPending:
-            write_string("retry_pending");
-            return;
-        case durable_store_import::ProviderAuditOutcome::RecoveryPending:
-            write_string("recovery_pending");
-            return;
-        case durable_store_import::ProviderAuditOutcome::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Success, "success");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Failure, "failure");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::RetryPending,
+                                    "retry_pending");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::RecoveryPending,
+                                    "recovery_pending");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAuditOutcome::Blocked,
+                                    "blocked"));
     }
 };
 
@@ -7177,10 +6565,10 @@ void print_durable_store_import_provider_telemetry_summary_json(
 namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_provider_write_attempt {
 namespace {
 
-class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportProviderWriteAttemptJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportProviderWriteAttemptJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderWriteAttemptPreview &preview) {
         print_object(0, [&](const auto &field) {
@@ -7222,135 +6610,111 @@ class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJs
             field("retry_resume_placeholder",
                   [&]() { print_retry_resume_placeholder(preview.retry_resume_placeholder, 1); });
             field("failure_attribution", [&]() {
-                if (preview.failure_attribution.has_value()) {
-                    print_failure_attribution(*preview.failure_attribution, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(preview.failure_attribution,
+                               [&](const auto &value) { print_failure_attribution(value, 1); });
             });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_adapter_kind(durable_store_import::ProviderAdapterKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderAdapterKind::ProviderNeutralShim:
-            write_string("provider_neutral_shim");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderAdapterKind::ProviderNeutralShim,
+                                    "provider_neutral_shim"));
     }
 
     void print_response_status(durable_store_import::PersistenceResponseStatus status) {
-        switch (status) {
-        case durable_store_import::PersistenceResponseStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Accepted,
+                                    "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Deferred,
+                                    "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Rejected,
+                                    "rejected"));
     }
 
     void print_response_outcome(durable_store_import::PersistenceResponseOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest:
-            write_string("accept_persistence_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest:
-            write_string("block_blocked_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest:
-            write_string("defer_deferred_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::RejectFailedRequest:
-            write_string("reject_failed_request");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest,
+                "accept_persistence_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest,
+                "block_blocked_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest,
+                "defer_deferred_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::RejectFailedRequest,
+                "reject_failed_request"));
     }
 
     void print_mutation_status(durable_store_import::StoreMutationStatus status) {
-        switch (status) {
-        case durable_store_import::StoreMutationStatus::Persisted:
-            write_string("persisted");
-            return;
-        case durable_store_import::StoreMutationStatus::NotMutated:
-            write_string("not_mutated");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationStatus::Persisted,
+                                    "persisted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::StoreMutationStatus::NotMutated,
+                                    "not_mutated"));
     }
 
     void print_write_intent_kind(durable_store_import::ProviderWriteIntentKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderWriteIntentKind::ProviderPersistReceipt:
-            write_string("provider_persist_receipt");
-            return;
-        case durable_store_import::ProviderWriteIntentKind::NoopBlocked:
-            write_string("noop_blocked");
-            return;
-        case durable_store_import::ProviderWriteIntentKind::NoopDeferred:
-            write_string("noop_deferred");
-            return;
-        case durable_store_import::ProviderWriteIntentKind::NoopRejected:
-            write_string("noop_rejected");
-            return;
-        case durable_store_import::ProviderWriteIntentKind::NoopUnsupportedCapability:
-            write_string("noop_unsupported_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteIntentKind::ProviderPersistReceipt,
+                "provider_persist_receipt");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteIntentKind::NoopBlocked,
+                                    "noop_blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteIntentKind::NoopDeferred,
+                                    "noop_deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteIntentKind::NoopRejected,
+                                    "noop_rejected");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteIntentKind::NoopUnsupportedCapability,
+                "noop_unsupported_capability"));
     }
 
     void print_planning_status(durable_store_import::ProviderWritePlanningStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderWritePlanningStatus::Planned:
-            write_string("planned");
-            return;
-        case durable_store_import::ProviderWritePlanningStatus::NotPlanned:
-            write_string("not_planned");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWritePlanningStatus::Planned,
+                                    "planned");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWritePlanningStatus::NotPlanned,
+                                    "not_planned"));
     }
 
     void print_capability(durable_store_import::ProviderCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::ProviderCapabilityKind::PlanProviderWrite:
-            write_string("plan_provider_write");
-            return;
-        case durable_store_import::ProviderCapabilityKind::PlanRetryPlaceholder:
-            write_string("plan_retry_placeholder");
-            return;
-        case durable_store_import::ProviderCapabilityKind::PlanResumePlaceholder:
-            write_string("plan_resume_placeholder");
-            return;
-        case durable_store_import::ProviderCapabilityKind::PlanRecoveryHandoff:
-            write_string("plan_recovery_handoff");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderCapabilityKind::PlanProviderWrite,
+                                    "plan_provider_write");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderCapabilityKind::PlanRetryPlaceholder,
+                "plan_retry_placeholder");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderCapabilityKind::PlanResumePlaceholder,
+                "plan_resume_placeholder");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderCapabilityKind::PlanRecoveryHandoff,
+                "plan_recovery_handoff"));
     }
 
     void print_failure_kind(durable_store_import::ProviderPlanningFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderPlanningFailureKind::SourceExecutionNotPersisted:
-            write_string("source_execution_not_persisted");
-            return;
-        case durable_store_import::ProviderPlanningFailureKind::UnsupportedProviderCapability:
-            write_string("unsupported_provider_capability");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderPlanningFailureKind::SourceExecutionNotPersisted,
+                "source_execution_not_persisted");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderPlanningFailureKind::UnsupportedProviderCapability,
+                "unsupported_provider_capability"));
     }
 
     void print_provider_config(const durable_store_import::ProviderAdapterConfig &config,
@@ -7361,8 +6725,7 @@ class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJs
             field("config_identity", [&]() { write_string(config.config_identity); });
             field("provider_profile_ref", [&]() { write_string(config.provider_profile_ref); });
             field("provider_namespace", [&]() { write_string(config.provider_namespace); });
-            field("credential_free",
-                  [&]() { out_ << (config.credential_free ? "true" : "false"); });
+            field("credential_free", [&]() { write_bool(config.credential_free); });
             field("secret_material_reference",
                   [&]() { print_optional_string(config.secret_material_reference); });
             field("endpoint_secret_reference",
@@ -7380,14 +6743,13 @@ class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJs
                   [&]() { write_string(matrix.capability_matrix_identity); });
             field("provider_config_identity",
                   [&]() { write_string(matrix.provider_config_identity); });
-            field("supports_provider_write",
-                  [&]() { out_ << (matrix.supports_provider_write ? "true" : "false"); });
+            field("supports_provider_write", [&]() { write_bool(matrix.supports_provider_write); });
             field("supports_retry_placeholder",
-                  [&]() { out_ << (matrix.supports_retry_placeholder ? "true" : "false"); });
+                  [&]() { write_bool(matrix.supports_retry_placeholder); });
             field("supports_resume_placeholder",
-                  [&]() { out_ << (matrix.supports_resume_placeholder ? "true" : "false"); });
+                  [&]() { write_bool(matrix.supports_resume_placeholder); });
             field("supports_recovery_handoff",
-                  [&]() { out_ << (matrix.supports_recovery_handoff ? "true" : "false"); });
+                  [&]() { write_bool(matrix.supports_recovery_handoff); });
         });
     }
 
@@ -7402,8 +6764,7 @@ class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJs
             field("provider_namespace", [&]() { write_string(intent.provider_namespace); });
             field("provider_persistence_id",
                   [&]() { print_optional_string(intent.provider_persistence_id); });
-            field("mutates_provider",
-                  [&]() { out_ << (intent.mutates_provider ? "true" : "false"); });
+            field("mutates_provider", [&]() { write_bool(intent.mutates_provider); });
         });
     }
 
@@ -7411,9 +6772,9 @@ class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJs
         const durable_store_import::ProviderRetryResumePlaceholder &placeholder, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("retry_placeholder_available",
-                  [&]() { out_ << (placeholder.retry_placeholder_available ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.retry_placeholder_available); });
             field("resume_placeholder_available",
-                  [&]() { out_ << (placeholder.resume_placeholder_available ? "true" : "false"); });
+                  [&]() { write_bool(placeholder.resume_placeholder_available); });
             field("retry_placeholder_identity",
                   [&]() { print_optional_string(placeholder.retry_placeholder_identity); });
             field("resume_placeholder_identity",
@@ -7427,11 +6788,8 @@ class DurableStoreImportProviderWriteAttemptJsonPrinter final : private PrettyJs
             field("kind", [&]() { print_failure_kind(failure.kind); });
             field("message", [&]() { write_string(failure.message); });
             field("missing_capability", [&]() {
-                if (failure.missing_capability.has_value()) {
-                    print_capability(*failure.missing_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(failure.missing_capability,
+                               [&](const auto &value) { print_capability(value); });
             });
         });
     }
@@ -7450,9 +6808,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_write_commit_receipt {
 namespace {
 
-class CommitReceiptJsonPrinter final : private PrettyJsonWriter {
+class CommitReceiptJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit CommitReceiptJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit CommitReceiptJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderWriteCommitReceipt &receipt) {
         print_object(0, [&](const auto &field) {
@@ -7471,61 +6829,48 @@ class CommitReceiptJsonPrinter final : private PrettyJsonWriter {
             field("provider_commit_digest",
                   [&]() { write_string(receipt.provider_commit_digest); });
             field("idempotency_key", [&]() { write_string(receipt.idempotency_key); });
-            field("secret_free", [&]() { out_ << (receipt.secret_free ? "true" : "false"); });
+            field("secret_free", [&]() { write_bool(receipt.secret_free); });
             field("raw_provider_payload_persisted",
-                  [&]() { out_ << (receipt.raw_provider_payload_persisted ? "true" : "false"); });
+                  [&]() { write_bool(receipt.raw_provider_payload_persisted); });
             field("failure_attribution", [&]() { print_failure(receipt.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderWriteCommitStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderWriteCommitStatus::Committed:
-            write_string("committed");
-            return;
-        case durable_store_import::ProviderWriteCommitStatus::Duplicate:
-            write_string("duplicate");
-            return;
-        case durable_store_import::ProviderWriteCommitStatus::Partial:
-            write_string("partial");
-            return;
-        case durable_store_import::ProviderWriteCommitStatus::Failed:
-            write_string("failed");
-            return;
-        case durable_store_import::ProviderWriteCommitStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Committed,
+                                    "committed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Duplicate,
+                                    "duplicate");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Partial,
+                                    "partial");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Failed,
+                                    "failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderWriteCommitFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderWriteCommitFailureKind::AdapterResultNotReady:
-            write_string("adapter_result_not_ready");
-            return;
-        case durable_store_import::ProviderWriteCommitFailureKind::RetryDecisionNotReady:
-            write_string("retry_decision_not_ready");
-            return;
-        case durable_store_import::ProviderWriteCommitFailureKind::ProviderFailure:
-            write_string("provider_failure");
-            return;
-        case durable_store_import::ProviderWriteCommitFailureKind::DuplicateDetected:
-            write_string("duplicate_detected");
-            return;
-        case durable_store_import::ProviderWriteCommitFailureKind::PartialCommit:
-            write_string("partial_commit");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteCommitFailureKind::AdapterResultNotReady,
+                "adapter_result_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteCommitFailureKind::RetryDecisionNotReady,
+                "retry_decision_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteCommitFailureKind::ProviderFailure,
+                "provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteCommitFailureKind::DuplicateDetected,
+                "duplicate_detected");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteCommitFailureKind::PartialCommit,
+                "partial_commit"));
     }
 
     void print_failure(
@@ -7556,37 +6901,32 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_status(durable_store_import::ProviderWriteCommitStatus status, std::ostream &out) {
-    switch (status) {
-    case durable_store_import::ProviderWriteCommitStatus::Committed:
-        out << "committed";
-        return;
-    case durable_store_import::ProviderWriteCommitStatus::Duplicate:
-        out << "duplicate";
-        return;
-    case durable_store_import::ProviderWriteCommitStatus::Partial:
-        out << "partial";
-        return;
-    case durable_store_import::ProviderWriteCommitStatus::Failed:
-        out << "failed";
-        return;
-    case durable_store_import::ProviderWriteCommitStatus::Blocked:
-        out << "blocked";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        status,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Committed,
+                                        "committed");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Duplicate,
+                                        "duplicate");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Partial,
+                                        "partial");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Failed,
+                                        "failed");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(durable_store_import::ProviderWriteCommitStatus::Blocked,
+                                        "blocked"));
 }
 
 void print_next(durable_store_import::ProviderWriteCommitNextActionKind kind, std::ostream &out) {
-    switch (kind) {
-    case durable_store_import::ProviderWriteCommitNextActionKind::ReadyForRecoveryAudit:
-        out << "ready_for_recovery_audit";
-        return;
-    case durable_store_import::ProviderWriteCommitNextActionKind::RetryUsingIdempotencyContract:
-        out << "retry_using_idempotency_contract";
-        return;
-    case durable_store_import::ProviderWriteCommitNextActionKind::ManualReviewRequired:
-        out << "manual_review_required";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        kind,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteCommitNextActionKind::ReadyForRecoveryAudit,
+            "ready_for_recovery_audit");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteCommitNextActionKind::RetryUsingIdempotencyContract,
+            "retry_using_idempotency_contract");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteCommitNextActionKind::ManualReviewRequired,
+            "manual_review_required"));
 }
 
 } // namespace
@@ -7616,9 +6956,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_write_recovery_checkpoint {
 namespace {
 
-class RecoveryCheckpointJsonPrinter final : private PrettyJsonWriter {
+class RecoveryCheckpointJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit RecoveryCheckpointJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit RecoveryCheckpointJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderWriteRecoveryCheckpoint &checkpoint) {
         print_object(0, [&](const auto &field) {
@@ -7649,72 +6989,61 @@ class RecoveryCheckpointJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_status(durable_store_import::ProviderWriteRecoveryCheckpointStatus status) {
-        switch (status) {
-        case durable_store_import::ProviderWriteRecoveryCheckpointStatus::StableCommitted:
-            write_string("stable_committed");
-            return;
-        case durable_store_import::ProviderWriteRecoveryCheckpointStatus::DuplicateReview:
-            write_string("duplicate_review");
-            return;
-        case durable_store_import::ProviderWriteRecoveryCheckpointStatus::PartialWrite:
-            write_string("partial_write");
-            return;
-        case durable_store_import::ProviderWriteRecoveryCheckpointStatus::FailedWrite:
-            write_string("failed_write");
-            return;
-        case durable_store_import::ProviderWriteRecoveryCheckpointStatus::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryCheckpointStatus::StableCommitted,
+                "stable_committed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryCheckpointStatus::DuplicateReview,
+                "duplicate_review");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryCheckpointStatus::PartialWrite,
+                "partial_write");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryCheckpointStatus::FailedWrite,
+                "failed_write");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryCheckpointStatus::Blocked, "blocked"));
     }
 
     void print_eligibility(durable_store_import::ProviderWriteRecoveryEligibility eligibility) {
-        switch (eligibility) {
-        case durable_store_import::ProviderWriteRecoveryEligibility::NotRequired:
-            write_string("not_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::ResumeRequired:
-            write_string("resume_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::DuplicateLookupRequired:
-            write_string("duplicate_lookup_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::ManualRecoveryRequired:
-            write_string("manual_recovery_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            eligibility,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::NotRequired,
+                "not_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::ResumeRequired,
+                "resume_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::DuplicateLookupRequired,
+                "duplicate_lookup_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::ManualRecoveryRequired,
+                "manual_recovery_required");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteRecoveryEligibility::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderWriteRecoveryFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderWriteRecoveryFailureKind::CommitReceiptNotReady:
-            write_string("commit_receipt_not_ready");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::PartialWrite:
-            write_string("partial_write");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::DuplicateCommitUnresolved:
-            write_string("duplicate_commit_unresolved");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::ProviderFailure:
-            write_string("provider_failure");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::CommitReceiptNotReady,
+                "commit_receipt_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::PartialWrite,
+                "partial_write");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::DuplicateCommitUnresolved,
+                "duplicate_commit_unresolved");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::ProviderFailure,
+                "provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteRecoveryFailureKind::Blocked,
+                                    "blocked"));
     }
 
     void print_failure(
@@ -7744,9 +7073,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_write_recovery_plan {
 namespace {
 
-class RecoveryPlanJsonPrinter final : private PrettyJsonWriter {
+class RecoveryPlanJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit RecoveryPlanJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit RecoveryPlanJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderWriteRecoveryPlan &plan) {
         print_object(0, [&](const auto &field) {
@@ -7765,82 +7094,72 @@ class RecoveryPlanJsonPrinter final : private PrettyJsonWriter {
             field("resume_token_placeholder_identity",
                   [&]() { write_string(plan.resume_token_placeholder_identity); });
             field("requires_provider_commit_lookup",
-                  [&]() { out_ << (plan.requires_provider_commit_lookup ? "true" : "false"); });
+                  [&]() { write_bool(plan.requires_provider_commit_lookup); });
             field("requires_operator_approval",
-                  [&]() { out_ << (plan.requires_operator_approval ? "true" : "false"); });
-            field("secret_free", [&]() { out_ << (plan.secret_free ? "true" : "false"); });
+                  [&]() { write_bool(plan.requires_operator_approval); });
+            field("secret_free", [&]() { write_bool(plan.secret_free); });
             field("failure_attribution", [&]() { print_failure(plan.failure_attribution, 1); });
         });
         out_ << '\n';
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_eligibility(durable_store_import::ProviderWriteRecoveryEligibility eligibility) {
-        switch (eligibility) {
-        case durable_store_import::ProviderWriteRecoveryEligibility::NotRequired:
-            write_string("not_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::ResumeRequired:
-            write_string("resume_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::DuplicateLookupRequired:
-            write_string("duplicate_lookup_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::ManualRecoveryRequired:
-            write_string("manual_recovery_required");
-            return;
-        case durable_store_import::ProviderWriteRecoveryEligibility::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            eligibility,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::NotRequired,
+                "not_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::ResumeRequired,
+                "resume_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::DuplicateLookupRequired,
+                "duplicate_lookup_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryEligibility::ManualRecoveryRequired,
+                "manual_recovery_required");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteRecoveryEligibility::Blocked,
+                                    "blocked"));
     }
 
     void print_action(durable_store_import::ProviderWriteRecoveryPlanAction action) {
-        switch (action) {
-        case durable_store_import::ProviderWriteRecoveryPlanAction::NoopCommitted:
-            write_string("noop_committed");
-            return;
-        case durable_store_import::ProviderWriteRecoveryPlanAction::LookupDuplicateCommit:
-            write_string("lookup_duplicate_commit");
-            return;
-        case durable_store_import::ProviderWriteRecoveryPlanAction::ResumeWithIdempotencyKey:
-            write_string("resume_with_idempotency_key");
-            return;
-        case durable_store_import::ProviderWriteRecoveryPlanAction::ManualRemediation:
-            write_string("manual_remediation");
-            return;
-        case durable_store_import::ProviderWriteRecoveryPlanAction::WaitForCommitReceipt:
-            write_string("wait_for_commit_receipt");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            action,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryPlanAction::NoopCommitted,
+                "noop_committed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryPlanAction::LookupDuplicateCommit,
+                "lookup_duplicate_commit");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryPlanAction::ResumeWithIdempotencyKey,
+                "resume_with_idempotency_key");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryPlanAction::ManualRemediation,
+                "manual_remediation");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryPlanAction::WaitForCommitReceipt,
+                "wait_for_commit_receipt"));
     }
 
     void print_failure_kind(durable_store_import::ProviderWriteRecoveryFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderWriteRecoveryFailureKind::CommitReceiptNotReady:
-            write_string("commit_receipt_not_ready");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::PartialWrite:
-            write_string("partial_write");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::DuplicateCommitUnresolved:
-            write_string("duplicate_commit_unresolved");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::ProviderFailure:
-            write_string("provider_failure");
-            return;
-        case durable_store_import::ProviderWriteRecoveryFailureKind::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::CommitReceiptNotReady,
+                "commit_receipt_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::PartialWrite,
+                "partial_write");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::DuplicateCommitUnresolved,
+                "duplicate_commit_unresolved");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRecoveryFailureKind::ProviderFailure,
+                "provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteRecoveryFailureKind::Blocked,
+                                    "blocked"));
     }
 
     void print_failure(
@@ -7871,38 +7190,37 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 void print_action(durable_store_import::ProviderWriteRecoveryPlanAction action, std::ostream &out) {
-    switch (action) {
-    case durable_store_import::ProviderWriteRecoveryPlanAction::NoopCommitted:
-        out << "noop_committed";
-        return;
-    case durable_store_import::ProviderWriteRecoveryPlanAction::LookupDuplicateCommit:
-        out << "lookup_duplicate_commit";
-        return;
-    case durable_store_import::ProviderWriteRecoveryPlanAction::ResumeWithIdempotencyKey:
-        out << "resume_with_idempotency_key";
-        return;
-    case durable_store_import::ProviderWriteRecoveryPlanAction::ManualRemediation:
-        out << "manual_remediation";
-        return;
-    case durable_store_import::ProviderWriteRecoveryPlanAction::WaitForCommitReceipt:
-        out << "wait_for_commit_receipt";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        action,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryPlanAction::NoopCommitted, "noop_committed");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryPlanAction::LookupDuplicateCommit,
+            "lookup_duplicate_commit");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryPlanAction::ResumeWithIdempotencyKey,
+            "resume_with_idempotency_key");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryPlanAction::ManualRemediation,
+            "manual_remediation");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryPlanAction::WaitForCommitReceipt,
+            "wait_for_commit_receipt"));
 }
 
 void print_next(durable_store_import::ProviderWriteRecoveryNextActionKind action,
                 std::ostream &out) {
-    switch (action) {
-    case durable_store_import::ProviderWriteRecoveryNextActionKind::ReadyForAuditEvent:
-        out << "ready_for_audit_event";
-        return;
-    case durable_store_import::ProviderWriteRecoveryNextActionKind::ResumeUsingToken:
-        out << "resume_using_token";
-        return;
-    case durable_store_import::ProviderWriteRecoveryNextActionKind::ManualReviewRequired:
-        out << "manual_review_required";
-        return;
-    }
+    AHFL_ARTIFACT_PRINT_ENUM(
+        action,
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryNextActionKind::ReadyForAuditEvent,
+            "ready_for_audit_event");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryNextActionKind::ResumeUsingToken,
+            "resume_using_token");
+        AHFL_ARTIFACT_OSTREAM_ENUM_CASE(
+            durable_store_import::ProviderWriteRecoveryNextActionKind::ManualReviewRequired,
+            "manual_review_required"));
 }
 
 } // namespace
@@ -7930,9 +7248,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_write_retry_decision {
 namespace {
 
-class RetryDecisionJsonPrinter final : private PrettyJsonWriter {
+class RetryDecisionJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit RetryDecisionJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit RetryDecisionJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::ProviderWriteRetryDecision &decision) {
         print_object(0, [&](const auto &field) {
@@ -7952,9 +7270,9 @@ class RetryDecisionJsonPrinter final : private PrettyJsonWriter {
             field("retry_token_placeholder_identity",
                   [&]() { write_string(decision.retry_token_placeholder_identity); });
             field("retry_eligibility", [&]() { print_eligibility(decision.retry_eligibility); });
-            field("retry_allowed", [&]() { out_ << (decision.retry_allowed ? "true" : "false"); });
+            field("retry_allowed", [&]() { write_bool(decision.retry_allowed); });
             field("duplicate_write_possible",
-                  [&]() { out_ << (decision.duplicate_write_possible ? "true" : "false"); });
+                  [&]() { write_bool(decision.duplicate_write_possible); });
             field("duplicate_detection_summary",
                   [&]() { write_string(decision.duplicate_detection_summary); });
             field("retry_decision_summary",
@@ -7965,49 +7283,38 @@ class RetryDecisionJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_optional_string(const std::optional<std::string> &value) {
-        if (value.has_value()) {
-            write_string(*value);
-            return;
-        }
-        out_ << "null";
-    }
-
     void print_eligibility(durable_store_import::ProviderWriteRetryEligibility eligibility) {
-        switch (eligibility) {
-        case durable_store_import::ProviderWriteRetryEligibility::Retryable:
-            write_string("retryable");
-            return;
-        case durable_store_import::ProviderWriteRetryEligibility::NonRetryable:
-            write_string("non_retryable");
-            return;
-        case durable_store_import::ProviderWriteRetryEligibility::DuplicateReviewRequired:
-            write_string("duplicate_review_required");
-            return;
-        case durable_store_import::ProviderWriteRetryEligibility::NotApplicable:
-            write_string("not_applicable");
-            return;
-        case durable_store_import::ProviderWriteRetryEligibility::Blocked:
-            write_string("blocked");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            eligibility,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteRetryEligibility::Retryable,
+                                    "retryable");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryEligibility::NonRetryable, "non_retryable");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryEligibility::DuplicateReviewRequired,
+                "duplicate_review_required");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryEligibility::NotApplicable,
+                "not_applicable");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ProviderWriteRetryEligibility::Blocked,
+                                    "blocked"));
     }
 
     void print_failure_kind(durable_store_import::ProviderWriteRetryFailureKind kind) {
-        switch (kind) {
-        case durable_store_import::ProviderWriteRetryFailureKind::AdapterResultNotReady:
-            write_string("adapter_result_not_ready");
-            return;
-        case durable_store_import::ProviderWriteRetryFailureKind::RetryableProviderFailure:
-            write_string("retryable_provider_failure");
-            return;
-        case durable_store_import::ProviderWriteRetryFailureKind::NonRetryableProviderFailure:
-            write_string("non_retryable_provider_failure");
-            return;
-        case durable_store_import::ProviderWriteRetryFailureKind::DuplicateWriteSuspected:
-            write_string("duplicate_write_suspected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryFailureKind::AdapterResultNotReady,
+                "adapter_result_not_ready");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryFailureKind::RetryableProviderFailure,
+                "retryable_provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryFailureKind::NonRetryableProviderFailure,
+                "non_retryable_provider_failure");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ProviderWriteRetryFailureKind::DuplicateWriteSuspected,
+                "duplicate_write_suspected"));
     }
 
     void print_failure(
@@ -8037,10 +7344,10 @@ namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_rece
 
 namespace {
 
-class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportDecisionReceiptJsonPrinter final : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportDecisionReceiptJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::Receipt &receipt) {
         print_object(0, [&](const auto &field) {
@@ -8070,22 +7377,13 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
             field("source_export_manifest_format_version",
                   [&]() { write_string(receipt.source_export_manifest_format_version); });
             field("source_package_identity", [&]() {
-                if (receipt.source_package_identity.has_value()) {
-                    print_package_identity(*receipt.source_package_identity, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.source_package_identity,
+                               [&](const auto &value) { print_package_identity(value, 1); });
             });
             field("workflow_canonical_name",
                   [&]() { write_string(receipt.workflow_canonical_name); });
             field("session_id", [&]() { write_string(receipt.session_id); });
-            field("run_id", [&]() {
-                if (receipt.run_id.has_value()) {
-                    write_string(*receipt.run_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("run_id", [&]() { print_optional_string(receipt.run_id); });
             field("input_fixture", [&]() { write_string(receipt.input_fixture); });
             field("workflow_status", [&]() { print_workflow_status(receipt.workflow_status); });
             field("checkpoint_status",
@@ -8098,11 +7396,8 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
             field("request_status", [&]() { print_request_status(receipt.request_status); });
             field("decision_status", [&]() { print_decision_status(receipt.decision_status); });
             field("workflow_failure_summary", [&]() {
-                if (receipt.workflow_failure_summary.has_value()) {
-                    print_failure_summary(*receipt.workflow_failure_summary, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.workflow_failure_summary,
+                               [&](const auto &value) { print_failure_summary(value, 1); });
             });
             field("export_package_identity",
                   [&]() { write_string(receipt.export_package_identity); });
@@ -8123,20 +7418,14 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
             field("receipt_status", [&]() { print_receipt_status(receipt.receipt_status); });
             field("receipt_outcome", [&]() { print_receipt_outcome(receipt.receipt_outcome); });
             field("accepted_for_receipt_archive",
-                  [&]() { out_ << (receipt.accepted_for_receipt_archive ? "true" : "false"); });
+                  [&]() { write_bool(receipt.accepted_for_receipt_archive); });
             field("next_required_adapter_capability", [&]() {
-                if (receipt.next_required_adapter_capability.has_value()) {
-                    print_adapter_capability(*receipt.next_required_adapter_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.next_required_adapter_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
             field("receipt_blocker", [&]() {
-                if (receipt.receipt_blocker.has_value()) {
-                    print_receipt_blocker(*receipt.receipt_blocker, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(receipt.receipt_blocker,
+                               [&](const auto &value) { print_receipt_blocker(value, 1); });
             });
         });
         out_ << '\n';
@@ -8167,225 +7456,172 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
                     return;
                 }
             });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("node_name", [&]() { print_optional_string(summary.node_name); });
             field("message", [&]() { write_string(summary.message); });
         });
     }
 
     void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Completed, "completed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Failed, "failed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Partial, "partial"));
     }
 
     void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::ReadyToPersist,
+                                    "ready_to_persist");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport,
+                "ready_to_export");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_descriptor::PersistenceDescriptorStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_manifest_status(persistence_export::PersistenceExportManifestStatus status) {
-        switch (status) {
-        case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::ReadyToImport,
+                "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_export::PersistenceExportManifestStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_descriptor_status(store_import::StoreImportDescriptorStatus status) {
-        switch (status) {
-        case store_import::StoreImportDescriptorStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case store_import::StoreImportDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::ReadyToImport,
+                                    "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_status(durable_store_import::RequestStatus status) {
-        switch (status) {
-        case durable_store_import::RequestStatus::ReadyForAdapter:
-            write_string("ready_for_adapter");
-            return;
-        case durable_store_import::RequestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::RequestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case durable_store_import::RequestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case durable_store_import::RequestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::ReadyForAdapter,
+                                    "ready_for_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_decision_status(durable_store_import::DecisionStatus status) {
-        switch (status) {
-        case durable_store_import::DecisionStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::DecisionStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::DecisionStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::DecisionStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Accepted, "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Rejected, "rejected"));
     }
 
     void print_decision_boundary_kind(durable_store_import::DecisionBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::DecisionBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::DecisionBoundaryKind::AdapterDecisionConsumable:
-            write_string("adapter_decision_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionBoundaryKind::LocalContractOnly,
+                                    "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::DecisionBoundaryKind::AdapterDecisionConsumable,
+                "adapter_decision_consumable"));
     }
 
     void print_receipt_boundary_kind(durable_store_import::ReceiptBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::ReceiptBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable:
-            write_string("adapter_receipt_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptBoundaryKind::LocalContractOnly,
+                                    "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable,
+                "adapter_receipt_consumable"));
     }
 
     void print_receipt_status(durable_store_import::ReceiptStatus status) {
-        switch (status) {
-        case durable_store_import::ReceiptStatus::ReadyForArchive:
-            write_string("ready_for_archive");
-            return;
-        case durable_store_import::ReceiptStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::ReceiptStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::ReceiptStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::ReadyForArchive,
+                                    "ready_for_archive");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Rejected, "rejected"));
     }
 
     void print_receipt_outcome(durable_store_import::ReceiptOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::ReceiptOutcome::ArchiveAcceptedDecision:
-            write_string("archive_accepted_decision");
-            return;
-        case durable_store_import::ReceiptOutcome::BlockBlockedDecision:
-            write_string("block_blocked_decision");
-            return;
-        case durable_store_import::ReceiptOutcome::DeferPartialDecision:
-            write_string("defer_partial_decision");
-            return;
-        case durable_store_import::ReceiptOutcome::RejectFailedDecision:
-            write_string("reject_failed_decision");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptOutcome::ArchiveAcceptedDecision,
+                                    "archive_accepted_decision");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptOutcome::BlockBlockedDecision,
+                                    "block_blocked_decision");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptOutcome::DeferPartialDecision,
+                                    "defer_partial_decision");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptOutcome::RejectFailedDecision,
+                                    "reject_failed_decision"));
     }
 
     void print_adapter_capability(durable_store_import::AdapterCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor:
-            write_string("consume_store_import_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeExportManifest:
-            write_string("consume_export_manifest");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor:
-            write_string("consume_persistence_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext:
-            write_string("consume_human_review_context");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord:
-            write_string("consume_checkpoint_record");
-            return;
-        case durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState:
-            write_string("preserve_partial_workflow_state");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor,
+                "consume_store_import_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeExportManifest,
+                "consume_export_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor,
+                "consume_persistence_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext,
+                "consume_human_review_context");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord,
+                "consume_checkpoint_record");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState,
+                "preserve_partial_workflow_state"));
     }
 
     void print_receipt_blocker(const durable_store_import::ReceiptBlocker &blocker,
@@ -8409,11 +7645,8 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private PrettyJsonWri
             });
             field("message", [&]() { write_string(blocker.message); });
             field("required_capability", [&]() {
-                if (blocker.required_capability.has_value()) {
-                    print_adapter_capability(*blocker.required_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(blocker.required_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
         });
     }
@@ -8434,10 +7667,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
-    : private PrettyJsonWriter {
+    : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::PersistenceRequest &request) {
         print_object(0, [&](const auto &field) {
@@ -8470,22 +7703,13 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
             field("source_export_manifest_format_version",
                   [&]() { write_string(request.source_export_manifest_format_version); });
             field("source_package_identity", [&]() {
-                if (request.source_package_identity.has_value()) {
-                    print_package_identity(*request.source_package_identity, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.source_package_identity,
+                               [&](const auto &value) { print_package_identity(value, 1); });
             });
             field("workflow_canonical_name",
                   [&]() { write_string(request.workflow_canonical_name); });
             field("session_id", [&]() { write_string(request.session_id); });
-            field("run_id", [&]() {
-                if (request.run_id.has_value()) {
-                    write_string(*request.run_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("run_id", [&]() { print_optional_string(request.run_id); });
             field("input_fixture", [&]() { write_string(request.input_fixture); });
             field("workflow_status", [&]() { print_workflow_status(request.workflow_status); });
             field("checkpoint_status",
@@ -8499,11 +7723,8 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
             field("decision_status", [&]() { print_decision_status(request.decision_status); });
             field("receipt_status", [&]() { print_receipt_status(request.receipt_status); });
             field("workflow_failure_summary", [&]() {
-                if (request.workflow_failure_summary.has_value()) {
-                    print_failure_summary(*request.workflow_failure_summary, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.workflow_failure_summary,
+                               [&](const auto &value) { print_failure_summary(value, 1); });
             });
             field("export_package_identity",
                   [&]() { write_string(request.export_package_identity); });
@@ -8534,20 +7755,15 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
                     request.receipt_persistence_request_outcome);
             });
             field("accepted_for_receipt_persistence",
-                  [&]() { out_ << (request.accepted_for_receipt_persistence ? "true" : "false"); });
+                  [&]() { write_bool(request.accepted_for_receipt_persistence); });
             field("next_required_adapter_capability", [&]() {
-                if (request.next_required_adapter_capability.has_value()) {
-                    print_adapter_capability(*request.next_required_adapter_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.next_required_adapter_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
             field("receipt_persistence_blocker", [&]() {
-                if (request.receipt_persistence_blocker.has_value()) {
-                    print_receipt_persistence_blocker(*request.receipt_persistence_blocker, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.receipt_persistence_blocker, [&](const auto &value) {
+                    print_receipt_persistence_blocker(value, 1);
+                });
             });
         });
         out_ << '\n';
@@ -8578,186 +7794,138 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
                     return;
                 }
             });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("node_name", [&]() { print_optional_string(summary.node_name); });
             field("message", [&]() { write_string(summary.message); });
         });
     }
 
     void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Completed, "completed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Failed, "failed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Partial, "partial"));
     }
 
     void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::ReadyToPersist,
+                                    "ready_to_persist");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport,
+                "ready_to_export");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_descriptor::PersistenceDescriptorStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_manifest_status(persistence_export::PersistenceExportManifestStatus status) {
-        switch (status) {
-        case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::ReadyToImport,
+                "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_export::PersistenceExportManifestStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_descriptor_status(store_import::StoreImportDescriptorStatus status) {
-        switch (status) {
-        case store_import::StoreImportDescriptorStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case store_import::StoreImportDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::ReadyToImport,
+                                    "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_status(durable_store_import::RequestStatus status) {
-        switch (status) {
-        case durable_store_import::RequestStatus::ReadyForAdapter:
-            write_string("ready_for_adapter");
-            return;
-        case durable_store_import::RequestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::RequestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case durable_store_import::RequestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case durable_store_import::RequestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::ReadyForAdapter,
+                                    "ready_for_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_decision_status(durable_store_import::DecisionStatus status) {
-        switch (status) {
-        case durable_store_import::DecisionStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::DecisionStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::DecisionStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::DecisionStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Accepted, "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Rejected, "rejected"));
     }
 
     void print_receipt_status(durable_store_import::ReceiptStatus status) {
-        switch (status) {
-        case durable_store_import::ReceiptStatus::ReadyForArchive:
-            write_string("ready_for_archive");
-            return;
-        case durable_store_import::ReceiptStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::ReceiptStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::ReceiptStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::ReadyForArchive,
+                                    "ready_for_archive");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Rejected, "rejected"));
     }
 
     void print_receipt_boundary_kind(durable_store_import::ReceiptBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::ReceiptBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable:
-            write_string("adapter_receipt_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptBoundaryKind::LocalContractOnly,
+                                    "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable,
+                "adapter_receipt_consumable"));
     }
 
     void
     print_receipt_persistence_boundary_kind(durable_store_import::PersistenceBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::PersistenceBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable:
-            write_string("adapter_receipt_persistence_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceBoundaryKind::LocalContractOnly,
+                "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable,
+                "adapter_receipt_persistence_consumable"));
     }
 
     void print_receipt_persistence_request_status(
@@ -8797,26 +7965,26 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
     }
 
     void print_adapter_capability(durable_store_import::AdapterCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor:
-            write_string("consume_store_import_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeExportManifest:
-            write_string("consume_export_manifest");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor:
-            write_string("consume_persistence_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext:
-            write_string("consume_human_review_context");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord:
-            write_string("consume_checkpoint_record");
-            return;
-        case durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState:
-            write_string("preserve_partial_workflow_state");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor,
+                "consume_store_import_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeExportManifest,
+                "consume_export_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor,
+                "consume_persistence_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext,
+                "consume_human_review_context");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord,
+                "consume_checkpoint_record");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState,
+                "preserve_partial_workflow_state"));
     }
 
     void print_receipt_persistence_blocker(const durable_store_import::PersistenceBlocker &blocker,
@@ -8840,11 +8008,8 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
             });
             field("message", [&]() { write_string(blocker.message); });
             field("required_capability", [&]() {
-                if (blocker.required_capability.has_value()) {
-                    print_adapter_capability(*blocker.required_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(blocker.required_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
         });
     }
@@ -8865,10 +8030,10 @@ namespace ahfl::durable_store_import_artifacts_detail::
 namespace {
 
 class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
-    : private PrettyJsonWriter {
+    : private ArtifactJsonWriter {
   public:
     explicit DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter(std::ostream &out)
-        : PrettyJsonWriter(out) {}
+        : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::PersistenceResponse &response) {
         print_object(0, [&](const auto &field) {
@@ -8908,22 +8073,13 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
             field("source_export_manifest_format_version",
                   [&]() { write_string(response.source_export_manifest_format_version); });
             field("source_package_identity", [&]() {
-                if (response.source_package_identity.has_value()) {
-                    print_package_identity(*response.source_package_identity, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(response.source_package_identity,
+                               [&](const auto &value) { print_package_identity(value, 1); });
             });
             field("workflow_canonical_name",
                   [&]() { write_string(response.workflow_canonical_name); });
             field("session_id", [&]() { write_string(response.session_id); });
-            field("run_id", [&]() {
-                if (response.run_id.has_value()) {
-                    write_string(*response.run_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("run_id", [&]() { print_optional_string(response.run_id); });
             field("input_fixture", [&]() { write_string(response.input_fixture); });
             field("workflow_status", [&]() { print_workflow_status(response.workflow_status); });
             field("checkpoint_status",
@@ -8939,11 +8095,8 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
             field("persistence_request_status",
                   [&]() { print_persistence_request_status(response.persistence_request_status); });
             field("workflow_failure_summary", [&]() {
-                if (response.workflow_failure_summary.has_value()) {
-                    print_failure_summary(*response.workflow_failure_summary, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(response.workflow_failure_summary,
+                               [&](const auto &value) { print_failure_summary(value, 1); });
             });
             field("export_package_identity",
                   [&]() { write_string(response.export_package_identity); });
@@ -8975,20 +8128,14 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
             field("response_status", [&]() { print_response_status(response.response_status); });
             field("response_outcome", [&]() { print_response_outcome(response.response_outcome); });
             field("acknowledged_for_response",
-                  [&]() { out_ << (response.acknowledged_for_response ? "true" : "false"); });
+                  [&]() { write_bool(response.acknowledged_for_response); });
             field("next_required_adapter_capability", [&]() {
-                if (response.next_required_adapter_capability.has_value()) {
-                    print_adapter_capability(*response.next_required_adapter_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(response.next_required_adapter_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
             field("response_blocker", [&]() {
-                if (response.response_blocker.has_value()) {
-                    print_response_blocker(*response.response_blocker, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(response.response_blocker,
+                               [&](const auto &value) { print_response_blocker(value, 1); });
             });
         });
         out_ << '\n';
@@ -9019,203 +8166,151 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
                     return;
                 }
             });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("node_name", [&]() { print_optional_string(summary.node_name); });
             field("message", [&]() { write_string(summary.message); });
         });
     }
 
     void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Completed, "completed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Failed, "failed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Partial, "partial"));
     }
 
     void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::ReadyToPersist,
+                                    "ready_to_persist");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport,
+                "ready_to_export");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_descriptor::PersistenceDescriptorStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_manifest_status(persistence_export::PersistenceExportManifestStatus status) {
-        switch (status) {
-        case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::ReadyToImport,
+                "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_export::PersistenceExportManifestStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_descriptor_status(store_import::StoreImportDescriptorStatus status) {
-        switch (status) {
-        case store_import::StoreImportDescriptorStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case store_import::StoreImportDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::ReadyToImport,
+                                    "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_status(durable_store_import::RequestStatus status) {
-        switch (status) {
-        case durable_store_import::RequestStatus::ReadyForAdapter:
-            write_string("ready_for_adapter");
-            return;
-        case durable_store_import::RequestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::RequestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case durable_store_import::RequestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case durable_store_import::RequestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::ReadyForAdapter,
+                                    "ready_for_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_decision_status(durable_store_import::DecisionStatus status) {
-        switch (status) {
-        case durable_store_import::DecisionStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::DecisionStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::DecisionStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::DecisionStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Accepted, "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::DecisionStatus::Rejected, "rejected"));
     }
 
     void print_receipt_status(durable_store_import::ReceiptStatus status) {
-        switch (status) {
-        case durable_store_import::ReceiptStatus::ReadyForArchive:
-            write_string("ready_for_archive");
-            return;
-        case durable_store_import::ReceiptStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::ReceiptStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::ReceiptStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::ReadyForArchive,
+                                    "ready_for_archive");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Deferred, "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptStatus::Rejected, "rejected"));
     }
 
     void print_persistence_request_status(durable_store_import::PersistenceRequestStatus status) {
-        switch (status) {
-        case durable_store_import::PersistenceRequestStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case durable_store_import::PersistenceRequestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::PersistenceRequestStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::PersistenceRequestStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceRequestStatus::ReadyToPersist,
+                                    "ready_to_persist");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceRequestStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceRequestStatus::Deferred,
+                                    "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceRequestStatus::Rejected,
+                                    "rejected"));
     }
 
     void print_receipt_boundary_kind(durable_store_import::ReceiptBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::ReceiptBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable:
-            write_string("adapter_receipt_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::ReceiptBoundaryKind::LocalContractOnly,
+                                    "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::ReceiptBoundaryKind::AdapterReceiptConsumable,
+                "adapter_receipt_consumable"));
     }
 
     void
     print_receipt_persistence_boundary_kind(durable_store_import::PersistenceBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::PersistenceBoundaryKind::LocalContractOnly:
-            write_string("local_contract_only");
-            return;
-        case durable_store_import::PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable:
-            write_string("adapter_receipt_persistence_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceBoundaryKind::LocalContractOnly,
+                "local_contract_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable,
+                "adapter_receipt_persistence_consumable"));
     }
 
     void print_receipt_persistence_response_boundary_kind(
@@ -9231,60 +8326,56 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
     }
 
     void print_response_status(durable_store_import::PersistenceResponseStatus status) {
-        switch (status) {
-        case durable_store_import::PersistenceResponseStatus::Accepted:
-            write_string("accepted");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Deferred:
-            write_string("deferred");
-            return;
-        case durable_store_import::PersistenceResponseStatus::Rejected:
-            write_string("rejected");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Accepted,
+                                    "accepted");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Deferred,
+                                    "deferred");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::PersistenceResponseStatus::Rejected,
+                                    "rejected"));
     }
 
     void print_response_outcome(durable_store_import::PersistenceResponseOutcome outcome) {
-        switch (outcome) {
-        case durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest:
-            write_string("accept_persistence_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest:
-            write_string("block_blocked_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest:
-            write_string("defer_deferred_request");
-            return;
-        case durable_store_import::PersistenceResponseOutcome::RejectFailedRequest:
-            write_string("reject_failed_request");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            outcome,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::AcceptPersistenceRequest,
+                "accept_persistence_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::BlockBlockedRequest,
+                "block_blocked_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::DeferDeferredRequest,
+                "defer_deferred_request");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::PersistenceResponseOutcome::RejectFailedRequest,
+                "reject_failed_request"));
     }
 
     void print_adapter_capability(durable_store_import::AdapterCapabilityKind capability) {
-        switch (capability) {
-        case durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor:
-            write_string("consume_store_import_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeExportManifest:
-            write_string("consume_export_manifest");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor:
-            write_string("consume_persistence_descriptor");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext:
-            write_string("consume_human_review_context");
-            return;
-        case durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord:
-            write_string("consume_checkpoint_record");
-            return;
-        case durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState:
-            write_string("preserve_partial_workflow_state");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            capability,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeStoreImportDescriptor,
+                "consume_store_import_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeExportManifest,
+                "consume_export_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumePersistenceDescriptor,
+                "consume_persistence_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeHumanReviewContext,
+                "consume_human_review_context");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::ConsumeCheckpointRecord,
+                "consume_checkpoint_record");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::AdapterCapabilityKind::PreservePartialWorkflowState,
+                "preserve_partial_workflow_state"));
     }
 
     void print_response_blocker(const durable_store_import::PersistenceResponseBlocker &blocker,
@@ -9311,11 +8402,8 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
             });
             field("message", [&]() { write_string(blocker.message); });
             field("required_capability", [&]() {
-                if (blocker.required_capability.has_value()) {
-                    print_adapter_capability(*blocker.required_capability);
-                    return;
-                }
-                out_ << "null";
+                print_optional(blocker.required_capability,
+                               [&](const auto &value) { print_adapter_capability(value); });
             });
         });
     }
@@ -10437,9 +9525,9 @@ namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_requ
 
 namespace {
 
-class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
+class DurableStoreImportRequestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportRequestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit DurableStoreImportRequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::Request &request) {
         print_object(0, [&](const auto &field) {
@@ -10463,22 +9551,13 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
             field("source_export_manifest_format_version",
                   [&]() { write_string(request.source_export_manifest_format_version); });
             field("source_package_identity", [&]() {
-                if (request.source_package_identity.has_value()) {
-                    print_package_identity(*request.source_package_identity, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.source_package_identity,
+                               [&](const auto &value) { print_package_identity(value, 1); });
             });
             field("workflow_canonical_name",
                   [&]() { write_string(request.workflow_canonical_name); });
             field("session_id", [&]() { write_string(request.session_id); });
-            field("run_id", [&]() {
-                if (request.run_id.has_value()) {
-                    write_string(*request.run_id);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("run_id", [&]() { print_optional_string(request.run_id); });
             field("input_fixture", [&]() { write_string(request.input_fixture); });
             field("workflow_status", [&]() { print_workflow_status(request.workflow_status); });
             field("checkpoint_status",
@@ -10489,11 +9568,8 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
             field("descriptor_status",
                   [&]() { print_descriptor_status(request.descriptor_status); });
             field("workflow_failure_summary", [&]() {
-                if (request.workflow_failure_summary.has_value()) {
-                    print_failure_summary(*request.workflow_failure_summary, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.workflow_failure_summary,
+                               [&](const auto &value) { print_failure_summary(value, 1); });
             });
             field("export_package_identity",
                   [&]() { write_string(request.export_package_identity); });
@@ -10507,21 +9583,15 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
                   [&]() { print_request_boundary_kind(request.request_boundary_kind); });
             field("requested_artifact_set",
                   [&]() { print_requested_artifact_set(request.requested_artifact_set, 1); });
-            field("adapter_ready", [&]() { out_ << (request.adapter_ready ? "true" : "false"); });
+            field("adapter_ready", [&]() { write_bool(request.adapter_ready); });
             field("next_required_adapter_artifact_kind", [&]() {
-                if (request.next_required_adapter_artifact_kind.has_value()) {
-                    print_requested_artifact_kind(*request.next_required_adapter_artifact_kind);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.next_required_adapter_artifact_kind,
+                               [&](const auto &value) { print_requested_artifact_kind(value); });
             });
             field("request_status", [&]() { print_request_status(request.request_status); });
             field("adapter_blocker", [&]() {
-                if (request.adapter_blocker.has_value()) {
-                    print_request_blocker(*request.adapter_blocker, 1);
-                    return;
-                }
-                out_ << "null";
+                print_optional(request.adapter_blocker,
+                               [&](const auto &value) { print_request_blocker(value, 1); });
             });
         });
         out_ << '\n';
@@ -10552,200 +9622,162 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
                     return;
                 }
             });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("node_name", [&]() { print_optional_string(summary.node_name); });
             field("message", [&]() { write_string(summary.message); });
         });
     }
 
     void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Completed, "completed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Failed, "failed");
+            AHFL_ARTIFACT_ENUM_CASE(runtime_session::WorkflowSessionStatus::Partial, "partial"));
     }
 
     void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::ReadyToPersist,
+                                    "ready_to_persist");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(checkpoint_record::CheckpointRecordStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport,
+                "ready_to_export");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_descriptor::PersistenceDescriptorStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_manifest_status(persistence_export::PersistenceExportManifestStatus status) {
-        switch (status) {
-        case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::ReadyToImport,
+                "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(persistence_export::PersistenceExportManifestStatus::Blocked,
+                                    "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalCompleted,
+                "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalFailed,
+                "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(
+                persistence_export::PersistenceExportManifestStatus::TerminalPartial,
+                "terminal_partial"));
     }
 
     void print_descriptor_status(store_import::StoreImportDescriptorStatus status) {
-        switch (status) {
-        case store_import::StoreImportDescriptorStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case store_import::StoreImportDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case store_import::StoreImportDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::ReadyToImport,
+                                    "ready_to_import");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(store_import::StoreImportDescriptorStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_boundary_kind(durable_store_import::RequestBoundaryKind kind) {
-        switch (kind) {
-        case durable_store_import::RequestBoundaryKind::LocalIntentOnly:
-            write_string("local_intent_only");
-            return;
-        case durable_store_import::RequestBoundaryKind::AdapterContractConsumable:
-            write_string("adapter_contract_consumable");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestBoundaryKind::LocalIntentOnly,
+                                    "local_intent_only");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestBoundaryKind::AdapterContractConsumable,
+                "adapter_contract_consumable"));
     }
 
     void print_requested_artifact_kind(durable_store_import::RequestedArtifactKind kind) {
-        switch (kind) {
-        case durable_store_import::RequestedArtifactKind::StoreImportDescriptor:
-            write_string("store_import_descriptor");
-            return;
-        case durable_store_import::RequestedArtifactKind::ExportManifest:
-            write_string("export_manifest");
-            return;
-        case durable_store_import::RequestedArtifactKind::PersistenceDescriptor:
-            write_string("persistence_descriptor");
-            return;
-        case durable_store_import::RequestedArtifactKind::PersistenceReview:
-            write_string("persistence_review");
-            return;
-        case durable_store_import::RequestedArtifactKind::CheckpointRecord:
-            write_string("checkpoint_record");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactKind::StoreImportDescriptor,
+                "store_import_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestedArtifactKind::ExportManifest,
+                                    "export_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactKind::PersistenceDescriptor,
+                "persistence_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestedArtifactKind::PersistenceReview,
+                                    "persistence_review");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestedArtifactKind::CheckpointRecord,
+                                    "checkpoint_record"));
     }
 
     void print_adapter_role(durable_store_import::RequestedArtifactAdapterRole role) {
-        switch (role) {
-        case durable_store_import::RequestedArtifactAdapterRole::RequestAnchor:
-            write_string("request_anchor");
-            return;
-        case durable_store_import::RequestedArtifactAdapterRole::ImportManifest:
-            write_string("import_manifest");
-            return;
-        case durable_store_import::RequestedArtifactAdapterRole::DurableStateDescriptor:
-            write_string("durable_state_descriptor");
-            return;
-        case durable_store_import::RequestedArtifactAdapterRole::HumanReviewContext:
-            write_string("human_review_context");
-            return;
-        case durable_store_import::RequestedArtifactAdapterRole::CheckpointPayload:
-            write_string("checkpoint_payload");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            role,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactAdapterRole::RequestAnchor,
+                "request_anchor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactAdapterRole::ImportManifest,
+                "import_manifest");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactAdapterRole::DurableStateDescriptor,
+                "durable_state_descriptor");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactAdapterRole::HumanReviewContext,
+                "human_review_context");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestedArtifactAdapterRole::CheckpointPayload,
+                "checkpoint_payload"));
     }
 
     void print_request_status(durable_store_import::RequestStatus status) {
-        switch (status) {
-        case durable_store_import::RequestStatus::ReadyForAdapter:
-            write_string("ready_for_adapter");
-            return;
-        case durable_store_import::RequestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case durable_store_import::RequestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case durable_store_import::RequestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case durable_store_import::RequestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            status,
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::ReadyForAdapter,
+                                    "ready_for_adapter");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::Blocked, "blocked");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalCompleted,
+                                    "terminal_completed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalFailed,
+                                    "terminal_failed");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestStatus::TerminalPartial,
+                                    "terminal_partial"));
     }
 
     void print_request_blocker_kind(durable_store_import::RequestBlockerKind kind) {
-        switch (kind) {
-        case durable_store_import::RequestBlockerKind::WaitingOnRequestedArtifact:
-            write_string("waiting_on_requested_artifact");
-            return;
-        case durable_store_import::RequestBlockerKind::MissingRequestIdentity:
-            write_string("missing_durable_store_import_request_identity");
-            return;
-        case durable_store_import::RequestBlockerKind::MissingRequestedArtifactSet:
-            write_string("missing_requested_artifact_set");
-            return;
-        case durable_store_import::RequestBlockerKind::WorkflowFailure:
-            write_string("workflow_failure");
-            return;
-        case durable_store_import::RequestBlockerKind::WorkflowPartial:
-            write_string("workflow_partial");
-            return;
-        }
+        AHFL_ARTIFACT_PRINT_ENUM(
+            kind,
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestBlockerKind::WaitingOnRequestedArtifact,
+                "waiting_on_requested_artifact");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestBlockerKind::MissingRequestIdentity,
+                "missing_durable_store_import_request_identity");
+            AHFL_ARTIFACT_ENUM_CASE(
+                durable_store_import::RequestBlockerKind::MissingRequestedArtifactSet,
+                "missing_requested_artifact_set");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestBlockerKind::WorkflowFailure,
+                                    "workflow_failure");
+            AHFL_ARTIFACT_ENUM_CASE(durable_store_import::RequestBlockerKind::WorkflowPartial,
+                                    "workflow_partial"));
     }
 
     void print_requested_artifact_entry(const durable_store_import::RequestedArtifactEntry &entry,
@@ -10754,8 +9786,7 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
             field("artifact_kind", [&]() { print_requested_artifact_kind(entry.artifact_kind); });
             field("logical_artifact_name", [&]() { write_string(entry.logical_artifact_name); });
             field("source_format_version", [&]() { write_string(entry.source_format_version); });
-            field("required_for_import",
-                  [&]() { out_ << (entry.required_for_import ? "true" : "false"); });
+            field("required_for_import", [&]() { write_bool(entry.required_for_import); });
             field("adapter_role", [&]() { print_adapter_role(entry.adapter_role); });
         });
     }
@@ -10779,13 +9810,8 @@ class DurableStoreImportRequestJsonPrinter final : private PrettyJsonWriter {
                                int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() { print_request_blocker_kind(blocker.kind); });
-            field("logical_artifact_name", [&]() {
-                if (blocker.logical_artifact_name.has_value()) {
-                    write_string(*blocker.logical_artifact_name);
-                    return;
-                }
-                out_ << "null";
-            });
+            field("logical_artifact_name",
+                  [&]() { print_optional_string(blocker.logical_artifact_name); });
             field("message", [&]() { write_string(blocker.message); });
         });
     }
@@ -11091,476 +10117,83 @@ void print_durable_store_import_review(const durable_store_import::ReviewSummary
 
 namespace ahfl {
 
-void print_durable_store_import_adapter_execution_json(
-    const durable_store_import::AdapterExecutionReceipt &receipt, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_adapter_execution::
-        print_durable_store_import_adapter_execution_json(receipt, out);
-}
-
-void print_durable_store_import_decision_json(const durable_store_import::Decision &decision,
-                                              std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_decision::
-        print_durable_store_import_decision_json(decision, out);
-}
-
-void print_durable_store_import_decision_review(
-    const durable_store_import::DecisionReviewSummary &summary, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_decision_review::
-        print_durable_store_import_decision_review(summary, out);
-}
-
-void print_durable_store_import_provider_approval_receipt_json(
-    const durable_store_import::ApprovalReceipt &receipt, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_approval_receipt::
-        print_durable_store_import_provider_approval_receipt_json(receipt, out);
-}
-
-void print_durable_store_import_provider_capability_negotiation_review(
-    const durable_store_import::ProviderCapabilityNegotiationReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_capability_negotiation_review::
-            print_durable_store_import_provider_capability_negotiation_review(review, out);
-}
-
-void print_durable_store_import_provider_compatibility_report_json(
-    const durable_store_import::ProviderCompatibilityReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_compatibility_report::
-        print_durable_store_import_provider_compatibility_report_json(report, out);
-}
-
-void print_durable_store_import_provider_compatibility_test_manifest_json(
-    const durable_store_import::ProviderCompatibilityTestManifest &manifest, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_compatibility_test_manifest::
-            print_durable_store_import_provider_compatibility_test_manifest_json(manifest, out);
-}
-
-void print_durable_store_import_provider_config_bundle_validation_report(
-    const durable_store_import::ProviderConfigBundleValidationReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_config_bundle_validation_report::
-            print_durable_store_import_provider_config_bundle_validation_report(report, out);
-}
-
-void print_durable_store_import_provider_config_load_json(
-    const durable_store_import::ProviderConfigLoadPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_config_load::
-        print_durable_store_import_provider_config_load_json(plan, out);
-}
-
-void print_durable_store_import_provider_config_readiness(
-    const durable_store_import::ProviderConfigReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_config_readiness::
-        print_durable_store_import_provider_config_readiness(review, out);
-}
-
-void print_durable_store_import_provider_config_snapshot_json(
-    const durable_store_import::ProviderConfigSnapshotPlaceholder &placeholder, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_config_snapshot::
-        print_durable_store_import_provider_config_snapshot_json(placeholder, out);
-}
-
-void print_durable_store_import_provider_conformance_report(
-    const durable_store_import::ProviderConformanceReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_conformance_report::
-        print_durable_store_import_provider_conformance_report(report, out);
-}
-
-void print_durable_store_import_provider_driver_binding_json(
-    const durable_store_import::ProviderDriverBindingPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_driver_binding::
-        print_durable_store_import_provider_driver_binding_json(plan, out);
-}
-
-void print_durable_store_import_provider_driver_readiness(
-    const durable_store_import::ProviderDriverReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_driver_readiness::
-        print_durable_store_import_provider_driver_readiness(review, out);
-}
-
-void print_durable_store_import_provider_execution_audit_event_json(
-    const durable_store_import::ProviderExecutionAuditEvent &event, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_execution_audit_event::
-        print_durable_store_import_provider_execution_audit_event_json(event, out);
-}
-
-void print_durable_store_import_provider_failure_taxonomy_report_json(
-    const durable_store_import::ProviderFailureTaxonomyReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_failure_taxonomy_report::
-        print_durable_store_import_provider_failure_taxonomy_report_json(report, out);
-}
-
-void print_durable_store_import_provider_failure_taxonomy_review(
-    const durable_store_import::ProviderFailureTaxonomyReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_failure_taxonomy_review::
-        print_durable_store_import_provider_failure_taxonomy_review(review, out);
-}
-
-void print_durable_store_import_provider_fixture_matrix_json(
-    const durable_store_import::ProviderFixtureMatrix &matrix, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_fixture_matrix::
-        print_durable_store_import_provider_fixture_matrix_json(matrix, out);
-}
-
-void print_durable_store_import_provider_host_execution_json(
-    const durable_store_import::ProviderHostExecutionPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_host_execution::
-        print_durable_store_import_provider_host_execution_json(plan, out);
-}
-
-void print_durable_store_import_provider_host_execution_readiness(
-    const durable_store_import::ProviderHostExecutionReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_host_execution_readiness::
-        print_durable_store_import_provider_host_execution_readiness(review, out);
-}
-
-void print_durable_store_import_provider_local_filesystem_alpha_plan_json(
-    const durable_store_import::ProviderLocalFilesystemAlphaPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_local_filesystem_alpha_plan::
-            print_durable_store_import_provider_local_filesystem_alpha_plan_json(plan, out);
-}
-
-void print_durable_store_import_provider_local_filesystem_alpha_readiness(
-    const durable_store_import::ProviderLocalFilesystemAlphaReadiness &readiness,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_local_filesystem_alpha_readiness::
-            print_durable_store_import_provider_local_filesystem_alpha_readiness(readiness, out);
-}
-
-void print_durable_store_import_provider_local_filesystem_alpha_result_json(
-    const durable_store_import::ProviderLocalFilesystemAlphaResult &result, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_local_filesystem_alpha_result::
-            print_durable_store_import_provider_local_filesystem_alpha_result_json(result, out);
-}
-
-void print_durable_store_import_provider_local_host_execution_receipt_json(
-    const durable_store_import::ProviderLocalHostExecutionReceipt &receipt, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_local_host_execution_receipt::
-            print_durable_store_import_provider_local_host_execution_receipt_json(receipt, out);
-}
-
-void print_durable_store_import_provider_local_host_execution_receipt_review(
-    const durable_store_import::ProviderLocalHostExecutionReceiptReview &review,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_local_host_execution_receipt_review::
-            print_durable_store_import_provider_local_host_execution_receipt_review(review, out);
-}
-
-void print_durable_store_import_provider_local_host_harness_record_json(
-    const durable_store_import::ProviderLocalHostHarnessExecutionRecord &record,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_local_host_harness_record::
-        print_durable_store_import_provider_local_host_harness_record_json(record, out);
-}
-
-void print_durable_store_import_provider_local_host_harness_request_json(
-    const durable_store_import::ProviderLocalHostHarnessExecutionRequest &request,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_local_host_harness_request::
-            print_durable_store_import_provider_local_host_harness_request_json(request, out);
-}
-
-void print_durable_store_import_provider_local_host_harness_review(
-    const durable_store_import::ProviderLocalHostHarnessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_local_host_harness_review::
-        print_durable_store_import_provider_local_host_harness_review(review, out);
-}
-
-void print_durable_store_import_provider_operator_review_event(
-    const durable_store_import::ProviderOperatorReviewEvent &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_operator_review_event::
-        print_durable_store_import_provider_operator_review_event(review, out);
-}
-
-void print_durable_store_import_provider_opt_in_decision_report(
-    const durable_store_import::ProviderOptInDecisionReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_opt_in_decision_report::
-        print_durable_store_import_provider_opt_in_decision_report(report, out);
-}
-
-void print_durable_store_import_provider_production_integration_dry_run_report(
-    const durable_store_import::ProviderProductionIntegrationDryRunReport &report,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_production_integration_dry_run_report::
-            print_durable_store_import_provider_production_integration_dry_run_report(report, out);
-}
-
-void print_durable_store_import_provider_production_readiness_evidence_json(
-    const durable_store_import::ProviderProductionReadinessEvidence &evidence, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_production_readiness_evidence::
-            print_durable_store_import_provider_production_readiness_evidence_json(evidence, out);
-}
-
-void print_durable_store_import_provider_production_readiness_report(
-    const durable_store_import::ProviderProductionReadinessReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_production_readiness_report::
-            print_durable_store_import_provider_production_readiness_report(report, out);
-}
-
-void print_durable_store_import_provider_production_readiness_review_json(
-    const durable_store_import::ProviderProductionReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_production_readiness_review::
-            print_durable_store_import_provider_production_readiness_review_json(review, out);
-}
-
-void print_durable_store_import_provider_recovery_handoff(
-    const durable_store_import::ProviderRecoveryHandoffPreview &preview, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_recovery_handoff::
-        print_durable_store_import_provider_recovery_handoff(preview, out);
-}
-
-void print_durable_store_import_provider_registry_json(
-    const durable_store_import::ProviderRegistry &registry, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_registry::
-        print_durable_store_import_provider_registry_json(registry, out);
-}
-
-void print_durable_store_import_provider_release_evidence_archive_manifest(
-    const durable_store_import::ReleaseEvidenceArchiveManifest &manifest, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_release_evidence_archive_manifest::
-            print_durable_store_import_provider_release_evidence_archive_manifest(manifest, out);
-}
-
-void print_durable_store_import_provider_runtime_policy_report(
-    const durable_store_import::ProviderRuntimePolicyReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_runtime_policy_report::
-        print_durable_store_import_provider_runtime_policy_report(report, out);
-}
-
-void print_durable_store_import_provider_runtime_preflight_json(
-    const durable_store_import::ProviderRuntimePreflightPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_runtime_preflight::
-        print_durable_store_import_provider_runtime_preflight_json(plan, out);
-}
-
-void print_durable_store_import_provider_runtime_readiness(
-    const durable_store_import::ProviderRuntimeReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_runtime_readiness::
-        print_durable_store_import_provider_runtime_readiness(review, out);
-}
-
-void print_durable_store_import_provider_schema_compatibility_report_json(
-    const durable_store_import::ProviderSchemaCompatibilityReport &report, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_schema_compatibility_report::
-            print_durable_store_import_provider_schema_compatibility_report_json(report, out);
-}
-
-void print_durable_store_import_provider_sdk_adapter_interface_json(
-    const durable_store_import::ProviderSdkAdapterInterfacePlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_adapter_interface::
-        print_durable_store_import_provider_sdk_adapter_interface_json(plan, out);
-}
-
-void print_durable_store_import_provider_sdk_adapter_interface_review(
-    const durable_store_import::ProviderSdkAdapterInterfaceReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_sdk_adapter_interface_review::
-            print_durable_store_import_provider_sdk_adapter_interface_review(review, out);
-}
-
-void print_durable_store_import_provider_sdk_adapter_readiness(
-    const durable_store_import::ProviderSdkAdapterReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_adapter_readiness::
-        print_durable_store_import_provider_sdk_adapter_readiness(review, out);
-}
-
-void print_durable_store_import_provider_sdk_adapter_request_json(
-    const durable_store_import::ProviderSdkAdapterRequestPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_adapter_request::
-        print_durable_store_import_provider_sdk_adapter_request_json(plan, out);
-}
-
-void print_durable_store_import_provider_sdk_adapter_response_placeholder_json(
-    const durable_store_import::ProviderSdkAdapterResponsePlaceholder &placeholder,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_sdk_adapter_response_placeholder::
-            print_durable_store_import_provider_sdk_adapter_response_placeholder_json(placeholder,
-                                                                                      out);
-}
-
-void print_durable_store_import_provider_sdk_envelope_json(
-    const durable_store_import::ProviderSdkRequestEnvelopePlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_envelope::
-        print_durable_store_import_provider_sdk_envelope_json(plan, out);
-}
-
-void print_durable_store_import_provider_sdk_handoff_readiness(
-    const durable_store_import::ProviderSdkHandoffReadinessReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_handoff_readiness::
-        print_durable_store_import_provider_sdk_handoff_readiness(review, out);
-}
-
-void print_durable_store_import_provider_sdk_mock_adapter_contract_json(
-    const durable_store_import::ProviderSdkMockAdapterContract &contract, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_mock_adapter_contract::
-        print_durable_store_import_provider_sdk_mock_adapter_contract_json(contract, out);
-}
-
-void print_durable_store_import_provider_sdk_mock_adapter_execution_json(
-    const durable_store_import::ProviderSdkMockAdapterExecutionResult &result, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_sdk_mock_adapter_execution::
-            print_durable_store_import_provider_sdk_mock_adapter_execution_json(result, out);
-}
-
-void print_durable_store_import_provider_sdk_mock_adapter_readiness(
-    const durable_store_import::ProviderSdkMockAdapterReadiness &readiness, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_provider_sdk_mock_adapter_readiness::
-            print_durable_store_import_provider_sdk_mock_adapter_readiness(readiness, out);
-}
-
-void print_durable_store_import_provider_sdk_payload_audit(
-    const durable_store_import::ProviderSdkPayloadAuditSummary &audit, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_payload_audit::
-        print_durable_store_import_provider_sdk_payload_audit(audit, out);
-}
-
-void print_durable_store_import_provider_sdk_payload_plan_json(
-    const durable_store_import::ProviderSdkPayloadMaterializationPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_sdk_payload_plan::
-        print_durable_store_import_provider_sdk_payload_plan_json(plan, out);
-}
-
-void print_durable_store_import_provider_secret_policy_review(
-    const durable_store_import::ProviderSecretPolicyReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_secret_policy_review::
-        print_durable_store_import_provider_secret_policy_review(review, out);
-}
-
-void print_durable_store_import_provider_secret_resolver_request_json(
-    const durable_store_import::ProviderSecretResolverRequestPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_secret_resolver_request::
-        print_durable_store_import_provider_secret_resolver_request_json(plan, out);
-}
-
-void print_durable_store_import_provider_secret_resolver_response_json(
-    const durable_store_import::ProviderSecretResolverResponsePlaceholder &placeholder,
-    std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_secret_resolver_response::
-        print_durable_store_import_provider_secret_resolver_response_json(placeholder, out);
-}
-
-void print_durable_store_import_provider_selection_plan_json(
-    const durable_store_import::ProviderSelectionPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_selection_plan::
-        print_durable_store_import_provider_selection_plan_json(plan, out);
-}
-
-void print_durable_store_import_provider_telemetry_summary_json(
-    const durable_store_import::ProviderTelemetrySummary &summary, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_telemetry_summary::
-        print_durable_store_import_provider_telemetry_summary_json(summary, out);
-}
-
-void print_durable_store_import_provider_write_attempt_json(
-    const durable_store_import::ProviderWriteAttemptPreview &preview, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_attempt::
-        print_durable_store_import_provider_write_attempt_json(preview, out);
-}
-
-void print_durable_store_import_provider_write_commit_receipt_json(
-    const durable_store_import::ProviderWriteCommitReceipt &receipt, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_commit_receipt::
-        print_durable_store_import_provider_write_commit_receipt_json(receipt, out);
-}
-
-void print_durable_store_import_provider_write_commit_review(
-    const durable_store_import::ProviderWriteCommitReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_commit_review::
-        print_durable_store_import_provider_write_commit_review(review, out);
-}
-
-void print_durable_store_import_provider_write_recovery_checkpoint_json(
-    const durable_store_import::ProviderWriteRecoveryCheckpoint &checkpoint, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_recovery_checkpoint::
-        print_durable_store_import_provider_write_recovery_checkpoint_json(checkpoint, out);
-}
-
-void print_durable_store_import_provider_write_recovery_plan_json(
-    const durable_store_import::ProviderWriteRecoveryPlan &plan, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_recovery_plan::
-        print_durable_store_import_provider_write_recovery_plan_json(plan, out);
-}
-
-void print_durable_store_import_provider_write_recovery_review(
-    const durable_store_import::ProviderWriteRecoveryReview &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_recovery_review::
-        print_durable_store_import_provider_write_recovery_review(review, out);
-}
-
-void print_durable_store_import_provider_write_retry_decision_json(
-    const durable_store_import::ProviderWriteRetryDecision &decision, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_provider_write_retry_decision::
-        print_durable_store_import_provider_write_retry_decision_json(decision, out);
-}
-
-void print_durable_store_import_receipt_json(const durable_store_import::Receipt &receipt,
-                                             std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_receipt::
-        print_durable_store_import_receipt_json(receipt, out);
-}
-
-void print_durable_store_import_receipt_persistence_request_json(
-    const durable_store_import::PersistenceRequest &request, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_receipt_persistence_request::
-        print_durable_store_import_receipt_persistence_request_json(request, out);
-}
-
-void print_durable_store_import_receipt_persistence_response_json(
-    const durable_store_import::PersistenceResponse &response, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_receipt_persistence_response::
-        print_durable_store_import_receipt_persistence_response_json(response, out);
-}
-
-void print_durable_store_import_receipt_persistence_response_review(
-    const durable_store_import::PersistenceResponseReviewSummary &review, std::ostream &out) {
-    durable_store_import_artifacts_detail::
-        durable_store_import_receipt_persistence_response_review::
-            print_durable_store_import_receipt_persistence_response_review(review, out);
-}
-
-void print_durable_store_import_receipt_persistence_review(
-    const durable_store_import::PersistenceReviewSummary &summary, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_receipt_persistence_review::
-        print_durable_store_import_receipt_persistence_review(summary, out);
-}
-
-void print_durable_store_import_receipt_review(
-    const durable_store_import::ReceiptReviewSummary &summary, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_receipt_review::
-        print_durable_store_import_receipt_review(summary, out);
-}
-
-void print_durable_store_import_recovery_preview(
-    const durable_store_import::RecoveryCommandPreview &preview, std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_recovery_preview::
-        print_durable_store_import_recovery_preview(preview, out);
-}
-
-void print_durable_store_import_request_json(const durable_store_import::Request &request,
-                                             std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_request::
-        print_durable_store_import_request_json(request, out);
-}
-
-void print_durable_store_import_review(const durable_store_import::ReviewSummary &summary,
-                                       std::ostream &out) {
-    durable_store_import_artifacts_detail::durable_store_import_review::
-        print_durable_store_import_review(summary, out);
-}
+namespace {
+
+constexpr DurableStoreImportArtifactPrinterDescriptor kDurableStoreImportArtifactPrinters[] = {
+#define AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER(public_name,                                    \
+                                                   artifact_type,                                  \
+                                                   parameter_name,                                 \
+                                                   detail_namespace,                               \
+                                                   detail_name,                                    \
+                                                   output_format,                                  \
+                                                   domain,                                         \
+                                                   artifact_id)                                    \
+    {#public_name,                                                                                 \
+     #artifact_type,                                                                               \
+     #detail_namespace,                                                                            \
+     #detail_name,                                                                                 \
+     artifact_id,                                                                                  \
+     output_format,                                                                                \
+     domain},
+#include "ahfl/durable_store_import/artifact_printers.def"
+#undef AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER
+};
+
+} // namespace
+
+std::string_view
+durable_store_import_artifact_output_format_name(DurableStoreImportArtifactOutputFormat format) {
+    switch (format) {
+    case DurableStoreImportArtifactOutputFormat::Json:
+        return "json";
+    case DurableStoreImportArtifactOutputFormat::Text:
+        return "text";
+    }
+    return "unknown";
+}
+
+std::string_view
+durable_store_import_artifact_domain_name(DurableStoreImportArtifactDomain domain) {
+    switch (domain) {
+    case DurableStoreImportArtifactDomain::CoreWorkflow:
+        return "core_workflow";
+    case DurableStoreImportArtifactDomain::Persistence:
+        return "persistence";
+    case DurableStoreImportArtifactDomain::ProviderConfiguration:
+        return "provider_configuration";
+    case DurableStoreImportArtifactDomain::ProviderGovernance:
+        return "provider_governance";
+    case DurableStoreImportArtifactDomain::ProviderHostExecution:
+        return "provider_host_execution";
+    case DurableStoreImportArtifactDomain::ProviderReliability:
+        return "provider_reliability";
+    case DurableStoreImportArtifactDomain::ProviderRuntime:
+        return "provider_runtime";
+    case DurableStoreImportArtifactDomain::ProviderSdk:
+        return "provider_sdk";
+    }
+    return "unknown";
+}
+
+std::span<const DurableStoreImportArtifactPrinterDescriptor>
+durable_store_import_artifact_printers() {
+    return std::span<const DurableStoreImportArtifactPrinterDescriptor>{
+        kDurableStoreImportArtifactPrinters};
+}
+
+#define AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER(public_name,                                    \
+                                                   artifact_type,                                  \
+                                                   parameter_name,                                 \
+                                                   detail_namespace,                               \
+                                                   detail_name,                                    \
+                                                   output_format,                                  \
+                                                   domain,                                         \
+                                                   artifact_id)                                    \
+    void public_name(const durable_store_import::artifact_type &parameter_name,                    \
+                     std::ostream &out) {                                                          \
+        durable_store_import_artifacts_detail::detail_namespace::detail_name(parameter_name, out); \
+    }
+#include "ahfl/durable_store_import/artifact_printers.def"
+#undef AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER
 
 } // namespace ahfl
