@@ -1,17 +1,131 @@
 #include "ahfl/durable_store_import/artifacts.hpp"
+#include "ahfl/durable_store_import/provider_artifacts.hpp"
 #include "ahfl/durable_store_import/provider_schema_compatibility.hpp"
 
 #include <cassert>
+#include <cstddef>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
 
+void assert_artifact_printer_registry() {
+    const auto printers = ahfl::durable_store_import_artifact_printers();
+    assert(printers.size() == 74);
+
+    std::size_t json_count = 0;
+    std::size_t text_count = 0;
+    std::size_t provider_sdk_count = 0;
+    bool found_adapter_execution = false;
+    bool found_schema_compatibility = false;
+
+    for (const auto &printer : printers) {
+        assert(!printer.public_name.empty());
+        assert(!printer.artifact_type_name.empty());
+        assert(!printer.detail_namespace.empty());
+        assert(!printer.detail_name.empty());
+        assert(!printer.artifact_id.empty());
+
+        if (printer.output_format == ahfl::DurableStoreImportArtifactOutputFormat::Json) {
+            ++json_count;
+            assert(ahfl::durable_store_import_artifact_output_format_name(printer.output_format) ==
+                   "json");
+        } else {
+            ++text_count;
+            assert(ahfl::durable_store_import_artifact_output_format_name(printer.output_format) ==
+                   "text");
+        }
+
+        if (printer.domain == ahfl::DurableStoreImportArtifactDomain::ProviderSdk) {
+            ++provider_sdk_count;
+        }
+
+        if (printer.public_name == "print_durable_store_import_adapter_execution_json") {
+            found_adapter_execution = true;
+            assert(printer.artifact_type_name == "AdapterExecutionReceipt");
+            assert(printer.artifact_id == "durable-store-import-adapter-execution");
+        }
+
+        if (printer.public_name ==
+            "print_durable_store_import_provider_schema_compatibility_report_json") {
+            found_schema_compatibility = true;
+            assert(printer.domain == ahfl::DurableStoreImportArtifactDomain::ProviderGovernance);
+        }
+    }
+
+    assert(json_count > text_count);
+    assert(text_count > 0);
+    assert(provider_sdk_count > 0);
+    assert(found_adapter_execution);
+    assert(found_schema_compatibility);
+    assert(ahfl::durable_store_import_artifact_domain_name(
+               ahfl::DurableStoreImportArtifactDomain::ProviderSdk) == "provider_sdk");
+}
+
+void assert_provider_artifact_registry() {
+    using ahfl::durable_store_import::ProviderArtifactDomain;
+    using ahfl::durable_store_import::ProviderArtifactRole;
+
+    const auto artifacts = ahfl::durable_store_import::provider_artifacts();
+    assert(artifacts.size() == 70);
+
+    for (const auto &artifact : artifacts) {
+        assert(!artifact.artifact_id.empty());
+        assert(!artifact.type_name.empty());
+        assert(!artifact.format_version.empty());
+        assert(!artifact.source_header.empty());
+        assert(artifact.artifact_id.starts_with("durable-store-import-provider-"));
+        assert(artifact.format_version.starts_with("ahfl.durable-store-import-provider-"));
+        assert(artifact.format_version.ends_with(".v1"));
+    }
+
+    assert(ahfl::durable_store_import::provider_artifact_count(ProviderArtifactDomain::Binding) ==
+           7);
+    assert(ahfl::durable_store_import::provider_artifact_count(ProviderArtifactDomain::Runtime) ==
+           6);
+    assert(ahfl::durable_store_import::provider_artifact_count(
+               ProviderArtifactDomain::HostExecution) == 11);
+    assert(ahfl::durable_store_import::provider_artifact_count(ProviderArtifactDomain::Sdk) == 10);
+    assert(ahfl::durable_store_import::provider_artifact_count(
+               ProviderArtifactDomain::Configuration) == 7);
+    assert(ahfl::durable_store_import::provider_artifact_count(
+               ProviderArtifactDomain::Reliability) == 8);
+    assert(ahfl::durable_store_import::provider_artifact_count(
+               ProviderArtifactDomain::Governance) == 11);
+    assert(ahfl::durable_store_import::provider_artifact_count(
+               ProviderArtifactDomain::Production) == 10);
+
+    const auto *runtime_preflight = ahfl::durable_store_import::find_provider_artifact_by_id(
+        "durable-store-import-provider-runtime-preflight-plan");
+    assert(runtime_preflight != nullptr);
+    assert(runtime_preflight->type_name == "ProviderRuntimePreflightPlan");
+    assert(runtime_preflight->domain == ProviderArtifactDomain::Runtime);
+    assert(runtime_preflight->role == ProviderArtifactRole::Plan);
+    assert(runtime_preflight->source_header == "ahfl/durable_store_import/provider_runtime.hpp");
+
+    const auto *sdk_adapter = ahfl::durable_store_import::find_provider_artifact_by_format_version(
+        "ahfl.durable-store-import-provider-sdk-adapter-request-plan.v1");
+    assert(sdk_adapter != nullptr);
+    assert(sdk_adapter->artifact_id == "durable-store-import-provider-sdk-adapter-request-plan");
+    assert(sdk_adapter->domain == ProviderArtifactDomain::Sdk);
+
+    assert(ahfl::durable_store_import::find_provider_artifact_by_id(
+               "durable-store-import-provider-missing") == nullptr);
+    assert(ahfl::durable_store_import::provider_artifact_domain_name(
+               ProviderArtifactDomain::Configuration) == "configuration");
+    assert(ahfl::durable_store_import::provider_artifact_role_name(ProviderArtifactRole::Record) ==
+           "record");
+}
+
 // 测试：所有版本兼容时应成功构建报告
 int test_all_compatible() {
+    assert_artifact_printer_registry();
+    assert_provider_artifact_registry();
+
     using namespace ahfl::durable_store_import;
 
     std::vector<ArtifactVersionCheck> version_checks = {
