@@ -1,4 +1,4 @@
-#include "ahfl/formal/tlaplus_backend.hpp"
+#include "formal/tlaplus_backend.hpp"
 
 #include <string>
 

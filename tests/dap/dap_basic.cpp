@@ -1,6 +1,6 @@
-#include "ahfl/dap/dap_server.hpp"
-#include "ahfl/dap/breakpoints.hpp"
-#include "ahfl/dap/state_inspector.hpp"
+#include "dap/dap_server.hpp"
+#include "dap/breakpoints.hpp"
+#include "dap/state_inspector.hpp"
 #include <cstdio>
 
 static int test_count = 0;

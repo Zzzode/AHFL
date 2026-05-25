@@ -1,9 +1,10 @@
-#include "ahfl/runtime/distributed.hpp"
+#include "runtime/distributed.hpp"
+
+#include "json/json_value.hpp"
+#include "support/curl.hpp"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -39,70 +40,21 @@ HttpResult http_request(const std::string &method,
                         const std::string &url,
                         const std::string &body = "",
                         int timeout_seconds = 10) {
-    HttpResult result;
-
-    std::string safe_url;
-    for (char c : url) {
-        if (c == '\'')
-            safe_url += "'\\''";
-        else
-            safe_url += c;
-    }
-
-    std::string cmd;
+    ahfl::support::CurlRequest request;
+    request.method = method;
+    request.url = url;
+    request.timeout_seconds = timeout_seconds;
     if (method == "PUT" || method == "POST") {
-        // Write body to a temp file to avoid shell escaping issues
-        auto tmp_path = fs::temp_directory_path() / "ahfl_http_body.tmp";
-        {
-            std::ofstream tmp(tmp_path, std::ios::binary);
-            if (tmp)
-                tmp << body;
-        }
-        cmd = "curl -s -w '\\n%{http_code}' -X " + method + " --max-time " +
-              std::to_string(timeout_seconds) + " -H 'Content-Type: application/octet-stream'" +
-              " --data-binary @'" + tmp_path.string() + "'" + " '" + safe_url + "' 2>/dev/null";
-    } else {
-        cmd = "curl -s -w '\\n%{http_code}' -X " + method + " --max-time " +
-              std::to_string(timeout_seconds) + " '" + safe_url + "' 2>/dev/null";
+        request.headers.emplace_back("Content-Type", "application/octet-stream");
+        request.body = body;
     }
 
-    FILE *pipe = popen(cmd.c_str(), "r");
-    if (pipe == nullptr)
-        return result;
-
-    std::string output;
-    std::array<char, 4096> buffer{};
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        output += buffer.data();
-    }
-    pclose(pipe);
-
-    if (output.empty())
-        return result;
-
-    // Extract status code from last line
-    auto last_newline = output.rfind('\n', output.size() - 2);
-    std::string status_str;
-    if (last_newline == std::string::npos) {
-        status_str = output;
-        result.body = "";
-    } else {
-        status_str = output.substr(last_newline + 1);
-        result.body = output.substr(0, last_newline);
-    }
-
-    while (!status_str.empty() && (status_str.back() == '\n' || status_str.back() == '\r')) {
-        status_str.pop_back();
-    }
-
-    try {
-        result.status_code = std::stoi(status_str);
-    } catch (...) {
-        return result;
-    }
-
-    result.success = (result.status_code >= 200 && result.status_code < 300);
-    return result;
+    const auto response = ahfl::support::execute_curl(request);
+    return HttpResult{
+        .status_code = response.status_code,
+        .body = response.body,
+        .success = response.is_success(),
+    };
 }
 
 // Get best endpoint sorted by priority (highest first)
@@ -150,28 +102,71 @@ StateSnapshot DistributedScheduler::create_snapshot(
 }
 
 std::string DistributedScheduler::serialize_snapshot(const StateSnapshot &snapshot) const {
-    std::ostringstream oss;
-    oss << "AHFL_SNAPSHOT_V1\n";
-    oss << "agent_id=" << snapshot.agent_id << "\n";
-    oss << "current_state=" << snapshot.current_state << "\n";
+    auto root = ahfl::json::JsonValue::make_object();
+    root->set("format", ahfl::json::JsonValue::make_string("AHFL_SNAPSHOT_V2"));
+    root->set("agent_id", ahfl::json::JsonValue::make_string(snapshot.agent_id));
+    root->set("current_state", ahfl::json::JsonValue::make_string(snapshot.current_state));
     auto epoch =
         std::chrono::duration_cast<std::chrono::milliseconds>(snapshot.timestamp.time_since_epoch())
             .count();
-    oss << "timestamp=" << epoch << "\n";
-    // Sort context keys for deterministic output
-    std::vector<std::pair<std::string, std::string>> sorted_ctx(snapshot.context_values.begin(),
-                                                                snapshot.context_values.end());
-    std::sort(sorted_ctx.begin(), sorted_ctx.end());
-    for (const auto &[key, value] : sorted_ctx) {
-        oss << "ctx." << key << "=" << value << "\n";
+    root->set("timestamp_ms", ahfl::json::JsonValue::make_int(epoch));
+
+    auto context = ahfl::json::JsonValue::make_object();
+    std::vector<std::pair<std::string, std::string>> sorted_context(snapshot.context_values.begin(),
+                                                                    snapshot.context_values.end());
+    std::sort(sorted_context.begin(), sorted_context.end());
+    for (const auto &[key, value] : sorted_context) {
+        context->set(key, ahfl::json::JsonValue::make_string(value));
     }
-    return oss.str();
+    root->set("context", std::move(context));
+    return ahfl::json::serialize_json(*root);
 }
 
 std::optional<StateSnapshot>
 DistributedScheduler::deserialize_snapshot(const std::string &data) const {
     if (data.empty())
         return std::nullopt;
+
+    if (auto parsed = ahfl::json::parse_json(data); parsed.has_value() && *parsed &&
+                                                (*parsed)->is_object()) {
+        const auto *format = (*parsed)->get("format");
+        if (format != nullptr) {
+            auto format_value = format->as_string();
+            if (!format_value.has_value() || *format_value != "AHFL_SNAPSHOT_V2") {
+                return std::nullopt;
+            }
+        }
+
+        const auto *agent_id = (*parsed)->get("agent_id");
+        const auto *state = (*parsed)->get("current_state");
+        const auto *timestamp = (*parsed)->get("timestamp_ms");
+        if (agent_id == nullptr || state == nullptr || timestamp == nullptr) {
+            return std::nullopt;
+        }
+        auto agent_id_value = agent_id->as_string();
+        auto state_value = state->as_string();
+        auto timestamp_value = timestamp->as_int();
+        if (!agent_id_value.has_value() || !state_value.has_value() ||
+            !timestamp_value.has_value() || agent_id_value->empty()) {
+            return std::nullopt;
+        }
+
+        StateSnapshot snapshot;
+        snapshot.agent_id = std::string(*agent_id_value);
+        snapshot.current_state = std::string(*state_value);
+        snapshot.timestamp =
+            std::chrono::system_clock::time_point(std::chrono::milliseconds(*timestamp_value));
+
+        if (const auto *context = (*parsed)->get("context");
+            context != nullptr && context->is_object()) {
+            for (const auto &[key, value] : context->object_fields) {
+                if (auto string_value = value->as_string(); string_value.has_value()) {
+                    snapshot.context_values[key] = std::string(*string_value);
+                }
+            }
+        }
+        return snapshot;
+    }
 
     std::istringstream iss(data);
     std::string line;

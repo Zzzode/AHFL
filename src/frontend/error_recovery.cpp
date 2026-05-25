@@ -1,4 +1,4 @@
-#include "ahfl/frontend/error_recovery.hpp"
+#include "frontend/error_recovery.hpp"
 
 #include <algorithm>
 #include <cstddef>

@@ -3,9 +3,9 @@
 #include <string>
 #include <thread>
 
-#include "ahfl/profiling/pass_timing.hpp"
-#include "ahfl/profiling/memory_tracker.hpp"
-#include "ahfl/profiling/hotspot.hpp"
+#include "profiling/pass_timing.hpp"
+#include "profiling/memory_tracker.hpp"
+#include "profiling/hotspot.hpp"
 
 static int test_count = 0;
 static int pass_count = 0;

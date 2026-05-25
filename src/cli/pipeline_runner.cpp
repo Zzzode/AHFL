@@ -1,4 +1,4 @@
-#include "ahfl/cli/pipeline_runner.hpp"
+#include "cli/pipeline_runner.hpp"
 
 #include "pipeline_context.hpp"
 #include "pipeline_core_commands.hpp"
@@ -13,6 +13,17 @@ namespace {
 
 [[nodiscard]] int invoke_execution_plan_command(const PackagePipelineContext &context) {
     return emit_execution_plan_with_diagnostics(context.program, context.metadata);
+}
+
+template <ProviderArtifactKind Artifact>
+[[nodiscard]] int invoke_provider_artifact_command(const PackagePipelineContext &context) {
+    if (context.mock_set == nullptr) {
+        std::cerr << "error: internal command dispatch failed: missing capability mocks\n";
+        return 1;
+    }
+
+    return emit_provider_artifact_with_diagnostics(
+        Artifact, context.program, context.metadata, *context.mock_set, context.options);
 }
 
 struct PackageCommandDispatchEntry {
@@ -77,9 +88,9 @@ constexpr PackageCommandDispatchEntry kPackageCommandDispatch[] = {
                                                        inference_order,                            \
                                                        package_order,                              \
                                                        capability_order,                           \
-                                                       handler)                                    \
-    {CommandKind::kind, invoke_package_command<handler>},
-#include "ahfl/cli/durable_store_import_provider_commands.def"
+                                                       artifact_kind)                              \
+    {CommandKind::kind, invoke_provider_artifact_command<ProviderArtifactKind::artifact_kind>},
+#include "cli/durable_store_import_provider_commands.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
     {CommandKind::EmitSchedulerReview,
      invoke_package_command<emit_scheduler_review_with_diagnostics>},

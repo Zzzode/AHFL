@@ -1,4 +1,4 @@
-#include "ahfl/runtime/http_transport.hpp"
+#include "runtime/http_transport.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -33,11 +33,12 @@ void test_build_curl_basic_post() {
 
     auto cmd = HttpTransport::build_curl_command(request);
 
-    check(cmd.find("curl -s -w") != std::string::npos, "basic_post.has_curl");
-    check(cmd.find("-X POST") != std::string::npos, "basic_post.method_post");
+    check(cmd.find("curl --config -") != std::string::npos, "basic_post.has_curl_config");
+    check(cmd.find("POST") != std::string::npos, "basic_post.method_post");
     check(cmd.find("api.example.com/v1/data") != std::string::npos, "basic_post.url");
     check(cmd.find("--max-time 30") != std::string::npos, "basic_post.timeout");
-    check(cmd.find("-d ") != std::string::npos, "basic_post.has_body");
+    check(cmd.find("body_bytes=") != std::string::npos, "basic_post.has_body");
+    check(cmd.find(R"({"key":"value"})") == std::string::npos, "basic_post.body_redacted");
 }
 
 // ============================================================================
@@ -54,9 +55,11 @@ void test_build_curl_with_headers() {
 
     auto cmd = HttpTransport::build_curl_command(request);
 
-    check(cmd.find("-H ") != std::string::npos, "headers.has_h_flag");
-    check(cmd.find("Content-Type: application/json") != std::string::npos, "headers.content_type");
-    check(cmd.find("Authorization: Bearer token123") != std::string::npos, "headers.auth");
+    check(cmd.find("headers=2") != std::string::npos, "headers.count");
+    check(cmd.find("Content-Type: application/json") == std::string::npos,
+          "headers.content_type_redacted");
+    check(cmd.find("Authorization: Bearer token123") == std::string::npos,
+          "headers.auth_redacted");
     check(cmd.find("--max-time 10") != std::string::npos, "headers.timeout");
 }
 
@@ -72,8 +75,8 @@ void test_build_curl_get_no_body() {
 
     auto cmd = HttpTransport::build_curl_command(request);
 
-    check(cmd.find("-X GET") != std::string::npos, "get.method");
-    check(cmd.find("-d ") == std::string::npos, "get.no_body_flag");
+    check(cmd.find("GET") != std::string::npos, "get.method");
+    check(cmd.find("body_bytes=") == std::string::npos, "get.no_body_flag");
     check(cmd.find("--max-time 5") != std::string::npos, "get.timeout");
 }
 
@@ -90,8 +93,7 @@ void test_build_curl_shell_quoting() {
 
     auto cmd = HttpTransport::build_curl_command(request);
 
-    // Single quotes in body should be escaped for shell safety
-    check(cmd.find("'\\''") != std::string::npos, "quoting.escaped_single_quote");
+    check(cmd.find("it's a test") == std::string::npos, "quoting.body_redacted");
 }
 
 // ============================================================================
@@ -134,7 +136,7 @@ void test_build_curl_put() {
 
     auto cmd = HttpTransport::build_curl_command(request);
 
-    check(cmd.find("-X PUT") != std::string::npos, "put.method");
+    check(cmd.find("PUT") != std::string::npos, "put.method");
     check(cmd.find("--max-time 15") != std::string::npos, "put.timeout");
 }
 

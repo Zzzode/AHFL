@@ -1,4 +1,4 @@
-#include "ahfl/profiling/hotspot.hpp"
+#include "profiling/hotspot.hpp"
 
 #include <algorithm>
 #include <utility>

@@ -1,4 +1,4 @@
-#include "ahfl/runtime/grpc_transport.hpp"
+#include "runtime/grpc_transport.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -194,16 +194,14 @@ void test_build_curl_command_h2c() {
 
     auto cmd = build_grpc_curl_command(req);
 
-    check(cmd.find("curl -s -w") != std::string::npos, "curl_h2c.has_curl");
-    check(cmd.find("--http2-prior-knowledge") != std::string::npos, "curl_h2c.h2c_flag");
-    check(cmd.find("--http2 ") == std::string::npos || cmd.find("--http2-prior-knowledge") != std::string::npos,
-          "curl_h2c.not_plain_http2");
-    check(cmd.find("-X POST") != std::string::npos, "curl_h2c.post_method");
+    check(cmd.find("curl --config -") != std::string::npos, "curl_h2c.has_curl_config");
+    check(cmd.find("POST") != std::string::npos, "curl_h2c.post_method");
     check(cmd.find("http://localhost:50051/test.Service/Call") != std::string::npos,
           "curl_h2c.url");
-    check(cmd.find("Content-Type: application/json") != std::string::npos,
-          "curl_h2c.content_type");
-    check(cmd.find("TE: trailers") != std::string::npos, "curl_h2c.te_trailers");
+    check(cmd.find("headers=2") != std::string::npos, "curl_h2c.header_count");
+    check(cmd.find("Content-Type: application/json") == std::string::npos,
+          "curl_h2c.content_type_redacted");
+    check(cmd.find("TE: trailers") == std::string::npos, "curl_h2c.te_trailers_redacted");
     check(cmd.find("--max-time 10") != std::string::npos, "curl_h2c.timeout");
 }
 
@@ -223,8 +221,6 @@ void test_build_curl_command_tls() {
 
     auto cmd = build_grpc_curl_command(req);
 
-    check(cmd.find("--http2 ") != std::string::npos, "curl_tls.http2_flag");
-    check(cmd.find("--http2-prior-knowledge") == std::string::npos, "curl_tls.no_h2c");
     check(cmd.find("https://grpc.example.com:443/api.v1.Service/Get") != std::string::npos,
           "curl_tls.url");
     check(cmd.find("--max-time 30") != std::string::npos, "curl_tls.timeout");
@@ -247,10 +243,11 @@ void test_build_curl_command_metadata() {
 
     auto cmd = build_grpc_curl_command(req);
 
-    check(cmd.find("Authorization: Bearer token123") != std::string::npos,
-          "curl_meta.auth_header");
-    check(cmd.find("x-request-id: abc-def") != std::string::npos,
-          "curl_meta.request_id");
+    check(cmd.find("headers=4") != std::string::npos, "curl_meta.header_count");
+    check(cmd.find("Authorization: Bearer token123") == std::string::npos,
+          "curl_meta.auth_redacted");
+    check(cmd.find("x-request-id: abc-def") == std::string::npos,
+          "curl_meta.request_id_redacted");
 }
 
 // ============================================================================
@@ -269,9 +266,8 @@ void test_build_curl_command_empty_body() {
 
     auto cmd = build_grpc_curl_command(req);
 
-    // When body is empty, should still send {} for gRPC
-    check(cmd.find("-d ") != std::string::npos, "curl_empty_body.has_data_flag");
-    check(cmd.find("{}") != std::string::npos, "curl_empty_body.sends_empty_object");
+    check(cmd.find("body_bytes=2") != std::string::npos, "curl_empty_body.sends_empty_object");
+    check(cmd.find("{}") == std::string::npos, "curl_empty_body.body_redacted");
 }
 
 // ============================================================================

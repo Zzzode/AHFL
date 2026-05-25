@@ -1,4 +1,6 @@
 add_library(ahfl_support_lib STATIC
+    curl.cpp
+    process.cpp
     thread_pool.cpp
     timer.cpp
     version.cpp

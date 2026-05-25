@@ -1,5 +1,5 @@
-#include "ahfl/store_import/review.hpp"
-#include "ahfl/validation/common.hpp"
+#include "store_import/review.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <string_view>

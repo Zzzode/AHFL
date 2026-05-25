@@ -1,4 +1,4 @@
-#include "ahfl/runtime/agent_runtime.hpp"
+#include "runtime/agent_runtime.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <variant>
 
-#include "ahfl/evaluator/evaluator.hpp"
+#include "evaluator/evaluator.hpp"
 
 namespace ahfl::runtime {
 

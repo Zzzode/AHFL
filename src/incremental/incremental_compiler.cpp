@@ -1,4 +1,4 @@
-#include "ahfl/incremental/incremental_compiler.hpp"
+#include "incremental/incremental_compiler.hpp"
 
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/ir/ir.hpp"
@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <fstream>
-#include <functional>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -20,8 +19,15 @@ std::uint64_t compute_content_hash(const std::string &file_path) {
     std::ifstream ifs(file_path, std::ios::binary);
     if (!ifs)
         return 0;
-    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-    return std::hash<std::string>{}(content);
+    constexpr std::uint64_t offset_basis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t hash = offset_basis;
+    char byte = '\0';
+    while (ifs.get(byte)) {
+        hash ^= static_cast<unsigned char>(byte);
+        hash *= prime;
+    }
+    return hash;
 }
 
 // Compute transitive dependents via BFS
@@ -138,14 +144,16 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
             }
         }
 
-        // Always cache the result (even failures) so repeated builds with
-        // the same content hash get a cache hit.
-        CacheEntry new_entry;
-        new_entry.module_path = mod_path;
-        new_entry.content_hash = content_hash;
-        new_entry.serialized_ir = serialized_ir;
-        new_entry.cached_at = std::chrono::system_clock::now();
-        cache_.store(std::move(new_entry));
+        if (status == CompileStatus::Recompiled) {
+            CacheEntry new_entry;
+            new_entry.module_path = mod_path;
+            new_entry.content_hash = content_hash;
+            new_entry.serialized_ir = serialized_ir;
+            new_entry.cached_at = std::chrono::system_clock::now();
+            cache_.store(std::move(new_entry));
+        } else {
+            cache_.invalidate(mod_path);
+        }
 
         ++stats_.modules_recompiled;
         results.push_back(CompileResult{status, mod_path, error_msg});

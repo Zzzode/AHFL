@@ -1,5 +1,5 @@
-#include "ahfl/secret/key_rotation.hpp"
-#include "ahfl/secret/vault_provider.hpp"
+#include "secret/key_rotation.hpp"
+#include "secret/vault_provider.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -9,7 +9,7 @@ namespace {
 
 using namespace ahfl::secret;
 
-bool test_vault_authenticate_then_resolve() {
+bool test_vault_authenticate_then_missing_vault_returns_nullopt() {
     VaultConfig config;
     config.address = "http://127.0.0.1:8200";
     config.mount_path = "secret";
@@ -24,15 +24,10 @@ bool test_vault_authenticate_then_resolve() {
     if (!provider.is_authenticated()) return false;
     if (!provider.is_connected()) return false;
 
-    // Resolve should now succeed
+    // No local Vault is running in this unit test; the provider must not
+    // synthesize a fake secret.
     auto result = provider.resolve("database_password");
-    if (!result.has_value()) return false;
-    if (*result != "vault_secret_database_password") return false;
-
-    // Resolve again should return from cache
-    auto result2 = provider.resolve("database_password");
-    if (!result2.has_value()) return false;
-    if (*result2 != "vault_secret_database_password") return false;
+    if (result.has_value()) return false;
 
     return true;
 }
@@ -77,11 +72,13 @@ bool test_key_rotation_add_policy_and_rotate() {
     if (retrieved->key != "api_key") return false;
     if (retrieved->interval != std::chrono::seconds{3600}) return false;
 
-    // Rotate key manually
+    // Rotate key manually. With no Vault server, rotation must fail closed
+    // instead of returning a synthetic secret.
     auto event = manager.rotate_key("api_key");
     if (event.key != "api_key") return false;
-    if (event.status != RotationStatus::Completed) return false;
-    if (event.new_version != "vault_secret_api_key") return false;
+    if (event.status != RotationStatus::Failed) return false;
+    if (!event.new_version.empty()) return false;
+    if (event.error_message.empty()) return false;
 
     // Check history
     auto hist = manager.history();
@@ -129,7 +126,7 @@ bool test_key_rotation_callback_fires() {
 
     if (callback_count != 1) return false;
     if (last_key != "secret_token") return false;
-    if (last_status != RotationStatus::Completed) return false;
+    if (last_status != RotationStatus::Failed) return false;
 
     // check_and_rotate should also fire callback (for first rotation on a new policy)
     RotationPolicy policy2;
@@ -165,7 +162,8 @@ int main() {
         }
     };
 
-    run(test_vault_authenticate_then_resolve, "test_vault_authenticate_then_resolve");
+    run(test_vault_authenticate_then_missing_vault_returns_nullopt,
+        "test_vault_authenticate_then_missing_vault_returns_nullopt");
     run(test_vault_resolve_without_auth_returns_nullopt,
         "test_vault_resolve_without_auth_returns_nullopt");
     run(test_key_rotation_add_policy_and_rotate, "test_key_rotation_add_policy_and_rotate");

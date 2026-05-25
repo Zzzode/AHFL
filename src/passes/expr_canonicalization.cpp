@@ -1,4 +1,4 @@
-#include "ahfl/passes/expr_canonicalization.hpp"
+#include "passes/expr_canonicalization.hpp"
 
 #include "ahfl/ir/ir.hpp"
 

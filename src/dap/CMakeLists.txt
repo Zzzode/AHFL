@@ -7,6 +7,8 @@ add_library(ahfl_dap STATIC
 target_link_libraries(ahfl_dap
     PUBLIC
         ahfl_support
+    PRIVATE
+        ahfl_json
 )
 
 ahfl_apply_project_warnings(ahfl_dap)

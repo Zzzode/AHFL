@@ -1,6 +1,6 @@
-#include "ahfl/formal/counterexample_json.hpp"
+#include "formal/counterexample_json.hpp"
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 #include <sstream>
 

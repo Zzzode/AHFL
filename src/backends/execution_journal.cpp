@@ -1,10 +1,10 @@
-#include "ahfl/backends/execution_journal.hpp"
+#include "backends/execution_journal.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 namespace ahfl {
 

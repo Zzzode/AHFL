@@ -1,4 +1,4 @@
-#include "ahfl/lsp/protocol_types.hpp"
+#include "lsp/protocol_types.hpp"
 
 namespace ahfl::lsp {
 

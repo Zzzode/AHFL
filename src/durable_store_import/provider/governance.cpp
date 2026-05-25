@@ -3,8 +3,8 @@
 
 // ---- provider_audit.cpp ----
 
-#include "ahfl/durable_store_import/provider/governance/audit.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/governance/audit.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -275,8 +275,8 @@ build_provider_operator_review_event(const ProviderTelemetrySummary &summary) {
 
 // ---- provider_compatibility.cpp ----
 
-#include "ahfl/durable_store_import/provider/governance/compatibility.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/governance/compatibility.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -523,8 +523,8 @@ build_provider_compatibility_report(const ProviderFixtureMatrix &matrix,
 
 // ---- provider_registry.cpp ----
 
-#include "ahfl/durable_store_import/provider/governance/registry.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/governance/registry.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -771,8 +771,8 @@ build_provider_capability_negotiation_review(const ProviderSelectionPlan &plan) 
 
 // ---- provider_conformance.cpp ----
 
-#include "ahfl/durable_store_import/provider/governance/conformance.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/governance/conformance.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -1056,8 +1056,8 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
 
 // ---- provider_schema_compatibility.cpp ----
 
-#include "ahfl/durable_store_import/provider/governance/schema_compatibility.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/governance/schema_compatibility.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

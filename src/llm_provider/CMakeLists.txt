@@ -15,6 +15,9 @@ add_library(ahfl_llm_provider STATIC
 target_link_libraries(ahfl_llm_provider
     PUBLIC
         ahfl_runtime
+    PRIVATE
+        ahfl_json
+        ahfl_support_lib
 )
 
 ahfl_apply_project_warnings(ahfl_llm_provider)

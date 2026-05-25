@@ -3,8 +3,8 @@
 
 // ---- provider_retry.cpp ----
 
-#include "ahfl/durable_store_import/provider/reliability/retry.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/reliability/retry.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -206,8 +206,8 @@ build_provider_write_retry_decision(const ProviderSdkMockAdapterExecutionResult 
 
 // ---- provider_commit.cpp ----
 
-#include "ahfl/durable_store_import/provider/reliability/commit.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/reliability/commit.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -452,8 +452,8 @@ build_provider_write_commit_review(const ProviderWriteCommitReceipt &receipt) {
 
 // ---- provider_recovery.cpp ----
 
-#include "ahfl/durable_store_import/provider/reliability/recovery.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/reliability/recovery.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -823,8 +823,8 @@ build_provider_write_recovery_review(const ProviderWriteRecoveryPlan &plan) {
 
 // ---- provider_failure_taxonomy.cpp ----
 
-#include "ahfl/durable_store_import/provider/reliability/failure_taxonomy.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/reliability/failure_taxonomy.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

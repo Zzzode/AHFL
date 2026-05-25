@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ahfl/cli/command_catalog.hpp"
-#include "ahfl/dry_run/runner.hpp"
+#include "cli/command_catalog.hpp"
+#include "dry_run/runner.hpp"
 #include "ahfl/handoff/package.hpp"
 #include "ahfl/ir/ir.hpp"
 

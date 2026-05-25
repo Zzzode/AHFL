@@ -556,6 +556,7 @@ add_executable(ahfl_cli_command_routing_tests
 )
 target_link_libraries(ahfl_cli_command_routing_tests
     PRIVATE
+        ahfl_durable_store_import_artifacts
         ahfl_support
 )
 ahfl_apply_project_warnings(ahfl_cli_command_routing_tests)

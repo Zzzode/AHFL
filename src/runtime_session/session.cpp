@@ -1,5 +1,5 @@
-#include "ahfl/runtime_session/session.hpp"
-#include "ahfl/validation/common.hpp"
+#include "runtime_session/session.hpp"
+#include "validation/common.hpp"
 
 #include <cstddef>
 #include <string>

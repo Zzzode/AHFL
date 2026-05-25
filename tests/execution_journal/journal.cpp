@@ -1,4 +1,4 @@
-#include "ahfl/execution_journal/journal.hpp"
+#include "execution_journal/journal.hpp"
 
 #include "../common/test_support.hpp"
 

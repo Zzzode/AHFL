@@ -1,5 +1,5 @@
-#include "ahfl/durable_store_import/request.hpp"
-#include "ahfl/durable_store_import/review.hpp"
+#include "durable_store_import/request.hpp"
+#include "durable_store_import/review.hpp"
 
 #include "../common/test_support.hpp"
 

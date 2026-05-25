@@ -1,6 +1,6 @@
-#include "ahfl/scheduler_snapshot/snapshot.hpp"
+#include "scheduler_snapshot/snapshot.hpp"
 #include "ahfl/support/diagnostics.hpp"
-#include "ahfl/validation/common.hpp"
+#include "validation/common.hpp"
 
 #include <optional>
 #include <string>

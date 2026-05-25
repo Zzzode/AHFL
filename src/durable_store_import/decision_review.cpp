@@ -1,5 +1,5 @@
-#include "ahfl/durable_store_import/decision_review.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/decision_review.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

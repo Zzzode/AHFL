@@ -1,4 +1,4 @@
-#include "ahfl/lsp/json_rpc.hpp"
+#include "lsp/json_rpc.hpp"
 
 #include <charconv>
 #include <cstddef>

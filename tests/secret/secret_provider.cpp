@@ -1,4 +1,4 @@
-#include "ahfl/secret/secret_provider.hpp"
+#include "secret/secret_provider.hpp"
 
 #include <cassert>
 #include <cstdlib>

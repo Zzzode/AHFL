@@ -1,4 +1,4 @@
-#include "ahfl/formatter/format_config.hpp"
+#include "formatter/format_config.hpp"
 #include <sstream>
 #include <fstream>
 

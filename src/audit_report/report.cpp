@@ -1,5 +1,5 @@
-#include "ahfl/audit_report/report.hpp"
-#include "ahfl/validation/common.hpp"
+#include "audit_report/report.hpp"
+#include "validation/common.hpp"
 
 #include <cstddef>
 #include <string>

@@ -14,5 +14,5 @@
     void detail_name(const ahfl::durable_store_import::artifact_type &parameter_name,            \
                      std::ostream &out);                                                        \
     }
-#include "ahfl/durable_store_import/artifact_printers.def"
+#include "durable_store_import/artifact_printers.def"
 #undef AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER

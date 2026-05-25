@@ -1,5 +1,5 @@
-#include "ahfl/formatter/formatter.hpp"
-#include "ahfl/formatter/format_config.hpp"
+#include "formatter/formatter.hpp"
+#include "formatter/format_config.hpp"
 #include <cstdio>
 
 static int test_count = 0;

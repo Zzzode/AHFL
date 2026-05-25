@@ -1,9 +1,8 @@
-#include "ahfl/runtime/grpc_transport.hpp"
+#include "runtime/grpc_transport.hpp"
 
-#include "ahfl/evaluator/value_json.hpp"
+#include "evaluator/value_json.hpp"
+#include "support/curl.hpp"
 
-#include <array>
-#include <cstdio>
 #include <sstream>
 
 namespace ahfl::runtime {
@@ -50,24 +49,7 @@ std::string GrpcEndpoint::to_path() const {
     return "/" + service_name + "/" + method_name;
 }
 
-// ============================================================================
-// Shell quoting (same approach as HttpTransport)
-// ============================================================================
-
 namespace {
-
-[[nodiscard]] std::string shell_quote(std::string_view value) {
-    std::string quoted = "'";
-    for (const auto character : value) {
-        if (character == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted.push_back(character);
-        }
-    }
-    quoted += "'";
-    return quoted;
-}
 
 /// Map HTTP status codes to gRPC status codes for transcoding.
 [[nodiscard]] GrpcStatusCode http_to_grpc_status(int http_code) {
@@ -131,37 +113,22 @@ std::string serialize_args_for_grpc(const std::vector<evaluator::Value> &args) {
 // ============================================================================
 
 std::string build_grpc_curl_command(const GrpcRequest &request) {
-    std::ostringstream cmd;
-
-    // Use --http2 for TLS (h2) or --http2-prior-knowledge for plaintext (h2c)
-    cmd << "curl -s -w '\\n%{http_code}' ";
-    if (request.endpoint.use_tls) {
-        cmd << "--http2 ";
-    } else {
-        cmd << "--http2-prior-knowledge ";
-    }
-
-    cmd << "-X POST ";
-    cmd << shell_quote(request.endpoint.to_url()) << " ";
-
-    // Always set gRPC-relevant headers
-    cmd << "-H " << shell_quote("Content-Type: application/json") << " ";
-    cmd << "-H " << shell_quote("TE: trailers") << " ";
-
-    // User-specified metadata as headers
+    ahfl::support::CurlRequest curl_request;
+    curl_request.method = "POST";
+    curl_request.url = request.endpoint.to_url();
+    curl_request.headers = {
+        {"Content-Type", "application/json"},
+        {"TE", "trailers"},
+    };
     for (const auto &[key, value] : request.metadata) {
-        cmd << "-H " << shell_quote(key + ": " + value) << " ";
+        curl_request.headers.emplace_back(key, value);
     }
-
-    // Request body
-    if (!request.serialized_body.empty()) {
-        cmd << "-d " << shell_quote(request.serialized_body) << " ";
-    } else {
-        cmd << "-d " << shell_quote("{}") << " ";
-    }
-
-    cmd << "--max-time " << request.timeout.count();
-    return cmd.str();
+    curl_request.body = request.serialized_body.empty() ? "{}" : request.serialized_body;
+    curl_request.timeout_seconds = static_cast<int>(request.timeout.count());
+    curl_request.http_version = request.endpoint.use_tls ? ahfl::support::CurlHttpVersion::Http2
+                                                         : ahfl::support::CurlHttpVersion::
+                                                               Http2PriorKnowledge;
+    return ahfl::support::describe_curl_command(curl_request);
 }
 
 // ============================================================================
@@ -169,102 +136,53 @@ std::string build_grpc_curl_command(const GrpcRequest &request) {
 // ============================================================================
 
 GrpcResponse execute_grpc(const GrpcRequest &request) {
-    const auto command = build_grpc_curl_command(request) + " 2>&1";
+    ahfl::support::CurlRequest curl_request;
+    curl_request.method = "POST";
+    curl_request.url = request.endpoint.to_url();
+    curl_request.headers = {
+        {"Content-Type", "application/json"},
+        {"TE", "trailers"},
+    };
+    for (const auto &[key, value] : request.metadata) {
+        curl_request.headers.emplace_back(key, value);
+    }
+    curl_request.body = request.serialized_body.empty() ? "{}" : request.serialized_body;
+    curl_request.timeout_seconds = static_cast<int>(request.timeout.count());
+    curl_request.http_version = request.endpoint.use_tls ? ahfl::support::CurlHttpVersion::Http2
+                                                         : ahfl::support::CurlHttpVersion::
+                                                               Http2PriorKnowledge;
 
-    FILE *pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
+    const auto response = ahfl::support::execute_curl(curl_request);
+    if (response.timed_out) {
         return GrpcResponse{
-            .status_code = GrpcStatusCode::Internal,
+            .status_code = GrpcStatusCode::DeadlineExceeded,
             .body = {},
-            .error_message = "failed to start curl process for gRPC call",
+            .error_message = "gRPC deadline exceeded",
         };
     }
-
-    std::string output;
-    std::array<char, 4096> buffer{};
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        output += buffer.data();
-    }
-
-    const int exit_code = pclose(pipe);
-
-    // curl exit code 28 = timeout
-    if (exit_code != 0 && output.empty()) {
-        if (exit_code == 28 || (WIFEXITED(exit_code) && WEXITSTATUS(exit_code) == 28)) {
-            return GrpcResponse{
-                .status_code = GrpcStatusCode::DeadlineExceeded,
-                .body = {},
-                .error_message = "gRPC deadline exceeded",
-            };
-        }
+    if (response.status_code == 0 && !response.error.empty()) {
         return GrpcResponse{
             .status_code = GrpcStatusCode::Unavailable,
-            .body = {},
-            .error_message = "curl command failed with exit code " + std::to_string(exit_code),
-        };
-    }
-
-    // Extract HTTP status code from last line (written by curl -w)
-    int http_status = 0;
-    std::string body = output;
-
-    const auto last_newline = output.rfind('\n');
-    if (last_newline != std::string::npos && last_newline > 0) {
-        const auto status_str = output.substr(last_newline + 1);
-        body = output.substr(0, last_newline);
-
-        if (!body.empty() && body.back() == '\n') {
-            body.pop_back();
-        }
-
-        try {
-            http_status = std::stoi(status_str);
-        } catch (...) {
-            http_status = 0;
-            body = output;
-        }
-    } else if (!output.empty()) {
-        try {
-            http_status = std::stoi(output);
-            body.clear();
-        } catch (...) {
-            http_status = 0;
-            body = output;
-        }
-    }
-
-    // Handle transport-level failures
-    if (http_status == 0 && exit_code != 0) {
-        const int real_exit = WIFEXITED(exit_code) ? WEXITSTATUS(exit_code) : exit_code;
-        if (real_exit == 28) {
-            return GrpcResponse{
-                .status_code = GrpcStatusCode::DeadlineExceeded,
-                .body = body,
-                .error_message = "gRPC deadline exceeded",
-            };
-        }
-        return GrpcResponse{
-            .status_code = GrpcStatusCode::Unavailable,
-            .body = body,
-            .error_message = "gRPC transport error (curl exit " + std::to_string(real_exit) + ")",
+            .body = response.body,
+            .error_message = response.error,
         };
     }
 
     // Map HTTP status to gRPC status
-    const auto grpc_status = http_to_grpc_status(http_status);
+    const auto grpc_status = http_to_grpc_status(response.status_code);
 
     if (grpc_status != GrpcStatusCode::Ok) {
         return GrpcResponse{
             .status_code = grpc_status,
-            .body = body,
+            .body = response.body,
             .error_message = std::string("gRPC ") + grpc_status_name(grpc_status) +
-                             " (HTTP " + std::to_string(http_status) + ")",
+                             " (HTTP " + std::to_string(response.status_code) + ")",
         };
     }
 
     return GrpcResponse{
         .status_code = GrpcStatusCode::Ok,
-        .body = body,
+        .body = response.body,
         .error_message = {},
     };
 }

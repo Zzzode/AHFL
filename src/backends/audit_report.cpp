@@ -1,10 +1,10 @@
-#include "ahfl/backends/audit_report.hpp"
+#include "backends/audit_report.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 namespace ahfl {
 

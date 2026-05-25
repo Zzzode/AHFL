@@ -1,4 +1,4 @@
-#include "ahfl/json/json_value.hpp"
+#include "json/json_value.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -67,6 +67,11 @@ bool test_parse_object() {
     if ((*result)->kind != Kind::Object) return false;
     if ((*result)->object_fields.size() != 2) return false;
     return true;
+}
+
+bool test_duplicate_object_key_rejected() {
+    auto result = parse_json(R"({"checksum":"good","checksum":"bad"})");
+    return !result.has_value();
 }
 
 bool test_serialize_roundtrip() {
@@ -220,6 +225,7 @@ int main() {
     run(test_parse_string, "test_parse_string");
     run(test_parse_array, "test_parse_array");
     run(test_parse_object, "test_parse_object");
+    run(test_duplicate_object_key_rejected, "test_duplicate_object_key_rejected");
     run(test_serialize_roundtrip, "test_serialize_roundtrip");
     run(test_get_accessor, "test_get_accessor");
     run(test_as_string, "test_as_string");

@@ -1,4 +1,4 @@
-#include "ahfl/profiling/pass_timing.hpp"
+#include "profiling/pass_timing.hpp"
 
 #include <utility>
 

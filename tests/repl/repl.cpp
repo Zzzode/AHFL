@@ -1,4 +1,4 @@
-#include "ahfl/repl/repl.hpp"
+#include "repl/repl.hpp"
 #include <cstdio>
 
 static int test_count = 0;

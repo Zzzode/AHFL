@@ -3,8 +3,8 @@
 
 // ---- provider_sdk_adapter.cpp ----
 
-#include "ahfl/durable_store_import/provider/sdk/adapter.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/sdk/adapter.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -723,8 +723,8 @@ ProviderSdkAdapterReadinessReviewResult build_provider_sdk_adapter_readiness_rev
 
 // ---- provider_sdk_interface.cpp ----
 
-#include "ahfl/durable_store_import/provider/sdk/interface.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/sdk/interface.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -1226,8 +1226,8 @@ build_provider_sdk_adapter_interface_review(const ProviderSdkAdapterInterfacePla
 
 // ---- provider_sdk_payload.cpp ----
 
-#include "ahfl/durable_store_import/provider/sdk/payload.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/sdk/payload.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -1538,8 +1538,8 @@ build_provider_sdk_payload_audit_summary(const ProviderSdkPayloadMaterialization
 
 // ---- provider_sdk_mock_adapter.cpp ----
 
-#include "ahfl/durable_store_import/provider/sdk/mock_adapter.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/sdk/mock_adapter.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

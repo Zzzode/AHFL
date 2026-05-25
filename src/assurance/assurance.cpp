@@ -1,7 +1,7 @@
-#include "ahfl/assurance/assurance.hpp"
+#include "assurance/assurance.hpp"
 
-#include "ahfl/support/json.hpp"
-#include "ahfl/support/overloaded.hpp"
+#include "support/json.hpp"
+#include "support/overloaded.hpp"
 
 #include <algorithm>
 #include <map>
