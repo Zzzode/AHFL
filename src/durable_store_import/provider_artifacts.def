@@ -7,7 +7,7 @@
 //   format_version  stable provider artifact format-version constant
 //   domain          provider pipeline domain
 //   role            contract role inside the domain
-//   source_header   compatibility header that still owns the model type
+//   source_header   leaf header that owns the model type
 
 #ifndef AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
 #error "Define AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT before including this file."
@@ -19,7 +19,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderAdapterConfigFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Config,
-    "ahfl/durable_store_import/provider_adapter.hpp")
+    "durable_store_import/provider/binding/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-capability-matrix",
@@ -27,7 +27,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderCapabilityMatrixFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Matrix,
-    "ahfl/durable_store_import/provider_adapter.hpp")
+    "durable_store_import/provider/binding/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-attempt-preview",
@@ -35,7 +35,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteAttemptPreviewFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Preview,
-    "ahfl/durable_store_import/provider_adapter.hpp")
+    "durable_store_import/provider/binding/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-recovery-handoff-preview",
@@ -43,7 +43,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderRecoveryHandoffPreviewFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Preview,
-    "ahfl/durable_store_import/provider_adapter.hpp")
+    "durable_store_import/provider/binding/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-driver-profile",
@@ -51,7 +51,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderDriverProfileFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Profile,
-    "ahfl/durable_store_import/provider_driver.hpp")
+    "durable_store_import/provider/binding/driver.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-driver-binding-plan",
@@ -59,7 +59,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderDriverBindingPlanFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_driver.hpp")
+    "durable_store_import/provider/binding/driver.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-driver-readiness-review",
@@ -67,7 +67,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderDriverReadinessReviewFormatVersion,
     ProviderArtifactDomain::Binding,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_driver.hpp")
+    "durable_store_import/provider/binding/driver.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-runtime-profile",
@@ -75,7 +75,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderRuntimeProfileFormatVersion,
     ProviderArtifactDomain::Runtime,
     ProviderArtifactRole::Profile,
-    "ahfl/durable_store_import/provider_runtime.hpp")
+    "durable_store_import/provider/runtime/runtime.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-runtime-preflight-plan",
@@ -83,7 +83,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderRuntimePreflightPlanFormatVersion,
     ProviderArtifactDomain::Runtime,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_runtime.hpp")
+    "durable_store_import/provider/runtime/runtime.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-runtime-readiness-review",
@@ -91,7 +91,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderRuntimeReadinessReviewFormatVersion,
     ProviderArtifactDomain::Runtime,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_runtime.hpp")
+    "durable_store_import/provider/runtime/runtime.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-envelope-policy",
@@ -99,7 +99,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkEnvelopePolicyFormatVersion,
     ProviderArtifactDomain::Runtime,
     ProviderArtifactRole::Policy,
-    "ahfl/durable_store_import/provider_sdk.hpp")
+    "durable_store_import/provider/runtime/sdk.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-request-envelope-plan",
@@ -107,7 +107,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkRequestEnvelopePlanFormatVersion,
     ProviderArtifactDomain::Runtime,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_sdk.hpp")
+    "durable_store_import/provider/runtime/sdk.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-handoff-readiness-review",
@@ -115,7 +115,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkHandoffReadinessReviewFormatVersion,
     ProviderArtifactDomain::Runtime,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_sdk.hpp")
+    "durable_store_import/provider/runtime/sdk.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-host-execution-policy",
@@ -123,7 +123,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderHostExecutionPolicyFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Policy,
-    "ahfl/durable_store_import/provider_host_execution.hpp")
+    "durable_store_import/provider/execution/host_execution.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-host-execution-plan",
@@ -131,7 +131,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderHostExecutionPlanFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_host_execution.hpp")
+    "durable_store_import/provider/execution/host_execution.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-host-execution-readiness-review",
@@ -139,7 +139,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderHostExecutionReadinessReviewFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_host_execution.hpp")
+    "durable_store_import/provider/execution/host_execution.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-host-execution-receipt",
@@ -147,7 +147,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalHostExecutionReceiptFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Receipt,
-    "ahfl/durable_store_import/provider_local_host_execution.hpp")
+    "durable_store_import/provider/execution/local_host_execution.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-host-execution-receipt-review",
@@ -155,7 +155,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalHostExecutionReceiptReviewFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_local_host_execution.hpp")
+    "durable_store_import/provider/execution/local_host_execution.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-host-harness-request",
@@ -163,7 +163,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalHostHarnessRequestFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Request,
-    "ahfl/durable_store_import/provider_local_host_harness.hpp")
+    "durable_store_import/provider/execution/local_host_harness.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-host-harness-execution-record",
@@ -171,7 +171,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalHostHarnessExecutionRecordFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Record,
-    "ahfl/durable_store_import/provider_local_host_harness.hpp")
+    "durable_store_import/provider/execution/local_host_harness.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-host-harness-review",
@@ -179,7 +179,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalHostHarnessReviewFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_local_host_harness.hpp")
+    "durable_store_import/provider/execution/local_host_harness.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-filesystem-alpha-plan",
@@ -187,7 +187,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalFilesystemAlphaPlanFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp")
+    "durable_store_import/provider/execution/local_filesystem_alpha.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-filesystem-alpha-result",
@@ -195,7 +195,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalFilesystemAlphaResultFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Result,
-    "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp")
+    "durable_store_import/provider/execution/local_filesystem_alpha.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-local-filesystem-alpha-readiness",
@@ -203,7 +203,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderLocalFilesystemAlphaReadinessFormatVersion,
     ProviderArtifactDomain::HostExecution,
     ProviderArtifactRole::Readiness,
-    "ahfl/durable_store_import/provider_local_filesystem_alpha.hpp")
+    "durable_store_import/provider/execution/local_filesystem_alpha.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-adapter-request-plan",
@@ -211,7 +211,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkAdapterRequestPlanFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_sdk_adapter.hpp")
+    "durable_store_import/provider/sdk/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-adapter-response-placeholder",
@@ -219,7 +219,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkAdapterResponsePlaceholderFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Placeholder,
-    "ahfl/durable_store_import/provider_sdk_adapter.hpp")
+    "durable_store_import/provider/sdk/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-adapter-readiness-review",
@@ -227,7 +227,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkAdapterReadinessReviewFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_sdk_adapter.hpp")
+    "durable_store_import/provider/sdk/adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-adapter-interface-plan",
@@ -235,7 +235,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkAdapterInterfacePlanFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_sdk_interface.hpp")
+    "durable_store_import/provider/sdk/interface.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-adapter-interface-review",
@@ -243,7 +243,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkAdapterInterfaceReviewFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_sdk_interface.hpp")
+    "durable_store_import/provider/sdk/interface.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-payload-materialization-plan",
@@ -251,7 +251,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkPayloadMaterializationPlanFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_sdk_payload.hpp")
+    "durable_store_import/provider/sdk/payload.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-payload-audit-summary",
@@ -259,7 +259,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkPayloadAuditSummaryFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Summary,
-    "ahfl/durable_store_import/provider_sdk_payload.hpp")
+    "durable_store_import/provider/sdk/payload.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-mock-adapter-contract",
@@ -267,7 +267,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkMockAdapterContractFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Contract,
-    "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp")
+    "durable_store_import/provider/sdk/mock_adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-mock-adapter-execution-result",
@@ -275,7 +275,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkMockAdapterExecutionResultFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Result,
-    "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp")
+    "durable_store_import/provider/sdk/mock_adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-sdk-mock-adapter-readiness",
@@ -283,7 +283,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSdkMockAdapterReadinessFormatVersion,
     ProviderArtifactDomain::Sdk,
     ProviderArtifactRole::Readiness,
-    "ahfl/durable_store_import/provider_sdk_mock_adapter.hpp")
+    "durable_store_import/provider/sdk/mock_adapter.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-config-load-plan",
@@ -291,7 +291,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderConfigLoadPlanFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_config.hpp")
+    "durable_store_import/provider/configuration/config.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-config-snapshot-placeholder",
@@ -299,7 +299,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderConfigSnapshotPlaceholderFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Placeholder,
-    "ahfl/durable_store_import/provider_config.hpp")
+    "durable_store_import/provider/configuration/config.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-config-readiness-review",
@@ -307,7 +307,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderConfigReadinessReviewFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_config.hpp")
+    "durable_store_import/provider/configuration/config.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-secret-resolver-request-plan",
@@ -315,7 +315,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSecretResolverRequestPlanFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_secret.hpp")
+    "durable_store_import/provider/configuration/secret.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-secret-resolver-response-placeholder",
@@ -323,7 +323,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSecretResolverResponsePlaceholderFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Placeholder,
-    "ahfl/durable_store_import/provider_secret.hpp")
+    "durable_store_import/provider/configuration/secret.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-secret-policy-review",
@@ -331,7 +331,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSecretPolicyReviewFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_secret.hpp")
+    "durable_store_import/provider/configuration/secret.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-config-bundle-validation-report",
@@ -339,7 +339,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderConfigBundleValidationReportFormatVersion,
     ProviderArtifactDomain::Configuration,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_config_bundle_validation.hpp")
+    "durable_store_import/provider/configuration/config_bundle_validation.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-retry-decision",
@@ -347,7 +347,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteRetryDecisionFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Decision,
-    "ahfl/durable_store_import/provider_retry.hpp")
+    "durable_store_import/provider/reliability/retry.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-commit-receipt",
@@ -355,7 +355,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteCommitReceiptFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Receipt,
-    "ahfl/durable_store_import/provider_commit.hpp")
+    "durable_store_import/provider/reliability/commit.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-commit-review",
@@ -363,7 +363,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteCommitReviewFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_commit.hpp")
+    "durable_store_import/provider/reliability/commit.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-recovery-checkpoint",
@@ -371,7 +371,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteRecoveryCheckpointFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Checkpoint,
-    "ahfl/durable_store_import/provider_recovery.hpp")
+    "durable_store_import/provider/reliability/recovery.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-recovery-plan",
@@ -379,7 +379,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteRecoveryPlanFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_recovery.hpp")
+    "durable_store_import/provider/reliability/recovery.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-write-recovery-review",
@@ -387,7 +387,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderWriteRecoveryReviewFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_recovery.hpp")
+    "durable_store_import/provider/reliability/recovery.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-failure-taxonomy-report",
@@ -395,7 +395,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderFailureTaxonomyReportFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_failure_taxonomy.hpp")
+    "durable_store_import/provider/reliability/failure_taxonomy.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-failure-taxonomy-review",
@@ -403,7 +403,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderFailureTaxonomyReviewFormatVersion,
     ProviderArtifactDomain::Reliability,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_failure_taxonomy.hpp")
+    "durable_store_import/provider/reliability/failure_taxonomy.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-execution-audit-event",
@@ -411,7 +411,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderExecutionAuditEventFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Event,
-    "ahfl/durable_store_import/provider_audit.hpp")
+    "durable_store_import/provider/governance/audit.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-telemetry-summary",
@@ -419,7 +419,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderTelemetrySummaryFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Summary,
-    "ahfl/durable_store_import/provider_audit.hpp")
+    "durable_store_import/provider/governance/audit.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-operator-review-event",
@@ -427,7 +427,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderOperatorReviewEventFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Event,
-    "ahfl/durable_store_import/provider_audit.hpp")
+    "durable_store_import/provider/governance/audit.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-compatibility-test-manifest",
@@ -435,7 +435,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderCompatibilityTestManifestFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Manifest,
-    "ahfl/durable_store_import/provider_compatibility.hpp")
+    "durable_store_import/provider/governance/compatibility.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-fixture-matrix",
@@ -443,7 +443,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderFixtureMatrixFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Matrix,
-    "ahfl/durable_store_import/provider_compatibility.hpp")
+    "durable_store_import/provider/governance/compatibility.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-compatibility-report",
@@ -451,7 +451,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderCompatibilityReportFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_compatibility.hpp")
+    "durable_store_import/provider/governance/compatibility.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-registry",
@@ -459,7 +459,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderRegistryFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Registry,
-    "ahfl/durable_store_import/provider_registry.hpp")
+    "durable_store_import/provider/governance/registry.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-selection-plan",
@@ -467,7 +467,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSelectionPlanFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Plan,
-    "ahfl/durable_store_import/provider_registry.hpp")
+    "durable_store_import/provider/governance/registry.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-capability-negotiation-review",
@@ -475,7 +475,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderCapabilityNegotiationReviewFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_registry.hpp")
+    "durable_store_import/provider/governance/registry.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-conformance-report",
@@ -483,7 +483,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderConformanceReportFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_conformance.hpp")
+    "durable_store_import/provider/governance/conformance.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-schema-compatibility-report",
@@ -491,7 +491,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderSchemaCompatibilityReportFormatVersion,
     ProviderArtifactDomain::Governance,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_schema_compatibility.hpp")
+    "durable_store_import/provider/governance/schema_compatibility.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-production-readiness-evidence",
@@ -499,7 +499,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderProductionReadinessEvidenceFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Evidence,
-    "ahfl/durable_store_import/provider_production_readiness.hpp")
+    "durable_store_import/provider/production/production_readiness.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-production-readiness-review",
@@ -507,7 +507,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderProductionReadinessReviewFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Review,
-    "ahfl/durable_store_import/provider_production_readiness.hpp")
+    "durable_store_import/provider/production/production_readiness.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-production-readiness-report",
@@ -515,7 +515,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderProductionReadinessReportFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_production_readiness.hpp")
+    "durable_store_import/provider/production/production_readiness.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-release-evidence-archive-manifest",
@@ -523,7 +523,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderReleaseEvidenceArchiveManifestFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Manifest,
-    "ahfl/durable_store_import/provider_release_evidence_archive.hpp")
+    "durable_store_import/provider/production/release_evidence_archive.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-approval-request",
@@ -531,7 +531,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderApprovalRequestFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Request,
-    "ahfl/durable_store_import/provider_approval_workflow.hpp")
+    "durable_store_import/provider/production/approval_workflow.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-approval-decision",
@@ -539,7 +539,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderApprovalDecisionFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Decision,
-    "ahfl/durable_store_import/provider_approval_workflow.hpp")
+    "durable_store_import/provider/production/approval_workflow.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-approval-receipt",
@@ -547,7 +547,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderApprovalReceiptFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Receipt,
-    "ahfl/durable_store_import/provider_approval_workflow.hpp")
+    "durable_store_import/provider/production/approval_workflow.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-opt-in-decision-report",
@@ -555,7 +555,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderOptInDecisionReportFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_opt_in_guard.hpp")
+    "durable_store_import/provider/production/opt_in_guard.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-runtime-policy-report",
@@ -563,7 +563,7 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderRuntimePolicyReportFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_runtime_policy.hpp")
+    "durable_store_import/provider/production/runtime_policy.hpp")
 
 AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     "durable-store-import-provider-production-integration-dry-run-report",
@@ -571,4 +571,4 @@ AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     kProviderProductionIntegrationDryRunReportFormatVersion,
     ProviderArtifactDomain::Production,
     ProviderArtifactRole::Report,
-    "ahfl/durable_store_import/provider_production_integration_dry_run.hpp")
+    "durable_store_import/provider/production/production_integration_dry_run.hpp")
