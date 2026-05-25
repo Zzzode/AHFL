@@ -24,14 +24,14 @@
 当前 CLI 实现主要位于：
 
 - `src/cli/ahflc.cpp`
-- `include/ahfl/backend.hpp`
+- `include/ahfl/backends/driver.hpp`
 
 其中：
 
 1. `src/cli/ahflc.cpp`
    - 命令解析与流水线编排
-2. `include/ahfl/backend.hpp`
-   - 对 backend driver 的兼容转发头
+2. `include/ahfl/backends/driver.hpp`
+   - backend driver 的真实模块头
 
 CLI 的职责是：
 

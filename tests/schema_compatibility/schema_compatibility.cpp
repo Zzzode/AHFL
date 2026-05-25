@@ -105,7 +105,7 @@ void assert_provider_artifact_registry() {
     assert(runtime_preflight->type_name == "ProviderRuntimePreflightPlan");
     assert(runtime_preflight->domain == ProviderArtifactDomain::Runtime);
     assert(runtime_preflight->role == ProviderArtifactRole::Plan);
-    assert(runtime_preflight->source_header == "ahfl/durable_store_import/provider_runtime.hpp");
+    assert(runtime_preflight->source_header == "durable_store_import/provider/runtime/runtime.hpp");
 
     const auto *sdk_adapter = ahfl::durable_store_import::find_provider_artifact_by_format_version(
         "ahfl.durable-store-import-provider-sdk-adapter-request-plan.v1");
