@@ -1,4 +1,4 @@
-#include "ahfl/formal/bmc.hpp"
+#include "formal/bmc.hpp"
 
 #include <algorithm>
 #include <chrono>

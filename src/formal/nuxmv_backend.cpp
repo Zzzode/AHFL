@@ -1,7 +1,8 @@
-#include "ahfl/formal/nuxmv_backend.hpp"
+#include "formal/nuxmv_backend.hpp"
 
-#include <array>
-#include <cstdio>
+#include "formal/process_launcher.hpp"
+
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -69,20 +70,6 @@ std::string write_temp_model(const std::string &model_text) {
     ofs << model_text;
     ofs.close();
     return path.string();
-}
-
-/// Shell-quote a path for safe use in commands.
-std::string shell_quote(const std::string &value) {
-    std::string quoted = "'";
-    for (char c : value) {
-        if (c == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted.push_back(c);
-        }
-    }
-    quoted += "'";
-    return quoted;
 }
 
 /// Parse nuXmv/NuSMV output for verification results.
@@ -238,23 +225,16 @@ ParsedResult parse_verification_output(const std::string &output) {
         cmd_file << "quit\n";
     }
 
-    std::string command =
-        shell_quote(binary) + " -source " + shell_quote(cmd_path.string()) + " 2>&1";
-
-    FILE *pipe = popen(command.c_str(), "r");
-    if (!pipe) {
-        summary.all_passed = false;
-        summary.error_message = "Failed to execute nuXmv process";
-        return summary;
+    ProcessConfig process_config;
+    process_config.executable = binary;
+    process_config.arguments = {"-source", cmd_path.string()};
+    process_config.timeout = std::chrono::seconds{60};
+    const auto process_result = launch_process(process_config);
+    std::string output = process_result.stdout_output;
+    if (!process_result.stderr_output.empty()) {
+        output += process_result.stderr_output;
     }
-
-    std::string output;
-    std::array<char, 4096> buffer{};
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        output += buffer.data();
-    }
-
-    int exit_code = pclose(pipe);
+    int exit_code = process_result.exit_code;
 
     // Clean up temp files
     std::error_code ec;

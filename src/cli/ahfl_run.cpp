@@ -5,13 +5,13 @@
 //
 // 该 CLI 编译 .ahfl 文件，使用 LLM Provider 真实执行 workflow。
 
-#include "ahfl/evaluator/value.hpp"
+#include "evaluator/value.hpp"
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/ir/ir.hpp"
-#include "ahfl/llm_provider/llm_capability_provider.hpp"
-#include "ahfl/llm_provider/llm_provider_config.hpp"
-#include "ahfl/runtime/capability_bridge.hpp"
-#include "ahfl/runtime/workflow_runtime.hpp"
+#include "llm_provider/llm_capability_provider.hpp"
+#include "llm_provider/llm_provider_config.hpp"
+#include "runtime/capability_bridge.hpp"
+#include "runtime/workflow_runtime.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"

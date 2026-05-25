@@ -3,8 +3,8 @@
 
 // ---- provider_adapter.cpp ----
 
-#include "ahfl/durable_store_import/provider/binding/adapter.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/binding/adapter.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -712,8 +712,8 @@ build_provider_recovery_handoff_preview(const ProviderWriteAttemptPreview &previ
 
 // ---- provider_driver.cpp ----
 
-#include "ahfl/durable_store_import/provider/binding/driver.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/binding/driver.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

@@ -1,6 +1,6 @@
-#include "ahfl/backends/assurance.hpp"
+#include "backends/assurance.hpp"
 
-#include "ahfl/assurance/assurance.hpp"
+#include "assurance/assurance.hpp"
 
 namespace ahfl {
 

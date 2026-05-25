@@ -1,13 +1,16 @@
-#include "ahfl/package/registry.hpp"
+#include "package/registry.hpp"
+
+#include "json/json_value.hpp"
+#include "support/curl.hpp"
 
 #include <algorithm>
-#include <array>
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace ahfl::package {
 
@@ -33,71 +36,17 @@ struct HttpResult {
 };
 
 HttpResult http_get(const std::string &url, int timeout_seconds = 10) {
-    HttpResult result;
-    // Shell-escape URL (basic protection)
-    std::string safe_url;
-    safe_url.reserve(url.size());
-    for (char c : url) {
-        if (c == '\'') {
-            safe_url += "'\\''";
-        } else {
-            safe_url += c;
-        }
-    }
+    ahfl::support::CurlRequest request;
+    request.method = "GET";
+    request.url = url;
+    request.timeout_seconds = timeout_seconds;
 
-    std::string cmd = "curl -s -w '\\n%{http_code}' --max-time " + std::to_string(timeout_seconds) +
-                      " '" + safe_url + "' 2>/dev/null";
-
-    FILE *pipe = popen(cmd.c_str(), "r");
-    if (pipe == nullptr)
-        return result;
-
-    std::string output;
-    std::array<char, 4096> buffer{};
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        output += buffer.data();
-    }
-    pclose(pipe);
-
-    if (output.empty())
-        return result;
-
-    // Extract status code from last line
-    auto last_newline = output.rfind('\n', output.size() - 2);
-    if (last_newline == std::string::npos) {
-        last_newline = 0;
-    } else {
-        ++last_newline;
-    }
-
-    std::string status_str = output.substr(last_newline);
-    // Trim trailing whitespace
-    while (!status_str.empty() && (status_str.back() == '\n' || status_str.back() == '\r')) {
-        status_str.pop_back();
-    }
-
-    try {
-        result.status_code = std::stoi(status_str);
-    } catch (...) {
-        return result;
-    }
-
-    result.body = output.substr(0, last_newline > 0 ? last_newline - 1 : 0);
-    result.success = (result.status_code >= 200 && result.status_code < 300);
-    return result;
-}
-
-// Minimal JSON field extraction (handles simple {"key":"value"} patterns)
-std::string extract_json_string(const std::string &json, const std::string &key) {
-    auto search = "\"" + key + "\":\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos)
-        return "";
-    pos += search.size();
-    auto end = json.find('"', pos);
-    if (end == std::string::npos)
-        return "";
-    return json.substr(pos, end - pos);
+    const auto response = ahfl::support::execute_curl(request);
+    return HttpResult{
+        .status_code = response.status_code,
+        .body = response.body,
+        .success = response.is_success(),
+    };
 }
 
 fs::path cache_file_path(const std::string &package_name) {
@@ -126,34 +75,132 @@ std::string load_from_cache(const std::string &package_name) {
     return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
 }
 
-PackageMetadata parse_metadata_json(const std::string &json, const std::string &package_name) {
+std::optional<std::string> object_string(const ahfl::json::JsonValue &object,
+                                         std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr) {
+        return std::nullopt;
+    }
+    auto value = field->as_string();
+    if (!value.has_value()) {
+        return std::nullopt;
+    }
+    return std::string(*value);
+}
+
+std::optional<PackageVersion> parse_version_object(const ahfl::json::JsonValue &version_object,
+                                                   const std::string &package_name,
+                                                   const std::string *forced_version = nullptr) {
+    if (!version_object.is_object()) {
+        return std::nullopt;
+    }
+
+    auto version = forced_version != nullptr ? std::optional<std::string>(*forced_version)
+                                             : object_string(version_object, "version");
+    if (!version.has_value() || version->empty()) {
+        return std::nullopt;
+    }
+
+    PackageVersion parsed;
+    parsed.name = package_name;
+    parsed.version = *version;
+    if (auto description = object_string(version_object, "description"); description.has_value()) {
+        parsed.description = *description;
+    }
+    if (auto checksum = object_string(version_object, "checksum"); checksum.has_value()) {
+        parsed.checksum = *checksum;
+    } else if (auto sha256 = object_string(version_object, "sha256"); sha256.has_value()) {
+        parsed.checksum = "sha256:" + *sha256;
+    }
+
+    if (const auto *authors = version_object.get("authors");
+        authors != nullptr && authors->is_array()) {
+        for (const auto &author : authors->array_items) {
+            if (auto value = author->as_string(); value.has_value()) {
+                parsed.authors.push_back(std::string(*value));
+            } else {
+                return std::nullopt;
+            }
+        }
+    }
+    return parsed;
+}
+
+std::optional<PackageMetadata> parse_metadata_json(const std::string &json,
+                                                   const std::string &package_name) {
+    auto parsed = ahfl::json::parse_json(json);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return std::nullopt;
+    }
+
     PackageMetadata metadata;
     metadata.name = package_name;
-    metadata.latest_version = extract_json_string(json, "latest_version");
+    if (auto latest = object_string(**parsed, "latest_version"); latest.has_value()) {
+        metadata.latest_version = *latest;
+    }
 
-    // Parse versions array (simplified: look for version patterns)
-    std::string::size_type pos = 0;
-    while ((pos = json.find("\"version\":\"", pos)) != std::string::npos) {
-        pos += 11; // skip "version":"
-        auto end = json.find('"', pos);
-        if (end == std::string::npos)
-            break;
-        std::string version = json.substr(pos, end - pos);
-
-        PackageVersion pv;
-        pv.name = package_name;
-        pv.version = version;
-        pv.description = extract_json_string(json, "description");
-        pv.checksum = extract_json_string(json, "checksum");
-        metadata.versions.push_back(std::move(pv));
-        pos = end + 1;
+    const auto *versions = (*parsed)->get("versions");
+    if (versions == nullptr || !versions->is_array()) {
+        return std::nullopt;
+    }
+    for (const auto &version : versions->array_items) {
+        auto parsed_version = parse_version_object(*version, package_name);
+        if (!parsed_version.has_value()) {
+            return std::nullopt;
+        }
+        metadata.versions.push_back(std::move(*parsed_version));
     }
 
     if (metadata.latest_version.empty() && !metadata.versions.empty()) {
         metadata.latest_version = metadata.versions.back().version;
     }
+    if (metadata.versions.empty() || metadata.latest_version.empty()) {
+        return std::nullopt;
+    }
 
     return metadata;
+}
+
+std::optional<PackageVersion> parse_single_version_json(const std::string &json,
+                                                        const std::string &package_name,
+                                                        const std::string &version) {
+    auto parsed = ahfl::json::parse_json(json);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return std::nullopt;
+    }
+    return parse_version_object(**parsed, package_name, &version);
+}
+
+std::vector<std::string> parse_search_json(const std::string &json) {
+    auto parsed = ahfl::json::parse_json(json);
+    if (!parsed.has_value() || !*parsed) {
+        return {};
+    }
+
+    const ahfl::json::JsonValue *items = parsed->get();
+    if (items->is_object()) {
+        items = items->get("results");
+    }
+    if (items == nullptr || !items->is_array()) {
+        return {};
+    }
+
+    std::vector<std::string> results;
+    for (const auto &item : items->array_items) {
+        if (auto name = item->as_string(); name.has_value()) {
+            results.push_back(std::string(*name));
+            continue;
+        }
+        if (item->is_object()) {
+            auto name = object_string(*item, "name");
+            if (name.has_value()) {
+                results.push_back(*name);
+                continue;
+            }
+        }
+        return {};
+    }
+    return results;
 }
 
 // Hardcoded fallback packages for offline mode
@@ -205,10 +252,10 @@ RegistryResult Registry::fetch_metadata(const std::string &package_name) const {
     auto http_result = http_get(url);
 
     if (http_result.success && !http_result.body.empty()) {
-        save_to_cache(package_name, http_result.body);
         auto metadata = parse_metadata_json(http_result.body, package_name);
-        if (!metadata.versions.empty()) {
-            return RegistryResult{true, std::move(metadata), std::nullopt, ""};
+        if (metadata.has_value()) {
+            save_to_cache(package_name, http_result.body);
+            return RegistryResult{true, std::move(*metadata), std::nullopt, ""};
         }
     }
 
@@ -216,8 +263,8 @@ RegistryResult Registry::fetch_metadata(const std::string &package_name) const {
     auto cached_json = load_from_cache(package_name);
     if (!cached_json.empty()) {
         auto metadata = parse_metadata_json(cached_json, package_name);
-        if (!metadata.versions.empty()) {
-            return RegistryResult{true, std::move(metadata), std::nullopt, ""};
+        if (metadata.has_value()) {
+            return RegistryResult{true, std::move(*metadata), std::nullopt, ""};
         }
     }
 
@@ -236,15 +283,11 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
         metadata.name = package_name;
         metadata.latest_version = version;
 
-        PackageVersion ver;
-        ver.name = package_name;
-        ver.version = version;
-        ver.description = extract_json_string(http_result.body, "description");
-        ver.checksum = extract_json_string(http_result.body, "checksum");
-        if (ver.checksum.empty())
-            ver.checksum = "sha256:" + extract_json_string(http_result.body, "sha256");
-        metadata.versions.push_back(std::move(ver));
-        return RegistryResult{true, std::move(metadata), std::nullopt, ""};
+        auto parsed_version = parse_single_version_json(http_result.body, package_name, version);
+        if (parsed_version.has_value()) {
+            metadata.versions.push_back(std::move(*parsed_version));
+            return RegistryResult{true, std::move(metadata), std::nullopt, ""};
+        }
     }
 
     // 2. Fallback: try full metadata fetch and filter
@@ -275,21 +318,10 @@ std::vector<std::string> Registry::search(const std::string &query) const {
     auto http_result = http_get(url);
 
     if (http_result.success && !http_result.body.empty()) {
-        // Parse simple JSON array of names: ["pkg1","pkg2"]
-        std::string::size_type pos = 0;
-        while ((pos = http_result.body.find('"', pos)) != std::string::npos) {
-            ++pos;
-            auto end = http_result.body.find('"', pos);
-            if (end == std::string::npos)
-                break;
-            auto name = http_result.body.substr(pos, end - pos);
-            if (!name.empty() && name.find(':') == std::string::npos) {
-                results.push_back(std::move(name));
-            }
-            pos = end + 1;
-        }
-        if (!results.empty())
+        results = parse_search_json(http_result.body);
+        if (!results.empty()) {
             return results;
+        }
     }
 
     // 2. Fallback to stub data

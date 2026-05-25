@@ -1,4 +1,4 @@
-#include "ahfl/cli/command_catalog.hpp"
+#include "cli/command_catalog.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -131,7 +131,7 @@ constexpr CommandSpec kCommandSpecs[] = {
                                                        inference_order,                            \
                                                        package_order,                              \
                                                        capability_order,                           \
-                                                       handler)                                    \
+                                                       artifact_kind)                              \
     {CommandKind::kind,                                                                            \
      token,                                                                                        \
      usage_order,                                                                                  \
@@ -139,7 +139,7 @@ constexpr CommandSpec kCommandSpecs[] = {
      inference_order,                                                                              \
      package_order,                                                                                \
      capability_order},
-#include "ahfl/cli/durable_store_import_provider_commands.def"
+#include "cli/durable_store_import_provider_commands.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
     {CommandKind::EmitSchedulerReview, "emit-scheduler-review", 96, 93, 99, 8, 86},
     {CommandKind::EmitRuntimeSession, "emit-runtime-session", 97, 94, 100, 9, 87},
@@ -337,6 +337,17 @@ void print_usage_line(std::ostream &out, CommandKind command) {
     }
 
     return "check";
+}
+
+[[nodiscard]] std::optional<std::string_view> emitted_artifact_id(CommandKind command) {
+    constexpr std::string_view kEmitPrefix = "emit-";
+    auto token = command_name(command);
+    if (!token.starts_with(kEmitPrefix)) {
+        return std::nullopt;
+    }
+
+    token.remove_prefix(kEmitPrefix.size());
+    return token;
 }
 
 [[nodiscard]] bool is_package_supported_command(CommandKind command) {

@@ -1,6 +1,6 @@
-#include "ahfl/evaluator/evaluator.hpp"
-#include "ahfl/evaluator/eval_context.hpp"
-#include "ahfl/evaluator/value.hpp"
+#include "evaluator/evaluator.hpp"
+#include "evaluator/eval_context.hpp"
+#include "evaluator/value.hpp"
 #include "ahfl/ir/ir.hpp"
 #include "ahfl/support/ownership.hpp"
 

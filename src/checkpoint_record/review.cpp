@@ -1,5 +1,5 @@
-#include "ahfl/checkpoint_record/review.hpp"
-#include "ahfl/validation/common.hpp"
+#include "checkpoint_record/review.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <string_view>

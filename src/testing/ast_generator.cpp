@@ -1,4 +1,4 @@
-#include "ahfl/testing/ast_generator.hpp"
+#include "testing/ast_generator.hpp"
 
 #include <algorithm>
 #include <array>

@@ -1,6 +1,6 @@
-#include "ahfl/runtime/capability_bridge.hpp"
-#include "ahfl/runtime/capability_eval.hpp"
-#include "ahfl/evaluator/value.hpp"
+#include "runtime/capability_bridge.hpp"
+#include "runtime/capability_eval.hpp"
+#include "evaluator/value.hpp"
 #include "ahfl/ir/ir.hpp"
 
 #include <cstdlib>

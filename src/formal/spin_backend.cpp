@@ -1,4 +1,4 @@
-#include "ahfl/formal/spin_backend.hpp"
+#include "formal/spin_backend.hpp"
 
 #include <string>
 #include <unordered_map>

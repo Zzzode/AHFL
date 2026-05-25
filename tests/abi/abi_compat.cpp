@@ -1,5 +1,5 @@
-#include <ahfl/abi/compat_check.hpp>
-#include <ahfl/abi/version_info.hpp>
+#include <abi/compat_check.hpp>
+#include <abi/version_info.hpp>
 
 #include <cstdio>
 

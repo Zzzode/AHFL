@@ -1,4 +1,4 @@
-#include "ahfl/dap/state_inspector.hpp"
+#include "dap/state_inspector.hpp"
 
 namespace ahfl::dap {
 

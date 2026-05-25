@@ -2,6 +2,7 @@ add_library(ahfl_support INTERFACE)
 target_include_directories(ahfl_support
     INTERFACE
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 ahfl_enable_cxx23(ahfl_support)
 
@@ -42,10 +43,22 @@ add_subdirectory(incremental)
 add_subdirectory(testing)
 add_subdirectory(package)
 
-add_library(ahfl_compiler INTERFACE)
-target_link_libraries(ahfl_compiler
+add_library(ahfl_compiler_core INTERFACE)
+target_link_libraries(ahfl_compiler_core
     INTERFACE
         ahfl_support_lib
+        ahfl_syntax
+        ahfl_semantics
+        ahfl_ir
+        ahfl_assurance
+        ahfl_backend
+        ahfl_json
+        ahfl_passes
+)
+
+add_library(ahfl_runtime_stack INTERFACE)
+target_link_libraries(ahfl_runtime_stack
+    INTERFACE
         ahfl_handoff
         ahfl_dry_run
         ahfl_evaluator
@@ -61,13 +74,14 @@ target_link_libraries(ahfl_compiler
         ahfl_store_import
         ahfl_durable_store_import
         ahfl_durable_store_import_artifacts
-        ahfl_assurance
         ahfl_formal
         ahfl_llm_provider
-        ahfl_backend
-        ahfl_json
         ahfl_secret
-        ahfl_passes
+)
+
+add_library(ahfl_tooling_stack INTERFACE)
+target_link_libraries(ahfl_tooling_stack
+    INTERFACE
         ahfl_lsp
         ahfl_formatter
         ahfl_repl
@@ -80,10 +94,19 @@ target_link_libraries(ahfl_compiler
         ahfl_package
 )
 
+add_library(ahfl_compiler INTERFACE)
+target_link_libraries(ahfl_compiler
+    INTERFACE
+        ahfl_compiler_core
+        ahfl_runtime_stack
+        ahfl_tooling_stack
+)
+
 add_library(ahfl_frontend INTERFACE)
 target_link_libraries(ahfl_frontend
     INTERFACE
-        ahfl_compiler
+        ahfl_syntax
+        ahfl_frontend_lib
 )
 
 add_subdirectory(cli)

@@ -8,6 +8,9 @@ add_library(ahfl_secret STATIC
 target_link_libraries(ahfl_secret
     PUBLIC
         ahfl_support
+    PRIVATE
+        ahfl_json
+        ahfl_support_lib
 )
 
 ahfl_apply_project_warnings(ahfl_secret)

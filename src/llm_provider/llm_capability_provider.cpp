@@ -1,6 +1,8 @@
 // llm_capability_provider.cpp - LLM Capability Provider 组合模块
 
-#include "ahfl/llm_provider/llm_capability_provider.hpp"
+#include "llm_provider/llm_capability_provider.hpp"
+
+#include "json/json_value.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -15,114 +17,54 @@ LLMCapabilityProvider::LLMCapabilityProvider(const ir::Program &program, LLMProv
 
 std::string LLMCapabilityProvider::build_request_json(const std::string &system_prompt,
                                                       const std::string &user_prompt) const {
-    // 手写 JSON 构建（避免依赖外部 JSON 库）
-    // 转义字符串中的特殊字符
-    auto escape_json_string = [](const std::string &s) -> std::string {
-        std::string result;
-        result.reserve(s.size() + 16);
-        for (char c : s) {
-            switch (c) {
-            case '"':
-                result += "\\\"";
-                break;
-            case '\\':
-                result += "\\\\";
-                break;
-            case '\n':
-                result += "\\n";
-                break;
-            case '\r':
-                result += "\\r";
-                break;
-            case '\t':
-                result += "\\t";
-                break;
-            default:
-                result += c;
-                break;
-            }
-        }
-        return result;
-    };
+    auto root = ahfl::json::JsonValue::make_object();
+    root->set("model", ahfl::json::JsonValue::make_string(config_.model));
 
-    std::ostringstream oss;
-    oss << "{";
-    oss << "\"model\":\"" << escape_json_string(config_.model) << "\",";
-    oss << "\"messages\":[";
-    oss << "{\"role\":\"system\",\"content\":\"" << escape_json_string(system_prompt) << "\"},";
-    oss << "{\"role\":\"user\",\"content\":\"" << escape_json_string(user_prompt) << "\"}";
-    oss << "],";
-    oss << "\"temperature\":" << config_.temperature << ",";
-    oss << "\"max_tokens\":" << config_.max_tokens;
+    auto messages = ahfl::json::JsonValue::make_array();
+    auto system = ahfl::json::JsonValue::make_object();
+    system->set("role", ahfl::json::JsonValue::make_string("system"));
+    system->set("content", ahfl::json::JsonValue::make_string(system_prompt));
+    messages->push(std::move(system));
 
-    // JSON mode（如果支持）
+    auto user = ahfl::json::JsonValue::make_object();
+    user->set("role", ahfl::json::JsonValue::make_string("user"));
+    user->set("content", ahfl::json::JsonValue::make_string(user_prompt));
+    messages->push(std::move(user));
+    root->set("messages", std::move(messages));
+
+    root->set("temperature", ahfl::json::JsonValue::make_float(config_.temperature));
+    root->set("max_tokens", ahfl::json::JsonValue::make_int(config_.max_tokens));
+
     if (config_.json_mode) {
-        oss << ",\"response_format\":{\"type\":\"json_object\"}";
+        auto format = ahfl::json::JsonValue::make_object();
+        format->set("type", ahfl::json::JsonValue::make_string("json_object"));
+        root->set("response_format", std::move(format));
     }
 
-    oss << "}";
-    return oss.str();
+    return ahfl::json::serialize_json(*root);
 }
 
 std::string
 LLMCapabilityProvider::extract_content_from_response(const std::string &response_body) const {
-    // 从 OpenAI-compatible 响应中提取 choices[0].message.content
-    // 简单查找 "content" 字段
-    std::string search = "\"content\"";
-    auto pos = response_body.find(search);
-    if (pos == std::string::npos) {
+    auto parsed = ahfl::json::parse_json(response_body);
+    if (!parsed.has_value() || !*parsed) {
         return "";
     }
 
-    // 跳过 key 和冒号
-    pos += search.size();
-    pos = response_body.find(':', pos);
-    if (pos == std::string::npos) {
+    const auto *choices = (*parsed)->get("choices");
+    if (choices == nullptr || !choices->is_array() || choices->array_items.empty()) {
         return "";
     }
-    ++pos;
-
-    // 跳过空白
-    while (pos < response_body.size() &&
-           (response_body[pos] == ' ' || response_body[pos] == '\t' || response_body[pos] == '\n' ||
-            response_body[pos] == '\r')) {
-        ++pos;
-    }
-
-    if (pos >= response_body.size() || response_body[pos] != '"') {
+    const auto *choice = choices->array_items.front().get();
+    const auto *message = choice != nullptr ? choice->get("message") : nullptr;
+    const auto *content = message != nullptr ? message->get("content") : nullptr;
+    if (content == nullptr) {
         return "";
     }
-
-    // 提取字符串值
-    ++pos;
-    std::string content;
-    while (pos < response_body.size() && response_body[pos] != '"') {
-        if (response_body[pos] == '\\' && pos + 1 < response_body.size()) {
-            ++pos;
-            switch (response_body[pos]) {
-            case 'n':
-                content += '\n';
-                break;
-            case 't':
-                content += '\t';
-                break;
-            case '"':
-                content += '"';
-                break;
-            case '\\':
-                content += '\\';
-                break;
-            default:
-                content += response_body[pos];
-                break;
-            }
-        } else {
-            content += response_body[pos];
-        }
-        ++pos;
+    if (auto value = content->as_string(); value.has_value()) {
+        return std::string(*value);
     }
-
-    return content;
+    return "";
 }
 
 evaluator::Value LLMCapabilityProvider::invoke(const std::string &capability_name,

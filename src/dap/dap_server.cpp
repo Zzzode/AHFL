@@ -1,5 +1,9 @@
-#include "ahfl/dap/dap_server.hpp"
+#include "dap/dap_server.hpp"
 
+#include "json/json_value.hpp"
+
+#include <cstdint>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -7,65 +11,44 @@ namespace ahfl::dap {
 
 namespace {
 
-// Simple JSON field extraction helpers
-std::string extract_json_string(const std::string &json, const std::string &key) {
-    auto search = "\"" + key + "\":\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos)
-        return "";
-    pos += search.size();
-    auto end = json.find('"', pos);
-    if (end == std::string::npos)
-        return "";
-    return json.substr(pos, end - pos);
+std::string json_escape(std::string_view value) {
+    return ahfl::json::serialize_json(*ahfl::json::JsonValue::make_string(std::string(value)));
 }
 
-int extract_json_int(const std::string &json, const std::string &key) {
-    auto search = "\"" + key + "\":";
-    auto pos = json.find(search);
-    if (pos == std::string::npos)
-        return -1;
-    pos += search.size();
-    // Skip whitespace
-    while (pos < json.size() && json[pos] == ' ')
-        ++pos;
-    std::string num;
-    while (pos < json.size() && json[pos] >= '0' && json[pos] <= '9') {
-        num += json[pos++];
-    }
-    if (num.empty())
-        return -1;
-    try {
-        return std::stoi(num);
-    } catch (...) {
-        return -1;
-    }
+std::string get_json_string(const ahfl::json::JsonValue &object, std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr)
+        return "";
+    auto value = field->as_string();
+    if (!value.has_value())
+        return "";
+    return std::string(*value);
 }
 
-// Extract an array of integers: "lines":[1,5,10]
-std::vector<int> extract_json_int_array(const std::string &json, const std::string &key) {
+int get_json_int(const ahfl::json::JsonValue &object, std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr)
+        return -1;
+    auto value = field->as_int();
+    if (!value.has_value())
+        return -1;
+    if (*value < 0 || *value > static_cast<int64_t>(std::numeric_limits<int>::max()))
+        return -1;
+    return static_cast<int>(*value);
+}
+
+std::vector<int> get_json_int_array(const ahfl::json::JsonValue &object, std::string_view key) {
     std::vector<int> result;
-    auto search = "\"" + key + "\":[";
-    auto pos = json.find(search);
-    if (pos == std::string::npos)
+    const auto *field = object.get(key);
+    if (field == nullptr || !field->is_array())
         return result;
-    pos += search.size();
-    auto end = json.find(']', pos);
-    if (end == std::string::npos)
-        return result;
-    auto arr = json.substr(pos, end - pos);
-    std::istringstream iss(arr);
-    std::string token;
-    while (std::getline(iss, token, ',')) {
-        // Trim whitespace
-        while (!token.empty() && token.front() == ' ')
-            token.erase(token.begin());
-        if (!token.empty()) {
-            try {
-                result.push_back(std::stoi(token));
-            } catch (...) {
-            }
+    for (const auto &item : field->array_items) {
+        auto value = item->as_int();
+        if (!value.has_value() || *value < 0 ||
+            *value > static_cast<int64_t>(std::numeric_limits<int>::max())) {
+            return {};
         }
+        result.push_back(static_cast<int>(*value));
     }
     return result;
 }
@@ -121,7 +104,7 @@ DapMessage DapServer::handle_request(const DapMessage &request) {
     } else if (request.command == "evaluate") {
         response.body = handle_evaluate(request.body);
     } else {
-        response.body = R"({"error":"unknown command: )" + request.command + R"("})";
+        response.body = R"({"error":)" + json_escape("unknown command: " + request.command) + "}";
     }
 
     return response;
@@ -169,8 +152,8 @@ std::string DapServer::encode_message(const DapMessage &msg) const {
         break;
     }
 
-    std::string json = R"({"seq":)" + std::to_string(msg.seq) + R"(,"type":")" + type_str + R"(")" +
-                       R"(,"command":")" + msg.command + R"(")";
+    std::string json = R"({"seq":)" + std::to_string(msg.seq) + R"(,"type":)" +
+                       json_escape(type_str) + R"(,"command":)" + json_escape(msg.command);
     if (!msg.body.empty()) {
         json += R"(,"body":)" + msg.body;
     }
@@ -191,8 +174,12 @@ DapMessage DapServer::decode_message(const std::string &raw) const {
         json = raw;
     }
 
-    // Extract fields
-    auto type_str = extract_json_string(json, "type");
+    auto parsed = ahfl::json::parse_json(json);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return msg;
+    }
+
+    auto type_str = get_json_string(**parsed, "type");
     if (type_str == "request")
         msg.type = DapMessageType::Request;
     else if (type_str == "response")
@@ -200,19 +187,11 @@ DapMessage DapServer::decode_message(const std::string &raw) const {
     else if (type_str == "event")
         msg.type = DapMessageType::Event;
 
-    msg.seq = extract_json_int(json, "seq");
-    msg.command = extract_json_string(json, "command");
+    msg.seq = get_json_int(**parsed, "seq");
+    msg.command = get_json_string(**parsed, "command");
 
-    // Extract body (everything between "body": and last })
-    auto body_pos = json.find("\"body\":");
-    if (body_pos != std::string::npos) {
-        body_pos += 7; // skip "body":
-        // Simple: take rest minus final }
-        auto rest = json.substr(body_pos);
-        if (!rest.empty() && rest.back() == '}') {
-            rest.pop_back();
-        }
-        msg.body = rest;
+    if (const auto *body = (*parsed)->get("body"); body != nullptr) {
+        msg.body = ahfl::json::serialize_json(*body);
     }
 
     return msg;
@@ -237,8 +216,12 @@ StateInspector &DapServer::state_inspector() {
 // --- Internal command handlers ---
 
 std::string DapServer::handle_set_breakpoints(const std::string &body) {
-    auto source_path = extract_json_string(body, "path");
-    auto lines = extract_json_int_array(body, "lines");
+    auto parsed = ahfl::json::parse_json(body);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return R"({"breakpoints":[]})";
+    }
+    auto source_path = get_json_string(**parsed, "path");
+    auto lines = get_json_int_array(**parsed, "lines");
 
     // Clear existing breakpoints for this source
     auto existing = breakpoint_manager_.all_breakpoints();
@@ -282,8 +265,8 @@ std::string DapServer::handle_stack_trace() {
     for (const auto &frame : frames) {
         if (!first)
             oss << ",";
-        oss << R"({"id":)" << frame.id << R"(,"name":")" << frame.name << R"(")"
-            << R"(,"source":{"path":")" << frame.source_file << R"("})"
+        oss << R"({"id":)" << frame.id << R"(,"name":)" << json_escape(frame.name)
+            << R"(,"source":{"path":)" << json_escape(frame.source_file) << R"(})"
             << R"(,"line":)" << frame.line << R"(,"column":1})";
         first = false;
     }
@@ -293,7 +276,10 @@ std::string DapServer::handle_stack_trace() {
 
 std::string DapServer::handle_scopes(const std::string &body) {
     // Extract frameId to determine which agent
-    auto frame_id = extract_json_int(body, "frameId");
+    auto parsed = ahfl::json::parse_json(body);
+    auto frame_id = parsed.has_value() && *parsed && (*parsed)->is_object()
+                        ? get_json_int(**parsed, "frameId")
+                        : -1;
     (void)frame_id;
 
     // Get scopes for first available agent
@@ -318,7 +304,7 @@ std::string DapServer::handle_scopes(const std::string &body) {
     for (const auto &scope : scopes) {
         if (!first)
             oss << ",";
-        oss << R"({"name":")" << scope.name << R"(")"
+        oss << R"({"name":)" << json_escape(scope.name)
             << R"(,"variablesReference":)" << ref_base << R"(,"expensive":false})";
         first = false;
         ++ref_base;
@@ -328,7 +314,10 @@ std::string DapServer::handle_scopes(const std::string &body) {
 }
 
 std::string DapServer::handle_variables(const std::string &body) {
-    auto variables_ref = extract_json_int(body, "variablesReference");
+    auto parsed = ahfl::json::parse_json(body);
+    auto variables_ref = parsed.has_value() && *parsed && (*parsed)->is_object()
+                             ? get_json_int(**parsed, "variablesReference")
+                             : -1;
 
     // Map variablesReference back to scope
     // 100 = first scope (Input), 101 = Context, 102 = Output
@@ -361,9 +350,9 @@ std::string DapServer::handle_variables(const std::string &body) {
     for (const auto &var : vars) {
         if (!first)
             oss << ",";
-        oss << R"({"name":")" << var.name << R"(")"
-            << R"(,"value":")" << var.value << R"(")"
-            << R"(,"type":")" << var.type << R"(")"
+        oss << R"({"name":)" << json_escape(var.name)
+            << R"(,"value":)" << json_escape(var.value)
+            << R"(,"type":)" << json_escape(var.type)
             << R"(,"variablesReference":)" << var.variables_reference << "}";
         first = false;
     }
@@ -384,7 +373,10 @@ std::string DapServer::handle_next() {
 }
 
 std::string DapServer::handle_evaluate(const std::string &body) {
-    auto expression = extract_json_string(body, "expression");
+    auto parsed = ahfl::json::parse_json(body);
+    auto expression = parsed.has_value() && *parsed && (*parsed)->is_object()
+                          ? get_json_string(**parsed, "expression")
+                          : "";
     std::string result_value = "(no result)";
 
     if (evaluate_handler_ && !expression.empty()) {
@@ -392,7 +384,7 @@ std::string DapServer::handle_evaluate(const std::string &body) {
     }
 
     std::ostringstream oss;
-    oss << R"({"result":")" << result_value << R"(","variablesReference":0})";
+    oss << R"({"result":)" << json_escape(result_value) << R"(,"variablesReference":0})";
     return oss.str();
 }
 

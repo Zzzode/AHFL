@@ -1,10 +1,10 @@
-#include "ahfl/backends/dry_run_trace.hpp"
+#include "backends/dry_run_trace.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 namespace ahfl {
 

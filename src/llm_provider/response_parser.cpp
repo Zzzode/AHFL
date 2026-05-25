@@ -1,6 +1,8 @@
 // response_parser.cpp - LLM JSON 响应 → AHFL Value 解析
 
-#include "ahfl/llm_provider/response_parser.hpp"
+#include "llm_provider/response_parser.hpp"
+
+#include "json/json_value.hpp"
 
 #include <algorithm>
 #include <string>
@@ -34,90 +36,30 @@ const ir::EnumDecl *ResponseParser::find_enum(const std::string &name) const {
 
 std::string ResponseParser::extract_json_value(const std::string &json_str,
                                                const std::string &key) const {
-    // 查找 "key"
-    std::string search = "\"" + key + "\"";
-    auto pos = json_str.find(search);
-    if (pos == std::string::npos) {
+    auto parsed = ahfl::json::parse_json(json_str);
+    if (!parsed.has_value() || !*parsed) {
         return "";
     }
-
-    // 跳过 key 和冒号
-    pos += search.size();
-    pos = json_str.find(':', pos);
-    if (pos == std::string::npos) {
+    const auto *field = (*parsed)->get(key);
+    if (field == nullptr) {
         return "";
     }
-    ++pos;
-
-    // 跳过空白
-    while (pos < json_str.size() && (json_str[pos] == ' ' || json_str[pos] == '\t' ||
-                                     json_str[pos] == '\n' || json_str[pos] == '\r')) {
-        ++pos;
+    if (auto value = field->as_string(); value.has_value()) {
+        return std::string(*value);
     }
-
-    if (pos >= json_str.size()) {
-        return "";
+    if (auto value = field->as_int(); value.has_value()) {
+        return std::to_string(*value);
     }
-
-    // 字符串值
-    if (json_str[pos] == '"') {
-        ++pos;
-        std::string value;
-        while (pos < json_str.size() && json_str[pos] != '"') {
-            if (json_str[pos] == '\\' && pos + 1 < json_str.size()) {
-                ++pos;
-                switch (json_str[pos]) {
-                case 'n':
-                    value += '\n';
-                    break;
-                case 't':
-                    value += '\t';
-                    break;
-                case '"':
-                    value += '"';
-                    break;
-                case '\\':
-                    value += '\\';
-                    break;
-                default:
-                    value += json_str[pos];
-                    break;
-                }
-            } else {
-                value += json_str[pos];
-            }
-            ++pos;
-        }
-        return value;
+    if (field->kind == ahfl::json::Kind::Float) {
+        return ahfl::json::serialize_json(*field);
     }
-
-    // 嵌套对象
-    if (json_str[pos] == '{') {
-        int depth = 1;
-        std::string value;
-        value += json_str[pos];
-        ++pos;
-        while (pos < json_str.size() && depth > 0) {
-            if (json_str[pos] == '{') {
-                ++depth;
-            } else if (json_str[pos] == '}') {
-                --depth;
-            }
-            value += json_str[pos];
-            ++pos;
-        }
-        return value;
+    if (auto value = field->as_bool(); value.has_value()) {
+        return *value ? "true" : "false";
     }
-
-    // 数字、布尔值或 null
-    std::string value;
-    while (pos < json_str.size() && json_str[pos] != ',' && json_str[pos] != '}' &&
-           json_str[pos] != ']' && json_str[pos] != ' ' && json_str[pos] != '\n' &&
-           json_str[pos] != '\r') {
-        value += json_str[pos];
-        ++pos;
+    if (field->is_object() || field->is_array()) {
+        return ahfl::json::serialize_json(*field);
     }
-    return value;
+    return "";
 }
 
 std::optional<evaluator::Value>
@@ -160,14 +102,32 @@ ResponseParser::parse_primitive(const std::string &value_str, const std::string 
 
 std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &json_obj,
                                                              const ir::StructDecl &decl) const {
+    auto parsed = ahfl::json::parse_json(json_obj);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return std::nullopt;
+    }
+
     std::unordered_map<std::string, evaluator::Value> fields;
 
     for (const auto &field : decl.fields) {
-        std::string raw_value = extract_json_value(json_obj, field.name);
-        if (raw_value.empty()) {
+        const auto *field_json = (*parsed)->get(field.name);
+        if (field_json == nullptr || field_json->is_null()) {
             // 字段缺失，使用默认值
             fields.emplace(field.name, evaluator::make_none());
             continue;
+        }
+
+        std::string raw_value;
+        if (auto string_value = field_json->as_string(); string_value.has_value()) {
+            raw_value = std::string(*string_value);
+        } else if (auto int_value = field_json->as_int(); int_value.has_value()) {
+            raw_value = std::to_string(*int_value);
+        } else if (field_json->kind == ahfl::json::Kind::Float) {
+            raw_value = ahfl::json::serialize_json(*field_json);
+        } else if (auto bool_value = field_json->as_bool(); bool_value.has_value()) {
+            raw_value = *bool_value ? "true" : "false";
+        } else {
+            raw_value = ahfl::json::serialize_json(*field_json);
         }
 
         // 检查是否是结构体类型

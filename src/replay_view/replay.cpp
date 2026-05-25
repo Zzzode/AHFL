@@ -1,5 +1,5 @@
-#include "ahfl/replay_view/replay.hpp"
-#include "ahfl/validation/common.hpp"
+#include "replay_view/replay.hpp"
+#include "validation/common.hpp"
 
 #include <cstddef>
 #include <string>

@@ -1,6 +1,6 @@
 // prompt_builder.cpp - LLM Prompt 构建
 
-#include "ahfl/llm_provider/prompt_builder.hpp"
+#include "llm_provider/prompt_builder.hpp"
 
 #include <sstream>
 #include <variant>

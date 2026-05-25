@@ -1,4 +1,4 @@
-#include "ahfl/durable_store_import/artifacts.hpp"
+#include "durable_store_import/artifacts.hpp"
 
 #include "artifacts/detail_declarations.hpp"
 
@@ -22,7 +22,7 @@ constexpr DurableStoreImportArtifactPrinterDescriptor kDurableStoreImportArtifac
      artifact_id,                                                                                  \
      output_format,                                                                                \
      domain},
-#include "ahfl/durable_store_import/artifact_printers.def"
+#include "durable_store_import/artifact_printers.def"
 #undef AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER
 };
 
@@ -68,6 +68,16 @@ durable_store_import_artifact_printers() {
         kDurableStoreImportArtifactPrinters};
 }
 
+const DurableStoreImportArtifactPrinterDescriptor *
+find_durable_store_import_artifact_printer(std::string_view artifact_id) {
+    for (const auto &printer : durable_store_import_artifact_printers()) {
+        if (printer.artifact_id == artifact_id) {
+            return &printer;
+        }
+    }
+    return nullptr;
+}
+
 #define AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER(public_name,                                    \
                                                    artifact_type,                                  \
                                                    parameter_name,                                 \
@@ -80,7 +90,7 @@ durable_store_import_artifact_printers() {
                      std::ostream &out) {                                                          \
         durable_store_import_artifacts_detail::detail_namespace::detail_name(parameter_name, out); \
     }
-#include "ahfl/durable_store_import/artifact_printers.def"
+#include "durable_store_import/artifact_printers.def"
 #undef AHFL_DURABLE_STORE_IMPORT_ARTIFACT_PRINTER
 
 } // namespace ahfl

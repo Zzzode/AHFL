@@ -1,10 +1,10 @@
-#include "ahfl/backends/runtime_session.hpp"
+#include "backends/runtime_session.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 namespace ahfl {
 

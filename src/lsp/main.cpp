@@ -1,4 +1,4 @@
-#include "ahfl/lsp/server.hpp"
+#include "lsp/server.hpp"
 
 #include <iostream>
 

@@ -2,14 +2,14 @@
 //
 // 验证 PromptBuilder、ResponseParser、LLMProviderConfig、LLMCapabilityProvider 的功能
 
-#include "ahfl/evaluator/value.hpp"
+#include "evaluator/value.hpp"
 #include "ahfl/ir/ir.hpp"
-#include "ahfl/llm_provider/http_client.hpp"
-#include "ahfl/llm_provider/llm_capability_provider.hpp"
-#include "ahfl/llm_provider/llm_provider_config.hpp"
-#include "ahfl/llm_provider/prompt_builder.hpp"
-#include "ahfl/llm_provider/response_parser.hpp"
-#include "ahfl/runtime/capability_bridge.hpp"
+#include "llm_provider/http_client.hpp"
+#include "llm_provider/llm_capability_provider.hpp"
+#include "llm_provider/llm_provider_config.hpp"
+#include "llm_provider/prompt_builder.hpp"
+#include "llm_provider/response_parser.hpp"
+#include "runtime/capability_bridge.hpp"
 
 #include <cstdlib>
 #include <iostream>

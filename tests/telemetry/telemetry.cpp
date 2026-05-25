@@ -3,10 +3,10 @@
 #include <thread>
 #include <chrono>
 
-#include "ahfl/telemetry/trace.hpp"
-#include "ahfl/telemetry/metrics.hpp"
-#include "ahfl/telemetry/logging.hpp"
-#include "ahfl/telemetry/context.hpp"
+#include "telemetry/trace.hpp"
+#include "telemetry/metrics.hpp"
+#include "telemetry/logging.hpp"
+#include "telemetry/context.hpp"
 
 static int test_count = 0;
 static int pass_count = 0;

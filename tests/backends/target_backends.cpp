@@ -1,9 +1,9 @@
 #include <cstdio>
 #include <string>
 
-#include "ahfl/backends/k8s_crd.hpp"
-#include "ahfl/backends/openapi_spec.hpp"
-#include "ahfl/backends/terraform_gen.hpp"
+#include "backends/k8s_crd.hpp"
+#include "backends/openapi_spec.hpp"
+#include "backends/terraform_gen.hpp"
 
 static int test_count = 0;
 static int pass_count = 0;

@@ -1,4 +1,4 @@
-#include "ahfl/durable_store_import/provider.hpp"
+#include "durable_store_import/provider.hpp"
 
 #include <algorithm>
 
@@ -10,7 +10,7 @@ constexpr ProviderArtifactDescriptor kProviderArtifacts[] = {
 #define AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                               \
     artifact_id, type_name, format_version, domain, role, source_header)                           \
     {artifact_id, #type_name, format_version, source_header, domain, role},
-#include "ahfl/durable_store_import/provider_artifacts.def"
+#include "durable_store_import/provider_artifacts.def"
 #undef AHFL_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
 };
 

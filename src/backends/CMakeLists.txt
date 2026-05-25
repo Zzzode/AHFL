@@ -237,6 +237,7 @@ add_library(ahfl_backend_wasm STATIC
 target_include_directories(ahfl_backend_wasm
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 ahfl_apply_project_warnings(ahfl_backend_wasm)
@@ -248,6 +249,7 @@ add_library(ahfl_backend_k8s_crd STATIC
 target_include_directories(ahfl_backend_k8s_crd
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 ahfl_apply_project_warnings(ahfl_backend_k8s_crd)
@@ -259,6 +261,7 @@ add_library(ahfl_backend_openapi_spec STATIC
 target_include_directories(ahfl_backend_openapi_spec
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 ahfl_apply_project_warnings(ahfl_backend_openapi_spec)
@@ -270,6 +273,7 @@ add_library(ahfl_backend_terraform_gen STATIC
 target_include_directories(ahfl_backend_terraform_gen
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 ahfl_apply_project_warnings(ahfl_backend_terraform_gen)

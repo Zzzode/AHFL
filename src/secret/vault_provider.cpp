@@ -1,28 +1,18 @@
-#include "ahfl/secret/vault_provider.hpp"
+#include "secret/vault_provider.hpp"
 
-#include <array>
-#include <cstdio>
+#include "json/json_value.hpp"
+#include "support/curl.hpp"
+
 #include <fstream>
-#include <sstream>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace ahfl::secret {
 
 namespace {
-
-/// Shell-quote a string for safe use in curl commands.
-std::string shell_quote(std::string_view value) {
-    std::string quoted = "'";
-    for (char c : value) {
-        if (c == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted.push_back(c);
-        }
-    }
-    quoted += "'";
-    return quoted;
-}
 
 /// Execute a curl command and return the response body + HTTP status.
 struct CurlResult {
@@ -36,143 +26,94 @@ CurlResult curl_request(const std::string &method,
                         const std::string &token,
                         const std::string &body_data = "",
                         int timeout_seconds = 5) {
-    std::ostringstream cmd;
-    cmd << "curl -s -w '\\n%{http_code}' -X " << method << " " << shell_quote(url) << " ";
-    cmd << "-H " << shell_quote("Content-Type: application/json") << " ";
-
+    ahfl::support::CurlRequest request;
+    request.method = method;
+    request.url = url;
+    request.timeout_seconds = timeout_seconds;
+    request.headers.emplace_back("Content-Type", "application/json");
     if (!token.empty()) {
-        cmd << "-H " << shell_quote("X-Vault-Token: " + token) << " ";
+        request.headers.emplace_back("X-Vault-Token", token);
     }
-
     if (!body_data.empty()) {
-        cmd << "-d " << shell_quote(body_data) << " ";
+        request.body = body_data;
     }
 
-    cmd << "--max-time " << timeout_seconds << " 2>&1";
+    const auto response = ahfl::support::execute_curl(request);
+    return CurlResult{
+        .status_code = response.status_code,
+        .body = response.body,
+        .error = response.error,
+    };
+}
 
-    FILE *pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) {
-        return {0, {}, "failed to start curl process"};
+std::optional<std::string> json_string_field(const ahfl::json::JsonValue &object,
+                                             std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr) {
+        return std::nullopt;
     }
-
-    std::string output;
-    std::array<char, 4096> buffer{};
-    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        output += buffer.data();
+    auto value = field->as_string();
+    if (!value.has_value()) {
+        return std::nullopt;
     }
-    pclose(pipe);
+    return std::string(*value);
+}
 
-    // Extract HTTP status from last line
-    CurlResult result;
-    auto last_nl = output.rfind('\n');
-    if (last_nl != std::string::npos && last_nl > 0) {
-        auto status_str = output.substr(last_nl + 1);
-        result.body = output.substr(0, last_nl);
-        if (!result.body.empty() && result.body.back() == '\n') {
-            result.body.pop_back();
+std::optional<std::string> vault_client_token(const std::string &body) {
+    auto parsed = ahfl::json::parse_json(body);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return std::nullopt;
+    }
+    const auto *auth = (*parsed)->get("auth");
+    if (auth == nullptr || !auth->is_object()) {
+        return std::nullopt;
+    }
+    return json_string_field(*auth, "client_token");
+}
+
+std::optional<std::string> vault_secret_value(const std::string &body, std::string_view key) {
+    auto parsed = ahfl::json::parse_json(body);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return std::nullopt;
+    }
+    const auto *outer = (*parsed)->get("data");
+    const auto *inner = outer != nullptr && outer->is_object() ? outer->get("data") : nullptr;
+    if (inner == nullptr || !inner->is_object()) {
+        return std::nullopt;
+    }
+    if (auto value = json_string_field(*inner, "value"); value.has_value()) {
+        return value;
+    }
+    return json_string_field(*inner, key);
+}
+
+std::vector<std::string> vault_secret_keys(const std::string &body) {
+    auto parsed = ahfl::json::parse_json(body);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return {};
+    }
+    const auto *data = (*parsed)->get("data");
+    const auto *keys = data != nullptr && data->is_object() ? data->get("keys") : nullptr;
+    if (keys == nullptr || !keys->is_array()) {
+        return {};
+    }
+    std::vector<std::string> result;
+    for (const auto &key : keys->array_items) {
+        auto value = key->as_string();
+        if (!value.has_value()) {
+            return {};
         }
-        try {
-            result.status_code = std::stoi(status_str);
-        } catch (...) {
-            result.status_code = 0;
-            result.body = output;
-        }
-    } else {
-        result.body = output;
+        result.push_back(std::string(*value));
     }
-
     return result;
 }
 
-/// Extract a JSON string value by key from a simple flat JSON response.
-/// This is a minimal parser for Vault's KV v2 response format.
-std::string extract_json_value(const std::string &json, const std::string &key) {
-    // Look for "key": "value" or "key":"value"
-    std::string search = "\"" + key + "\"";
-    auto pos = json.find(search);
-    if (pos == std::string::npos)
-        return "";
-
-    pos += search.size();
-    // Skip whitespace and colon
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == ':')) {
-        pos++;
+std::string build_object_json(std::vector<std::pair<std::string, std::string>> fields) {
+    auto object = ahfl::json::JsonValue::make_object();
+    for (auto &[key, value] : fields) {
+        object->set(std::move(key), ahfl::json::JsonValue::make_string(std::move(value)));
     }
-    if (pos >= json.size())
-        return "";
-
-    if (json[pos] == '"') {
-        // String value
-        pos++;
-        std::string value;
-        while (pos < json.size() && json[pos] != '"') {
-            if (json[pos] == '\\' && pos + 1 < json.size()) {
-                pos++;
-                switch (json[pos]) {
-                case 'n':
-                    value += '\n';
-                    break;
-                case 't':
-                    value += '\t';
-                    break;
-                case '"':
-                    value += '"';
-                    break;
-                case '\\':
-                    value += '\\';
-                    break;
-                default:
-                    value += json[pos];
-                    break;
-                }
-            } else {
-                value += json[pos];
-            }
-            pos++;
-        }
-        return value;
-    }
-
-    // Non-string value (number, bool, null)
-    std::string value;
-    while (pos < json.size() && json[pos] != ',' && json[pos] != '}' && json[pos] != ']' &&
-           json[pos] != ' ' && json[pos] != '\n') {
-        value += json[pos];
-        pos++;
-    }
-    return value;
-}
-
-/// Extract a list of keys from Vault LIST response.
-std::vector<std::string> extract_json_keys(const std::string &json) {
-    std::vector<std::string> keys;
-    // Look for "keys":["key1","key2",...]
-    auto pos = json.find("\"keys\"");
-    if (pos == std::string::npos)
-        return keys;
-
-    pos = json.find('[', pos);
-    if (pos == std::string::npos)
-        return keys;
-    pos++;
-
-    while (pos < json.size() && json[pos] != ']') {
-        if (json[pos] == '"') {
-            pos++;
-            std::string key;
-            while (pos < json.size() && json[pos] != '"') {
-                key += json[pos];
-                pos++;
-            }
-            if (!key.empty()) {
-                keys.push_back(key);
-            }
-            pos++; // skip closing quote
-        } else {
-            pos++;
-        }
-    }
-    return keys;
+    return ahfl::json::serialize_json(*object);
 }
 
 } // namespace
@@ -208,43 +149,15 @@ std::optional<std::string> VaultSecretProvider::resolve(std::string_view key) {
         curl_request("GET", url, config_.token, "", static_cast<int>(config_.timeout.count()));
 
     if (result.status_code == 200) {
-        // Extract from Vault KV v2 response: {"data":{"data":{"value":"..."}}}
-        // Look for the value field within nested data
-        auto data_pos = result.body.find("\"data\"");
-        if (data_pos != std::string::npos) {
-            // Find the nested data object
-            auto inner_data = result.body.substr(data_pos);
-            auto second_data = inner_data.find("\"data\"", 6);
-            if (second_data != std::string::npos) {
-                auto inner = inner_data.substr(second_data);
-                std::string value = extract_json_value(inner, "value");
-                if (!value.empty()) {
-                    cache_[key_str] = value;
-                    return value;
-                }
-                // If no "value" key, try the key name itself
-                value = extract_json_value(inner, key_str);
-                if (!value.empty()) {
-                    cache_[key_str] = value;
-                    return value;
-                }
-            }
-        }
-        // Fallback: try to find any value in the response
-        std::string value = extract_json_value(result.body, "value");
-        if (!value.empty()) {
-            cache_[key_str] = value;
+        if (auto value = vault_secret_value(result.body, key_str); value.has_value()) {
+            cache_[key_str] = *value;
             return value;
         }
     } else if (result.status_code == 404) {
         return std::nullopt;
     }
 
-    // Connection failure or Vault unavailable: provide synthetic fallback
-    // for local development/testing without a running Vault server
-    std::string fallback = "vault_secret_" + key_str;
-    cache_[key_str] = fallback;
-    return fallback;
+    return std::nullopt;
 }
 
 void VaultSecretProvider::refresh(std::string_view key) {
@@ -274,18 +187,16 @@ void VaultSecretProvider::authenticate() {
 
     case VaultAuthMethod::AppRole: {
         // AppRole auth: POST /v1/auth/approle/login with role_id + secret_id
-        std::string body = "{\"role_id\":\"" + auth_config_.role_id + "\",\"secret_id\":\"" +
-                           auth_config_.secret_id + "\"}";
+        std::string body = build_object_json({{"role_id", auth_config_.role_id},
+                                              {"secret_id", auth_config_.secret_id}});
         auto result = curl_request("POST",
                                    config_.address + "/v1/auth/approle/login",
                                    "",
                                    body,
                                    static_cast<int>(config_.timeout.count()));
         if (result.status_code == 200) {
-            // Extract client_token from response
-            std::string token = extract_json_value(result.body, "client_token");
-            if (!token.empty()) {
-                config_.token = token;
+            if (auto token = vault_client_token(result.body); token.has_value()) {
+                config_.token = *token;
                 authenticated_ = true;
             }
         }
@@ -301,17 +212,15 @@ void VaultSecretProvider::authenticate() {
             std::getline(sa_file, jwt);
         }
         if (!jwt.empty()) {
-            std::string body =
-                "{\"role\":\"" + auth_config_.k8s_role + "\",\"jwt\":\"" + jwt + "\"}";
+            std::string body = build_object_json({{"role", auth_config_.k8s_role}, {"jwt", jwt}});
             auto result = curl_request("POST",
                                        config_.address + "/v1/auth/kubernetes/login",
                                        "",
                                        body,
                                        static_cast<int>(config_.timeout.count()));
             if (result.status_code == 200) {
-                std::string token = extract_json_value(result.body, "client_token");
-                if (!token.empty()) {
-                    config_.token = token;
+                if (auto token = vault_client_token(result.body); token.has_value()) {
+                    config_.token = *token;
                     authenticated_ = true;
                 }
             }
@@ -358,7 +267,7 @@ std::vector<std::string> VaultSecretProvider::list_secrets(std::string_view path
         curl_request("LIST", url, config_.token, "", static_cast<int>(config_.timeout.count()));
 
     if (result.status_code == 200) {
-        return extract_json_keys(result.body);
+        return vault_secret_keys(result.body);
     }
 
     return {};

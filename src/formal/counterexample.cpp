@@ -1,4 +1,4 @@
-#include "ahfl/formal/counterexample.hpp"
+#include "formal/counterexample.hpp"
 
 #include <algorithm>
 #include <cctype>

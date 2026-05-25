@@ -1,21 +1,21 @@
 #pragma once
 
-#include "ahfl/cli/command_catalog.hpp"
-#include "ahfl/dry_run/runner.hpp"
-#include "ahfl/durable_store_import/adapter_execution.hpp"
-#include "ahfl/durable_store_import/decision.hpp"
-#include "ahfl/durable_store_import/decision_review.hpp"
-#include "ahfl/durable_store_import/provider/binding/adapter.hpp"
-#include "ahfl/durable_store_import/provider/binding/driver.hpp"
-#include "ahfl/durable_store_import/receipt.hpp"
-#include "ahfl/durable_store_import/receipt_persistence.hpp"
-#include "ahfl/durable_store_import/receipt_persistence_response.hpp"
-#include "ahfl/durable_store_import/receipt_persistence_response_review.hpp"
-#include "ahfl/durable_store_import/receipt_persistence_review.hpp"
-#include "ahfl/durable_store_import/receipt_review.hpp"
-#include "ahfl/durable_store_import/recovery_preview.hpp"
-#include "ahfl/durable_store_import/request.hpp"
-#include "ahfl/durable_store_import/review.hpp"
+#include "cli/command_catalog.hpp"
+#include "dry_run/runner.hpp"
+#include "durable_store_import/adapter_execution.hpp"
+#include "durable_store_import/decision.hpp"
+#include "durable_store_import/decision_review.hpp"
+#include "durable_store_import/provider/binding/adapter.hpp"
+#include "durable_store_import/provider/binding/driver.hpp"
+#include "durable_store_import/receipt.hpp"
+#include "durable_store_import/receipt_persistence.hpp"
+#include "durable_store_import/receipt_persistence_response.hpp"
+#include "durable_store_import/receipt_persistence_response_review.hpp"
+#include "durable_store_import/receipt_persistence_review.hpp"
+#include "durable_store_import/receipt_review.hpp"
+#include "durable_store_import/recovery_preview.hpp"
+#include "durable_store_import/request.hpp"
+#include "durable_store_import/review.hpp"
 #include "ahfl/handoff/package.hpp"
 #include "ahfl/ir/ir.hpp"
 
@@ -103,7 +103,7 @@ build_durable_store_import_recovery_preview_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteAttemptPreview>
-build_durable_store_import_provider_write_attempt_for_cli(
+build_provider_write_attempt_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -111,7 +111,7 @@ build_durable_store_import_provider_write_attempt_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderRecoveryHandoffPreview>
-build_durable_store_import_provider_recovery_handoff_for_cli(
+build_provider_recovery_handoff_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -119,7 +119,7 @@ build_durable_store_import_provider_recovery_handoff_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverBindingPlan>
-build_durable_store_import_provider_driver_binding_for_cli(
+build_provider_driver_binding_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -127,7 +127,7 @@ build_durable_store_import_provider_driver_binding_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverReadinessReview>
-build_durable_store_import_provider_driver_readiness_for_cli(
+build_provider_driver_readiness_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -203,30 +203,6 @@ emit_durable_store_import_receipt_with_diagnostics(const ahfl::ir::Program &prog
     const CommandLineOptions &options);
 
 [[nodiscard]] int emit_durable_store_import_recovery_preview_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options);
-
-[[nodiscard]] int emit_durable_store_import_provider_write_attempt_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options);
-
-[[nodiscard]] int emit_durable_store_import_provider_recovery_handoff_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options);
-
-[[nodiscard]] int emit_durable_store_import_provider_driver_binding_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options);
-
-[[nodiscard]] int emit_durable_store_import_provider_driver_readiness_with_diagnostics(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,

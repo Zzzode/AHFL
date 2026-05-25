@@ -1,4 +1,4 @@
-#include "ahfl/secret/auth_provider.hpp"
+#include "secret/auth_provider.hpp"
 
 namespace ahfl::secret {
 

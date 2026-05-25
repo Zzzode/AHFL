@@ -1,11 +1,11 @@
-#include "ahfl/backends/checkpoint_record.hpp"
+#include "backends/checkpoint_record.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 #include <vector>
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 namespace ahfl {
 

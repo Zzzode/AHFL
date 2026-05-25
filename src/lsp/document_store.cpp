@@ -1,4 +1,4 @@
-#include "ahfl/lsp/document_store.hpp"
+#include "lsp/document_store.hpp"
 
 namespace ahfl::lsp {
 

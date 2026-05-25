@@ -1,6 +1,9 @@
-#include "ahfl/llm_provider/streaming.hpp"
+#include "llm_provider/streaming.hpp"
 
-#include <cstdio>
+#include "json/json_value.hpp"
+#include "support/curl.hpp"
+
+#include <sstream>
 #include <string>
 
 namespace ahfl::llm_provider {
@@ -17,42 +20,30 @@ std::optional<std::string> SSEParser::feed_line(std::string_view line) {
             done_ = true;
             return std::nullopt;
         }
-        // Extract "content" field from the JSON delta.
-        // Minimal extraction: find "delta":{"content":"..."} pattern
-        constexpr std::string_view content_key = "\"content\":\"";
-        auto pos = data.find(content_key);
-        if (pos == std::string_view::npos) {
+        auto parsed = ahfl::json::parse_json(data);
+        if (!parsed.has_value() || !*parsed) {
             return std::nullopt;
         }
-        pos += content_key.size();
-        std::string result;
-        while (pos < data.size() && data[pos] != '"') {
-            if (data[pos] == '\\' && pos + 1 < data.size()) {
-                ++pos;
-                switch (data[pos]) {
-                case 'n':
-                    result += '\n';
-                    break;
-                case 't':
-                    result += '\t';
-                    break;
-                case '"':
-                    result += '"';
-                    break;
-                case '\\':
-                    result += '\\';
-                    break;
-                default:
-                    result += data[pos];
-                    break;
-                }
-            } else {
-                result += data[pos];
+
+        const auto *root = parsed->get();
+        if (const auto *content = root->get("content")) {
+            if (auto value = content->as_string(); value.has_value()) {
+                return std::string(*value);
             }
-            ++pos;
         }
-        if (!result.empty()) {
-            return result;
+
+        const auto *choices = root->get("choices");
+        if (choices == nullptr || !choices->is_array() || choices->array_items.empty()) {
+            return std::nullopt;
+        }
+        const auto *choice = choices->array_items.front().get();
+        const auto *delta = choice != nullptr ? choice->get("delta") : nullptr;
+        const auto *content = delta != nullptr ? delta->get("content") : nullptr;
+        if (content == nullptr) {
+            return std::nullopt;
+        }
+        if (auto value = content->as_string(); value.has_value()) {
+            return std::string(*value);
         }
     }
     return std::nullopt;
@@ -65,46 +56,36 @@ StreamingClient::StreamingClient(std::string_view endpoint, std::string_view api
 StreamResult StreamingClient::stream(const std::string &request_json, StreamChunkCallback cb) {
     StreamResult result;
 
-    // Build curl command for streaming
-    std::string cmd = "curl -sS -N -X POST \"" + endpoint_ +
-                      "\" -H \"Content-Type: application/json\" "
-                      "-H \"Authorization: Bearer " +
-                      api_key_ + "\" -d '" + request_json + "' 2>&1";
+    ahfl::support::CurlRequest request;
+    request.method = "POST";
+    request.url = endpoint_;
+    request.headers = {
+        {"Content-Type", "application/json"},
+        {"Authorization", "Bearer " + api_key_},
+    };
+    request.body = request_json;
 
-    FILE *pipe = popen(cmd.c_str(), "r");
-    if (pipe == nullptr) {
-        result.error = "failed to open pipe for curl";
+    const auto response = ahfl::support::execute_curl(request);
+    if (response.status_code == 0 && !response.error.empty()) {
+        result.error = response.error;
         return result;
     }
 
     SSEParser parser;
     std::string line;
-    char buf[4096];
-    std::string buffer;
-
-    while (fgets(buf, sizeof(buf), pipe) != nullptr) {
-        buffer += buf;
-        // Process complete lines
-        std::size_t newline_pos = 0;
-        while ((newline_pos = buffer.find('\n')) != std::string::npos) {
-            line = buffer.substr(0, newline_pos);
-            buffer.erase(0, newline_pos + 1);
-            // Strip trailing \r
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-            if (line.empty()) {
-                continue;
-            }
-            auto chunk = parser.feed_line(line);
-            if (chunk.has_value()) {
-                result.full_content += *chunk;
-                if (cb) {
-                    cb(*chunk, false);
-                }
-            }
-            if (parser.is_done()) {
-                break;
+    std::istringstream lines(response.body);
+    while (std::getline(lines, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+        auto chunk = parser.feed_line(line);
+        if (chunk.has_value()) {
+            result.full_content += *chunk;
+            if (cb) {
+                cb(*chunk, false);
             }
         }
         if (parser.is_done()) {
@@ -112,13 +93,16 @@ StreamResult StreamingClient::stream(const std::string &request_json, StreamChun
         }
     }
 
-    pclose(pipe);
-
     if (cb) {
         cb("", true);
     }
 
-    result.success = true;
+    result.success = response.is_success();
+    if (!result.success) {
+        result.error = response.error.empty() ? "stream request failed with status " +
+                                                   std::to_string(response.status_code)
+                                             : response.error;
+    }
     return result;
 }
 

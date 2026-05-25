@@ -1,4 +1,4 @@
-#include "ahfl/runtime/connection_pool.hpp"
+#include "runtime/connection_pool.hpp"
 
 #include <cstdlib>
 #include <iostream>

@@ -1,5 +1,5 @@
-#include "ahfl/formal/counterexample.hpp"
-#include "ahfl/formal/counterexample_json.hpp"
+#include "formal/counterexample.hpp"
+#include "formal/counterexample_json.hpp"
 
 #include <cstdlib>
 #include <iostream>

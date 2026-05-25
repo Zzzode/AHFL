@@ -1,4 +1,4 @@
-#include "ahfl/llm_provider/provider_registry.hpp"
+#include "llm_provider/provider_registry.hpp"
 
 #include <algorithm>
 

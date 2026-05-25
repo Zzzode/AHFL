@@ -1,4 +1,4 @@
-#include <ahfl/abi/compat_check.hpp>
+#include <abi/compat_check.hpp>
 
 namespace ahfl::abi {
 

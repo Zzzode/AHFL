@@ -1,5 +1,5 @@
-#include "ahfl/package/registry.hpp"
-#include "ahfl/package/resolver.hpp"
+#include "package/registry.hpp"
+#include "package/resolver.hpp"
 
 #include <iostream>
 

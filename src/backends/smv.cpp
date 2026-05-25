@@ -1,9 +1,9 @@
 #include "ahfl/backends/smv.hpp"
 
 #include <algorithm>
-#include "ahfl/support/overloaded.hpp"
-#include "ahfl/support/string_utils.hpp"
-#include "ahfl/backends/smv_naming.hpp"
+#include "support/overloaded.hpp"
+#include "support/string_utils.hpp"
+#include "backends/smv_naming.hpp"
 #include <cctype>
 #include <cstddef>
 #include <functional>

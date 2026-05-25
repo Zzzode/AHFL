@@ -1,4 +1,4 @@
-#include "ahfl/passes/pass_manager.hpp"
+#include "passes/pass_manager.hpp"
 #include "ahfl/ir/ir.hpp"
 
 #include <cassert>

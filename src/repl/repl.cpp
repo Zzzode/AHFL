@@ -1,8 +1,8 @@
-#include "ahfl/repl/repl.hpp"
+#include "repl/repl.hpp"
 
-#include "ahfl/evaluator/evaluator.hpp"
-#include "ahfl/formal/bmc.hpp"
-#include "ahfl/formal/nuxmv_backend.hpp"
+#include "evaluator/evaluator.hpp"
+#include "formal/bmc.hpp"
+#include "formal/nuxmv_backend.hpp"
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/ir/ir.hpp"
 #include "ahfl/semantics/resolver.hpp"

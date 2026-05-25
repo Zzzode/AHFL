@@ -7,6 +7,7 @@ add_library(ahfl_incremental STATIC
 target_include_directories(ahfl_incremental
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 target_link_libraries(ahfl_incremental
