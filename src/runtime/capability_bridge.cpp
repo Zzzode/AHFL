@@ -1,9 +1,9 @@
-#include "ahfl/runtime/capability_bridge.hpp"
+#include "runtime/capability_bridge.hpp"
 
-#include "ahfl/evaluator/value_json.hpp"
-#include "ahfl/runtime/connection_pool.hpp"
-#include "ahfl/runtime/grpc_transport.hpp"
-#include "ahfl/runtime/http_transport.hpp"
+#include "evaluator/value_json.hpp"
+#include "runtime/connection_pool.hpp"
+#include "runtime/grpc_transport.hpp"
+#include "runtime/http_transport.hpp"
 
 #include <memory>
 #include <sstream>

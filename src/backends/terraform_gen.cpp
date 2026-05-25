@@ -1,6 +1,6 @@
-#include "ahfl/backends/terraform_gen.hpp"
+#include "backends/terraform_gen.hpp"
 
-#include "ahfl/support/structured_writer.hpp"
+#include "support/structured_writer.hpp"
 
 namespace ahfl::backends {
 

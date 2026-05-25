@@ -1,11 +1,11 @@
-#include "ahfl/passes/pass_manager.hpp"
+#include "passes/pass_manager.hpp"
 
-#include "ahfl/passes/capability_reachability.hpp"
-#include "ahfl/passes/contract_redundancy.hpp"
-#include "ahfl/passes/dead_state_elimination.hpp"
-#include "ahfl/passes/expr_canonicalization.hpp"
-#include "ahfl/passes/temporal_simplification.hpp"
-#include "ahfl/passes/workflow_simplification.hpp"
+#include "passes/capability_reachability.hpp"
+#include "passes/contract_redundancy.hpp"
+#include "passes/dead_state_elimination.hpp"
+#include "passes/expr_canonicalization.hpp"
+#include "passes/temporal_simplification.hpp"
+#include "passes/workflow_simplification.hpp"
 
 #include <string>
 

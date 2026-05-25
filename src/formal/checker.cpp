@@ -1,69 +1,22 @@
-#include "ahfl/formal/checker.hpp"
+#include "formal/checker.hpp"
 
 #include "ahfl/backends/smv.hpp"
-#include "ahfl/formal/counterexample.hpp"
-#include "ahfl/formal/counterexample_json.hpp"
+#include "formal/counterexample.hpp"
+#include "formal/counterexample_json.hpp"
+#include "formal/process_launcher.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string_view>
-#include <sys/wait.h>
 #include <unordered_map>
+#include <utility>
 
 namespace ahfl::formal {
 namespace {
-
-[[nodiscard]] std::string shell_quote(std::string_view value) {
-    std::string quoted = "'";
-    for (const auto character : value) {
-        if (character == '\'') {
-            quoted += "'\\''";
-        } else {
-            quoted.push_back(character);
-        }
-    }
-    quoted += "'";
-    return quoted;
-}
-
-[[nodiscard]] std::string read_pipe(std::string_view command) {
-    std::string output;
-    FILE *pipe = popen(std::string(command).c_str(), "r");
-    if (pipe == nullptr) {
-        return output;
-    }
-
-    char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-    static_cast<void>(pclose(pipe));
-    return output;
-}
-
-[[nodiscard]] std::string first_line(std::string output) {
-    if (const auto newline = output.find('\n'); newline != std::string::npos) {
-        output.resize(newline);
-    }
-    while (!output.empty() && (output.back() == '\r' || output.back() == '\n')) {
-        output.pop_back();
-    }
-    return output;
-}
-
-[[nodiscard]] std::optional<std::string> find_executable(std::string_view executable) {
-    const auto output =
-        first_line(read_pipe("command -v " + shell_quote(executable) + " 2>/dev/null"));
-    if (output.empty()) {
-        return std::nullopt;
-    }
-    return output;
-}
 
 [[nodiscard]] std::optional<std::string> resolve_checker_path(const FormalCheckerOptions &options) {
     if (options.checker_path.has_value() && !options.checker_path->empty()) {
@@ -94,22 +47,6 @@ namespace {
            ("ahfl-formal-model-" + std::to_string(now) + ".smv");
 }
 
-[[nodiscard]] int decode_process_status(int raw_status) {
-    if (raw_status == -1) {
-        return -1;
-    }
-
-    if (WIFEXITED(raw_status)) {
-        return WEXITSTATUS(raw_status);
-    }
-
-    if (WIFSIGNALED(raw_status)) {
-        return 128 + WTERMSIG(raw_status);
-    }
-
-    return raw_status;
-}
-
 struct ProcessResult {
     int exit_code{-1};
     std::string output;
@@ -117,24 +54,17 @@ struct ProcessResult {
 
 [[nodiscard]] ProcessResult run_checker(std::string_view checker_path,
                                         const std::filesystem::path &model_path) {
-    const auto command =
-        shell_quote(checker_path) + " " + shell_quote(model_path.string()) + " 2>&1";
-    FILE *pipe = popen(command.c_str(), "r");
-    if (pipe == nullptr) {
-        return ProcessResult{
-            .exit_code = -1,
-            .output = "failed to start checker process\n",
-        };
+    ProcessConfig config;
+    config.executable = std::string(checker_path);
+    config.arguments = {model_path.string()};
+    config.timeout = std::chrono::seconds{60};
+    const auto result = launch_process(config);
+    auto output = result.stdout_output;
+    if (!result.stderr_output.empty()) {
+        output += result.stderr_output;
     }
-
-    std::string output;
-    char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        output += buffer;
-    }
-
     return ProcessResult{
-        .exit_code = decode_process_status(pclose(pipe)),
+        .exit_code = result.exit_code,
         .output = std::move(output),
     };
 }

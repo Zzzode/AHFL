@@ -1,5 +1,5 @@
-#include "ahfl/store_import/descriptor.hpp"
-#include "ahfl/validation/common.hpp"
+#include "store_import/descriptor.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <unordered_set>

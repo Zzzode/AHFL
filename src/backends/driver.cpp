@@ -1,12 +1,12 @@
 #include "ahfl/backends/driver.hpp"
 
-#include "ahfl/backends/assurance.hpp"
-#include "ahfl/backends/execution_plan.hpp"
-#include "ahfl/backends/native_json.hpp"
-#include "ahfl/backends/package_review.hpp"
+#include "backends/assurance.hpp"
+#include "backends/execution_plan.hpp"
+#include "backends/native_json.hpp"
+#include "backends/package_review.hpp"
 #include "ahfl/backends/registry.hpp"
 #include "ahfl/backends/smv.hpp"
-#include "ahfl/backends/summary.hpp"
+#include "backends/summary.hpp"
 #include "ahfl/ir/ir.hpp"
 
 namespace ahfl {

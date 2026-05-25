@@ -1,4 +1,4 @@
-#include "ahfl/telemetry/logging.hpp"
+#include "telemetry/logging.hpp"
 
 #include <chrono>
 #include <cstdio>

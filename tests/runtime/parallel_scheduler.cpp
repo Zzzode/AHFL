@@ -1,5 +1,5 @@
-#include "ahfl/runtime/parallel_scheduler.hpp"
-#include "ahfl/runtime/data_pipeline.hpp"
+#include "runtime/parallel_scheduler.hpp"
+#include "runtime/data_pipeline.hpp"
 #include <cstdio>
 #include <stdexcept>
 

@@ -1,4 +1,4 @@
-#include "ahfl/secret/key_rotation.hpp"
+#include "secret/key_rotation.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -65,32 +65,30 @@ std::vector<RotationEvent> KeyRotationManager::check_and_rotate() {
 RotationEvent KeyRotationManager::rotate_key(const std::string &key) {
     auto now = std::chrono::system_clock::now();
 
-    // Get old value
     auto old_value = provider_.resolve(key);
     std::string old_version = old_value.value_or("");
 
-    // Refresh the key in the provider
     provider_.refresh(key);
 
-    // Get new value
     auto new_value = provider_.resolve(key);
     std::string new_version = new_value.value_or("");
 
-    // Create event
     RotationEvent event;
     event.key = key;
-    event.status = RotationStatus::Completed;
+    event.status = new_value.has_value() ? RotationStatus::Completed : RotationStatus::Failed;
     event.timestamp = now;
     event.old_version = std::move(old_version);
     event.new_version = std::move(new_version);
+    if (!new_value.has_value()) {
+        event.error_message = "secret provider returned no value for rotated key";
+    }
 
-    // Record last rotation time
-    last_rotation_[key] = now;
+    if (event.status == RotationStatus::Completed) {
+        last_rotation_[key] = now;
+    }
 
-    // Store in history
     history_.push_back(event);
 
-    // Notify callbacks
     for (const auto &cb : callbacks_) {
         cb(event);
     }

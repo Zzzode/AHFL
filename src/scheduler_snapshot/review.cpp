@@ -1,5 +1,5 @@
-#include "ahfl/scheduler_snapshot/review.hpp"
-#include "ahfl/validation/common.hpp"
+#include "scheduler_snapshot/review.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

@@ -15,6 +15,8 @@ add_library(ahfl_formal STATIC
 target_link_libraries(ahfl_formal
     PUBLIC
         ahfl_backend_smv
+    PRIVATE
+        ahfl_support_lib
 )
 
 ahfl_apply_project_warnings(ahfl_formal)

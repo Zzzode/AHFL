@@ -1,4 +1,4 @@
-#include "ahfl/formal/model_checker_backend.hpp"
+#include "formal/model_checker_backend.hpp"
 
 #include <cstdlib>
 #include <iostream>

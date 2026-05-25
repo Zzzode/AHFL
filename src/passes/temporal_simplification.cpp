@@ -1,4 +1,4 @@
-#include "ahfl/passes/temporal_simplification.hpp"
+#include "passes/temporal_simplification.hpp"
 
 #include "ahfl/ir/ir.hpp"
 

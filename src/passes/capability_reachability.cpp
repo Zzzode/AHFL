@@ -1,4 +1,4 @@
-#include "ahfl/passes/capability_reachability.hpp"
+#include "passes/capability_reachability.hpp"
 
 #include "ahfl/ir/ir.hpp"
 

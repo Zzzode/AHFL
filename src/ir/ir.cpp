@@ -1,8 +1,8 @@
 #include "ahfl/ir/ir.hpp"
 
 #include "ahfl/frontend/frontend.hpp"
-#include "ahfl/support/overloaded.hpp"
-#include "ahfl/support/string_utils.hpp"
+#include "support/overloaded.hpp"
+#include "support/string_utils.hpp"
 
 #include <cctype>
 #include <cstddef>

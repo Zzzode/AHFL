@@ -1,5 +1,5 @@
-#include "ahfl/execution_journal/journal.hpp"
-#include "ahfl/validation/common.hpp"
+#include "execution_journal/journal.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <string_view>

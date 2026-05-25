@@ -1,8 +1,8 @@
 #include <cstdio>
 #include <string>
 
-#include "ahfl/backends/wasm_backend.hpp"
-#include "ahfl/backends/wasm_runtime.hpp"
+#include "backends/wasm_backend.hpp"
+#include "backends/wasm_runtime.hpp"
 
 static int test_count = 0;
 static int pass_count = 0;

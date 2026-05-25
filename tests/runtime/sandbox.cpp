@@ -1,4 +1,4 @@
-#include "ahfl/runtime/sandbox.hpp"
+#include "runtime/sandbox.hpp"
 #include <cstdio>
 
 static int test_count = 0;

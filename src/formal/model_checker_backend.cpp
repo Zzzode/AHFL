@@ -1,8 +1,8 @@
-#include "ahfl/formal/model_checker_backend.hpp"
+#include "formal/model_checker_backend.hpp"
 
-#include "ahfl/formal/nuxmv_backend.hpp"
-#include "ahfl/formal/spin_backend.hpp"
-#include "ahfl/formal/tlaplus_backend.hpp"
+#include "formal/nuxmv_backend.hpp"
+#include "formal/spin_backend.hpp"
+#include "formal/tlaplus_backend.hpp"
 
 namespace ahfl::formal {
 

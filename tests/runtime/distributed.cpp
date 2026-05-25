@@ -1,4 +1,4 @@
-#include "ahfl/runtime/distributed.hpp"
+#include "runtime/distributed.hpp"
 #include <cstdio>
 
 static int test_count = 0;

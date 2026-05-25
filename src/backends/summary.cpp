@@ -1,4 +1,4 @@
-#include "ahfl/backends/summary.hpp"
+#include "backends/summary.hpp"
 #include "printer_helpers.hpp"
 
 #include <cstddef>
@@ -6,7 +6,7 @@
 #include <string_view>
 #include <variant>
 
-#include "ahfl/support/overloaded.hpp"
+#include "support/overloaded.hpp"
 namespace ahfl {
 
 namespace {

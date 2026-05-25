@@ -1,4 +1,4 @@
-#include "ahfl/llm_provider/streaming.hpp"
+#include "llm_provider/streaming.hpp"
 
 #include <cassert>
 #include <iostream>
@@ -10,9 +10,18 @@ using namespace ahfl::llm_provider;
 
 bool test_feed_line_data_event() {
     SSEParser parser;
-    auto result = parser.feed_line("data: {\"content\":\"hello\"}");
+    auto result = parser.feed_line("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}");
     if (!result.has_value()) return false;
     if (*result != "hello") return false;
+    return true;
+}
+
+bool test_feed_line_unescapes_json_content() {
+    SSEParser parser;
+    auto result =
+        parser.feed_line("data: {\"choices\":[{\"delta\":{\"content\":\"line\\nnext\"}}]}");
+    if (!result.has_value()) return false;
+    if (*result != "line\nnext") return false;
     return true;
 }
 
@@ -53,6 +62,7 @@ int main() {
     };
 
     run(test_feed_line_data_event, "test_feed_line_data_event");
+    run(test_feed_line_unescapes_json_content, "test_feed_line_unescapes_json_content");
     run(test_feed_line_empty_returns_nullopt, "test_feed_line_empty_returns_nullopt");
     run(test_feed_line_done_signal, "test_feed_line_done_signal");
     run(test_feed_line_comment_returns_nullopt, "test_feed_line_comment_returns_nullopt");

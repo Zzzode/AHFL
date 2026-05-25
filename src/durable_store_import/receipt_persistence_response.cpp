@@ -1,5 +1,5 @@
-#include "ahfl/durable_store_import/receipt_persistence_response.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/receipt_persistence_response.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>

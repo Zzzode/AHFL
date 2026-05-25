@@ -1,4 +1,4 @@
-#include "ahfl/formatter/formatter.hpp"
+#include "formatter/formatter.hpp"
 
 #include "ahfl/frontend/frontend.hpp"
 

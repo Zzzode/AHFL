@@ -1,4 +1,4 @@
-#include "ahfl/passes/workflow_simplification.hpp"
+#include "passes/workflow_simplification.hpp"
 
 #include "ahfl/ir/ir.hpp"
 

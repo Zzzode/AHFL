@@ -1,4 +1,4 @@
-#include "ahfl/passes/dead_state_elimination.hpp"
+#include "passes/dead_state_elimination.hpp"
 
 #include "ahfl/ir/ir.hpp"
 

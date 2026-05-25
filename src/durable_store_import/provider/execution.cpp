@@ -3,8 +3,8 @@
 
 // ---- provider_host_execution.cpp ----
 
-#include "ahfl/durable_store_import/provider/execution/host_execution.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/execution/host_execution.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -705,8 +705,8 @@ build_provider_host_execution_readiness_review(const ProviderHostExecutionPlan &
 
 // ---- provider_local_host_execution.cpp ----
 
-#include "ahfl/durable_store_import/provider/execution/local_host_execution.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/execution/local_host_execution.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -1185,8 +1185,8 @@ ProviderLocalHostExecutionReceiptReviewResult build_provider_local_host_executio
 
 // ---- provider_local_host_harness.cpp ----
 
-#include "ahfl/durable_store_import/provider/execution/local_host_harness.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/execution/local_host_harness.hpp"
+#include "validation/common.hpp"
 
 #include <string>
 #include <utility>
@@ -1670,8 +1670,8 @@ build_provider_local_host_harness_review(const ProviderLocalHostHarnessExecution
 
 // ---- provider_local_filesystem_alpha.cpp ----
 
-#include "ahfl/durable_store_import/provider/execution/local_filesystem_alpha.hpp"
-#include "ahfl/validation/common.hpp"
+#include "durable_store_import/provider/execution/local_filesystem_alpha.hpp"
+#include "validation/common.hpp"
 
 #include <filesystem>
 #include <fstream>

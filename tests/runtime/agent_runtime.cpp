@@ -1,5 +1,5 @@
-#include "ahfl/runtime/agent_runtime.hpp"
-#include "ahfl/evaluator/value.hpp"
+#include "runtime/agent_runtime.hpp"
+#include "evaluator/value.hpp"
 #include "ahfl/ir/ir.hpp"
 
 #include <cstdlib>

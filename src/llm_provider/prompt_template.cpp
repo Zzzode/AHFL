@@ -1,4 +1,4 @@
-#include "ahfl/llm_provider/prompt_template.hpp"
+#include "llm_provider/prompt_template.hpp"
 
 #include <string>
 

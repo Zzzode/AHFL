@@ -1,6 +1,6 @@
 // llm_provider_config.cpp - 配置加载与环境变量展开
 
-#include "ahfl/llm_provider/llm_provider_config.hpp"
+#include "llm_provider/llm_provider_config.hpp"
 
 #include <cstdlib>
 #include <string>

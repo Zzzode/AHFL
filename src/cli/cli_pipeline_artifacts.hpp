@@ -1,17 +1,17 @@
 #pragma once
 
-#include "ahfl/audit_report/report.hpp"
-#include "ahfl/checkpoint_record/record.hpp"
-#include "ahfl/cli/command_catalog.hpp"
-#include "ahfl/dry_run/runner.hpp"
-#include "ahfl/execution_journal/journal.hpp"
+#include "audit_report/report.hpp"
+#include "checkpoint_record/record.hpp"
+#include "cli/command_catalog.hpp"
+#include "dry_run/runner.hpp"
+#include "execution_journal/journal.hpp"
 #include "ahfl/handoff/package.hpp"
-#include "ahfl/persistence_descriptor/descriptor.hpp"
-#include "ahfl/persistence_export/manifest.hpp"
-#include "ahfl/replay_view/replay.hpp"
-#include "ahfl/runtime_session/session.hpp"
-#include "ahfl/scheduler_snapshot/snapshot.hpp"
-#include "ahfl/store_import/descriptor.hpp"
+#include "persistence_descriptor/descriptor.hpp"
+#include "persistence_export/manifest.hpp"
+#include "replay_view/replay.hpp"
+#include "runtime_session/session.hpp"
+#include "scheduler_snapshot/snapshot.hpp"
+#include "store_import/descriptor.hpp"
 
 #include <optional>
 #include <string_view>

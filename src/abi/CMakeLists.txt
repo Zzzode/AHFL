@@ -6,6 +6,7 @@ add_library(ahfl_abi STATIC
 target_include_directories(ahfl_abi
     PUBLIC
         ${PROJECT_SOURCE_DIR}/include
+        ${PROJECT_SOURCE_DIR}/src
 )
 
 ahfl_enable_cxx23(ahfl_abi)

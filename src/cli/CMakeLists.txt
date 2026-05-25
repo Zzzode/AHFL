@@ -4,6 +4,7 @@ add_executable(ahflc
     command_catalog.cpp
     pipeline_core_commands.cpp
     pipeline_durable_store_import.cpp
+    pipeline_durable_store_import_provider.cpp
     durable_store_import_provider_pipeline/runtime.cpp
     durable_store_import_provider_pipeline/sdk.cpp
     durable_store_import_provider_pipeline/execution.cpp
@@ -28,7 +29,6 @@ add_executable(ahfl-run
 target_link_libraries(ahfl-run
     PRIVATE
         ahfl_compiler
-        ahfl_llm_provider
 )
 
 ahfl_apply_project_warnings(ahfl-run)

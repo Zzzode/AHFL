@@ -4,8 +4,8 @@
 #include <string>
 #include <variant>
 
-#include "ahfl/formal/bmc.hpp"
-#include "ahfl/formal/nuxmv_backend.hpp"
+#include "formal/bmc.hpp"
+#include "formal/nuxmv_backend.hpp"
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/ir/ir.hpp"
 #include "ahfl/semantics/resolver.hpp"

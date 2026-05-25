@@ -1,7 +1,7 @@
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/handoff/package.hpp"
 #include "ahfl/ir/ir.hpp"
-#include "ahfl/runtime_session/session.hpp"
+#include "runtime_session/session.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"

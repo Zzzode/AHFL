@@ -2,9 +2,10 @@
 
 #include "../pipeline_durable_store_import.hpp"
 #include "../pipeline_durable_store_import_provider_steps.hpp"
+#include "../pipeline_emit.hpp"
 
-#include "ahfl/durable_store_import/artifacts.hpp"
-#include "ahfl/durable_store_import/provider.hpp"
+#include "durable_store_import/artifacts.hpp"
+#include "durable_store_import/provider.hpp"
 
 #include <iostream>
 #include <optional>
@@ -16,13 +17,13 @@
 namespace ahfl::cli {
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderExecutionAuditEvent>
-build_durable_store_import_provider_execution_audit_event_for_cli(
+build_provider_execution_audit_event_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto report = build_durable_store_import_provider_failure_taxonomy_report_for_cli(
+    const auto report = build_provider_failure_taxonomy_report_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!report.has_value()) {
         return std::nullopt;
@@ -36,32 +37,14 @@ build_durable_store_import_provider_execution_audit_event_for_cli(
     return *event.event;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_execution_audit_event_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto event = build_durable_store_import_provider_execution_audit_event_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-execution-audit-event");
-    if (!event.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_execution_audit_event_json(*event, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderTelemetrySummary>
-build_durable_store_import_provider_telemetry_summary_for_cli(
+build_provider_telemetry_summary_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto event = build_durable_store_import_provider_execution_audit_event_for_cli(
+    const auto event = build_provider_execution_audit_event_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!event.has_value()) {
         return std::nullopt;
@@ -75,32 +58,14 @@ build_durable_store_import_provider_telemetry_summary_for_cli(
     return *summary.summary;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_telemetry_summary_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto summary = build_durable_store_import_provider_telemetry_summary_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-telemetry-summary");
-    if (!summary.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_telemetry_summary_json(*summary, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderOperatorReviewEvent>
-build_durable_store_import_provider_operator_review_event_for_cli(
+build_provider_operator_review_event_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto summary = build_durable_store_import_provider_telemetry_summary_for_cli(
+    const auto summary = build_provider_telemetry_summary_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!summary.has_value()) {
         return std::nullopt;
@@ -114,32 +79,14 @@ build_durable_store_import_provider_operator_review_event_for_cli(
     return *review.review;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_operator_review_event_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto review = build_durable_store_import_provider_operator_review_event_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-operator-review-event");
-    if (!review.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_operator_review_event(*review, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderCompatibilityTestManifest>
-build_durable_store_import_provider_compatibility_test_manifest_for_cli(
+build_provider_compatibility_test_manifest_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto review = build_durable_store_import_provider_operator_review_event_for_cli(
+    const auto review = build_provider_operator_review_event_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!review.has_value()) {
         return std::nullopt;
@@ -154,33 +101,14 @@ build_durable_store_import_provider_compatibility_test_manifest_for_cli(
     return *manifest.manifest;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_compatibility_test_manifest_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto manifest = build_durable_store_import_provider_compatibility_test_manifest_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-compatibility-test-manifest");
-    if (!manifest.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_compatibility_test_manifest_json(*manifest,
-                                                                               std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderFixtureMatrix>
-build_durable_store_import_provider_fixture_matrix_for_cli(
+build_provider_fixture_matrix_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto manifest = build_durable_store_import_provider_compatibility_test_manifest_for_cli(
+    const auto manifest = build_provider_compatibility_test_manifest_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!manifest.has_value()) {
         return std::nullopt;
@@ -194,30 +122,16 @@ build_durable_store_import_provider_fixture_matrix_for_cli(
     return *matrix.matrix;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_fixture_matrix_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto matrix = build_durable_store_import_provider_fixture_matrix_for_cli(
-        program, metadata, mock_set, options, "emit-durable-store-import-provider-fixture-matrix");
-    if (!matrix.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_fixture_matrix_json(*matrix, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderCompatibilityReport>
-build_durable_store_import_provider_compatibility_report_for_cli(
+build_provider_compatibility_report_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto matrix = build_durable_store_import_provider_fixture_matrix_for_cli(
+    const auto matrix = build_provider_fixture_matrix_for_cli(
         program, metadata, mock_set, options, command_name);
-    const auto telemetry = build_durable_store_import_provider_telemetry_summary_for_cli(
+    const auto telemetry = build_provider_telemetry_summary_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!matrix.has_value() || !telemetry.has_value()) {
         return std::nullopt;
@@ -232,32 +146,14 @@ build_durable_store_import_provider_compatibility_report_for_cli(
     return *report.report;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_compatibility_report_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto report = build_durable_store_import_provider_compatibility_report_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-compatibility-report");
-    if (!report.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_compatibility_report_json(*report, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderRegistry>
-build_durable_store_import_provider_registry_for_cli(
+build_provider_registry_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto report = build_durable_store_import_provider_compatibility_report_for_cli(
+    const auto report = build_provider_compatibility_report_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!report.has_value()) {
         return std::nullopt;
@@ -271,28 +167,14 @@ build_durable_store_import_provider_registry_for_cli(
     return *registry.registry;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_registry_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto registry = build_durable_store_import_provider_registry_for_cli(
-        program, metadata, mock_set, options, "emit-durable-store-import-provider-registry");
-    if (!registry.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_registry_json(*registry, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSelectionPlan>
-build_durable_store_import_provider_selection_plan_for_cli(
+build_provider_selection_plan_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto registry = build_durable_store_import_provider_registry_for_cli(
+    const auto registry = build_provider_registry_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!registry.has_value()) {
         return std::nullopt;
@@ -306,28 +188,14 @@ build_durable_store_import_provider_selection_plan_for_cli(
     return *plan.plan;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_selection_plan_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto plan = build_durable_store_import_provider_selection_plan_for_cli(
-        program, metadata, mock_set, options, "emit-durable-store-import-provider-selection-plan");
-    if (!plan.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_selection_plan_json(*plan, std::cout);
-    return 0;
-}
-
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderCapabilityNegotiationReview>
-build_durable_store_import_provider_capability_negotiation_review_for_cli(
+build_provider_capability_negotiation_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto plan = build_durable_store_import_provider_selection_plan_for_cli(
+    const auto plan = build_provider_selection_plan_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!plan.has_value()) {
         return std::nullopt;
@@ -342,86 +210,51 @@ build_durable_store_import_provider_capability_negotiation_review_for_cli(
     return *review.review;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_capability_negotiation_review_with_diagnostics(
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderConformanceReport>
+build_provider_conformance_report_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    const auto review = build_durable_store_import_provider_capability_negotiation_review_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-capability-negotiation-review");
-    if (!review.has_value()) {
-        return 1;
-    }
-    ahfl::print_durable_store_import_provider_capability_negotiation_review(*review, std::cout);
-    return 0;
-}
-
-[[nodiscard]] int emit_durable_store_import_provider_conformance_report_with_diagnostics(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    // 复用已有 pipeline 获取上游 artifact
-    const auto compatibility = build_durable_store_import_provider_compatibility_report_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-conformance-report");
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto compatibility = build_provider_compatibility_report_for_cli(
+        program, metadata, mock_set, options, command_name);
     if (!compatibility.has_value()) {
-        return 1;
+        return std::nullopt;
     }
-    const auto registry = build_durable_store_import_provider_registry_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-conformance-report");
+    const auto registry = build_provider_registry_for_cli(
+        program, metadata, mock_set, options, command_name);
     if (!registry.has_value()) {
-        return 1;
+        return std::nullopt;
     }
-    const auto evidence = build_durable_store_import_provider_production_readiness_evidence_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-conformance-report");
+    const auto evidence = build_provider_production_readiness_evidence_for_cli(
+        program, metadata, mock_set, options, command_name);
     if (!evidence.has_value()) {
-        return 1;
+        return std::nullopt;
     }
 
-    // 构建 conformance report
     const auto report = ahfl::durable_store_import::build_provider_conformance_report(
         *compatibility, *registry, *evidence);
     report.diagnostics.render(std::cerr);
     if (report.has_errors() || !report.report.has_value()) {
-        return 1;
+        return std::nullopt;
     }
-    ahfl::print_durable_store_import_provider_conformance_report(*report.report, std::cout);
-    return 0;
+    return *report.report;
 }
 
-[[nodiscard]] int emit_durable_store_import_provider_schema_compatibility_report_with_diagnostics(
+[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderSchemaCompatibilityReport>
+build_provider_schema_compatibility_report_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options) {
-    // 获取 production readiness evidence 作为版本检查基础
-    const auto evidence = build_durable_store_import_provider_production_readiness_evidence_for_cli(
-        program,
-        metadata,
-        mock_set,
-        options,
-        "emit-durable-store-import-provider-schema-compatibility-report");
+    const CommandLineOptions &options,
+    std::string_view command_name) {
+    const auto evidence = build_provider_production_readiness_evidence_for_cli(
+        program, metadata, mock_set, options, command_name);
     if (!evidence.has_value()) {
-        return 1;
+        return std::nullopt;
     }
 
-    // 构建 version checks - 检查 evidence 自身的 format version
     std::vector<ahfl::durable_store_import::ArtifactVersionCheck> version_checks;
     version_checks.push_back({
         "provider-production-readiness-evidence",
@@ -473,11 +306,9 @@ build_durable_store_import_provider_capability_negotiation_review_for_cli(
         evidence->run_id);
     report.diagnostics.render(std::cerr);
     if (report.has_errors() || !report.report.has_value()) {
-        return 1;
+        return std::nullopt;
     }
-    ahfl::print_durable_store_import_provider_schema_compatibility_report_json(*report.report,
-                                                                               std::cout);
-    return 0;
+    return *report.report;
 }
 
 } // namespace ahfl::cli

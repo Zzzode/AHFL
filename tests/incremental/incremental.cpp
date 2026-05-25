@@ -1,6 +1,6 @@
-#include <ahfl/incremental/dependency_graph.hpp>
-#include <ahfl/incremental/incremental_compiler.hpp>
-#include <ahfl/incremental/ir_cache.hpp>
+#include <incremental/dependency_graph.hpp>
+#include <incremental/incremental_compiler.hpp>
+#include <incremental/ir_cache.hpp>
 
 #include <cstdio>
 
@@ -76,7 +76,7 @@ int main() {
         check(valid, "ir_cache: store and lookup (hit vs miss vs stale)");
     }
 
-    // Test 3: incremental_compiler: compile_changed skips up-to-date modules
+    // Test 3: incremental_compiler: failures are not cached as up-to-date
     {
         ahfl::incremental::DependencyGraph graph;
         ahfl::incremental::IrCache cache;
@@ -96,25 +96,25 @@ int main() {
 
         ahfl::incremental::IncrementalCompiler compiler(graph, cache);
 
-        // First compile: both should be recompiled
         auto results1 = compiler.compile_changed({"lib.ahfl"});
         auto stats1 = compiler.stats();
 
         bool first_ok = (results1.size() == 2) &&
                         (stats1.modules_recompiled == 2) &&
-                        (stats1.cache_misses == 2);
+                        (stats1.cache_misses == 2) &&
+                        (cache.entry_count() == 0);
 
-        // Second compile of the same module with same hash should hit cache
         compiler.reset_stats();
-        // Now lib.ahfl has hash=0 in cache (from the first compile where it was directly changed)
-        // If we compile it again as directly changed, hash=0 matches -> cache hit
         auto results2 = compiler.compile_changed({"lib.ahfl"});
         auto stats2 = compiler.stats();
 
-        bool second_ok = (stats2.cache_hits >= 1);
+        bool second_ok = (results2.size() == 2) &&
+                         (stats2.cache_hits == 0) &&
+                         (stats2.cache_misses == 2) &&
+                         (cache.entry_count() == 0);
 
         check(first_ok && second_ok,
-              "incremental_compiler: compile_changed recompiles and caches");
+              "incremental_compiler: compile_changed does not cache failures");
     }
 
     // Test 4: dependency_graph: cycle detection

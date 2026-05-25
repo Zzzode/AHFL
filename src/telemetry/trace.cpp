@@ -1,4 +1,4 @@
-#include "ahfl/telemetry/trace.hpp"
+#include "telemetry/trace.hpp"
 
 #include <algorithm>
 #include <chrono>

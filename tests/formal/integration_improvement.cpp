@@ -1,6 +1,6 @@
-#include "ahfl/formal/incremental_verifier.hpp"
-#include "ahfl/formal/process_launcher.hpp"
-#include "ahfl/formal/state_space_estimator.hpp"
+#include "formal/incremental_verifier.hpp"
+#include "formal/process_launcher.hpp"
+#include "formal/state_space_estimator.hpp"
 
 #include <cstdlib>
 #include <iostream>

@@ -1,6 +1,6 @@
-#include "ahfl/backends/k8s_crd.hpp"
+#include "backends/k8s_crd.hpp"
 
-#include "ahfl/support/structured_writer.hpp"
+#include "support/structured_writer.hpp"
 
 #include <cctype>
 #include <cstddef>

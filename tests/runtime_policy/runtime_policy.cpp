@@ -1,4 +1,4 @@
-#include "ahfl/durable_store_import/provider/production/runtime_policy.hpp"
+#include "durable_store_import/provider/production/runtime_policy.hpp"
 
 #include <cassert>
 #include <iostream>

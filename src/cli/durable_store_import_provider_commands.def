@@ -1,0 +1,575 @@
+// This file intentionally has no include guard. Include it with
+// AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND defined.
+//
+// Fields:
+//   kind                       CommandKind enumerator suffix
+//   token                      stable CLI token
+//   usage_project_aware_order  help-list order, or -1
+//   action_order               action-list order, or -1
+//   inference_order            inference-list order, or -1
+//   package_supported_order    package-aware list order, or -1
+//   capability_input_order     capability-input list order, or -1
+//   artifact_kind              ProviderArtifactKind emitted by this command
+
+#ifndef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
+#error "Define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND before including this file."
+#endif
+
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteAttempt,
+    "emit-durable-store-import-provider-write-attempt",
+    34,
+    31,
+    29,
+    44,
+    24,
+    WriteAttempt)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderRecoveryHandoff,
+    "emit-durable-store-import-provider-recovery-handoff",
+    35,
+    32,
+    30,
+    45,
+    25,
+    RecoveryHandoff)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderDriverBinding,
+    "emit-durable-store-import-provider-driver-binding",
+    36,
+    33,
+    31,
+    46,
+    26,
+    DriverBinding)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderDriverReadiness,
+    "emit-durable-store-import-provider-driver-readiness",
+    37,
+    34,
+    32,
+    47,
+    27,
+    DriverReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderRuntimePreflight,
+    "emit-durable-store-import-provider-runtime-preflight",
+    38,
+    35,
+    33,
+    48,
+    28,
+    RuntimePreflight)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderRuntimeReadiness,
+    "emit-durable-store-import-provider-runtime-readiness",
+    39,
+    36,
+    34,
+    49,
+    29,
+    RuntimeReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkEnvelope,
+    "emit-durable-store-import-provider-sdk-envelope",
+    40,
+    37,
+    35,
+    50,
+    30,
+    SdkEnvelope)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkHandoffReadiness,
+    "emit-durable-store-import-provider-sdk-handoff-readiness",
+    41,
+    38,
+    36,
+    51,
+    31,
+    SdkHandoffReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderHostExecution,
+    "emit-durable-store-import-provider-host-execution",
+    42,
+    39,
+    37,
+    52,
+    32,
+    HostExecution)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderHostExecutionReadiness,
+    "emit-durable-store-import-provider-host-execution-readiness",
+    43,
+    40,
+    38,
+    53,
+    33,
+    HostExecutionReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalHostExecutionReceipt,
+    "emit-durable-store-import-provider-local-host-execution-receipt",
+    44,
+    41,
+    39,
+    54,
+    34,
+    LocalHostExecutionReceipt)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalHostExecutionReceiptReview,
+    "emit-durable-store-import-provider-local-host-execution-receipt-review",
+    45,
+    42,
+    40,
+    55,
+    35,
+    LocalHostExecutionReceiptReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkAdapterRequest,
+    "emit-durable-store-import-provider-sdk-adapter-request",
+    46,
+    43,
+    41,
+    56,
+    36,
+    SdkAdapterRequest)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkAdapterResponsePlaceholder,
+    "emit-durable-store-import-provider-sdk-adapter-response-placeholder",
+    47,
+    44,
+    42,
+    57,
+    37,
+    SdkAdapterResponsePlaceholder)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkAdapterReadiness,
+    "emit-durable-store-import-provider-sdk-adapter-readiness",
+    48,
+    45,
+    43,
+    58,
+    38,
+    SdkAdapterReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkAdapterInterface,
+    "emit-durable-store-import-provider-sdk-adapter-interface",
+    49,
+    46,
+    44,
+    59,
+    39,
+    SdkAdapterInterface)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkAdapterInterfaceReview,
+    "emit-durable-store-import-provider-sdk-adapter-interface-review",
+    50,
+    47,
+    45,
+    60,
+    40,
+    SdkAdapterInterfaceReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderConfigLoad,
+    "emit-durable-store-import-provider-config-load",
+    51,
+    48,
+    46,
+    61,
+    41,
+    ConfigLoad)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderConfigSnapshot,
+    "emit-durable-store-import-provider-config-snapshot",
+    52,
+    49,
+    47,
+    62,
+    42,
+    ConfigSnapshot)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderConfigReadiness,
+    "emit-durable-store-import-provider-config-readiness",
+    53,
+    50,
+    48,
+    63,
+    43,
+    ConfigReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSecretResolverRequest,
+    "emit-durable-store-import-provider-secret-resolver-request",
+    54,
+    51,
+    49,
+    64,
+    44,
+    SecretResolverRequest)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSecretResolverResponse,
+    "emit-durable-store-import-provider-secret-resolver-response",
+    55,
+    52,
+    50,
+    65,
+    45,
+    SecretResolverResponse)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSecretPolicyReview,
+    "emit-durable-store-import-provider-secret-policy-review",
+    56,
+    53,
+    51,
+    66,
+    46,
+    SecretPolicyReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalHostHarnessRequest,
+    "emit-durable-store-import-provider-local-host-harness-request",
+    57,
+    54,
+    52,
+    67,
+    47,
+    LocalHostHarnessRequest)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalHostHarnessRecord,
+    "emit-durable-store-import-provider-local-host-harness-record",
+    58,
+    55,
+    53,
+    68,
+    48,
+    LocalHostHarnessRecord)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalHostHarnessReview,
+    "emit-durable-store-import-provider-local-host-harness-review",
+    59,
+    56,
+    54,
+    69,
+    49,
+    LocalHostHarnessReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkPayloadPlan,
+    "emit-durable-store-import-provider-sdk-payload-plan",
+    60,
+    57,
+    55,
+    70,
+    50,
+    SdkPayloadPlan)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkPayloadAudit,
+    "emit-durable-store-import-provider-sdk-payload-audit",
+    61,
+    58,
+    56,
+    71,
+    51,
+    SdkPayloadAudit)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkMockAdapterContract,
+    "emit-durable-store-import-provider-sdk-mock-adapter-contract",
+    62,
+    59,
+    57,
+    72,
+    52,
+    SdkMockAdapterContract)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkMockAdapterExecution,
+    "emit-durable-store-import-provider-sdk-mock-adapter-execution",
+    63,
+    60,
+    58,
+    73,
+    53,
+    SdkMockAdapterExecution)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSdkMockAdapterReadiness,
+    "emit-durable-store-import-provider-sdk-mock-adapter-readiness",
+    64,
+    61,
+    59,
+    74,
+    54,
+    SdkMockAdapterReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalFilesystemAlphaPlan,
+    "emit-durable-store-import-provider-local-filesystem-alpha-plan",
+    65,
+    62,
+    60,
+    75,
+    55,
+    LocalFilesystemAlphaPlan)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalFilesystemAlphaResult,
+    "emit-durable-store-import-provider-local-filesystem-alpha-result",
+    66,
+    63,
+    61,
+    76,
+    56,
+    LocalFilesystemAlphaResult)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderLocalFilesystemAlphaReadiness,
+    "emit-durable-store-import-provider-local-filesystem-alpha-readiness",
+    67,
+    64,
+    62,
+    77,
+    57,
+    LocalFilesystemAlphaReadiness)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteRetryDecision,
+    "emit-durable-store-import-provider-write-retry-decision",
+    68,
+    65,
+    63,
+    78,
+    58,
+    WriteRetryDecision)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteCommitReceipt,
+    "emit-durable-store-import-provider-write-commit-receipt",
+    69,
+    66,
+    64,
+    79,
+    59,
+    WriteCommitReceipt)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteCommitReview,
+    "emit-durable-store-import-provider-write-commit-review",
+    70,
+    67,
+    65,
+    80,
+    60,
+    WriteCommitReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteRecoveryCheckpoint,
+    "emit-durable-store-import-provider-write-recovery-checkpoint",
+    71,
+    68,
+    74,
+    81,
+    61,
+    WriteRecoveryCheckpoint)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteRecoveryPlan,
+    "emit-durable-store-import-provider-write-recovery-plan",
+    72,
+    69,
+    75,
+    82,
+    62,
+    WriteRecoveryPlan)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderWriteRecoveryReview,
+    "emit-durable-store-import-provider-write-recovery-review",
+    73,
+    70,
+    76,
+    83,
+    63,
+    WriteRecoveryReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderFailureTaxonomyReport,
+    "emit-durable-store-import-provider-failure-taxonomy-report",
+    74,
+    71,
+    77,
+    84,
+    64,
+    FailureTaxonomyReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderFailureTaxonomyReview,
+    "emit-durable-store-import-provider-failure-taxonomy-review",
+    75,
+    72,
+    78,
+    85,
+    65,
+    FailureTaxonomyReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderExecutionAuditEvent,
+    "emit-durable-store-import-provider-execution-audit-event",
+    76,
+    73,
+    79,
+    86,
+    66,
+    ExecutionAuditEvent)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderTelemetrySummary,
+    "emit-durable-store-import-provider-telemetry-summary",
+    77,
+    74,
+    80,
+    87,
+    67,
+    TelemetrySummary)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderOperatorReviewEvent,
+    "emit-durable-store-import-provider-operator-review-event",
+    78,
+    75,
+    81,
+    88,
+    68,
+    OperatorReviewEvent)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderCompatibilityTestManifest,
+    "emit-durable-store-import-provider-compatibility-test-manifest",
+    79,
+    76,
+    82,
+    89,
+    69,
+    CompatibilityTestManifest)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderFixtureMatrix,
+    "emit-durable-store-import-provider-fixture-matrix",
+    80,
+    77,
+    83,
+    90,
+    70,
+    FixtureMatrix)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderCompatibilityReport,
+    "emit-durable-store-import-provider-compatibility-report",
+    81,
+    78,
+    84,
+    91,
+    71,
+    CompatibilityReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderRegistry,
+    "emit-durable-store-import-provider-registry",
+    82,
+    79,
+    85,
+    92,
+    72,
+    Registry)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSelectionPlan,
+    "emit-durable-store-import-provider-selection-plan",
+    83,
+    80,
+    86,
+    93,
+    73,
+    SelectionPlan)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderCapabilityNegotiationReview,
+    "emit-durable-store-import-provider-capability-negotiation-review",
+    84,
+    81,
+    87,
+    94,
+    74,
+    CapabilityNegotiationReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderProductionReadinessEvidence,
+    "emit-durable-store-import-provider-production-readiness-evidence",
+    85,
+    82,
+    88,
+    95,
+    75,
+    ProductionReadinessEvidence)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderProductionReadinessReview,
+    "emit-durable-store-import-provider-production-readiness-review",
+    86,
+    83,
+    89,
+    96,
+    76,
+    ProductionReadinessReview)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderProductionReadinessReport,
+    "emit-durable-store-import-provider-production-readiness-report",
+    87,
+    84,
+    90,
+    97,
+    77,
+    ProductionReadinessReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderConformanceReport,
+    "emit-durable-store-import-provider-conformance-report",
+    88,
+    85,
+    91,
+    98,
+    78,
+    ConformanceReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderSchemaCompatibilityReport,
+    "emit-durable-store-import-provider-schema-compatibility-report",
+    89,
+    86,
+    92,
+    99,
+    79,
+    SchemaCompatibilityReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderConfigBundleValidationReport,
+    "emit-durable-store-import-provider-config-bundle-validation-report",
+    90,
+    87,
+    93,
+    100,
+    80,
+    ConfigBundleValidationReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderReleaseEvidenceArchiveManifest,
+    "emit-durable-store-import-provider-release-evidence-archive-manifest",
+    91,
+    88,
+    94,
+    101,
+    81,
+    ReleaseEvidenceArchiveManifest)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderApprovalReceipt,
+    "emit-durable-store-import-provider-approval-receipt",
+    92,
+    89,
+    95,
+    102,
+    82,
+    ApprovalReceipt)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderOptInDecisionReport,
+    "emit-durable-store-import-provider-opt-in-decision-report",
+    93,
+    90,
+    96,
+    103,
+    83,
+    OptInDecisionReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderRuntimePolicyReport,
+    "emit-durable-store-import-provider-runtime-policy-report",
+    94,
+    91,
+    97,
+    104,
+    84,
+    RuntimePolicyReport)
+AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(
+    EmitDurableStoreImportProviderProductionIntegrationDryRunReport,
+    "emit-durable-store-import-provider-production-integration-dry-run-report",
+    95,
+    92,
+    98,
+    105,
+    85,
+    ProductionIntegrationDryRunReport)

@@ -1,4 +1,4 @@
-#include "ahfl/json/json_value.hpp"
+#include "json/json_value.hpp"
 
 #include <charconv>
 #include <cstddef>
@@ -483,6 +483,9 @@ class Parser {
             }
             auto val = parse_value();
             if (!val) {
+                return std::nullopt;
+            }
+            if (obj->get(*key) != nullptr) {
                 return std::nullopt;
             }
             obj->set(std::move(*key), std::move(*val));

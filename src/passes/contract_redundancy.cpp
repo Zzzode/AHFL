@@ -1,4 +1,4 @@
-#include "ahfl/passes/contract_redundancy.hpp"
+#include "passes/contract_redundancy.hpp"
 
 #include "ahfl/ir/ir.hpp"
 

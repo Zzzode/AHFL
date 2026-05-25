@@ -1,4 +1,4 @@
-#include "ahfl/dry_run/runner.hpp"
+#include "dry_run/runner.hpp"
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/handoff/package.hpp"
 #include "ahfl/ir/ir.hpp"

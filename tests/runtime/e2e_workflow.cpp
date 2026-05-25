@@ -3,11 +3,11 @@
 // 本测试编译 tests/runtime/e2e_multi_agent.ahfl 并使用 WorkflowRuntime 执行，
 // 验证完整的 runtime 执行流程。
 
-#include "ahfl/evaluator/value.hpp"
+#include "evaluator/value.hpp"
 #include "ahfl/frontend/frontend.hpp"
 #include "ahfl/ir/ir.hpp"
-#include "ahfl/runtime/capability_bridge.hpp"
-#include "ahfl/runtime/workflow_runtime.hpp"
+#include "runtime/capability_bridge.hpp"
+#include "runtime/workflow_runtime.hpp"
 #include "ahfl/semantics/resolver.hpp"
 #include "ahfl/semantics/typecheck.hpp"
 #include "ahfl/semantics/validate.hpp"

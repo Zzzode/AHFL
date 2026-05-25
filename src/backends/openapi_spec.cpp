@@ -1,8 +1,8 @@
-#include "ahfl/backends/openapi_spec.hpp"
+#include "backends/openapi_spec.hpp"
 
 #include <sstream>
 
-#include "ahfl/support/json.hpp"
+#include "support/json.hpp"
 
 namespace ahfl::backends {
 
