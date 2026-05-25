@@ -168,7 +168,7 @@ ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --ch
 4. Ensure `cmake --build --preset build-format-check` reports no violations
 5. Submit a Pull Request
 
-See [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md) for detailed guidelines.
+See [`docs/reference/durable-store-import-reference-v0.1.zh.md`](docs/reference/durable-store-import-reference-v0.1.zh.md) for durable-store/provider contributor guidance.
 
 ## Status
 
