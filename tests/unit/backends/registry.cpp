@@ -44,7 +44,7 @@ int main() {
         {ahfl::BackendKind::AssuranceJson, "assurance-json"},
     };
 
-    auto &registry = ahfl::BackendRegistry::instance();
+    auto &registry = ahfl::global_backend_registry();
     const auto original_size = registry.size();
 
     for (const auto &expected : expected_backends) {

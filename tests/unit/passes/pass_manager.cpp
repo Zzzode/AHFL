@@ -1,92 +1,107 @@
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest.h>
+
 #include "passes/pass_manager.hpp"
 #include "ahfl/ir/ir.hpp"
 
-#include <cassert>
-#include <iostream>
 #include <memory>
-#include <string>
 #include <string_view>
 
 namespace {
 
 using namespace ahfl::passes;
 
-/// A pass that never modifies the IR.
 class NoOpPass final : public Pass {
   public:
     [[nodiscard]] std::string_view name() const override { return "NoOpPass"; }
     [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override { return false; }
 };
 
-/// A pass that always reports a modification.
 class AlwaysModifyPass final : public Pass {
   public:
     [[nodiscard]] std::string_view name() const override { return "AlwaysModifyPass"; }
     [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override { return true; }
 };
 
-bool test_empty_pass_manager() {
-    PassManager pm;
-    ahfl::ir::Program prog;
-
-    auto result = pm.run(prog);
-    if (result.any_modified != false) return false;
-    if (!result.executed.empty()) return false;
-    return true;
-}
-
-bool test_noop_pass_returns_false() {
-    PassManager pm;
-    pm.add_pass(std::make_unique<NoOpPass>());
-
-    ahfl::ir::Program prog;
-    auto result = pm.run(prog);
-    if (result.any_modified != false) return false;
-    // The pass should still be listed as executed
-    if (result.executed.size() != 1) return false;
-    if (result.executed[0] != "NoOpPass") return false;
-    return true;
-}
-
-bool test_modify_pass_returns_true() {
-    PassManager pm;
-    pm.add_pass(std::make_unique<AlwaysModifyPass>());
-
-    ahfl::ir::Program prog;
-    auto result = pm.run(prog);
-    if (result.any_modified != true) return false;
-    if (result.executed.size() != 1) return false;
-    if (result.executed[0] != "AlwaysModifyPass") return false;
-    return true;
-}
-
-bool test_create_default_pipeline() {
-    auto pipeline = create_default_pipeline();
-    if (!pipeline) return false;
-    // The default pipeline should be non-null; we just verify it exists
-    return true;
-}
-
 } // namespace
 
-int main() {
-    int failures = 0;
-    auto run = [&](bool (*fn)(), const char *name) {
-        if (!fn()) {
-            std::cerr << "FAIL: " << name << "\n";
-            ++failures;
-        }
-    };
+TEST_CASE("PassManager: empty pipeline") {
+    PassManager pm;
+    ahfl::ir::Program prog;
+    auto result = pm.run(prog);
+    CHECK_FALSE(result.any_modified);
+    CHECK(result.executed.empty());
+    CHECK(result.timings_ms.empty());
+}
 
-    run(test_empty_pass_manager, "test_empty_pass_manager");
-    run(test_noop_pass_returns_false, "test_noop_pass_returns_false");
-    run(test_modify_pass_returns_true, "test_modify_pass_returns_true");
-    run(test_create_default_pipeline, "test_create_default_pipeline");
+TEST_CASE("PassManager: no-op pass") {
+    PassManager pm;
+    pm.add_pass(std::make_unique<NoOpPass>());
+    ahfl::ir::Program prog;
+    auto result = pm.run(prog);
+    CHECK_FALSE(result.any_modified);
+    REQUIRE(result.executed.size() == 1);
+    CHECK(result.executed[0] == "NoOpPass");
+}
 
-    if (failures > 0) {
-        std::cerr << failures << " test(s) failed\n";
-        return 1;
+TEST_CASE("PassManager: modifying pass") {
+    PassManager pm;
+    pm.add_pass(std::make_unique<AlwaysModifyPass>());
+    ahfl::ir::Program prog;
+    auto result = pm.run(prog);
+    CHECK(result.any_modified);
+    REQUIRE(result.executed.size() == 1);
+    CHECK(result.executed[0] == "AlwaysModifyPass");
+}
+
+TEST_CASE("PassManager: default pipeline creation") {
+    auto pipeline = create_default_pipeline();
+    REQUIRE(pipeline != nullptr);
+    auto names = pipeline->registered_pass_names();
+    CHECK(names.size() == 4);
+    auto analyses = pipeline->registered_analysis_names();
+    CHECK(analyses.size() == 2);
+}
+
+TEST_CASE("PassManager: pass filter") {
+    auto pm = create_default_pipeline();
+    ahfl::ir::Program prog;
+    pm->set_pass_filter({"dead-state-elimination"});
+    auto result = pm->run(prog);
+    // Only the filtered pass (or none if name doesn't match exactly) should execute
+    for (const auto &name : result.executed) {
+        // Analysis passes always run, but transform passes should be filtered
+        CHECK((name == "dead-state-elimination" || name == "capability-reachability" ||
+               name == "contract-redundancy"));
     }
-    std::cerr << "All tests passed\n";
-    return 0;
+}
+
+TEST_CASE("PassManager: timing collection") {
+    PassManager pm;
+    pm.add_pass(std::make_unique<NoOpPass>());
+    ahfl::ir::Program prog;
+    auto result = pm.run(prog);
+    REQUIRE(result.timings_ms.size() == 1);
+    CHECK(result.timings_ms[0].first == "NoOpPass");
+    CHECK(result.timings_ms[0].second >= 0.0);
+}
+
+TEST_CASE("PassManager: run_to_fixpoint") {
+    PassManager pm;
+    pm.add_pass(std::make_unique<NoOpPass>());
+    ahfl::ir::Program prog;
+    auto result = pm.run_to_fixpoint(prog, 5);
+    // NoOpPass never modifies, so fixpoint exits after first iteration
+    CHECK_FALSE(result.any_modified);
+    CHECK(result.executed.size() == 1);
+}
+
+TEST_CASE("PassManager: registered names") {
+    PassManager pm;
+    pm.add_pass(std::make_unique<NoOpPass>());
+    pm.add_pass(std::make_unique<AlwaysModifyPass>());
+    auto names = pm.registered_pass_names();
+    REQUIRE(names.size() == 2);
+    CHECK(names[0] == "NoOpPass");
+    CHECK(names[1] == "AlwaysModifyPass");
 }

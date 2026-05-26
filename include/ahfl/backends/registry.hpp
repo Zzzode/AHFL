@@ -28,10 +28,9 @@ struct BackendEntry {
 };
 
 /// Central registry of all available backends.
-/// Backends register themselves via BackendRegistrar RAII objects.
 class BackendRegistry {
   public:
-    static BackendRegistry &instance();
+    BackendRegistry() = default;
 
     /// Register a new backend. Returns false if kind already registered.
     bool register_backend(BackendEntry entry);
@@ -53,15 +52,13 @@ class BackendRegistry {
     [[nodiscard]] std::size_t size() const { return entries_.size(); }
 
   private:
-    BackendRegistry() = default;
     std::vector<BackendEntry> entries_;
 };
 
-/// RAII registrar — construct at file scope to auto-register a backend.
-struct BackendRegistrar {
-    explicit BackendRegistrar(BackendEntry entry) {
-        BackendRegistry::instance().register_backend(std::move(entry));
-    }
-};
+/// Populate registry with all built-in backends.
+void initialize_builtin_backends(BackendRegistry &registry);
+
+/// Get the global backend registry (lazily initialized with built-in backends).
+[[nodiscard]] BackendRegistry &global_backend_registry();
 
 } // namespace ahfl
