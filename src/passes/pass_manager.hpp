@@ -3,7 +3,9 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace ahfl::ir {
@@ -48,9 +50,13 @@ class PassManager {
     struct RunResult {
         bool any_modified{false};
         std::vector<std::string> executed;
+        std::vector<std::pair<std::string_view, double>> timings_ms;
     };
 
     [[nodiscard]] RunResult run(ir::Program &program);
+
+    /// Run passes repeatedly until no modifications occur or max_iterations reached.
+    [[nodiscard]] RunResult run_to_fixpoint(ir::Program &program, std::size_t max_iterations = 10);
 
     /// Access analysis results after run().
     [[nodiscard]] const std::vector<std::unique_ptr<AnalysisResult>> &analysis_results() const {
@@ -70,6 +76,7 @@ class PassManager {
     std::vector<std::unique_ptr<AnalysisPass>> analyses_;
     std::vector<std::unique_ptr<AnalysisResult>> analysis_results_;
     std::unordered_set<std::string_view> pass_filter_;
+    std::unordered_map<std::string_view, std::size_t> analysis_index_;
 
     void ensure_analysis(std::string_view name, const ir::Program &program);
     void invalidate_analysis(std::string_view name);

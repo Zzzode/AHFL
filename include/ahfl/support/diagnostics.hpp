@@ -1,5 +1,6 @@
 #pragma once
 
+#include <concepts>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -111,71 +112,19 @@ struct MessageTemplate {
         return std::string(format);
     }
 
-    [[nodiscard]] std::string format_with(std::string_view arg) const {
+    template <typename... Args>
+        requires(sizeof...(Args) > 0 && (std::convertible_to<Args, std::string_view> && ...))
+    [[nodiscard]] std::string format_with(Args &&...args) const {
         std::string result(format);
         constexpr std::string_view placeholder = "{}";
-        const auto pos = result.find(placeholder);
-        if (pos != std::string::npos) {
-            result.replace(pos, placeholder.length(), arg);
-        }
-        return result;
-    }
-
-    [[nodiscard]] std::string format_with(std::string_view arg1, std::string_view arg2) const {
-        std::string result(format);
-        constexpr std::string_view placeholder = "{}";
-        std::size_t pos = result.find(placeholder);
-        if (pos != std::string::npos) {
-            result.replace(pos, placeholder.length(), arg1);
-            pos = result.find(placeholder, pos + arg1.length());
-            if (pos != std::string::npos) {
-                result.replace(pos, placeholder.length(), arg2);
-            }
-        }
-        return result;
-    }
-
-    [[nodiscard]] std::string
-    format_with(std::string_view arg1, std::string_view arg2, std::string_view arg3) const {
-        std::string result(format);
-        constexpr std::string_view placeholder = "{}";
-        std::size_t pos = result.find(placeholder);
-        if (pos != std::string::npos) {
-            result.replace(pos, placeholder.length(), arg1);
-            pos = result.find(placeholder, pos + arg1.length());
-            if (pos != std::string::npos) {
-                result.replace(pos, placeholder.length(), arg2);
-                pos = result.find(placeholder, pos + arg2.length());
-                if (pos != std::string::npos) {
-                    result.replace(pos, placeholder.length(), arg3);
-                }
-            }
-        }
-        return result;
-    }
-
-    [[nodiscard]] std::string format_with(std::string_view arg1,
-                                          std::string_view arg2,
-                                          std::string_view arg3,
-                                          std::string_view arg4) const {
-        std::string result(format);
-        constexpr std::string_view placeholder = "{}";
-        std::size_t pos = result.find(placeholder);
-        if (pos != std::string::npos) {
-            result.replace(pos, placeholder.length(), arg1);
-            pos = result.find(placeholder, pos + arg1.length());
-            if (pos != std::string::npos) {
-                result.replace(pos, placeholder.length(), arg2);
-                pos = result.find(placeholder, pos + arg2.length());
-                if (pos != std::string::npos) {
-                    result.replace(pos, placeholder.length(), arg3);
-                    pos = result.find(placeholder, pos + arg3.length());
-                    if (pos != std::string::npos) {
-                        result.replace(pos, placeholder.length(), arg4);
-                    }
-                }
-            }
-        }
+        std::size_t pos = 0;
+        ((pos = result.find(placeholder, pos),
+          pos != std::string::npos
+              ? (result.replace(pos, placeholder.length(),
+                                std::string_view(std::forward<Args>(args))),
+                 pos += std::string_view(std::forward<Args>(args)).length())
+              : pos),
+         ...);
         return result;
     }
 };
@@ -348,31 +297,10 @@ class DiagnosticBuilder {
         return std::move(*this);
     }
 
-    DiagnosticBuilder &&message(MessageTemplate tmpl, std::string_view arg) && {
-        message_ = tmpl.format_with(arg);
-        return std::move(*this);
-    }
-
-    DiagnosticBuilder &&
-    message(MessageTemplate tmpl, std::string_view arg1, std::string_view arg2) && {
-        message_ = tmpl.format_with(arg1, arg2);
-        return std::move(*this);
-    }
-
-    DiagnosticBuilder &&message(MessageTemplate tmpl,
-                                std::string_view arg1,
-                                std::string_view arg2,
-                                std::string_view arg3) && {
-        message_ = tmpl.format_with(arg1, arg2, arg3);
-        return std::move(*this);
-    }
-
-    DiagnosticBuilder &&message(MessageTemplate tmpl,
-                                std::string_view arg1,
-                                std::string_view arg2,
-                                std::string_view arg3,
-                                std::string_view arg4) && {
-        message_ = tmpl.format_with(arg1, arg2, arg3, arg4);
+    template <typename... Args>
+        requires(sizeof...(Args) > 0 && (std::convertible_to<Args, std::string_view> && ...))
+    DiagnosticBuilder &&message(MessageTemplate tmpl, Args &&...args) && {
+        message_ = tmpl.format_with(std::forward<Args>(args)...);
         return std::move(*this);
     }
 
@@ -460,25 +388,25 @@ class DiagnosticBag {
 
     // === Core Operations ===
 
-    [[nodiscard]] bool has_error() const noexcept {
-        for (const auto &diagnostic : diagnostics_) {
-            if (diagnostic.severity == DiagnosticSeverity::Error) {
-                return true;
-            }
-        }
-        return false;
-    }
+    [[nodiscard]] bool has_error() const noexcept { return error_count_ > 0; }
+    [[nodiscard]] bool has_warning() const noexcept { return warning_count_ > 0; }
+    [[nodiscard]] std::size_t error_count() const noexcept { return error_count_; }
+    [[nodiscard]] std::size_t warning_count() const noexcept { return warning_count_; }
 
     [[nodiscard]] const std::vector<Diagnostic> &entries() const noexcept {
         return diagnostics_;
     }
 
     void append(const DiagnosticBag &other) {
+        error_count_ += other.error_count_;
+        warning_count_ += other.warning_count_;
         diagnostics_.insert(
             diagnostics_.end(), other.diagnostics_.begin(), other.diagnostics_.end());
     }
 
     void append_from_source(const DiagnosticBag &other, const SourceFile &source) {
+        error_count_ += other.error_count_;
+        warning_count_ += other.warning_count_;
         for (const auto &entry : other.diagnostics_) {
             auto diagnostic = entry;
             if (!diagnostic.source_name.has_value()) {
@@ -515,16 +443,62 @@ class DiagnosticBag {
             }
 
             out << '\n';
+
+            // Source snippet + caret rendering
+            if (source.has_value() && diagnostic.range.has_value() &&
+                !diagnostic.range->empty()) {
+                auto &src = source->get();
+                src.refresh_line_starts_cache();
+                const auto &starts = src.line_starts_cache;
+                auto begin_pos = src.locate(diagnostic.range->begin_offset);
+
+                std::size_t line_idx = begin_pos.line - 1;
+                std::size_t line_start = starts[line_idx];
+                std::size_t line_end = (line_idx + 1 < starts.size())
+                                           ? starts[line_idx + 1] - 1
+                                           : src.content.size();
+                if (line_end > line_start && line_end <= src.content.size() &&
+                    src.content[line_end - 1] == '\r') {
+                    --line_end;
+                }
+
+                std::string_view line_text =
+                    std::string_view(src.content).substr(line_start, line_end - line_start);
+
+                std::string line_num = std::to_string(begin_pos.line);
+                std::string gutter(line_num.size(), ' ');
+
+                out << "  " << line_num << " | " << line_text << '\n';
+
+                std::size_t col_start = begin_pos.column - 1;
+                std::size_t span_end_in_line = diagnostic.range->end_offset - line_start;
+                if (span_end_in_line > line_text.size()) {
+                    span_end_in_line = line_text.size();
+                }
+                if (span_end_in_line <= col_start) {
+                    span_end_in_line = col_start + 1;
+                }
+
+                out << "  " << gutter << " | " << std::string(col_start, ' ')
+                    << std::string(span_end_in_line - col_start, '~') << '\n';
+            }
         }
     }
 
     // Internal method for DiagnosticBuilder
     void add_diagnostic(Diagnostic diagnostic) {
+        if (diagnostic.severity == DiagnosticSeverity::Error) {
+            ++error_count_;
+        } else if (diagnostic.severity == DiagnosticSeverity::Warning) {
+            ++warning_count_;
+        }
         diagnostics_.push_back(std::move(diagnostic));
     }
 
   private:
     std::vector<Diagnostic> diagnostics_;
+    std::size_t error_count_{0};
+    std::size_t warning_count_{0};
 };
 
 // Implementation of DiagnosticBuilder::emit()
