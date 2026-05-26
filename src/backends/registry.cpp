@@ -4,8 +4,12 @@
 
 namespace ahfl {
 
-BackendRegistry &BackendRegistry::instance() {
-    static BackendRegistry registry;
+BackendRegistry &global_backend_registry() {
+    static BackendRegistry registry = [] {
+        BackendRegistry r;
+        initialize_builtin_backends(r);
+        return r;
+    }();
     return registry;
 }
 

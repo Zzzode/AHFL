@@ -8,6 +8,7 @@
 #include "passes/workflow_simplification.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 
 namespace ahfl::passes {
@@ -15,6 +16,7 @@ namespace ahfl::passes {
 void PassManager::add_pass(std::unique_ptr<Pass> pass) { passes_.push_back(std::move(pass)); }
 
 void PassManager::add_analysis(std::unique_ptr<AnalysisPass> analysis) {
+    analysis_index_[analysis->name()] = analyses_.size();
     analyses_.push_back(std::move(analysis));
 }
 
@@ -44,31 +46,24 @@ std::vector<std::string_view> PassManager::registered_analysis_names() const {
 }
 
 void PassManager::ensure_analysis(std::string_view name, const ir::Program &program) {
-    // Check if already computed
-    for (std::size_t i = 0; i < analyses_.size(); ++i) {
-        if (analyses_[i]->name() == name && i < analysis_results_.size() &&
-            analysis_results_[i] != nullptr) {
-            return;
-        }
+    auto it = analysis_index_.find(name);
+    if (it == analysis_index_.end()) {
+        return;
     }
-
-    // Find and run the analysis
-    for (std::size_t i = 0; i < analyses_.size(); ++i) {
-        if (analyses_[i]->name() == name) {
-            if (i >= analysis_results_.size()) {
-                analysis_results_.resize(analyses_.size());
-            }
-            analysis_results_[i] = analyses_[i]->run(program);
-            return;
-        }
+    std::size_t idx = it->second;
+    if (idx < analysis_results_.size() && analysis_results_[idx] != nullptr) {
+        return;
     }
+    if (idx >= analysis_results_.size()) {
+        analysis_results_.resize(analyses_.size());
+    }
+    analysis_results_[idx] = analyses_[idx]->run(program);
 }
 
 void PassManager::invalidate_analysis(std::string_view name) {
-    for (std::size_t i = 0; i < analyses_.size(); ++i) {
-        if (analyses_[i]->name() == name && i < analysis_results_.size()) {
-            analysis_results_[i].reset();
-        }
+    auto it = analysis_index_.find(name);
+    if (it != analysis_index_.end() && it->second < analysis_results_.size()) {
+        analysis_results_[it->second].reset();
     }
 }
 
@@ -88,7 +83,12 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
             ensure_analysis(req, program);
         }
 
+        auto start = std::chrono::steady_clock::now();
         bool modified = pass->run(program);
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        double ms = std::chrono::duration<double, std::milli>(elapsed).count();
+        result.timings_ms.emplace_back(pass->name(), ms);
+
         if (modified) {
             result.any_modified = true;
             // Invalidate analyses declared by this pass
@@ -108,6 +108,23 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
     }
 
     return result;
+}
+
+PassManager::RunResult PassManager::run_to_fixpoint(ir::Program &program,
+                                                     std::size_t max_iterations) {
+    RunResult combined{};
+    for (std::size_t i = 0; i < max_iterations; ++i) {
+        auto result = run(program);
+        combined.executed.insert(combined.executed.end(), result.executed.begin(),
+                                 result.executed.end());
+        combined.timings_ms.insert(combined.timings_ms.end(), result.timings_ms.begin(),
+                                    result.timings_ms.end());
+        if (!result.any_modified) {
+            break;
+        }
+        combined.any_modified = true;
+    }
+    return combined;
 }
 
 std::unique_ptr<PassManager> create_default_pipeline() {

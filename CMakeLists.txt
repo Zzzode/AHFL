@@ -56,6 +56,7 @@ option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure backends (WASM, K8s, Open
 option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)
 
 add_subdirectory(third_party/antlr4)
+add_subdirectory(third_party/doctest)
 add_subdirectory(src)
 
 enable_testing()

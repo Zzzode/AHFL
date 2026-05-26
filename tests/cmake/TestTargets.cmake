@@ -348,6 +348,7 @@ add_executable(ahfl_pass_manager_tests
 target_link_libraries(ahfl_pass_manager_tests
     PRIVATE
         ahfl_passes
+        doctest
 )
 ahfl_apply_project_warnings(ahfl_pass_manager_tests)
 
