@@ -12,21 +12,12 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kPersistenceResponseFormatVersion =
     "ahfl.durable-store-import-decision-receipt-persistence-response.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view
-    kDurableStoreImportDecisionReceiptPersistenceResponseFormatVersion =
-        kPersistenceResponseFormatVersion;
-
 enum class PersistenceResponseStatus {
     Accepted,
     Blocked,
     Deferred,
     Rejected,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceResponseStatus
-    [[deprecated("Use PersistenceResponseStatus")]] = PersistenceResponseStatus;
 
 enum class PersistenceResponseOutcome {
     AcceptPersistenceRequest,
@@ -35,18 +26,10 @@ enum class PersistenceResponseOutcome {
     RejectFailedRequest,
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceResponseOutcome
-    [[deprecated("Use PersistenceResponseOutcome")]] = PersistenceResponseOutcome;
-
 enum class PersistenceResponseBoundaryKind {
     LocalContractOnly,
     AdapterResponseConsumable,
 };
-
-// Legacy alias
-using ReceiptPersistenceResponseBoundaryKind [[deprecated("Use PersistenceResponseBoundaryKind")]] =
-    PersistenceResponseBoundaryKind;
 
 enum class PersistenceResponseBlockerKind {
     SourcePersistenceRequestBlocked,
@@ -55,20 +38,12 @@ enum class PersistenceResponseBlockerKind {
     PersistenceWorkflowFailure,
 };
 
-// Legacy alias
-using ReceiptPersistenceResponseBlockerKind [[deprecated("Use PersistenceResponseBlockerKind")]] =
-    PersistenceResponseBlockerKind;
-
 struct PersistenceResponseBlocker {
     PersistenceResponseBlockerKind kind{
         PersistenceResponseBlockerKind::SourcePersistenceRequestBlocked};
     std::string message;
     std::optional<AdapterCapabilityKind> required_capability;
 };
-
-// Legacy alias
-using ReceiptPersistenceResponseBlocker [[deprecated("Use PersistenceResponseBlocker")]] =
-    PersistenceResponseBlocker;
 
 struct PersistenceResponse {
     std::string format_version{std::string(kPersistenceResponseFormatVersion)};
@@ -143,10 +118,6 @@ struct PersistenceResponse {
     std::optional<PersistenceResponseBlocker> response_blocker; // Keep field name
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptPersistenceResponse
-    [[deprecated("Use PersistenceResponse")]] = PersistenceResponse;
-
 struct PersistenceResponseValidationResult {
     DiagnosticBag diagnostics;
 
@@ -154,10 +125,6 @@ struct PersistenceResponseValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceResponseValidationResult
-    [[deprecated("Use PersistenceResponseValidationResult")]] = PersistenceResponseValidationResult;
 
 struct PersistenceResponseResult {
     std::optional<PersistenceResponse> response;
@@ -168,27 +135,10 @@ struct PersistenceResponseResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceResponseResult
-    [[deprecated("Use PersistenceResponseResult")]] = PersistenceResponseResult;
-
 [[nodiscard]] PersistenceResponseValidationResult
 validate_persistence_response(const PersistenceResponse &response);
 
 [[nodiscard]] PersistenceResponseResult
 build_persistence_response(const PersistenceRequest &request);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline PersistenceResponseValidationResult
-validate_durable_store_import_decision_receipt_persistence_response(
-    const PersistenceResponse &response) {
-    return validate_persistence_response(response);
-}
-
-[[nodiscard]] inline PersistenceResponseResult
-build_durable_store_import_decision_receipt_persistence_response(
-    const PersistenceRequest &request) {
-    return build_persistence_response(request);
-}
 
 } // namespace ahfl::durable_store_import

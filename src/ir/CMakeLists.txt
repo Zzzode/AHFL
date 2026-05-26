@@ -8,4 +8,6 @@ target_link_libraries(ahfl_ir
         ahfl_semantics
 )
 
+target_include_directories(ahfl_ir PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_ir)

@@ -382,12 +382,6 @@ class DiagnosticBuilder {
         return std::move(*this);
     }
 
-    // Set legacy error code (for backward compatibility)
-    DiagnosticBuilder &&legacy_code(DiagnosticCategory category, std::string_view code_value) && {
-        code_ = std::string(to_string(category)) + "." + std::string(code_value);
-        return std::move(*this);
-    }
-
     // Set source range
     DiagnosticBuilder &&range(SourceRange r) && {
         range_ = r;

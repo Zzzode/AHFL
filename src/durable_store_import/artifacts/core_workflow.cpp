@@ -236,9 +236,9 @@ namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_deci
 
 namespace {
 
-class DurableStoreImportDecisionJsonPrinter final : private ArtifactJsonWriter {
+class DecisionJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportDecisionJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
+    explicit DecisionJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::Decision &decision) {
         print_object(0, [&](const auto &field) {
@@ -531,7 +531,7 @@ class DurableStoreImportDecisionJsonPrinter final : private ArtifactJsonWriter {
 
 void print_durable_store_import_decision_json(const durable_store_import::Decision &decision,
                                               std::ostream &out) {
-    DurableStoreImportDecisionJsonPrinter(out).print(decision);
+    DecisionJsonPrinter(out).print(decision);
 }
 
 } // namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_decision
@@ -689,18 +689,15 @@ decision_boundary_kind_name(durable_store_import::DecisionBoundaryKind kind) {
 [[nodiscard]] std::string
 next_action_name(durable_store_import::DecisionReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::DecisionReviewNextActionKind::HandoffDurableStoreImportDecision:
+    case durable_store_import::DecisionReviewNextActionKind::HandoffDecision:
         return "handoff_durable_store_import_decision";
     case durable_store_import::DecisionReviewNextActionKind::ResolveRequiredAdapterCapability:
         return "resolve_required_adapter_capability";
-    case durable_store_import::DecisionReviewNextActionKind::
-        ArchiveCompletedDurableStoreImportDecision:
+    case durable_store_import::DecisionReviewNextActionKind::ArchiveCompletedDecision:
         return "archive_completed_durable_store_import_decision";
-    case durable_store_import::DecisionReviewNextActionKind::
-        PreservePartialDurableStoreImportDecision:
+    case durable_store_import::DecisionReviewNextActionKind::PreservePartialDecision:
         return "preserve_partial_durable_store_import_decision";
-    case durable_store_import::DecisionReviewNextActionKind::
-        InvestigateDurableStoreImportDecisionRejection:
+    case durable_store_import::DecisionReviewNextActionKind::InvestigateDecisionRejection:
         return "investigate_durable_store_import_decision_rejection";
     }
 
@@ -857,10 +854,9 @@ namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_rece
 
 namespace {
 
-class DurableStoreImportDecisionReceiptJsonPrinter final : private ArtifactJsonWriter {
+class ReceiptJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportDecisionReceiptJsonPrinter(std::ostream &out)
-        : ArtifactJsonWriter(out) {}
+    explicit ReceiptJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::Receipt &receipt) {
         print_object(0, [&](const auto &field) {
@@ -1169,7 +1165,7 @@ class DurableStoreImportDecisionReceiptJsonPrinter final : private ArtifactJsonW
 
 void print_durable_store_import_receipt_json(const durable_store_import::Receipt &receipt,
                                              std::ostream &out) {
-    DurableStoreImportDecisionReceiptJsonPrinter(out).print(receipt);
+    ReceiptJsonPrinter(out).print(receipt);
 }
 
 } // namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_receipt
@@ -1342,19 +1338,15 @@ receipt_boundary_kind_name(durable_store_import::ReceiptBoundaryKind kind) {
 [[nodiscard]] std::string
 next_action_name(durable_store_import::ReceiptReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::ReceiptReviewNextActionKind::
-        HandoffDurableStoreImportDecisionReceipt:
+    case durable_store_import::ReceiptReviewNextActionKind::HandoffReceipt:
         return "handoff_durable_store_import_decision_receipt";
     case durable_store_import::ReceiptReviewNextActionKind::ResolveRequiredAdapterCapability:
         return "resolve_required_adapter_capability";
-    case durable_store_import::ReceiptReviewNextActionKind::
-        ArchiveCompletedDurableStoreImportDecisionReceipt:
+    case durable_store_import::ReceiptReviewNextActionKind::ArchiveCompletedReceipt:
         return "archive_completed_durable_store_import_decision_receipt";
-    case durable_store_import::ReceiptReviewNextActionKind::
-        PreservePartialDurableStoreImportDecisionReceipt:
+    case durable_store_import::ReceiptReviewNextActionKind::PreservePartialReceipt:
         return "preserve_partial_durable_store_import_decision_receipt";
-    case durable_store_import::ReceiptReviewNextActionKind::
-        InvestigateDurableStoreImportDecisionReceiptRejection:
+    case durable_store_import::ReceiptReviewNextActionKind::InvestigateReceiptRejection:
         return "investigate_durable_store_import_decision_receipt_rejection";
     }
 
@@ -1693,9 +1685,9 @@ namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_requ
 
 namespace {
 
-class DurableStoreImportRequestJsonPrinter final : private ArtifactJsonWriter {
+class RequestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportRequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
+    explicit RequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::Request &request) {
         print_object(0, [&](const auto &field) {
@@ -1989,7 +1981,7 @@ class DurableStoreImportRequestJsonPrinter final : private ArtifactJsonWriter {
 
 void print_durable_store_import_request_json(const durable_store_import::Request &request,
                                              std::ostream &out) {
-    DurableStoreImportRequestJsonPrinter(out).print(request);
+    RequestJsonPrinter(out).print(request);
 }
 
 } // namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_request
@@ -2150,15 +2142,15 @@ request_boundary_kind_name(durable_store_import::RequestBoundaryKind kind) {
 
 [[nodiscard]] std::string next_action_name(durable_store_import::ReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::ReviewNextActionKind::HandoffDurableStoreImportRequest:
+    case durable_store_import::ReviewNextActionKind::HandoffRequest:
         return "handoff_durable_store_import_request";
     case durable_store_import::ReviewNextActionKind::AwaitAdapterReadiness:
         return "await_adapter_readiness";
-    case durable_store_import::ReviewNextActionKind::ArchiveCompletedDurableStoreImportState:
+    case durable_store_import::ReviewNextActionKind::ArchiveCompletedState:
         return "archive_completed_durable_store_import_state";
-    case durable_store_import::ReviewNextActionKind::InvestigateDurableStoreImportFailure:
+    case durable_store_import::ReviewNextActionKind::InvestigateFailure:
         return "investigate_durable_store_import_failure";
-    case durable_store_import::ReviewNextActionKind::PreservePartialDurableStoreImportState:
+    case durable_store_import::ReviewNextActionKind::PreservePartialState:
         return "preserve_partial_durable_store_import_state";
     }
 

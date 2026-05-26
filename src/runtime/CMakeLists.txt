@@ -20,4 +20,6 @@ target_link_libraries(ahfl_runtime
         ahfl_json
 )
 
+target_include_directories(ahfl_runtime PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_runtime)

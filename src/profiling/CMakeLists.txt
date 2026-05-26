@@ -9,4 +9,6 @@ target_link_libraries(ahfl_profiling
         ahfl_support
 )
 
+target_include_directories(ahfl_profiling PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_profiling)

@@ -1,4 +1,5 @@
 #include "durable_store_import/receipt_persistence.hpp"
+#include "durable_store_import/receipt_persistence_stage.hpp"
 #include "validation/common.hpp"
 
 #include <string>
@@ -8,7 +9,7 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_RECEIPT_PERSISTENCE";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_RECEIPT_PERSISTENCE"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -45,48 +46,6 @@ void validate_persistence_blocker(const PersistenceRequest &request, DiagnosticB
                               "receipt_persistence_blocker required_capability must match "
                               "next_required_adapter_capability");
     }
-}
-
-[[nodiscard]] PersistenceBlockerKind to_persistence_blocker_kind(ReceiptBlockerKind kind) {
-    switch (kind) {
-    case ReceiptBlockerKind::SourceDecisionBlocked:
-        return PersistenceBlockerKind::SourceReceiptBlocked;
-    case ReceiptBlockerKind::MissingRequiredAdapterCapability:
-        return PersistenceBlockerKind::MissingRequiredAdapterCapability;
-    case ReceiptBlockerKind::WorkflowFailure:
-        return PersistenceBlockerKind::WorkflowFailure;
-    case ReceiptBlockerKind::PartialWorkflowState:
-        return PersistenceBlockerKind::PartialWorkflowState;
-    }
-
-    return PersistenceBlockerKind::SourceReceiptBlocked;
-}
-
-[[nodiscard]] std::string persistence_outcome_slug(PersistenceRequestOutcome outcome) {
-    switch (outcome) {
-    case PersistenceRequestOutcome::PersistReadyReceipt:
-        return "persistence-ready";
-    case PersistenceRequestOutcome::BlockBlockedReceipt:
-        return "blocked";
-    case PersistenceRequestOutcome::DeferPartialReceipt:
-        return "deferred";
-    case PersistenceRequestOutcome::RejectFailedReceipt:
-        return "rejected";
-    }
-
-    return "invalid";
-}
-
-[[nodiscard]] std::string build_persistence_request_identity(
-    const std::optional<handoff::PackageIdentity> &source_package_identity,
-    std::string_view workflow_canonical_name,
-    std::string_view session_id,
-    PersistenceRequestOutcome outcome) {
-    const auto &identity_anchor = source_package_identity.has_value()
-                                      ? source_package_identity->name
-                                      : std::string(workflow_canonical_name);
-    return "durable-store-import-receipt-persistence-request::" + identity_anchor +
-           "::" + std::string(session_id) + "::" + persistence_outcome_slug(outcome);
 }
 
 } // namespace
@@ -535,102 +494,7 @@ PersistenceRequestResult build_persistence_request(const Receipt &receipt) {
         return result;
     }
 
-    PersistenceRequest request{
-        .format_version = std::string(kPersistenceRequestFormatVersion),
-        .source_durable_store_import_decision_receipt_format_version = receipt.format_version,
-        .source_durable_store_import_decision_format_version =
-            receipt.source_durable_store_import_decision_format_version,
-        .source_durable_store_import_request_format_version =
-            receipt.source_durable_store_import_request_format_version,
-        .source_store_import_descriptor_format_version =
-            receipt.source_store_import_descriptor_format_version,
-        .source_execution_plan_format_version = receipt.source_execution_plan_format_version,
-        .source_runtime_session_format_version = receipt.source_runtime_session_format_version,
-        .source_execution_journal_format_version = receipt.source_execution_journal_format_version,
-        .source_replay_view_format_version = receipt.source_replay_view_format_version,
-        .source_scheduler_snapshot_format_version =
-            receipt.source_scheduler_snapshot_format_version,
-        .source_checkpoint_record_format_version = receipt.source_checkpoint_record_format_version,
-        .source_persistence_descriptor_format_version =
-            receipt.source_persistence_descriptor_format_version,
-        .source_export_manifest_format_version = receipt.source_export_manifest_format_version,
-        .source_package_identity = receipt.source_package_identity,
-        .workflow_canonical_name = receipt.workflow_canonical_name,
-        .session_id = receipt.session_id,
-        .run_id = receipt.run_id,
-        .input_fixture = receipt.input_fixture,
-        .workflow_status = receipt.workflow_status,
-        .checkpoint_status = receipt.checkpoint_status,
-        .persistence_status = receipt.persistence_status,
-        .manifest_status = receipt.manifest_status,
-        .descriptor_status = receipt.descriptor_status,
-        .request_status = receipt.request_status,
-        .decision_status = receipt.decision_status,
-        .receipt_status = receipt.receipt_status,
-        .workflow_failure_summary = receipt.workflow_failure_summary,
-        .export_package_identity = receipt.export_package_identity,
-        .store_import_candidate_identity = receipt.store_import_candidate_identity,
-        .durable_store_import_request_identity = receipt.durable_store_import_request_identity,
-        .durable_store_import_decision_identity = receipt.durable_store_import_decision_identity,
-        .durable_store_import_receipt_identity = receipt.durable_store_import_receipt_identity,
-        .durable_store_import_receipt_persistence_request_identity = "",
-        .planned_durable_identity = receipt.planned_durable_identity,
-        .receipt_boundary_kind = receipt.receipt_boundary_kind,
-        .receipt_persistence_boundary_kind = PersistenceBoundaryKind::LocalContractOnly,
-        .receipt_persistence_request_status = PersistenceRequestStatus::Blocked,
-        .receipt_persistence_request_outcome = PersistenceRequestOutcome::BlockBlockedReceipt,
-        .accepted_for_receipt_persistence = false,
-        .next_required_adapter_capability = receipt.next_required_adapter_capability,
-        .receipt_persistence_blocker = std::nullopt,
-    };
-
-    if (receipt.receipt_blocker.has_value()) {
-        request.receipt_persistence_blocker = PersistenceBlocker{
-            .kind = to_persistence_blocker_kind(receipt.receipt_blocker->kind),
-            .message = receipt.receipt_blocker->message,
-            .required_capability = receipt.receipt_blocker->required_capability,
-        };
-    }
-
-    switch (receipt.receipt_status) {
-    case ReceiptStatus::ReadyForArchive:
-        request.receipt_persistence_request_status = PersistenceRequestStatus::ReadyToPersist;
-        request.receipt_persistence_request_outcome =
-            PersistenceRequestOutcome::PersistReadyReceipt;
-        request.receipt_persistence_boundary_kind =
-            PersistenceBoundaryKind::AdapterReceiptPersistenceConsumable;
-        request.accepted_for_receipt_persistence = true;
-        request.next_required_adapter_capability.reset();
-        request.receipt_persistence_blocker.reset();
-        break;
-    case ReceiptStatus::Blocked:
-        request.receipt_persistence_request_status = PersistenceRequestStatus::Blocked;
-        request.receipt_persistence_request_outcome =
-            PersistenceRequestOutcome::BlockBlockedReceipt;
-        request.receipt_persistence_boundary_kind = PersistenceBoundaryKind::LocalContractOnly;
-        request.accepted_for_receipt_persistence = false;
-        break;
-    case ReceiptStatus::Deferred:
-        request.receipt_persistence_request_status = PersistenceRequestStatus::Deferred;
-        request.receipt_persistence_request_outcome =
-            PersistenceRequestOutcome::DeferPartialReceipt;
-        request.receipt_persistence_boundary_kind = PersistenceBoundaryKind::LocalContractOnly;
-        request.accepted_for_receipt_persistence = false;
-        break;
-    case ReceiptStatus::Rejected:
-        request.receipt_persistence_request_status = PersistenceRequestStatus::Rejected;
-        request.receipt_persistence_request_outcome =
-            PersistenceRequestOutcome::RejectFailedReceipt;
-        request.receipt_persistence_boundary_kind = PersistenceBoundaryKind::LocalContractOnly;
-        request.accepted_for_receipt_persistence = false;
-        break;
-    }
-
-    request.durable_store_import_receipt_persistence_request_identity =
-        build_persistence_request_identity(request.source_package_identity,
-                                           request.workflow_canonical_name,
-                                           request.session_id,
-                                           request.receipt_persistence_request_outcome);
+    auto request = build_receipt_persistence_request_projection(receipt);
 
     const auto validation = validate_persistence_request(request);
     result.diagnostics.append(validation.diagnostics);

@@ -13,10 +13,6 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kReceiptFormatVersion =
     "ahfl.durable-store-import-decision-receipt.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportDecisionReceiptFormatVersion =
-    kReceiptFormatVersion;
-
 enum class ReceiptStatus {
     ReadyForArchive,
     Blocked,
@@ -24,19 +20,12 @@ enum class ReceiptStatus {
     Rejected,
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptStatus [[deprecated("Use ReceiptStatus")]] = ReceiptStatus;
-
 enum class ReceiptOutcome {
     ArchiveAcceptedDecision,
     BlockBlockedDecision,
     DeferPartialDecision,
     RejectFailedDecision,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptOutcome [[deprecated("Use ReceiptOutcome")]] =
-    ReceiptOutcome;
 
 enum class ReceiptBoundaryKind {
     LocalContractOnly,
@@ -113,9 +102,6 @@ struct Receipt {
     std::optional<ReceiptBlocker> receipt_blocker;
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceipt [[deprecated("Use Receipt")]] = Receipt;
-
 struct ReceiptValidationResult {
     DiagnosticBag diagnostics;
 
@@ -123,10 +109,6 @@ struct ReceiptValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptValidationResult
-    [[deprecated("Use ReceiptValidationResult")]] = ReceiptValidationResult;
 
 struct ReceiptResult {
     std::optional<Receipt> receipt;
@@ -137,21 +119,7 @@ struct ReceiptResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptResult [[deprecated("Use ReceiptResult")]] = ReceiptResult;
-
 [[nodiscard]] ReceiptValidationResult validate_receipt(const Receipt &receipt);
 [[nodiscard]] ReceiptResult build_receipt(const Decision &decision);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline ReceiptValidationResult
-validate_durable_store_import_decision_receipt(const Receipt &receipt) {
-    return validate_receipt(receipt);
-}
-
-[[nodiscard]] inline ReceiptResult
-build_durable_store_import_decision_receipt(const Decision &decision) {
-    return build_receipt(decision);
-}
 
 } // namespace ahfl::durable_store_import

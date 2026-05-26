@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace ahfl::ir {
@@ -23,6 +24,11 @@ class Pass {
     [[nodiscard]] virtual std::string_view name() const = 0;
     /// Returns true if the IR was modified.
     [[nodiscard]] virtual bool run(ir::Program &program) = 0;
+
+    /// Declare which analyses this pass requires (run before if missing).
+    [[nodiscard]] virtual std::vector<std::string_view> required_analyses() const { return {}; }
+    /// Declare which analyses this pass invalidates (cleared after run).
+    [[nodiscard]] virtual std::vector<std::string_view> invalidated_analyses() const { return {}; }
 };
 
 /// An analysis pass that inspects but does not modify the IR.
@@ -51,10 +57,22 @@ class PassManager {
         return analysis_results_;
     }
 
+    /// Set a filter: only passes whose name() is in the set will execute.
+    /// An empty filter means all passes run (default behavior).
+    void set_pass_filter(std::vector<std::string_view> pass_names);
+
+    /// Query registered pass/analysis names.
+    [[nodiscard]] std::vector<std::string_view> registered_pass_names() const;
+    [[nodiscard]] std::vector<std::string_view> registered_analysis_names() const;
+
   private:
     std::vector<std::unique_ptr<Pass>> passes_;
     std::vector<std::unique_ptr<AnalysisPass>> analyses_;
     std::vector<std::unique_ptr<AnalysisResult>> analysis_results_;
+    std::unordered_set<std::string_view> pass_filter_;
+
+    void ensure_analysis(std::string_view name, const ir::Program &program);
+    void invalidate_analysis(std::string_view name);
 };
 
 /// Convenience: create a PassManager with all default optimization passes registered.

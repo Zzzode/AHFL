@@ -8,8 +8,7 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_RECEIPT_PERSISTENCE_RESPONSE_REVIEW";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_RECEIPT_PERSISTENCE_RESPONSE_REVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -61,7 +60,7 @@ to_next_action_kind(PersistenceResponseStatus status, bool acknowledged) {
     case PersistenceResponseStatus::Blocked:
         return PersistenceResponseReviewNextActionKind::ResolveBlocker;
     case PersistenceResponseStatus::Deferred:
-        return PersistenceResponseReviewNextActionKind::WaitforCapability;
+        return PersistenceResponseReviewNextActionKind::WaitForCapability;
     case PersistenceResponseStatus::Rejected:
         return PersistenceResponseReviewNextActionKind::ReviewFailure;
     }

@@ -12,22 +12,12 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kPersistenceResponseReviewFormatVersion =
     "ahfl.durable-store-import-decision-receipt-persistence-response-review.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view
-    kDurableStoreImportDecisionReceiptPersistenceResponseReviewFormatVersion =
-        kPersistenceResponseReviewFormatVersion;
-
 enum class PersistenceResponseReviewNextActionKind {
     AcknowledgeResponse,
     ResolveBlocker,
-    WaitforCapability,
+    WaitForCapability,
     ReviewFailure,
 };
-
-// Legacy alias
-using ReceiptPersistenceResponseReviewNextActionKind
-    [[deprecated("Use PersistenceResponseReviewNextActionKind")]] =
-        PersistenceResponseReviewNextActionKind;
 
 struct PersistenceResponsePreview {
     std::string response_identity;
@@ -36,10 +26,6 @@ struct PersistenceResponsePreview {
     bool acknowledged_for_response;
     PersistenceResponseBoundaryKind response_boundary_kind;
 };
-
-// Legacy alias
-using ReceiptPersistenceResponsePreview [[deprecated("Use PersistenceResponsePreview")]] =
-    PersistenceResponsePreview;
 
 struct PersistenceResponseReviewSummary {
     std::string format_version{std::string(kPersistenceResponseReviewFormatVersion)};
@@ -75,10 +61,6 @@ struct PersistenceResponseReviewSummary {
         PersistenceResponseReviewNextActionKind::ResolveBlocker};
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptPersistenceResponseReviewSummary
-    [[deprecated("Use PersistenceResponseReviewSummary")]] = PersistenceResponseReviewSummary;
-
 struct PersistenceResponseReviewValidationResult {
     DiagnosticBag diagnostics;
 
@@ -86,11 +68,6 @@ struct PersistenceResponseReviewValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceResponseReviewValidationResult
-    [[deprecated("Use PersistenceResponseReviewValidationResult")]] =
-        PersistenceResponseReviewValidationResult;
 
 struct PersistenceResponseReviewResult {
     std::optional<PersistenceResponseReviewSummary> review;
@@ -101,27 +78,10 @@ struct PersistenceResponseReviewResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceResponseReviewResult
-    [[deprecated("Use PersistenceResponseReviewResult")]] = PersistenceResponseReviewResult;
-
 [[nodiscard]] PersistenceResponseReviewValidationResult
 validate_persistence_response_review(const PersistenceResponseReviewSummary &review);
 
 [[nodiscard]] PersistenceResponseReviewResult
 build_persistence_response_review(const PersistenceResponse &response);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline PersistenceResponseReviewValidationResult
-validate_durable_store_import_decision_receipt_persistence_response_review(
-    const PersistenceResponseReviewSummary &review) {
-    return validate_persistence_response_review(review);
-}
-
-[[nodiscard]] inline PersistenceResponseReviewResult
-build_durable_store_import_decision_receipt_persistence_response_review(
-    const PersistenceResponse &response) {
-    return build_persistence_response_review(response);
-}
 
 } // namespace ahfl::durable_store_import

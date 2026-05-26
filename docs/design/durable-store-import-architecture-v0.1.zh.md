@@ -27,8 +27,9 @@ flowchart LR
     StoreImport --> Request[DurableStoreImportRequest]
     Request --> Decision[DurableStoreImportDecision]
     Decision --> Receipt[DurableStoreImportReceipt]
-    Receipt --> ReceiptPersistence[ReceiptPersistenceRequest]
-    ReceiptPersistence --> Response[ReceiptPersistenceResponse]
+    Receipt --> ReceiptPersistenceStage[ReceiptPersistenceStage]
+    ReceiptPersistenceStage --> ReceiptPersistence[ReceiptPersistenceRequest Projection]
+    ReceiptPersistenceStage --> Response[ReceiptPersistenceResponse Projection]
     Response --> AdapterExecution[AdapterExecutionReceipt]
     AdapterExecution --> RecoveryPreview[RecoveryCommandPreview]
     Request --> ProviderBinding[Provider Binding]
@@ -50,7 +51,8 @@ core chain 负责从 store-import descriptor 走到 local fake durable-store exe
 | Request | durable-store-import-facing request boundary | `src/durable_store_import/request.hpp` |
 | Decision | adapter contract decision | `src/durable_store_import/decision.hpp` |
 | Receipt | adapter receipt boundary | `src/durable_store_import/receipt.hpp` |
-| Receipt persistence | receipt persistence request / response | `src/durable_store_import/receipt_persistence.hpp`, `src/durable_store_import/receipt_persistence_response.hpp` |
+| ReceiptPersistenceStage | receipt persistence state transition source of truth | `src/durable_store_import/receipt_persistence_stage.hpp` |
+| Receipt persistence projections | CLI / golden stable request and response projections | `src/durable_store_import/receipt_persistence.hpp`, `src/durable_store_import/receipt_persistence_response.hpp` |
 | Adapter execution | deterministic local fake durable-store execution | `src/durable_store_import/adapter_execution.hpp` |
 | Recovery preview | reviewer-facing recovery projection | `src/durable_store_import/recovery_preview.hpp` |
 
@@ -60,6 +62,10 @@ core chain 负责从 store-import descriptor 走到 local fake durable-store exe
 2. 每个 artifact 带 source format-version 链。
 3. review summary 不能反向成为 machine-facing 输入。
 4. local fake durable store 只用于 deterministic regression，不暴露真实 store URI、object path、database key、credential、resume token 或 retry token。
+
+Receipt persistence 的核心 seam 是 `ReceiptPersistenceStage`。`PersistenceRequest` 与 `PersistenceResponse` 保留为 wire-compatible projection，用于现有 CLI、golden 和 schema compatibility；状态、boundary、blocker 与 identity 映射不得在两个 projection builder 中重复实现。
+
+C++ model 层只暴露短语义名，例如 `Request`、`Decision`、`Receipt`、`PersistenceRequest`、`PersistenceResponse`。`durable-store-import-*` 长命名只能作为稳定外部 contract 出现在 CLI command、JSON field、format version、artifact id 或 golden 名称中，不能再作为内部 alias、builder shim 或 enum member 的命名策略。
 
 ## Provider Pipeline 领域
 

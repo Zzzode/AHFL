@@ -11,4 +11,6 @@ target_link_libraries(ahfl_package
         ahfl_support_lib
 )
 
+target_include_directories(ahfl_package PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_package)

@@ -13,8 +13,8 @@ namespace ahfl::scheduler_snapshot {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.SCHEDULER_SNAPSHOT";
-inline constexpr std::string_view kBootstrapDiagnosticCode = "AHFL.BE.SCHEDULER_SNAPSHOT_BOOTSTRAP";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"SCHEDULER_SNAPSHOT"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> kBootstrapDiagnosticCode{"SCHEDULER_SNAPSHOT_BOOTSTRAP"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -22,7 +22,7 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 
 void emit_bootstrap_error(DiagnosticBag &diagnostics, std::string message) {
     diagnostics.error()
-        .legacy_code(DiagnosticCategory::Backend, kBootstrapDiagnosticCode)
+        .code(kBootstrapDiagnosticCode)
         .message(std::move(message))
         .emit();
 }

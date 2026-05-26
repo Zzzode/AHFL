@@ -13,4 +13,6 @@ target_link_libraries(ahfl_passes
         ahfl_ir
 )
 
+target_include_directories(ahfl_passes PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_passes)

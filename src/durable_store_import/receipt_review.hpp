@@ -12,21 +12,13 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kReceiptReviewFormatVersion =
     "ahfl.durable-store-import-decision-receipt-review.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportDecisionReceiptReviewSummaryFormatVersion =
-    kReceiptReviewFormatVersion;
-
 enum class ReceiptReviewNextActionKind {
-    HandoffDurableStoreImportDecisionReceipt,
+    HandoffReceipt,
     ResolveRequiredAdapterCapability,
-    ArchiveCompletedDurableStoreImportDecisionReceipt,
-    PreservePartialDurableStoreImportDecisionReceipt,
-    InvestigateDurableStoreImportDecisionReceiptRejection,
+    ArchiveCompletedReceipt,
+    PreservePartialReceipt,
+    InvestigateReceiptRejection,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptReviewNextActionKind
-    [[deprecated("Use ReceiptReviewNextActionKind")]] = ReceiptReviewNextActionKind;
 
 struct ReceiptReviewSummary {
     std::string format_version{std::string(kReceiptReviewFormatVersion)};
@@ -74,10 +66,6 @@ struct ReceiptReviewSummary {
     std::string next_step_recommendation;
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptReviewSummary [[deprecated("Use ReceiptReviewSummary")]] =
-    ReceiptReviewSummary;
-
 struct ReceiptReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
@@ -85,11 +73,6 @@ struct ReceiptReviewSummaryValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptReviewSummaryValidationResult
-    [[deprecated("Use ReceiptReviewSummaryValidationResult")]] =
-        ReceiptReviewSummaryValidationResult;
 
 struct ReceiptReviewSummaryResult {
     std::optional<ReceiptReviewSummary> summary;
@@ -100,24 +83,9 @@ struct ReceiptReviewSummaryResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptReviewSummaryResult
-    [[deprecated("Use ReceiptReviewSummaryResult")]] = ReceiptReviewSummaryResult;
-
 [[nodiscard]] ReceiptReviewSummaryValidationResult
 validate_receipt_review_summary(const ReceiptReviewSummary &summary);
 
 [[nodiscard]] ReceiptReviewSummaryResult build_receipt_review_summary(const Receipt &receipt);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline ReceiptReviewSummaryValidationResult
-validate_durable_store_import_decision_receipt_review_summary(const ReceiptReviewSummary &summary) {
-    return validate_receipt_review_summary(summary);
-}
-
-[[nodiscard]] inline ReceiptReviewSummaryResult
-build_durable_store_import_decision_receipt_review_summary(const Receipt &receipt) {
-    return build_receipt_review_summary(receipt);
-}
 
 } // namespace ahfl::durable_store_import

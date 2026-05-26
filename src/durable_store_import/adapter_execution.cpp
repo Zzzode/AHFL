@@ -7,7 +7,7 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_ADAPTER_EXECUTION";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_ADAPTER_EXECUTION"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);

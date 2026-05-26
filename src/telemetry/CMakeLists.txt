@@ -10,4 +10,6 @@ target_link_libraries(ahfl_telemetry
         ahfl_support
 )
 
+target_include_directories(ahfl_telemetry PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_telemetry)

@@ -9,7 +9,7 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_REVIEW";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_REVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -73,15 +73,15 @@ void validate_adapter_blocker(const RequestBlocker &blocker, DiagnosticBag &diag
 [[nodiscard]] ReviewNextActionKind next_action_for_request(const Request &request) {
     switch (request.request_status) {
     case RequestStatus::ReadyForAdapter:
-        return ReviewNextActionKind::HandoffDurableStoreImportRequest;
+        return ReviewNextActionKind::HandoffRequest;
     case RequestStatus::Blocked:
         return ReviewNextActionKind::AwaitAdapterReadiness;
     case RequestStatus::TerminalCompleted:
-        return ReviewNextActionKind::ArchiveCompletedDurableStoreImportState;
+        return ReviewNextActionKind::ArchiveCompletedState;
     case RequestStatus::TerminalFailed:
-        return ReviewNextActionKind::InvestigateDurableStoreImportFailure;
+        return ReviewNextActionKind::InvestigateFailure;
     case RequestStatus::TerminalPartial:
-        return ReviewNextActionKind::PreservePartialDurableStoreImportState;
+        return ReviewNextActionKind::PreservePartialState;
     }
 
     return ReviewNextActionKind::AwaitAdapterReadiness;
@@ -309,7 +309,7 @@ ReviewSummaryValidationResult validate_review_summary(const ReviewSummary &summa
 
     switch (summary.request_status) {
     case RequestStatus::ReadyForAdapter:
-        if (summary.next_action != ReviewNextActionKind::HandoffDurableStoreImportRequest) {
+        if (summary.next_action != ReviewNextActionKind::HandoffRequest) {
             emit_validation_error(
                 diagnostics,
                 "durable store import review summary ReadyForAdapter request_status "
@@ -342,7 +342,7 @@ ReviewSummaryValidationResult validate_review_summary(const ReviewSummary &summa
         }
         break;
     case RequestStatus::TerminalCompleted:
-        if (summary.next_action != ReviewNextActionKind::ArchiveCompletedDurableStoreImportState) {
+        if (summary.next_action != ReviewNextActionKind::ArchiveCompletedState) {
             emit_validation_error(
                 diagnostics,
                 "durable store import review summary TerminalCompleted request_status requires "
@@ -366,7 +366,7 @@ ReviewSummaryValidationResult validate_review_summary(const ReviewSummary &summa
         }
         break;
     case RequestStatus::TerminalFailed:
-        if (summary.next_action != ReviewNextActionKind::InvestigateDurableStoreImportFailure) {
+        if (summary.next_action != ReviewNextActionKind::InvestigateFailure) {
             emit_validation_error(
                 diagnostics,
                 "durable store import review summary TerminalFailed request_status requires "
@@ -380,7 +380,7 @@ ReviewSummaryValidationResult validate_review_summary(const ReviewSummary &summa
         }
         break;
     case RequestStatus::TerminalPartial:
-        if (summary.next_action != ReviewNextActionKind::PreservePartialDurableStoreImportState) {
+        if (summary.next_action != ReviewNextActionKind::PreservePartialState) {
             emit_validation_error(
                 diagnostics,
                 "durable store import review summary TerminalPartial request_status requires "
