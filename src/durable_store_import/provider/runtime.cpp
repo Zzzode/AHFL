@@ -12,8 +12,7 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_runtime_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_RUNTIME";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_runtime_detail_kValidationDiagnosticCode{"DSI_PROVIDER_RUNTIME"};
 
 void provider_runtime_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                    std::string message) {
@@ -656,8 +655,7 @@ build_provider_runtime_readiness_review(const ProviderRuntimePreflightPlan &plan
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_sdk_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_SDK";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_sdk_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK"};
 
 void provider_sdk_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(

@@ -7,11 +7,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
 
 namespace {
 
-class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
-    : private ArtifactJsonWriter {
+class PersistenceRequestJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter(std::ostream &out)
-        : ArtifactJsonWriter(out) {}
+    explicit PersistenceRequestJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::PersistenceRequest &request) {
         print_object(0, [&](const auto &field) {
@@ -360,7 +358,7 @@ class DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter final
 
 void print_durable_store_import_receipt_persistence_request_json(
     const durable_store_import::PersistenceRequest &request, std::ostream &out) {
-    DurableStoreImportDecisionReceiptPersistenceRequestJsonPrinter(out).print(request);
+    PersistenceRequestJsonPrinter(out).print(request);
 }
 
 } // namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_receipt_persistence_request
@@ -370,11 +368,9 @@ namespace ahfl::durable_store_import_artifacts_detail::
 
 namespace {
 
-class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
-    : private ArtifactJsonWriter {
+class PersistenceResponseJsonPrinter final : private ArtifactJsonWriter {
   public:
-    explicit DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter(std::ostream &out)
-        : ArtifactJsonWriter(out) {}
+    explicit PersistenceResponseJsonPrinter(std::ostream &out) : ArtifactJsonWriter(out) {}
 
     void print(const durable_store_import::PersistenceResponse &response) {
         print_object(0, [&](const auto &field) {
@@ -754,7 +750,7 @@ class DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter final
 
 void print_durable_store_import_receipt_persistence_response_json(
     const durable_store_import::PersistenceResponse &response, std::ostream &out) {
-    DurableStoreImportDecisionReceiptPersistenceResponseJsonPrinter(out).print(response);
+    PersistenceResponseJsonPrinter(out).print(response);
 }
 
 } // namespace ahfl::durable_store_import_artifacts_detail::durable_store_import_receipt_persistence_response
@@ -819,7 +815,7 @@ next_action_name(durable_store_import::PersistenceResponseReviewNextActionKind a
         return "acknowledge_response";
     case durable_store_import::PersistenceResponseReviewNextActionKind::ResolveBlocker:
         return "resolve_blocker";
-    case durable_store_import::PersistenceResponseReviewNextActionKind::WaitforCapability:
+    case durable_store_import::PersistenceResponseReviewNextActionKind::WaitForCapability:
         return "wait_for_capability";
     case durable_store_import::PersistenceResponseReviewNextActionKind::ReviewFailure:
         return "review_failure";
@@ -1150,19 +1146,15 @@ receipt_persistence_request_outcome_name(durable_store_import::PersistenceReques
 [[nodiscard]] std::string
 next_action_name(durable_store_import::PersistenceReviewNextActionKind action) {
     switch (action) {
-    case durable_store_import::PersistenceReviewNextActionKind::
-        HandoffDurableStoreImportDecisionReceiptPersistenceRequest:
+    case durable_store_import::PersistenceReviewNextActionKind::HandoffPersistenceRequest:
         return "handoff_durable_store_import_decision_receipt_persistence_request";
     case durable_store_import::PersistenceReviewNextActionKind::ResolveRequiredAdapterCapability:
         return "resolve_required_adapter_capability";
-    case durable_store_import::PersistenceReviewNextActionKind::
-        PersistCompletedDurableStoreImportDecisionReceipt:
+    case durable_store_import::PersistenceReviewNextActionKind::PersistCompletedReceipt:
         return "persist_completed_durable_store_import_decision_receipt";
-    case durable_store_import::PersistenceReviewNextActionKind::
-        PreservePartialDurableStoreImportDecisionReceipt:
+    case durable_store_import::PersistenceReviewNextActionKind::PreservePartialReceipt:
         return "preserve_partial_durable_store_import_decision_receipt";
-    case durable_store_import::PersistenceReviewNextActionKind::
-        InvestigateDurableStoreImportDecisionReceiptPersistenceRejection:
+    case durable_store_import::PersistenceReviewNextActionKind::InvestigatePersistenceRejection:
         return "investigate_durable_store_import_decision_receipt_persistence_rejection";
     }
 

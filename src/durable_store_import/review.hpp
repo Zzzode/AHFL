@@ -14,21 +14,13 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kReviewSummaryFormatVersion =
     "ahfl.durable-store-import-review.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportReviewSummaryFormatVersion =
-    kReviewSummaryFormatVersion;
-
 enum class ReviewNextActionKind {
-    HandoffDurableStoreImportRequest,
+    HandoffRequest,
     AwaitAdapterReadiness,
-    ArchiveCompletedDurableStoreImportState,
-    InvestigateDurableStoreImportFailure,
-    PreservePartialDurableStoreImportState,
+    ArchiveCompletedState,
+    InvestigateFailure,
+    PreservePartialState,
 };
-
-// Legacy alias
-using DurableStoreImportReviewNextActionKind [[deprecated("Use ReviewNextActionKind")]] =
-    ReviewNextActionKind;
 
 struct ReviewSummary {
     std::string format_version{std::string(kReviewSummaryFormatVersion)};
@@ -70,9 +62,6 @@ struct ReviewSummary {
     std::string next_step_recommendation;
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportReviewSummary [[deprecated("Use ReviewSummary")]] = ReviewSummary;
-
 struct ReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
@@ -80,10 +69,6 @@ struct ReviewSummaryValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportReviewSummaryValidationResult
-    [[deprecated("Use ReviewSummaryValidationResult")]] = ReviewSummaryValidationResult;
 
 struct ReviewSummaryResult {
     std::optional<ReviewSummary> summary;
@@ -94,23 +79,8 @@ struct ReviewSummaryResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportReviewSummaryResult [[deprecated("Use ReviewSummaryResult")]] =
-    ReviewSummaryResult;
-
 [[nodiscard]] ReviewSummaryValidationResult validate_review_summary(const ReviewSummary &summary);
 
 [[nodiscard]] ReviewSummaryResult build_review_summary(const Request &request);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline ReviewSummaryValidationResult
-validate_durable_store_import_review_summary(const ReviewSummary &summary) {
-    return validate_review_summary(summary);
-}
-
-[[nodiscard]] inline ReviewSummaryResult
-build_durable_store_import_review_summary(const Request &request) {
-    return build_review_summary(request);
-}
 
 } // namespace ahfl::durable_store_import

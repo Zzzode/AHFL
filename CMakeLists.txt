@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(AHFL LANGUAGES CXX)
+project(AHFL VERSION 0.59.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +51,10 @@ else()
     message(STATUS "AHFL SMV checker for optional tests: not found")
 endif()
 
+option(AHFL_ENABLE_BACKEND_FORMAL "Build formal verification backend (SMV)" ON)
+option(AHFL_ENABLE_BACKEND_INFRA "Build infrastructure backends (WASM, K8s, OpenAPI, Terraform)" ON)
+option(AHFL_ENABLE_BACKEND_PIPELINE "Build pipeline observation backends" ON)
+
 add_subdirectory(third_party/antlr4)
 add_subdirectory(src)
 
@@ -58,3 +62,8 @@ enable_testing()
 add_subdirectory(tests)
 
 ahfl_enable_format_targets("${CMAKE_CURRENT_SOURCE_DIR}" "${CLANG_FORMAT_BIN}")
+
+option(AHFL_INSTALL "Generate install/export rules" OFF)
+if(AHFL_INSTALL)
+    include(cmake/modules/AhflInstall.cmake)
+endif()

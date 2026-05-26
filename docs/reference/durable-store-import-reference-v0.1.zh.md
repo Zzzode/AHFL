@@ -9,6 +9,7 @@
 | Area | Source |
 | --- | --- |
 | Core durable-store-import models | `src/durable_store_import/*.hpp` |
+| Receipt persistence transition rules | `src/durable_store_import/receipt_persistence_stage.hpp` |
 | Provider model domains | `src/durable_store_import/provider/**/*.hpp` |
 | Provider artifact descriptors | `src/durable_store_import/provider_artifacts.def` |
 | Provider CLI artifact registry | `src/cli/pipeline_durable_store_import_provider_artifacts.def` |
@@ -34,6 +35,11 @@ emit-durable-store-import-adapter-execution
 emit-durable-store-import-recovery-preview
 emit-durable-store-import-decision-review
 ```
+
+`emit-durable-store-import-receipt-persistence-request` 与
+`emit-durable-store-import-receipt-persistence-response` 是稳定 CLI projection。不要在各自 builder 里复制状态映射；核心规则必须放在 `ReceiptPersistenceStage`。
+
+内部 C++ API 不提供 `build_durable_store_import_*` 兼容 shim；新增模型和 review action 应使用短语义名，并由 artifact printer 映射到稳定 JSON 字符串。
 
 Provider 命令由 `src/cli/durable_store_import_provider_commands.def` 注册生成。不要复制 command handler 来新增 provider 命令；新增时应在 `src/cli/pipeline_durable_store_import_provider_artifacts.def` 添加一条 artifact 记录，在 `src/cli/durable_store_import_provider_commands.def` 添加一条 command 记录，再交给 `ProviderPipeline` 统一 dispatch。
 

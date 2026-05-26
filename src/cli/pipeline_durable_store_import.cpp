@@ -27,7 +27,7 @@
 namespace ahfl::cli {
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Request>
-build_durable_store_import_request_for_cli(const ahfl::ir::Program &program,
+build_import_request_for_cli(const ahfl::ir::Program &program,
                                            const ahfl::handoff::PackageMetadata &metadata,
                                            const ahfl::dry_run::CapabilityMockSet &mock_set,
                                            const CommandLineOptions &options,
@@ -45,7 +45,7 @@ build_durable_store_import_request_for_cli(const ahfl::ir::Program &program,
     }
 
     const auto request_result =
-        ahfl::durable_store_import::build_durable_store_import_request(*store_import_descriptor);
+        ahfl::durable_store_import::build_request(*store_import_descriptor);
     request_result.diagnostics.render(std::cerr);
     if (request_result.has_errors() || !request_result.request.has_value()) {
         return std::nullopt;
@@ -55,18 +55,18 @@ build_durable_store_import_request_for_cli(const ahfl::ir::Program &program,
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Decision>
-build_durable_store_import_decision_for_cli(const ahfl::ir::Program &program,
+build_import_decision_for_cli(const ahfl::ir::Program &program,
                                             const ahfl::handoff::PackageMetadata &metadata,
                                             const ahfl::dry_run::CapabilityMockSet &mock_set,
                                             const CommandLineOptions &options,
                                             std::string_view command_name) {
-    const auto request = build_durable_store_import_request_for_cli(
+    const auto request = build_import_request_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!request.has_value()) {
         return std::nullopt;
     }
 
-    const auto decision = ahfl::durable_store_import::build_durable_store_import_decision(*request);
+    const auto decision = ahfl::durable_store_import::build_decision(*request);
     decision.diagnostics.render(std::cerr);
     if (decision.has_errors() || !decision.decision.has_value()) {
         return std::nullopt;
@@ -76,19 +76,19 @@ build_durable_store_import_decision_for_cli(const ahfl::ir::Program &program,
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Receipt>
-build_durable_store_import_receipt_for_cli(const ahfl::ir::Program &program,
+build_receipt_for_cli(const ahfl::ir::Program &program,
                                            const ahfl::handoff::PackageMetadata &metadata,
                                            const ahfl::dry_run::CapabilityMockSet &mock_set,
                                            const CommandLineOptions &options,
                                            std::string_view command_name) {
-    const auto decision = build_durable_store_import_decision_for_cli(
+    const auto decision = build_import_decision_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!decision.has_value()) {
         return std::nullopt;
     }
 
     const auto receipt =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt(*decision);
+        ahfl::durable_store_import::build_receipt(*decision);
     receipt.diagnostics.render(std::cerr);
     if (receipt.has_errors() || !receipt.receipt.has_value()) {
         return std::nullopt;
@@ -98,20 +98,20 @@ build_durable_store_import_receipt_for_cli(const ahfl::ir::Program &program,
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceRequest>
-build_durable_store_import_receipt_persistence_request_for_cli(
+build_receipt_persistence_request_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto receipt = build_durable_store_import_receipt_for_cli(
+    const auto receipt = build_receipt_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!receipt.has_value()) {
         return std::nullopt;
     }
 
     const auto request =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt_persistence_request(
+        ahfl::durable_store_import::build_persistence_request(
             *receipt);
     request.diagnostics.render(std::cerr);
     if (request.has_errors() || !request.request.has_value()) {
@@ -126,7 +126,7 @@ emit_durable_store_import_request_with_diagnostics(const ahfl::ir::Program &prog
                                                    const ahfl::handoff::PackageMetadata &metadata,
                                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
                                                    const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_request_for_cli,
+    return emit_cli_artifact(build_import_request_for_cli,
                              ahfl::print_durable_store_import_request_json,
                              program,
                              metadata,
@@ -140,14 +140,14 @@ emit_durable_store_import_review_with_diagnostics(const ahfl::ir::Program &progr
                                                   const ahfl::handoff::PackageMetadata &metadata,
                                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
                                                   const CommandLineOptions &options) {
-    const auto request = build_durable_store_import_request_for_cli(
+    const auto request = build_import_request_for_cli(
         program, metadata, mock_set, options, "emit-durable-store-import-review");
     if (!request.has_value()) {
         return 1;
     }
 
     const auto review =
-        ahfl::durable_store_import::build_durable_store_import_review_summary(*request);
+        ahfl::durable_store_import::build_review_summary(*request);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
         return 1;
@@ -162,7 +162,7 @@ emit_durable_store_import_review_with_diagnostics(const ahfl::ir::Program &progr
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_decision_for_cli,
+    return emit_cli_artifact(build_import_decision_for_cli,
                              ahfl::print_durable_store_import_decision_json,
                              program,
                              metadata,
@@ -176,7 +176,7 @@ emit_durable_store_import_receipt_with_diagnostics(const ahfl::ir::Program &prog
                                                    const ahfl::handoff::PackageMetadata &metadata,
                                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
                                                    const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_receipt_for_cli,
+    return emit_cli_artifact(build_receipt_for_cli,
                              ahfl::print_durable_store_import_receipt_json,
                              program,
                              metadata,
@@ -191,7 +191,7 @@ emit_durable_store_import_receipt_with_diagnostics(const ahfl::ir::Program &prog
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
     return emit_cli_artifact(
-        build_durable_store_import_receipt_persistence_request_for_cli,
+        build_receipt_persistence_request_for_cli,
         ahfl::print_durable_store_import_receipt_persistence_request_json,
         program,
         metadata,
@@ -201,19 +201,19 @@ emit_durable_store_import_receipt_with_diagnostics(const ahfl::ir::Program &prog
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ReceiptReviewSummary>
-build_durable_store_import_receipt_review_for_cli(const ahfl::ir::Program &program,
+build_receipt_review_for_cli(const ahfl::ir::Program &program,
                                                   const ahfl::handoff::PackageMetadata &metadata,
                                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
                                                   const CommandLineOptions &options,
                                                   std::string_view command_name) {
-    const auto receipt = build_durable_store_import_receipt_for_cli(
+    const auto receipt = build_receipt_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!receipt.has_value()) {
         return std::nullopt;
     }
 
     const auto review =
-        ahfl::durable_store_import::build_durable_store_import_decision_receipt_review_summary(
+        ahfl::durable_store_import::build_receipt_review_summary(
             *receipt);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
@@ -228,7 +228,7 @@ build_durable_store_import_receipt_review_for_cli(const ahfl::ir::Program &progr
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_receipt_review_for_cli,
+    return emit_cli_artifact(build_receipt_review_for_cli,
                              ahfl::print_durable_store_import_receipt_review,
                              program,
                              metadata,
@@ -238,13 +238,13 @@ build_durable_store_import_receipt_review_for_cli(const ahfl::ir::Program &progr
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceReviewSummary>
-build_durable_store_import_receipt_persistence_review_for_cli(
+build_receipt_persistence_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto request = build_durable_store_import_receipt_persistence_request_for_cli(
+    const auto request = build_receipt_persistence_request_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!request.has_value()) {
         return std::nullopt;
@@ -264,7 +264,7 @@ build_durable_store_import_receipt_persistence_review_for_cli(
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_receipt_persistence_review_for_cli,
+    return emit_cli_artifact(build_receipt_persistence_review_for_cli,
                              ahfl::print_durable_store_import_receipt_persistence_review,
                              program,
                              metadata,
@@ -274,20 +274,20 @@ build_durable_store_import_receipt_persistence_review_for_cli(
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceResponse>
-build_durable_store_import_receipt_persistence_response_for_cli(
+build_receipt_persistence_response_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto request = build_durable_store_import_receipt_persistence_request_for_cli(
+    const auto request = build_receipt_persistence_request_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!request.has_value()) {
         return std::nullopt;
     }
 
     const auto response = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_response(*request);
+        build_persistence_response(*request);
     response.diagnostics.render(std::cerr);
     if (response.has_errors() || !response.response.has_value()) {
         return std::nullopt;
@@ -301,7 +301,7 @@ build_durable_store_import_receipt_persistence_response_for_cli(
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_receipt_persistence_response_for_cli,
+    return emit_cli_artifact(build_receipt_persistence_response_for_cli,
                              ahfl::print_durable_store_import_receipt_persistence_response_json,
                              program,
                              metadata,
@@ -311,20 +311,20 @@ build_durable_store_import_receipt_persistence_response_for_cli(
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceResponseReviewSummary>
-build_durable_store_import_receipt_persistence_response_review_for_cli(
+build_receipt_persistence_response_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto response = build_durable_store_import_receipt_persistence_response_for_cli(
+    const auto response = build_receipt_persistence_response_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!response.has_value()) {
         return std::nullopt;
     }
 
     const auto review = ahfl::durable_store_import::
-        build_durable_store_import_decision_receipt_persistence_response_review(*response);
+        build_persistence_response_review(*response);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.review.has_value()) {
         return std::nullopt;
@@ -339,7 +339,7 @@ build_durable_store_import_receipt_persistence_response_review_for_cli(
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
     return emit_cli_artifact(
-        build_durable_store_import_receipt_persistence_response_review_for_cli,
+        build_receipt_persistence_response_review_for_cli,
         ahfl::print_durable_store_import_receipt_persistence_response_review,
         program,
         metadata,
@@ -349,13 +349,13 @@ build_durable_store_import_receipt_persistence_response_review_for_cli(
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::AdapterExecutionReceipt>
-build_durable_store_import_adapter_execution_for_cli(
+build_adapter_execution_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto response = build_durable_store_import_receipt_persistence_response_for_cli(
+    const auto response = build_receipt_persistence_response_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!response.has_value()) {
         return std::nullopt;
@@ -375,7 +375,7 @@ build_durable_store_import_adapter_execution_for_cli(
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_adapter_execution_for_cli,
+    return emit_cli_artifact(build_adapter_execution_for_cli,
                              ahfl::print_durable_store_import_adapter_execution_json,
                              program,
                              metadata,
@@ -385,13 +385,13 @@ build_durable_store_import_adapter_execution_for_cli(
 }
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::RecoveryCommandPreview>
-build_durable_store_import_recovery_preview_for_cli(
+build_recovery_preview_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto execution = build_durable_store_import_adapter_execution_for_cli(
+    const auto execution = build_adapter_execution_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!execution.has_value()) {
         return std::nullopt;
@@ -411,7 +411,7 @@ build_durable_store_import_recovery_preview_for_cli(
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    return emit_cli_artifact(build_durable_store_import_recovery_preview_for_cli,
+    return emit_cli_artifact(build_recovery_preview_for_cli,
                              ahfl::print_durable_store_import_recovery_preview,
                              program,
                              metadata,
@@ -427,7 +427,7 @@ build_provider_write_attempt_for_cli(
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
     std::string_view command_name) {
-    const auto execution = build_durable_store_import_adapter_execution_for_cli(
+    const auto execution = build_adapter_execution_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!execution.has_value()) {
         return std::nullopt;
@@ -516,14 +516,14 @@ build_provider_driver_readiness_for_cli(
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options) {
-    const auto decision = build_durable_store_import_decision_for_cli(
+    const auto decision = build_import_decision_for_cli(
         program, metadata, mock_set, options, "emit-durable-store-import-decision-review");
     if (!decision.has_value()) {
         return 1;
     }
 
     const auto review =
-        ahfl::durable_store_import::build_durable_store_import_decision_review_summary(*decision);
+        ahfl::durable_store_import::build_decision_review_summary(*decision);
     review.diagnostics.render(std::cerr);
     if (review.has_errors() || !review.summary.has_value()) {
         return 1;

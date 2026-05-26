@@ -37,6 +37,7 @@ else()
     add_executable(fuzz_smv_emitter_check fuzz/fuzz_smv_emitter.cpp)
     target_link_libraries(fuzz_smv_emitter_check PRIVATE ahfl_formal)
     target_compile_definitions(fuzz_smv_emitter_check PRIVATE AHFL_FUZZ_STANDALONE=1)
+    target_include_directories(fuzz_smv_emitter_check PRIVATE ${PROJECT_SOURCE_DIR}/src)
     ahfl_apply_project_warnings(fuzz_smv_emitter_check)
 
     add_test(NAME ahfl.fuzz.parser_check COMMAND $<TARGET_FILE:fuzz_parser_check>)

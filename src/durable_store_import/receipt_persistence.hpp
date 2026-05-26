@@ -12,21 +12,12 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kPersistenceRequestFormatVersion =
     "ahfl.durable-store-import-decision-receipt-persistence-request.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view
-    kDurableStoreImportDecisionReceiptPersistenceRequestFormatVersion =
-        kPersistenceRequestFormatVersion;
-
 enum class PersistenceRequestStatus {
     ReadyToPersist,
     Blocked,
     Deferred,
     Rejected,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceRequestStatus
-    [[deprecated("Use PersistenceRequestStatus")]] = PersistenceRequestStatus;
 
 enum class PersistenceRequestOutcome {
     PersistReadyReceipt,
@@ -35,18 +26,10 @@ enum class PersistenceRequestOutcome {
     RejectFailedReceipt,
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceRequestOutcome
-    [[deprecated("Use PersistenceRequestOutcome")]] = PersistenceRequestOutcome;
-
 enum class PersistenceBoundaryKind {
     LocalContractOnly,
     AdapterReceiptPersistenceConsumable,
 };
-
-// Legacy alias
-using ReceiptPersistenceBoundaryKind [[deprecated("Use PersistenceBoundaryKind")]] =
-    PersistenceBoundaryKind;
 
 enum class PersistenceBlockerKind {
     SourceReceiptBlocked,
@@ -55,18 +38,11 @@ enum class PersistenceBlockerKind {
     WorkflowFailure,
 };
 
-// Legacy alias
-using ReceiptPersistenceBlockerKind [[deprecated("Use PersistenceBlockerKind")]] =
-    PersistenceBlockerKind;
-
 struct PersistenceBlocker {
     PersistenceBlockerKind kind{PersistenceBlockerKind::SourceReceiptBlocked};
     std::string message;
     std::optional<AdapterCapabilityKind> required_capability;
 };
-
-// Legacy alias
-using ReceiptPersistenceBlocker [[deprecated("Use PersistenceBlocker")]] = PersistenceBlocker;
 
 struct PersistenceRequest {
     std::string format_version{std::string(kPersistenceRequestFormatVersion)};
@@ -134,10 +110,6 @@ struct PersistenceRequest {
     std::optional<PersistenceBlocker> receipt_persistence_blocker; // Keep for JSON compatibility
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptPersistenceRequest [[deprecated("Use PersistenceRequest")]] =
-    PersistenceRequest;
-
 struct PersistenceRequestValidationResult {
     DiagnosticBag diagnostics;
 
@@ -145,10 +117,6 @@ struct PersistenceRequestValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceRequestValidationResult
-    [[deprecated("Use PersistenceRequestValidationResult")]] = PersistenceRequestValidationResult;
 
 struct PersistenceRequestResult {
     std::optional<PersistenceRequest> request;
@@ -159,25 +127,9 @@ struct PersistenceRequestResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceRequestResult
-    [[deprecated("Use PersistenceRequestResult")]] = PersistenceRequestResult;
-
 [[nodiscard]] PersistenceRequestValidationResult
 validate_persistence_request(const PersistenceRequest &request);
 
 [[nodiscard]] PersistenceRequestResult build_persistence_request(const Receipt &receipt);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline PersistenceRequestValidationResult
-validate_durable_store_import_decision_receipt_persistence_request(
-    const PersistenceRequest &request) {
-    return validate_persistence_request(request);
-}
-
-[[nodiscard]] inline PersistenceRequestResult
-build_durable_store_import_decision_receipt_persistence_request(const Receipt &receipt) {
-    return build_persistence_request(receipt);
-}
 
 } // namespace ahfl::durable_store_import

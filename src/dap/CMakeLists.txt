@@ -11,4 +11,6 @@ target_link_libraries(ahfl_dap
         ahfl_json
 )
 
+target_include_directories(ahfl_dap PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_dap)

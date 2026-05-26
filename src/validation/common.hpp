@@ -12,16 +12,6 @@
 
 namespace ahfl::validation {
 
-namespace code {
-inline constexpr std::string_view kVersionMismatch = "AHFL.VAL.VERSION_MISMATCH";
-inline constexpr std::string_view kRequiredFieldEmpty = "AHFL.VAL.REQUIRED_FIELD_EMPTY";
-inline constexpr std::string_view kOptionalFieldEmpty = "AHFL.VAL.OPTIONAL_FIELD_EMPTY";
-inline constexpr std::string_view kFailureSummaryEmptyMessage =
-    "AHFL.VAL.FAILURE_SUMMARY_EMPTY_MESSAGE";
-inline constexpr std::string_view kFailureSummaryEmptyNodeName =
-    "AHFL.VAL.FAILURE_SUMMARY_EMPTY_NODE_NAME";
-} // namespace code
-
 [[nodiscard]] inline std::string scoped_label(std::string_view scope, std::string_view field) {
     if (scope.empty()) {
         return std::string(field);
@@ -39,11 +29,10 @@ inline constexpr std::string_view kFailureSummaryEmptyNodeName =
 }
 
 inline void
-emit_validation_error(DiagnosticBag &diagnostics, std::string_view code, std::string message) {
-    diagnostics.error()
-        .legacy_code(DiagnosticCategory::Validation, code)
-        .message(std::move(message))
-        .emit();
+emit_validation_error(DiagnosticBag &diagnostics,
+                      ErrorCode<DiagnosticCategory::Validation> err_code,
+                      std::string message) {
+    diagnostics.error().code(err_code).message(std::move(message)).emit();
 }
 
 inline void require_version(DiagnosticBag &diagnostics,
@@ -56,7 +45,7 @@ inline void require_version(DiagnosticBag &diagnostics,
     }
 
     emit_validation_error(diagnostics,
-                          code::kVersionMismatch,
+                          error_codes::validation::VersionMismatch,
                           scoped_label(scope, field) + " must be '" + std::string(expected) + "'");
 }
 
@@ -69,7 +58,9 @@ inline void require_non_empty(DiagnosticBag &diagnostics,
     }
 
     emit_validation_error(
-        diagnostics, code::kRequiredFieldEmpty, scoped_label(scope, field) + " must not be empty");
+        diagnostics,
+        error_codes::validation::RequiredFieldEmpty,
+        scoped_label(scope, field) + " must not be empty");
 }
 
 inline void require_optional_non_empty(DiagnosticBag &diagnostics,
@@ -82,7 +73,7 @@ inline void require_optional_non_empty(DiagnosticBag &diagnostics,
     }
 
     emit_validation_error(diagnostics,
-                          code::kOptionalFieldEmpty,
+                          error_codes::validation::OptionalFieldEmpty,
                           scoped_label(scope, field) + " " + std::string(suffix));
 }
 
@@ -176,7 +167,7 @@ inline void validate_failure_summary_owner(const runtime_session::RuntimeFailure
                                            std::string_view scope) {
     if (summary.message.empty()) {
         emit_validation_error(diagnostics,
-                              code::kFailureSummaryEmptyMessage,
+                              error_codes::validation::FailureSummaryEmptyMessage,
                               scoped_message(scope,
                                              std::string(owner_name) +
                                                  " contains failure summary with empty message"));
@@ -184,7 +175,7 @@ inline void validate_failure_summary_owner(const runtime_session::RuntimeFailure
 
     if (summary.node_name.has_value() && summary.node_name->empty()) {
         emit_validation_error(diagnostics,
-                              code::kFailureSummaryEmptyNodeName,
+                              error_codes::validation::FailureSummaryEmptyNodeName,
                               scoped_message(scope,
                                              std::string(owner_name) +
                                                  " contains failure summary with empty node_name"));

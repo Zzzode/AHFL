@@ -1,8 +1,8 @@
 add_library(ahfl_support INTERFACE)
 target_include_directories(ahfl_support
     INTERFACE
-        ${PROJECT_SOURCE_DIR}/include
-        ${PROJECT_SOURCE_DIR}/src
+        $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
 )
 ahfl_enable_cxx23(ahfl_support)
 
@@ -14,16 +14,40 @@ add_subdirectory(semantics)
 add_subdirectory(ir)
 add_subdirectory(assurance)
 add_subdirectory(handoff)
-add_subdirectory(dry_run)
-add_subdirectory(runtime_session)
-add_subdirectory(execution_journal)
-add_subdirectory(replay_view)
-add_subdirectory(audit_report)
-add_subdirectory(scheduler_snapshot)
-add_subdirectory(checkpoint_record)
-add_subdirectory(persistence_descriptor)
-add_subdirectory(persistence_export)
-add_subdirectory(store_import)
+add_library(ahfl_execution_pipeline STATIC
+    dry_run/mock.cpp
+    dry_run/runner.cpp
+    runtime_session/session.cpp
+    execution_journal/journal.cpp
+    replay_view/replay.cpp
+)
+target_link_libraries(ahfl_execution_pipeline PUBLIC ahfl_handoff)
+target_include_directories(ahfl_execution_pipeline PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_execution_pipeline)
+
+add_library(ahfl_observation STATIC
+    audit_report/report.cpp
+    scheduler_snapshot/snapshot.cpp
+    scheduler_snapshot/review.cpp
+    checkpoint_record/record.cpp
+    checkpoint_record/review.cpp
+)
+target_link_libraries(ahfl_observation PUBLIC ahfl_execution_pipeline)
+target_include_directories(ahfl_observation PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_observation)
+
+add_library(ahfl_persistence STATIC
+    persistence_descriptor/descriptor.cpp
+    persistence_descriptor/review.cpp
+    persistence_export/manifest.cpp
+    persistence_export/review.cpp
+    store_import/descriptor.cpp
+    store_import/review.cpp
+)
+target_link_libraries(ahfl_persistence PUBLIC ahfl_observation)
+target_include_directories(ahfl_persistence PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_persistence)
+
 add_subdirectory(durable_store_import)
 add_subdirectory(evaluator)
 add_subdirectory(runtime)
@@ -60,20 +84,12 @@ add_library(ahfl_runtime_stack INTERFACE)
 target_link_libraries(ahfl_runtime_stack
     INTERFACE
         ahfl_handoff
-        ahfl_dry_run
+        ahfl_execution_pipeline
         ahfl_evaluator
         ahfl_runtime
-        ahfl_runtime_session
-        ahfl_execution_journal
-        ahfl_replay_view
-        ahfl_audit_report
-        ahfl_scheduler_snapshot
-        ahfl_checkpoint_record
-        ahfl_persistence_descriptor
-        ahfl_persistence_export
-        ahfl_store_import
+        ahfl_observation
+        ahfl_persistence
         ahfl_durable_store_import
-        ahfl_durable_store_import_artifacts
         ahfl_formal
         ahfl_llm_provider
         ahfl_secret

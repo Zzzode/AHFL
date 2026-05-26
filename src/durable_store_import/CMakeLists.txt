@@ -6,6 +6,7 @@ set(AHFL_DURABLE_STORE_IMPORT_CORE_SOURCES
     receipt_persistence.cpp
     receipt_persistence_response.cpp
     receipt_persistence_response_review.cpp
+    receipt_persistence_stage.cpp
     receipt_persistence_review.cpp
     recovery_preview.cpp
     receipt_review.cpp
@@ -13,57 +14,17 @@ set(AHFL_DURABLE_STORE_IMPORT_CORE_SOURCES
     review.cpp
 )
 
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_BINDING_SOURCES
+set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_SOURCES
     provider/binding.cpp
     provider/artifacts.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_RUNTIME_SOURCES
     provider/runtime.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_EXECUTION_SOURCES
     provider/execution.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_SDK_SOURCES
     provider/sdk.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_CONFIGURATION_SOURCES
     provider/configuration.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_RELIABILITY_SOURCES
     provider/reliability.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_GOVERNANCE_SOURCES
     provider/governance.cpp
-)
-
-set(AHFL_DURABLE_STORE_IMPORT_PROVIDER_PRODUCTION_SOURCES
     provider/production.cpp
 )
-
-add_library(ahfl_durable_store_import STATIC
-    ${AHFL_DURABLE_STORE_IMPORT_CORE_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_BINDING_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_RUNTIME_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_EXECUTION_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_SDK_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_CONFIGURATION_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_RELIABILITY_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_GOVERNANCE_SOURCES}
-    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_PRODUCTION_SOURCES}
-)
-
-target_link_libraries(ahfl_durable_store_import
-    PUBLIC
-        ahfl_store_import
-)
-
-ahfl_apply_project_warnings(ahfl_durable_store_import)
 
 set(AHFL_DURABLE_STORE_IMPORT_ARTIFACT_SOURCES
     artifacts.cpp
@@ -77,14 +38,34 @@ set(AHFL_DURABLE_STORE_IMPORT_ARTIFACT_SOURCES
     artifacts/provider_sdk.cpp
 )
 
+# --- Core: decision/receipt/request types ---
+add_library(ahfl_durable_store_import_core STATIC
+    ${AHFL_DURABLE_STORE_IMPORT_CORE_SOURCES}
+)
+target_link_libraries(ahfl_durable_store_import_core PUBLIC ahfl_persistence)
+target_include_directories(ahfl_durable_store_import_core PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_durable_store_import_core)
+
+# --- Providers: binding/runtime/execution/sdk/config/reliability/governance/production ---
+add_library(ahfl_durable_store_import_providers STATIC
+    ${AHFL_DURABLE_STORE_IMPORT_PROVIDER_SOURCES}
+)
+target_link_libraries(ahfl_durable_store_import_providers PUBLIC ahfl_durable_store_import_core)
+target_include_directories(ahfl_durable_store_import_providers PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_durable_store_import_providers)
+
+# --- Artifacts: emission/serialization of all artifact types ---
 add_library(ahfl_durable_store_import_artifacts STATIC
     ${AHFL_DURABLE_STORE_IMPORT_ARTIFACT_SOURCES}
 )
-
-target_link_libraries(ahfl_durable_store_import_artifacts
-    PUBLIC
-        ahfl_durable_store_import
-        ahfl_support
-)
-
+target_link_libraries(ahfl_durable_store_import_artifacts PUBLIC ahfl_durable_store_import_core)
+target_include_directories(ahfl_durable_store_import_artifacts PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_durable_store_import_artifacts)
+
+# --- Aggregator (backward-compatible) ---
+add_library(ahfl_durable_store_import INTERFACE)
+target_link_libraries(ahfl_durable_store_import INTERFACE
+    ahfl_durable_store_import_core
+    ahfl_durable_store_import_providers
+    ahfl_durable_store_import_artifacts
+)
