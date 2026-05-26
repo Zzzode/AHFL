@@ -12,8 +12,7 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_config_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_CONFIG";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_config_detail_kValidationDiagnosticCode{"DSI_PROVIDER_CONFIG"};
 
 void provider_config_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(
@@ -570,8 +569,7 @@ build_provider_config_readiness_review(const ProviderConfigSnapshotPlaceholder &
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_secret_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_SECRET";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_secret_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SECRET"};
 
 void provider_secret_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(
@@ -1107,9 +1105,8 @@ build_provider_secret_policy_review(const ProviderSecretResolverResponsePlacehol
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view
-    provider_config_bundle_validation_detail_kValidationDiagnosticCode =
-        "AHFL.VAL.DSI_PROVIDER_CONFIG_BUNDLE_VALIDATION";
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_config_bundle_validation_detail_kValidationDiagnosticCode{"DSI_PROVIDER_CONFIG_BUNDLE_VALIDATION"};
 
 void provider_config_bundle_validation_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                     std::string message) {

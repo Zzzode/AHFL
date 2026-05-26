@@ -14,4 +14,6 @@ target_link_libraries(ahfl_support_lib
 find_package(Threads REQUIRED)
 target_link_libraries(ahfl_support_lib PUBLIC Threads::Threads)
 
+target_include_directories(ahfl_support_lib PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_support_lib)

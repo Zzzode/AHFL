@@ -12,22 +12,13 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kPersistenceReviewFormatVersion =
     "ahfl.durable-store-import-decision-receipt-persistence-review.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view
-    kDurableStoreImportDecisionReceiptPersistenceReviewSummaryFormatVersion =
-        kPersistenceReviewFormatVersion;
-
 enum class PersistenceReviewNextActionKind {
-    HandoffDurableStoreImportDecisionReceiptPersistenceRequest,
+    HandoffPersistenceRequest,
     ResolveRequiredAdapterCapability,
-    PersistCompletedDurableStoreImportDecisionReceipt,
-    PreservePartialDurableStoreImportDecisionReceipt,
-    InvestigateDurableStoreImportDecisionReceiptPersistenceRejection,
+    PersistCompletedReceipt,
+    PreservePartialReceipt,
+    InvestigatePersistenceRejection,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceReviewNextActionKind
-    [[deprecated("Use PersistenceReviewNextActionKind")]] = PersistenceReviewNextActionKind;
 
 struct PersistenceReviewSummary {
     std::string format_version{std::string(kPersistenceReviewFormatVersion)};
@@ -82,10 +73,6 @@ struct PersistenceReviewSummary {
     std::string next_step_recommendation;
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReceiptPersistenceReviewSummary
-    [[deprecated("Use PersistenceReviewSummary")]] = PersistenceReviewSummary;
-
 struct PersistenceReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
@@ -93,11 +80,6 @@ struct PersistenceReviewSummaryValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceReviewSummaryValidationResult
-    [[deprecated("Use PersistenceReviewSummaryValidationResult")]] =
-        PersistenceReviewSummaryValidationResult;
 
 struct PersistenceReviewSummaryResult {
     std::optional<PersistenceReviewSummary> summary;
@@ -108,27 +90,10 @@ struct PersistenceReviewSummaryResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReceiptPersistenceReviewSummaryResult
-    [[deprecated("Use PersistenceReviewSummaryResult")]] = PersistenceReviewSummaryResult;
-
 [[nodiscard]] PersistenceReviewSummaryValidationResult
 validate_persistence_review_summary(const PersistenceReviewSummary &summary);
 
 [[nodiscard]] PersistenceReviewSummaryResult
 build_persistence_review_summary(const PersistenceRequest &request);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline PersistenceReviewSummaryValidationResult
-validate_durable_store_import_decision_receipt_persistence_review_summary(
-    const PersistenceReviewSummary &summary) {
-    return validate_persistence_review_summary(summary);
-}
-
-[[nodiscard]] inline PersistenceReviewSummaryResult
-build_durable_store_import_decision_receipt_persistence_review_summary(
-    const PersistenceRequest &request) {
-    return build_persistence_review_summary(request);
-}
 
 } // namespace ahfl::durable_store_import

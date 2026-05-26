@@ -20,6 +20,8 @@ target_link_libraries(ahflc
         ahfl_compiler
 )
 
+target_include_directories(ahflc PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahflc)
 
 add_executable(ahfl-run
@@ -30,5 +32,7 @@ target_link_libraries(ahfl-run
     PRIVATE
         ahfl_compiler
 )
+
+target_include_directories(ahfl-run PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 ahfl_apply_project_warnings(ahfl-run)

@@ -8,7 +8,7 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_RECEIPT_REVIEW";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_RECEIPT_REVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -52,14 +52,14 @@ void validate_receipt_blocker(const ReceiptBlocker &blocker, DiagnosticBag &diag
     switch (receipt.receipt_status) {
     case ReceiptStatus::ReadyForArchive:
         return receipt.request_status == RequestStatus::TerminalCompleted
-                   ? ReceiptReviewNextActionKind::ArchiveCompletedDurableStoreImportDecisionReceipt
-                   : ReceiptReviewNextActionKind::HandoffDurableStoreImportDecisionReceipt;
+                   ? ReceiptReviewNextActionKind::ArchiveCompletedReceipt
+                   : ReceiptReviewNextActionKind::HandoffReceipt;
     case ReceiptStatus::Blocked:
         return ReceiptReviewNextActionKind::ResolveRequiredAdapterCapability;
     case ReceiptStatus::Deferred:
-        return ReceiptReviewNextActionKind::PreservePartialDurableStoreImportDecisionReceipt;
+        return ReceiptReviewNextActionKind::PreservePartialReceipt;
     case ReceiptStatus::Rejected:
-        return ReceiptReviewNextActionKind::InvestigateDurableStoreImportDecisionReceiptRejection;
+        return ReceiptReviewNextActionKind::InvestigateReceiptRejection;
     }
 
     return ReceiptReviewNextActionKind::ResolveRequiredAdapterCapability;
@@ -298,15 +298,13 @@ validate_receipt_review_summary(const ReceiptReviewSummary &summary) {
                                   "ArchiveAcceptedDecision receipt_outcome");
         }
         if (summary.request_status == RequestStatus::TerminalCompleted) {
-            if (summary.next_action !=
-                ReceiptReviewNextActionKind::ArchiveCompletedDurableStoreImportDecisionReceipt) {
+            if (summary.next_action != ReceiptReviewNextActionKind::ArchiveCompletedReceipt) {
                 emit_validation_error(
                     diagnostics,
                     "durable store import receipt review summary completed ReadyForArchive receipt "
                     "requires next_action archive_completed_durable_store_import_decision_receipt");
             }
-        } else if (summary.next_action !=
-                   ReceiptReviewNextActionKind::HandoffDurableStoreImportDecisionReceipt) {
+        } else if (summary.next_action != ReceiptReviewNextActionKind::HandoffReceipt) {
             emit_validation_error(
                 diagnostics,
                 "durable store import receipt review summary ReadyForArchive receipt requires "
@@ -350,8 +348,7 @@ validate_receipt_review_summary(const ReceiptReviewSummary &summary) {
                 "durable store import receipt review summary Deferred receipt_status "
                 "requires DeferPartialDecision receipt_outcome");
         }
-        if (summary.next_action !=
-            ReceiptReviewNextActionKind::PreservePartialDurableStoreImportDecisionReceipt) {
+        if (summary.next_action != ReceiptReviewNextActionKind::PreservePartialReceipt) {
             emit_validation_error(
                 diagnostics,
                 "durable store import receipt review summary Deferred receipt requires next_action "
@@ -370,8 +367,7 @@ validate_receipt_review_summary(const ReceiptReviewSummary &summary) {
                 "durable store import receipt review summary Rejected receipt_status "
                 "requires RejectFailedDecision receipt_outcome");
         }
-        if (summary.next_action !=
-            ReceiptReviewNextActionKind::InvestigateDurableStoreImportDecisionReceiptRejection) {
+        if (summary.next_action != ReceiptReviewNextActionKind::InvestigateReceiptRejection) {
             emit_validation_error(
                 diagnostics,
                 "durable store import receipt review summary Rejected receipt requires next_action "

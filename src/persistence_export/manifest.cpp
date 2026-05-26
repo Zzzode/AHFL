@@ -9,8 +9,8 @@ namespace ahfl::persistence_export {
 
 namespace {
 
-inline constexpr auto kValidationDiagnosticCode = "AHFL.VAL.PERSISTENCE_EXPORT_MANIFEST";
-inline constexpr auto kBootstrapDiagnosticCode = "AHFL.BE.PERSISTENCE_EXPORT_MANIFEST_BOOTSTRAP";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"PERSISTENCE_EXPORT_MANIFEST"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> kBootstrapDiagnosticCode{"PERSISTENCE_EXPORT_MANIFEST_BOOTSTRAP"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -18,7 +18,7 @@ void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
 
 void emit_bootstrap_error(DiagnosticBag &diagnostics, std::string message) {
     diagnostics.error()
-        .legacy_code(DiagnosticCategory::Backend, kBootstrapDiagnosticCode)
+        .code(kBootstrapDiagnosticCode)
         .message(std::move(message))
         .emit();
 }

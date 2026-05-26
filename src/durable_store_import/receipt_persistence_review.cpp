@@ -8,8 +8,7 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_RECEIPT_PERSISTENCE_REVIEW";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_RECEIPT_PERSISTENCE_REVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -58,17 +57,14 @@ next_action_for_request(const PersistenceRequest &request) {
     switch (request.receipt_persistence_request_status) {
     case PersistenceRequestStatus::ReadyToPersist:
         return request.request_status == RequestStatus::TerminalCompleted
-                   ? PersistenceReviewNextActionKind::
-                         PersistCompletedDurableStoreImportDecisionReceipt
-                   : PersistenceReviewNextActionKind::
-                         HandoffDurableStoreImportDecisionReceiptPersistenceRequest;
+                   ? PersistenceReviewNextActionKind::PersistCompletedReceipt
+                   : PersistenceReviewNextActionKind::HandoffPersistenceRequest;
     case PersistenceRequestStatus::Blocked:
         return PersistenceReviewNextActionKind::ResolveRequiredAdapterCapability;
     case PersistenceRequestStatus::Deferred:
-        return PersistenceReviewNextActionKind::PreservePartialDurableStoreImportDecisionReceipt;
+        return PersistenceReviewNextActionKind::PreservePartialReceipt;
     case PersistenceRequestStatus::Rejected:
-        return PersistenceReviewNextActionKind::
-            InvestigateDurableStoreImportDecisionReceiptPersistenceRejection;
+        return PersistenceReviewNextActionKind::InvestigatePersistenceRejection;
     }
 
     return PersistenceReviewNextActionKind::ResolveRequiredAdapterCapability;
@@ -346,16 +342,14 @@ validate_persistence_review_summary(const PersistenceReviewSummary &summary) {
                                   "ReadyToPersist status requires PersistReadyReceipt outcome");
         }
         if (summary.request_status == RequestStatus::TerminalCompleted) {
-            if (summary.next_action != PersistenceReviewNextActionKind::
-                                           PersistCompletedDurableStoreImportDecisionReceipt) {
+            if (summary.next_action != PersistenceReviewNextActionKind::PersistCompletedReceipt) {
                 emit_validation_error(diagnostics,
                                       "durable store import receipt persistence review summary "
                                       "completed ReadyToPersist status requires next_action "
                                       "persist_completed_durable_store_import_decision_receipt");
             }
         } else if (summary.next_action !=
-                   PersistenceReviewNextActionKind::
-                       HandoffDurableStoreImportDecisionReceiptPersistenceRequest) {
+                   PersistenceReviewNextActionKind::HandoffPersistenceRequest) {
             emit_validation_error(
                 diagnostics,
                 "durable store import receipt persistence review summary ReadyToPersist status "
@@ -411,8 +405,7 @@ validate_persistence_review_summary(const PersistenceReviewSummary &summary) {
                                   "durable store import receipt persistence review summary "
                                   "Deferred status requires DeferPartialReceipt outcome");
         }
-        if (summary.next_action !=
-            PersistenceReviewNextActionKind::PreservePartialDurableStoreImportDecisionReceipt) {
+        if (summary.next_action != PersistenceReviewNextActionKind::PreservePartialReceipt) {
             emit_validation_error(
                 diagnostics,
                 "durable store import receipt persistence review summary Deferred status requires "
@@ -440,8 +433,7 @@ validate_persistence_review_summary(const PersistenceReviewSummary &summary) {
                                   "Rejected status requires RejectFailedReceipt outcome");
         }
         if (summary.next_action !=
-            PersistenceReviewNextActionKind::
-                InvestigateDurableStoreImportDecisionReceiptPersistenceRejection) {
+            PersistenceReviewNextActionKind::InvestigatePersistenceRejection) {
             emit_validation_error(
                 diagnostics,
                 "durable store import receipt persistence review summary Rejected status requires "

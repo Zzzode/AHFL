@@ -12,8 +12,7 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_adapter_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_ADAPTER";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_adapter_detail_kValidationDiagnosticCode{"DSI_PROVIDER_ADAPTER"};
 
 void provider_adapter_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                    std::string message) {
@@ -721,8 +720,7 @@ build_provider_recovery_handoff_preview(const ProviderWriteAttemptPreview &previ
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_driver_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_DRIVER";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_driver_detail_kValidationDiagnosticCode{"DSI_PROVIDER_DRIVER"};
 
 void provider_driver_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(

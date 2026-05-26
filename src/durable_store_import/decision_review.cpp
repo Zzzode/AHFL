@@ -8,7 +8,7 @@ namespace ahfl::durable_store_import {
 
 namespace {
 
-inline constexpr std::string_view kValidationDiagnosticCode = "AHFL.VAL.DSI_DECISION_REVIEW";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_DECISION_REVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
@@ -52,14 +52,14 @@ void validate_decision_blocker(const DecisionBlocker &blocker, DiagnosticBag &di
     switch (decision.decision_status) {
     case DecisionStatus::Accepted:
         return decision.request_status == RequestStatus::TerminalCompleted
-                   ? DecisionReviewNextActionKind::ArchiveCompletedDurableStoreImportDecision
-                   : DecisionReviewNextActionKind::HandoffDurableStoreImportDecision;
+                   ? DecisionReviewNextActionKind::ArchiveCompletedDecision
+                   : DecisionReviewNextActionKind::HandoffDecision;
     case DecisionStatus::Blocked:
         return DecisionReviewNextActionKind::ResolveRequiredAdapterCapability;
     case DecisionStatus::Deferred:
-        return DecisionReviewNextActionKind::PreservePartialDurableStoreImportDecision;
+        return DecisionReviewNextActionKind::PreservePartialDecision;
     case DecisionStatus::Rejected:
-        return DecisionReviewNextActionKind::InvestigateDurableStoreImportDecisionRejection;
+        return DecisionReviewNextActionKind::InvestigateDecisionRejection;
     }
 
     return DecisionReviewNextActionKind::ResolveRequiredAdapterCapability;
@@ -263,15 +263,13 @@ validate_decision_review_summary(const DecisionReviewSummary &summary) {
     switch (summary.decision_status) {
     case DecisionStatus::Accepted:
         if (summary.request_status == RequestStatus::TerminalCompleted) {
-            if (summary.next_action !=
-                DecisionReviewNextActionKind::ArchiveCompletedDurableStoreImportDecision) {
+            if (summary.next_action != DecisionReviewNextActionKind::ArchiveCompletedDecision) {
                 emit_validation_error(
                     diagnostics,
                     "durable store import decision review summary Accepted completed decision "
                     "requires next_action archive_completed_durable_store_import_decision");
             }
-        } else if (summary.next_action !=
-                   DecisionReviewNextActionKind::HandoffDurableStoreImportDecision) {
+        } else if (summary.next_action != DecisionReviewNextActionKind::HandoffDecision) {
             emit_validation_error(diagnostics,
                                   "durable store import decision review summary Accepted decision "
                                   "requires next_action handoff_durable_store_import_decision");
@@ -300,8 +298,7 @@ validate_decision_review_summary(const DecisionReviewSummary &summary) {
         }
         break;
     case DecisionStatus::Deferred:
-        if (summary.next_action !=
-            DecisionReviewNextActionKind::PreservePartialDurableStoreImportDecision) {
+        if (summary.next_action != DecisionReviewNextActionKind::PreservePartialDecision) {
             emit_validation_error(
                 diagnostics,
                 "durable store import decision review summary Deferred decision requires "
@@ -314,8 +311,7 @@ validate_decision_review_summary(const DecisionReviewSummary &summary) {
         }
         break;
     case DecisionStatus::Rejected:
-        if (summary.next_action !=
-            DecisionReviewNextActionKind::InvestigateDurableStoreImportDecisionRejection) {
+        if (summary.next_action != DecisionReviewNextActionKind::InvestigateDecisionRejection) {
             emit_validation_error(
                 diagnostics,
                 "durable store import decision review summary Rejected decision requires "

@@ -2047,17 +2047,19 @@ ahfl_label_tests(
         ahfl.incremental.incremental_all
 )
 
-ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-wasm-backend
-    TESTS
-        ahfl.backends.wasm_all
-)
+if(AHFL_ENABLE_BACKEND_INFRA)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-wasm-backend
+        TESTS
+            ahfl.backends.wasm_all
+    )
 
-ahfl_label_tests(
-    LABELS ahfl-v0.59 v0.59-target-backends
-    TESTS
-        ahfl.backends.targets_all
-)
+    ahfl_label_tests(
+        LABELS ahfl-v0.59 v0.59-target-backends
+        TESTS
+            ahfl.backends.targets_all
+    )
+endif()
 
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-fuzzing

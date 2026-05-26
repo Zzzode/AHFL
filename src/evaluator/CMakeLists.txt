@@ -11,4 +11,6 @@ target_link_libraries(ahfl_evaluator
         ahfl_ir
 )
 
+target_include_directories(ahfl_evaluator PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_evaluator)

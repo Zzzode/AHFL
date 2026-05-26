@@ -8,4 +8,6 @@ target_link_libraries(ahfl_formatter
         ahfl_syntax
 )
 
+target_include_directories(ahfl_formatter PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_formatter)

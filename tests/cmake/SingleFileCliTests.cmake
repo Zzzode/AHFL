@@ -23,54 +23,54 @@ ahfl_add_output_test(
     ahflc.emit_ir.example
     emit-ir
     "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
-    "${AHFL_TESTS_DIR}/ir/refund_audit_core_v0_1.ir"
+    "${AHFL_TESTS_DIR}/golden/ir/refund_audit_core_v0_1.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.alias_const
     emit-ir
-    "${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
-    "${AHFL_TESTS_DIR}/ir/ok_alias_const.ir"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.expr_temporal
     emit-ir
-    "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
-    "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ir"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.flow_workflow_semantics
     emit-ir
-    "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
-    "${AHFL_TESTS_DIR}/ir/ok_flow_workflow_semantics.ir"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.workflow_value_flow
     emit-ir
-    "${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-    "${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ir"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_summary.workflow_value_flow
     emit-summary
-    "${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-    "${AHFL_TESTS_DIR}/summary/ok_workflow_value_flow.summary"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "${AHFL_TESTS_DIR}/golden/summary/ok_workflow_value_flow.summary"
 )
 
 ahfl_add_output_test(
     ahflc.emit_assurance_json.effects
     emit-assurance-json
-    "${AHFL_TESTS_DIR}/assurance/ok_effects.ahfl"
-    "${AHFL_TESTS_DIR}/assurance/ok_effects.assurance.json"
+    "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
+    "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.assurance.json"
 )
 
 add_test(NAME ahflc.validate_assurance.effects
     COMMAND $<TARGET_FILE:ahflc> validate-assurance
-            "${AHFL_TESTS_DIR}/assurance/ok_effects.ahfl"
+            "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
 )
 set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: assurance validation ready"
@@ -79,82 +79,82 @@ set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_missing_effect
     validate-assurance
-    "${AHFL_TESTS_DIR}/assurance/fail_missing_effect.ahfl"
+    "${AHFL_TESTS_DIR}/golden/assurance/fail_missing_effect.ahfl"
     "missing_effect_spec"
 )
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_financial_missing_controls
     validate-assurance
-    "${AHFL_TESTS_DIR}/assurance/fail_financial_missing_controls.ahfl"
+    "${AHFL_TESTS_DIR}/golden/assurance/fail_financial_missing_controls.ahfl"
     "missing_financial_compensation"
 )
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_external_missing_audit
     validate-assurance
-    "${AHFL_TESTS_DIR}/assurance/fail_external_missing_audit.ahfl"
+    "${AHFL_TESTS_DIR}/golden/assurance/fail_external_missing_audit.ahfl"
     "audit_event"
 )
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_retry_idempotency
     validate-assurance
-    "${AHFL_TESTS_DIR}/assurance/fail_retry_idempotency.ahfl"
+    "${AHFL_TESTS_DIR}/golden/assurance/fail_retry_idempotency.ahfl"
     "retry_safe_if_idempotent_without_key"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir_json.expr_temporal
     emit-ir-json
-    "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
-    "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.json"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.alias_const
     emit-smv
-    "${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
-    "${AHFL_TESTS_DIR}/formal/ok_alias_const.smv"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_alias_const.smv"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.expr_temporal
     emit-smv
-    "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
-    "${AHFL_TESTS_DIR}/formal/ok_expr_temporal.smv"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_expr_temporal.smv"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.flow_workflow_semantics
     emit-smv
-    "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
-    "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.smv"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.smv"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.bounded_data_semantics
     emit-smv
-    "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.ahfl"
-    "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.smv"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.smv"
 )
 
 ahfl_add_check_test(
     ahflc.check.formal_real_smv_control
-    "${AHFL_TESTS_DIR}/formal/ok_real_smv_control.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
 )
 
 ahfl_add_check_test(
     ahflc.check.formal_bounded_data_semantics
-    "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
 )
 
 add_test(NAME ahflc.verify_formal.fake_pass
     COMMAND $<TARGET_FILE:ahflc> verify-formal
-            --model-checker "${AHFL_TESTS_DIR}/formal/fake_smv_checker_pass.sh"
+            --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             --formal-model-out
             "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_flow_workflow_semantics.verify.smv"
-            "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
+            "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
 )
 set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
@@ -163,8 +163,8 @@ set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
 add_test(NAME ahflc.verify_formal.fake_fail
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_TESTS_DIR}/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
-            "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=formal verification failed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
@@ -175,7 +175,7 @@ if(AHFL_SMV_CHECKER)
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_real_smv_control.verify.smv"
-                "${AHFL_TESTS_DIR}/formal/ok_real_smv_control.ahfl"
+                "${AHFL_TESTS_DIR}/golden/formal/ok_real_smv_control.ahfl"
     )
     set_tests_properties(ahflc.verify_formal.real_smv PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
@@ -186,7 +186,7 @@ if(AHFL_SMV_CHECKER)
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_expr_temporal.verify.smv"
-                "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
+                "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
     )
     set_tests_properties(ahflc.verify_formal.real_smv_observation_assumptions PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
@@ -197,7 +197,7 @@ if(AHFL_SMV_CHECKER)
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_effects.verify.smv"
-                "${AHFL_TESTS_DIR}/assurance/ok_effects.ahfl"
+                "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
     )
     set_tests_properties(ahflc.verify_formal.real_smv_effect_events PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
@@ -208,7 +208,7 @@ if(AHFL_SMV_CHECKER)
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_bounded_data_semantics.verify.smv"
-                "${AHFL_TESTS_DIR}/formal/ok_bounded_data_semantics.ahfl"
+                "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
     )
     set_tests_properties(ahflc.verify_formal.real_smv_bounded_data_semantics PROPERTIES
         PASS_REGULAR_EXPRESSION "ok: formal verification passed"
@@ -217,8 +217,8 @@ if(AHFL_SMV_CHECKER)
     add_test(NAME ahflc.verify_formal.real_smv_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/formal/fail_real_smv_control.ahfl"
-                "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/fail_real_smv_control.ahfl"
+                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
+                "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
                 "-DEXPECTED_REGEX=counterexample AHFL mapping"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
@@ -226,8 +226,8 @@ if(AHFL_SMV_CHECKER)
     add_test(NAME ahflc.verify_formal.real_smv_bounded_data_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/formal/fail_bounded_data_semantics.ahfl"
-                "-DINPUT_FILE=${AHFL_TESTS_DIR}/formal/fail_bounded_data_semantics.ahfl"
+                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
+                "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
                 "-DEXPECTED_REGEX=formal verification failed"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
     )
@@ -236,743 +236,44 @@ endif()
 ahfl_add_output_test(
     ahflc.emit_ir_json.flow_workflow_semantics
     emit-ir-json
-    "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.ahfl"
-    "${AHFL_TESTS_DIR}/formal/ok_flow_workflow_semantics.json"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir_json.workflow_value_flow
     emit-ir-json
-    "${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-    "${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.json"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_native_json.workflow_value_flow
     emit-native-json
-    "${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-    "${AHFL_TESTS_DIR}/native/ok_workflow_value_flow.native.json"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+    "${AHFL_TESTS_DIR}/golden/native/ok_workflow_value_flow.native.json"
 )
 
-add_test(NAME ahflc.emit_native_json.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-native-json --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/native/ok_workflow_value_flow.with_package.native.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_package_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-package-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/review/ok_workflow_value_flow.with_package.review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_execution_plan.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-execution-plan --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/plan/ok_workflow_value_flow.with_package.execution-plan.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_dry_run_trace.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-dry-run-trace --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/trace/ok_workflow_value_flow.with_package.dry-run-trace.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_runtime_session.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-runtime-session --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/session/ok_workflow_value_flow.with_package.runtime-session.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_runtime_session.alias_const.partial.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-runtime-session --package ${AHFL_TESTS_DIR}/ir/ok_alias_const.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_alias_const.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001 ${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/session/ok_alias_const.partial.with_package.runtime-session.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_replay_view.alias_const.partial.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-replay-view --package ${AHFL_TESTS_DIR}/ir/ok_alias_const.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_alias_const.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001 ${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/replay/ok_alias_const.partial.with_package.replay-view.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_audit_report.alias_const.partial.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-audit-report --package ${AHFL_TESTS_DIR}/ir/ok_alias_const.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_alias_const.pending.mocks.json --input-fixture fixture.request.partial --run-id run-partial-001 ${AHFL_TESTS_DIR}/ir/ok_alias_const.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/audit/ok_alias_const.partial.with_package.audit-report.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_execution_journal.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-execution-journal --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/journal/ok_workflow_value_flow.with_package.execution-journal.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_replay_view.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-replay-view --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/replay/ok_workflow_value_flow.with_package.replay-view.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_audit_report.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-audit-report --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/audit/ok_workflow_value_flow.with_package.audit-report.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_scheduler_snapshot.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-scheduler-snapshot --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/scheduler/ok_workflow_value_flow.with_package.scheduler-snapshot.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_checkpoint_record.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-checkpoint-record --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/ok_workflow_value_flow.with_package.checkpoint-record.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_checkpoint_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-checkpoint-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/checkpoint/ok_workflow_value_flow.with_package.checkpoint-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_persistence_descriptor.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-persistence-descriptor --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/ok_workflow_value_flow.with_package.persistence-descriptor.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_persistence_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-persistence-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/persistence/ok_workflow_value_flow.with_package.persistence-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_export_manifest.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-export-manifest --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/export/ok_workflow_value_flow.with_package.export-manifest.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_export_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-export-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/export/ok_workflow_value_flow.with_package.export-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_store_import_descriptor.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-store-import-descriptor --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/ok_workflow_value_flow.with_package.store-import-descriptor.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_store_import_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-store-import-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/store_import/ok_workflow_value_flow.with_package.store-import-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_request.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-request --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-request.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_decision.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-decision --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-decision.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_receipt.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-receipt --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_request.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-request --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-persistence-request.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_receipt_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-receipt-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-persistence-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_response.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-response --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-persistence-response.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_receipt_persistence_response_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-receipt-persistence-response-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-receipt-persistence-response-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_adapter_execution.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-adapter-execution --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-adapter-execution.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_recovery_preview.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-recovery-preview --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-recovery-preview"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_attempt.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-attempt --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-attempt.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_recovery_handoff.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-recovery-handoff --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-recovery-handoff"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_driver_binding.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-driver-binding --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-driver-binding.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_driver_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-driver-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-driver-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_runtime_preflight.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-preflight --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-runtime-preflight.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_runtime_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-runtime-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-runtime-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_envelope.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-envelope --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-envelope.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_handoff_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-handoff-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-handoff-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_host_execution.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-host-execution --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-host-execution.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_host_execution_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-host-execution-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-host-execution-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_host_execution_receipt.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-execution-receipt --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-host-execution-receipt.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_host_execution_receipt_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-execution-receipt-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-host-execution-receipt-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_adapter_request.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-adapter-request --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-adapter-request.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_adapter_response_placeholder.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-adapter-response-placeholder --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-adapter-response-placeholder.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_adapter_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-adapter-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-adapter-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_adapter_interface.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-adapter-interface --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-adapter-interface.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_adapter_interface_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-adapter-interface-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-adapter-interface-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_config_load.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-config-load --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-config-load.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_config_snapshot.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-config-snapshot --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-config-snapshot.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_config_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-config-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-config-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_secret_resolver_request.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-secret-resolver-request --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-secret-resolver-request.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_secret_resolver_response.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-secret-resolver-response --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-secret-resolver-response.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_secret_policy_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-secret-policy-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-secret-policy-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_host_harness_request.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-harness-request --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-host-harness-request.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_host_harness_record.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-harness-record --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-host-harness-record.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_host_harness_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-host-harness-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-host-harness-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_payload_plan.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-payload-plan --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-payload-plan.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_payload_audit.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-payload-audit --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-payload-audit"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_mock_adapter_contract.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-mock-adapter-contract --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-mock-adapter-contract.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_mock_adapter_execution.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-mock-adapter-execution --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-mock-adapter-execution.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_sdk_mock_adapter_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-sdk-mock-adapter-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-sdk-mock-adapter-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_filesystem_alpha_plan.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-filesystem-alpha-plan --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-filesystem-alpha-plan.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_filesystem_alpha_result.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-filesystem-alpha-result --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-filesystem-alpha-result.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_local_filesystem_alpha_readiness.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-local-filesystem-alpha-readiness --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-local-filesystem-alpha-readiness"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_retry_decision.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-retry-decision --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-retry-decision.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_commit_receipt.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-commit-receipt --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-commit-receipt.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_commit_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-commit-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-commit-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_recovery_checkpoint.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-recovery-checkpoint --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-recovery-checkpoint.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_recovery_plan.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-recovery-plan --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-recovery-plan.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_write_recovery_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-write-recovery-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-write-recovery-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_failure_taxonomy_report.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-failure-taxonomy-report --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-failure-taxonomy-report.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_failure_taxonomy_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-failure-taxonomy-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-failure-taxonomy-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_execution_audit_event.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-execution-audit-event --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-execution-audit-event.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_telemetry_summary.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-telemetry-summary --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-telemetry-summary.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_operator_review_event.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-operator-review-event --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-operator-review-event"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_compatibility_test_manifest.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-compatibility-test-manifest --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-compatibility-test-manifest.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_fixture_matrix.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-fixture-matrix --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-fixture-matrix.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_compatibility_report.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-compatibility-report --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-compatibility-report.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_registry.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-registry --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-registry.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_selection_plan.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-selection-plan --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-selection-plan.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_capability_negotiation_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-capability-negotiation-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-capability-negotiation-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_production_readiness_evidence.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-production-readiness-evidence --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-production-readiness-evidence.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_production_readiness_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-production-readiness-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-production-readiness-review.json"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_production_readiness_report.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-production-readiness-report --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-provider-production-readiness-report"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_provider_conformance_report.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-provider-conformance-report --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/conformance/ok_workflow_value_flow.with_package.durable-store-import-provider-conformance-report"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_durable_store_import_decision_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-durable-store-import-decision-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/durable_store_import/ok_workflow_value_flow.with_package.durable-store-import-decision-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
-
-add_test(NAME ahflc.emit_scheduler_review.workflow_value_flow.with_package
-    COMMAND ${CMAKE_COMMAND}
-            "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=emit-scheduler-review --package ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.package.json --capability-mocks ${AHFL_TESTS_DIR}/dry_run/ok_workflow_value_flow.mocks.json --input-fixture fixture.request.basic --run-id run-001 ${AHFL_TESTS_DIR}/ir/ok_workflow_value_flow.ahfl"
-            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/scheduler/ok_workflow_value_flow.with_package.scheduler-review"
-            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedCommandOutput.cmake"
-)
+# Auto-discover and register all with_package golden tests.
+# This replaces ~88 manual add_test() calls by scanning tests/golden/ for
+# files matching the *.with_package.* naming convention.
+ahfl_discover_package_golden_tests()
 
 ahfl_add_output_test(
     ahflc.emit_native_json.expr_temporal
     emit-native-json
-    "${AHFL_TESTS_DIR}/ir/ok_expr_temporal.ahfl"
-    "${AHFL_TESTS_DIR}/native/ok_expr_temporal.native.json"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/native/ok_expr_temporal.native.json"
 )
 
 ahfl_add_check_test(
     ahflc.check.import_alias
-    "${AHFL_TESTS_DIR}/resolver/ok_import_alias_self.ahfl"
+    "${AHFL_TESTS_DIR}/golden/resolver/ok_import_alias_self.ahfl"
 )
 
 add_test(NAME ahflc.dump_types.alias_schema
     COMMAND $<TARGET_FILE:ahflc> dump-types
-            "${AHFL_TESTS_DIR}/typecheck/ok_agent_schema_alias.ahfl"
+            "${AHFL_TESTS_DIR}/golden/typecheck/ok_agent_schema_alias.ahfl"
 )
 set_tests_properties(ahflc.dump_types.alias_schema PROPERTIES
     PASS_REGULAR_EXPRESSION "input: types::alias::Request"
@@ -980,126 +281,126 @@ set_tests_properties(ahflc.dump_types.alias_schema PROPERTIES
 
 ahfl_add_check_fail_test(
     ahflc.fail.duplicate_type
-    "${AHFL_TESTS_DIR}/resolver/duplicate_top_level_type.ahfl"
+    "${AHFL_TESTS_DIR}/golden/resolver/duplicate_top_level_type.ahfl"
     "duplicate type"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.unknown_references
-    "${AHFL_TESTS_DIR}/resolver/unknown_references.ahfl"
+    "${AHFL_TESTS_DIR}/golden/resolver/unknown_references.ahfl"
     "unknown type"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.type_alias_cycle
-    "${AHFL_TESTS_DIR}/resolver/type_alias_cycle.ahfl"
+    "${AHFL_TESTS_DIR}/golden/resolver/type_alias_cycle.ahfl"
     "type alias cycle detected"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.duplicate_import_alias
-    "${AHFL_TESTS_DIR}/resolver/duplicate_import_alias.ahfl"
+    "${AHFL_TESTS_DIR}/golden/resolver/duplicate_import_alias.ahfl"
     "duplicate import alias"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.ambiguous_callable
-    "${AHFL_TESTS_DIR}/resolver/ambiguous_callable.ahfl"
+    "${AHFL_TESTS_DIR}/golden/resolver/ambiguous_callable.ahfl"
     "ambiguous callable"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.agent_schema_not_struct
-    "${AHFL_TESTS_DIR}/typecheck/agent_schema_not_struct.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_schema_not_struct.ahfl"
     "agent input type must resolve to a struct type"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.if_condition_not_bool
-    "${AHFL_TESTS_DIR}/typecheck/if_condition_not_bool.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/if_condition_not_bool.ahfl"
     "if condition must have type Bool"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.assert_condition_not_bool
-    "${AHFL_TESTS_DIR}/typecheck/assert_condition_not_bool.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/assert_condition_not_bool.ahfl"
     "assert condition must have type Bool"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.contract_capability_call
-    "${AHFL_TESTS_DIR}/typecheck/contract_capability_call.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/contract_capability_call.ahfl"
     "capability call 'Validate' is not allowed in this context"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.contract_invariant_unknown_state
-    "${AHFL_TESTS_DIR}/typecheck/contract_invariant_unknown_state.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/contract_invariant_unknown_state.ahfl"
     "unknown state 'Missing'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.contract_invariant_running_not_allowed
-    "${AHFL_TESTS_DIR}/typecheck/contract_invariant_running_not_allowed.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/contract_invariant_running_not_allowed.ahfl"
     "running\\(\\.\\.\\.\\) is only valid in workflow safety/liveness formulas"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.contract_invariant_output_not_allowed
-    "${AHFL_TESTS_DIR}/typecheck/contract_invariant_output_not_allowed.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/contract_invariant_output_not_allowed.ahfl"
     "unknown value 'output'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.agent_unreachable_state
-    "${AHFL_TESTS_DIR}/typecheck/agent_unreachable_state.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_unreachable_state.ahfl"
     "state 'Dead' is unreachable"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.flow_missing_handler
-    "${AHFL_TESTS_DIR}/typecheck/flow_missing_handler.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_missing_handler.ahfl"
     "missing non-final-state handler for 'Middle'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.flow_illegal_goto
-    "${AHFL_TESTS_DIR}/typecheck/flow_illegal_goto.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_illegal_goto.ahfl"
     "illegal goto from state 'Init' to 'Init'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.flow_return_in_non_final
-    "${AHFL_TESTS_DIR}/typecheck/flow_return_in_non_final.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/flow_return_in_non_final.ahfl"
     "return is only allowed in final state handlers"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.workflow_after_missing
-    "${AHFL_TESTS_DIR}/typecheck/workflow_after_missing.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_after_missing.ahfl"
     "unknown workflow dependency 'missing'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.workflow_dependency_cycle
-    "${AHFL_TESTS_DIR}/typecheck/workflow_dependency_cycle.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_dependency_cycle.ahfl"
     "workflow dependency cycle detected"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.workflow_dependency_not_visible
-    "${AHFL_TESTS_DIR}/typecheck/workflow_dependency_not_visible.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_dependency_not_visible.ahfl"
     "unknown value 'first'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.workflow_completed_invalid_state
-    "${AHFL_TESTS_DIR}/typecheck/workflow_completed_invalid_state.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_completed_invalid_state.ahfl"
     "state 'Init' is not a final state of node 'run'"
 )
 
 ahfl_add_check_fail_test(
     ahflc.fail.workflow_node_input_mismatch
-    "${AHFL_TESTS_DIR}/typecheck/workflow_node_input_mismatch.ahfl"
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_node_input_mismatch.ahfl"
     "type mismatch in workflow node input"
 )

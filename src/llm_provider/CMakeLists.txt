@@ -20,4 +20,6 @@ target_link_libraries(ahfl_llm_provider
         ahfl_support_lib
 )
 
+target_include_directories(ahfl_llm_provider PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_llm_provider)

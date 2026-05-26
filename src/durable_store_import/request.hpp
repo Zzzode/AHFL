@@ -6,16 +6,13 @@
 #include <string_view>
 #include <vector>
 
-#include "store_import/descriptor.hpp"
 #include "ahfl/support/diagnostics.hpp"
+#include "store_import/descriptor.hpp"
 
 namespace ahfl::durable_store_import {
 
 // Format version - stable contract, DO NOT CHANGE
 inline constexpr std::string_view kRequestFormatVersion = "ahfl.durable-store-import-request.v1";
-
-// Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportRequestFormatVersion = kRequestFormatVersion;
 
 enum class RequestStatus {
     ReadyForAdapter,
@@ -24,9 +21,6 @@ enum class RequestStatus {
     TerminalFailed,
     TerminalPartial,
 };
-
-// Legacy alias
-using DurableStoreImportRequestStatus [[deprecated("Use RequestStatus")]] = RequestStatus;
 
 enum class RequestBoundaryKind {
     LocalIntentOnly,
@@ -57,9 +51,6 @@ enum class RequestBlockerKind {
     WorkflowPartial,
 };
 
-// Legacy alias
-using AdapterBlockerKind [[deprecated("Use RequestBlockerKind")]] = RequestBlockerKind;
-
 struct RequestedArtifactEntry {
     RequestedArtifactKind artifact_kind{RequestedArtifactKind::StoreImportDescriptor};
     std::string logical_artifact_name;
@@ -78,9 +69,6 @@ struct RequestBlocker {
     std::string message;
     std::optional<std::string> logical_artifact_name;
 };
-
-// Legacy alias
-using AdapterBlocker [[deprecated("Use RequestBlocker")]] = RequestBlocker;
 
 struct Request {
     std::string format_version{std::string(kRequestFormatVersion)};
@@ -130,9 +118,6 @@ struct Request {
     std::optional<RequestBlocker> adapter_blocker; // Keep for JSON compatibility
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportRequest [[deprecated("Use Request")]] = Request;
-
 struct RequestValidationResult {
     DiagnosticBag diagnostics;
 
@@ -140,10 +125,6 @@ struct RequestValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportRequestValidationResult [[deprecated("Use RequestValidationResult")]] =
-    RequestValidationResult;
 
 struct RequestResult {
     std::optional<Request> request;
@@ -154,21 +135,7 @@ struct RequestResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportRequestResult [[deprecated("Use RequestResult")]] = RequestResult;
-
 [[nodiscard]] RequestValidationResult validate_request(const Request &request);
 [[nodiscard]] RequestResult build_request(const store_import::StoreImportDescriptor &descriptor);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline RequestValidationResult
-validate_durable_store_import_request(const Request &request) {
-    return validate_request(request);
-}
-
-[[nodiscard]] inline RequestResult
-build_durable_store_import_request(const store_import::StoreImportDescriptor &descriptor) {
-    return build_request(descriptor);
-}
 
 } // namespace ahfl::durable_store_import

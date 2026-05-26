@@ -12,9 +12,6 @@ namespace ahfl::durable_store_import {
 // Format version - stable contract, DO NOT CHANGE
 inline constexpr std::string_view kDecisionFormatVersion = "ahfl.durable-store-import-decision.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportDecisionFormatVersion = kDecisionFormatVersion;
-
 enum class DecisionStatus {
     Accepted,
     Blocked,
@@ -22,18 +19,12 @@ enum class DecisionStatus {
     Rejected,
 };
 
-// Legacy alias
-using DurableStoreImportDecisionStatus [[deprecated("Use DecisionStatus")]] = DecisionStatus;
-
 enum class DecisionOutcome {
     AcceptRequest,
     BlockRequest,
     DeferPartialRequest,
     RejectFailedRequest,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionOutcome [[deprecated("Use DecisionOutcome")]] = DecisionOutcome;
 
 enum class DecisionBoundaryKind {
     LocalContractOnly,
@@ -106,9 +97,6 @@ struct Decision {
     std::optional<DecisionBlocker> decision_blocker;
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecision [[deprecated("Use Decision")]] = Decision;
-
 struct DecisionValidationResult {
     DiagnosticBag diagnostics;
 
@@ -116,10 +104,6 @@ struct DecisionValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionValidationResult [[deprecated("Use DecisionValidationResult")]] =
-    DecisionValidationResult;
 
 struct DecisionResult {
     std::optional<Decision> decision;
@@ -130,20 +114,7 @@ struct DecisionResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionResult [[deprecated("Use DecisionResult")]] = DecisionResult;
-
 [[nodiscard]] DecisionValidationResult validate_decision(const Decision &decision);
 [[nodiscard]] DecisionResult build_decision(const Request &request);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline DecisionValidationResult
-validate_durable_store_import_decision(const Decision &decision) {
-    return validate_decision(decision);
-}
-
-[[nodiscard]] inline DecisionResult build_durable_store_import_decision(const Request &request) {
-    return build_decision(request);
-}
 
 } // namespace ahfl::durable_store_import

@@ -12,8 +12,7 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_audit_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_AUDIT";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_audit_detail_kValidationDiagnosticCode{"DSI_PROVIDER_AUDIT"};
 
 void provider_audit_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(
@@ -284,8 +283,7 @@ build_provider_operator_review_event(const ProviderTelemetrySummary &summary) {
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_compatibility_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_COMPATIBILITY";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_compatibility_detail_kValidationDiagnosticCode{"DSI_PROVIDER_COMPATIBILITY"};
 
 void provider_compatibility_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                          std::string message) {
@@ -532,8 +530,7 @@ build_provider_compatibility_report(const ProviderFixtureMatrix &matrix,
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_registry_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_REGISTRY";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_registry_detail_kValidationDiagnosticCode{"DSI_PROVIDER_REGISTRY"};
 
 void provider_registry_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                     std::string message) {
@@ -780,8 +777,7 @@ build_provider_capability_negotiation_review(const ProviderSelectionPlan &plan) 
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_conformance_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_CONFORMANCE";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_conformance_detail_kValidationDiagnosticCode{"DSI_PROVIDER_CONFORMANCE"};
 
 void provider_conformance_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                        std::string message) {
@@ -1065,8 +1061,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_schema_compatibility_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_SCHEMA_COMPATIBILITY";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_schema_compatibility_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SCHEMA_COMPATIBILITY"};
 
 void provider_schema_compatibility_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                 std::string message) {

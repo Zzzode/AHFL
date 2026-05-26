@@ -10,4 +10,6 @@ target_link_libraries(ahfl_semantics
         ahfl_syntax
 )
 
+target_include_directories(ahfl_semantics PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
 ahfl_apply_project_warnings(ahfl_semantics)

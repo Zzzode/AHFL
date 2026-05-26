@@ -12,21 +12,13 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kDecisionReviewFormatVersion =
     "ahfl.durable-store-import-decision-review.v1";
 
-// Legacy alias for backward compatibility
-inline constexpr std::string_view kDurableStoreImportDecisionReviewSummaryFormatVersion =
-    kDecisionReviewFormatVersion;
-
 enum class DecisionReviewNextActionKind {
-    HandoffDurableStoreImportDecision,
+    HandoffDecision,
     ResolveRequiredAdapterCapability,
-    ArchiveCompletedDurableStoreImportDecision,
-    PreservePartialDurableStoreImportDecision,
-    InvestigateDurableStoreImportDecisionRejection,
+    ArchiveCompletedDecision,
+    PreservePartialDecision,
+    InvestigateDecisionRejection,
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReviewNextActionKind
-    [[deprecated("Use DecisionReviewNextActionKind")]] = DecisionReviewNextActionKind;
 
 struct DecisionReviewSummary {
     std::string format_version{std::string(kDecisionReviewFormatVersion)};
@@ -70,10 +62,6 @@ struct DecisionReviewSummary {
     std::string next_step_recommendation;
 };
 
-// Legacy alias for backward compatibility
-using DurableStoreImportDecisionReviewSummary [[deprecated("Use DecisionReviewSummary")]] =
-    DecisionReviewSummary;
-
 struct DecisionReviewSummaryValidationResult {
     DiagnosticBag diagnostics;
 
@@ -81,11 +69,6 @@ struct DecisionReviewSummaryValidationResult {
         return diagnostics.has_error();
     }
 };
-
-// Legacy alias
-using DurableStoreImportDecisionReviewSummaryValidationResult
-    [[deprecated("Use DecisionReviewSummaryValidationResult")]] =
-        DecisionReviewSummaryValidationResult;
 
 struct DecisionReviewSummaryResult {
     std::optional<DecisionReviewSummary> summary;
@@ -96,24 +79,9 @@ struct DecisionReviewSummaryResult {
     }
 };
 
-// Legacy alias
-using DurableStoreImportDecisionReviewSummaryResult
-    [[deprecated("Use DecisionReviewSummaryResult")]] = DecisionReviewSummaryResult;
-
 [[nodiscard]] DecisionReviewSummaryValidationResult
 validate_decision_review_summary(const DecisionReviewSummary &summary);
 
 [[nodiscard]] DecisionReviewSummaryResult build_decision_review_summary(const Decision &decision);
-
-// Legacy function names - delegate to new functions
-[[nodiscard]] inline DecisionReviewSummaryValidationResult
-validate_durable_store_import_decision_review_summary(const DecisionReviewSummary &summary) {
-    return validate_decision_review_summary(summary);
-}
-
-[[nodiscard]] inline DecisionReviewSummaryResult
-build_durable_store_import_decision_review_summary(const Decision &decision) {
-    return build_decision_review_summary(decision);
-}
 
 } // namespace ahfl::durable_store_import

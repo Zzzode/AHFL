@@ -12,8 +12,7 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_production_readiness_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_PRODUCTION_READINESS";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_production_readiness_detail_kValidationDiagnosticCode{"DSI_PROVIDER_PRODUCTION_READINESS"};
 
 void provider_production_readiness_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                 std::string message) {
@@ -287,9 +286,8 @@ build_provider_production_readiness_report(const ProviderProductionReadinessRevi
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view
-    provider_release_evidence_archive_detail_kValidationDiagnosticCode =
-        "AHFL.VAL.DSI_PROVIDER_RELEASE_EVIDENCE_ARCHIVE";
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_release_evidence_archive_detail_kValidationDiagnosticCode{"DSI_PROVIDER_RELEASE_EVIDENCE_ARCHIVE"};
 
 void provider_release_evidence_archive_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                     std::string message) {
@@ -553,8 +551,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr std::string_view provider_approval_workflow_detail_kValidationDiagnosticCode =
-    "AHFL.VAL.DSI_PROVIDER_APPROVAL_WORKFLOW";
+inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_approval_workflow_detail_kValidationDiagnosticCode{"DSI_PROVIDER_APPROVAL_WORKFLOW"};
 
 void provider_approval_workflow_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                              std::string message) {

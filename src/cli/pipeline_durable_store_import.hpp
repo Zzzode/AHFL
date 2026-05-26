@@ -27,28 +27,28 @@ namespace ahfl::cli {
 // --- build_*_for_cli functions ---
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Request>
-build_durable_store_import_request_for_cli(const ahfl::ir::Program &program,
+build_import_request_for_cli(const ahfl::ir::Program &program,
                                            const ahfl::handoff::PackageMetadata &metadata,
                                            const ahfl::dry_run::CapabilityMockSet &mock_set,
                                            const CommandLineOptions &options,
                                            std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Decision>
-build_durable_store_import_decision_for_cli(const ahfl::ir::Program &program,
+build_import_decision_for_cli(const ahfl::ir::Program &program,
                                             const ahfl::handoff::PackageMetadata &metadata,
                                             const ahfl::dry_run::CapabilityMockSet &mock_set,
                                             const CommandLineOptions &options,
                                             std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::Receipt>
-build_durable_store_import_receipt_for_cli(const ahfl::ir::Program &program,
+build_receipt_for_cli(const ahfl::ir::Program &program,
                                            const ahfl::handoff::PackageMetadata &metadata,
                                            const ahfl::dry_run::CapabilityMockSet &mock_set,
                                            const CommandLineOptions &options,
                                            std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceRequest>
-build_durable_store_import_receipt_persistence_request_for_cli(
+build_receipt_persistence_request_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -56,14 +56,14 @@ build_durable_store_import_receipt_persistence_request_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ReceiptReviewSummary>
-build_durable_store_import_receipt_review_for_cli(const ahfl::ir::Program &program,
+build_receipt_review_for_cli(const ahfl::ir::Program &program,
                                                   const ahfl::handoff::PackageMetadata &metadata,
                                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
                                                   const CommandLineOptions &options,
                                                   std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceReviewSummary>
-build_durable_store_import_receipt_persistence_review_for_cli(
+build_receipt_persistence_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -71,7 +71,7 @@ build_durable_store_import_receipt_persistence_review_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceResponse>
-build_durable_store_import_receipt_persistence_response_for_cli(
+build_receipt_persistence_response_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -79,7 +79,7 @@ build_durable_store_import_receipt_persistence_response_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::PersistenceResponseReviewSummary>
-build_durable_store_import_receipt_persistence_response_review_for_cli(
+build_receipt_persistence_response_review_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -87,7 +87,7 @@ build_durable_store_import_receipt_persistence_response_review_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::AdapterExecutionReceipt>
-build_durable_store_import_adapter_execution_for_cli(
+build_adapter_execution_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
@@ -95,7 +95,7 @@ build_durable_store_import_adapter_execution_for_cli(
     std::string_view command_name);
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::RecoveryCommandPreview>
-build_durable_store_import_recovery_preview_for_cli(
+build_recovery_preview_for_cli(
     const ahfl::ir::Program &program,
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
