@@ -102,37 +102,6 @@ build_recovery_preview_for_cli(
     const CommandLineOptions &options,
     std::string_view command_name);
 
-[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderWriteAttemptPreview>
-build_provider_write_attempt_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name);
-
-[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderRecoveryHandoffPreview>
-build_provider_recovery_handoff_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name);
-
-[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverBindingPlan>
-build_provider_driver_binding_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name);
-
-[[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverReadinessReview>
-build_provider_driver_readiness_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name);
 
 // --- emit_*_with_diagnostics functions ---
 

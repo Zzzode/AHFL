@@ -14,8 +14,7 @@ ProviderPipeline::ProviderPipeline(const ahfl::ir::Program &program,
                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
                                    const CommandLineOptions &options,
                                    std::string_view command_name)
-    : program_(program), metadata_(metadata), mock_set_(mock_set), options_(options),
-      command_name_(command_name) {}
+    : cache_(program, metadata, mock_set, options, command_name) {}
 
 std::optional<ProviderArtifact> ProviderPipeline::build(ProviderArtifactKind kind) const {
     switch (kind) {
@@ -23,13 +22,14 @@ std::optional<ProviderArtifact> ProviderPipeline::build(ProviderArtifactKind kin
                                                         artifact_type,                            \
                                                         builder,                                  \
                                                         printer,                                  \
-                                                        command_token)                            \
+                                                        command_token,                            \
+                                                        visibility)                               \
     case ProviderArtifactKind::kind_name: {                                                       \
-        auto artifact = builder(program_, metadata_, mock_set_, options_, command_name_);          \
-        if (!artifact.has_value()) {                                                              \
+        const auto *p = cache_.get_##kind_name();                                                 \
+        if (p == nullptr) {                                                                       \
             return std::nullopt;                                                                  \
         }                                                                                         \
-        return ProviderArtifact{std::move(*artifact)};                                            \
+        return ProviderArtifact{*p};                                                              \
     }
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
@@ -61,7 +61,8 @@ std::string_view provider_artifact_command_token(ProviderArtifactKind kind) {
                                                         artifact_type,                            \
                                                         builder,                                  \
                                                         printer,                                  \
-                                                        command_token)                            \
+                                                        command_token,                            \
+                                                        visibility)                               \
     case ProviderArtifactKind::kind_name: return command_token;
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
@@ -78,7 +79,8 @@ bool print_provider_artifact(ProviderArtifactKind kind,
                                                         artifact_type,                            \
                                                         builder,                                  \
                                                         printer,                                  \
-                                                        command_token)                            \
+                                                        command_token,                            \
+                                                        visibility)                               \
     case ProviderArtifactKind::kind_name: {                                                       \
         const auto *typed = std::get_if<ahfl::durable_store_import::artifact_type>(&artifact);     \
         if (typed == nullptr) {                                                                   \
@@ -117,6 +119,16 @@ int emit_provider_artifact_with_diagnostics(
         return 1;
     }
     return 0;
+}
+
+constexpr ProviderArtifactVisibility provider_artifact_visibility(ProviderArtifactKind kind) {
+    switch (kind) {
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind_name, artifact_type, builder, printer, command_token, visibility) \
+    case ProviderArtifactKind::kind_name: return ProviderArtifactVisibility::visibility;
+#include "pipeline_durable_store_import_provider_artifacts.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
+    }
+    return ProviderArtifactVisibility::Internal;
 }
 
 } // namespace ahfl::cli

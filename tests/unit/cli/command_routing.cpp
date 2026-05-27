@@ -39,7 +39,8 @@ constexpr ProviderArtifactSpec kProviderArtifacts[] = {
                                                         artifact_type,                            \
                                                         builder,                                  \
                                                         printer,                                  \
-                                                        command_token)                            \
+                                                        command_token,                            \
+                                                        visibility)                              \
     {#kind, command_token},
 #include "cli/pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT

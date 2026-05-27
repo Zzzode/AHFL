@@ -7,6 +7,8 @@
 
 #include "durable_store_import/provider.hpp"
 
+#include "provider_pipeline_cache.hpp"
+
 #include <iosfwd>
 #include <optional>
 #include <string_view>
@@ -19,7 +21,8 @@ enum class ProviderArtifactKind {
                                                         artifact_type,                            \
                                                         builder,                                  \
                                                         printer,                                  \
-                                                        command_token)                            \
+                                                        command_token,                            \
+                                                        visibility)                               \
     kind,
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
@@ -31,7 +34,8 @@ using ProviderArtifact = std::variant<
                                                         artifact_type,                            \
                                                         builder,                                  \
                                                         printer,                                  \
-                                                        command_token)                            \
+                                                        command_token,                            \
+                                                        visibility)                               \
     , ahfl::durable_store_import::artifact_type
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
@@ -48,12 +52,13 @@ class ProviderPipeline {
     [[nodiscard]] std::optional<ProviderArtifact> build(ProviderArtifactKind kind) const;
 
   private:
-    const ahfl::ir::Program &program_;
-    const ahfl::handoff::PackageMetadata &metadata_;
-    const ahfl::dry_run::CapabilityMockSet &mock_set_;
-    const CommandLineOptions &options_;
-    std::string_view command_name_;
+    mutable ProviderPipelineCache cache_;
 };
+
+enum class ProviderArtifactVisibility { Public, Internal };
+
+[[nodiscard]] constexpr ProviderArtifactVisibility
+provider_artifact_visibility(ProviderArtifactKind kind);
 
 [[nodiscard]] std::optional<ProviderArtifactKind>
 provider_artifact_for_command(CommandKind command);

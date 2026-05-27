@@ -1,0 +1,153 @@
+// provider_step_graph.def — Provider artifact dependency graph (X-macro table)
+//
+// This file declaratively encodes the dependency graph for all provider pipeline
+// steps. It is intended to be included (possibly multiple times) by translation
+// units that define or need to enumerate provider builder functions.
+//
+// Three macro shapes are used:
+//
+//   AHFL_PROVIDER_STEP_1(kind, domain_builder, result_field, dep1)
+//       A step with exactly one dependency.  The generated builder will:
+//         1. Retrieve `dep1` from the cache.
+//         2. Invoke `dsi::domain_builder(*dep1)`.
+//         3. Render diagnostics, check errors, and return `result.result_field`.
+//
+//   AHFL_PROVIDER_STEP_2(kind, domain_builder, result_field, dep1, dep2)
+//       A step with exactly two dependencies.  The generated builder will:
+//         1. Retrieve `dep1` and `dep2` from the cache.
+//         2. Invoke `dsi::domain_builder(*dep1, *dep2)`.
+//         3. Render diagnostics, check errors, and return `result.result_field`.
+//
+//   AHFL_PROVIDER_STEP_CUSTOM(kind)
+//       A step whose builder requires hand-written logic (complex multi-dep,
+//       conditional branching, or non-standard result handling). The
+//       implementation lives in `provider_steps/*.cpp` and is maintained
+//       manually.
+//
+// Usage example (code generation):
+//
+//   #define AHFL_PROVIDER_STEP_1(kind, builder, field, d1) \
+//       /* generate build_##kind##_for_cli(...) */
+//   #define AHFL_PROVIDER_STEP_2(kind, builder, field, d1, d2) \
+//       /* generate build_##kind##_for_cli(...) */
+//   #define AHFL_PROVIDER_STEP_CUSTOM(kind) /* skip or forward-declare */
+//   #include "provider_step_graph.def"
+//
+
+// ─── Guard: all three macros must be defined before inclusion ────────────────
+
+#ifndef AHFL_PROVIDER_STEP_1
+#error "AHFL_PROVIDER_STEP_1(kind, domain_builder, result_field, dep1) must be defined before including provider_step_graph.def"
+#endif
+
+#ifndef AHFL_PROVIDER_STEP_2
+#error "AHFL_PROVIDER_STEP_2(kind, domain_builder, result_field, dep1, dep2) must be defined before including provider_step_graph.def"
+#endif
+
+#ifndef AHFL_PROVIDER_STEP_CUSTOM
+#error "AHFL_PROVIDER_STEP_CUSTOM(kind) must be defined before including provider_step_graph.def"
+#endif
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Custom nodes — complex multi-dep or special logic (manual implementation)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+AHFL_PROVIDER_STEP_CUSTOM(WriteAttempt)
+AHFL_PROVIDER_STEP_CUSTOM(RecoveryHandoff)
+AHFL_PROVIDER_STEP_CUSTOM(DriverBinding)
+AHFL_PROVIDER_STEP_CUSTOM(DriverReadiness)
+AHFL_PROVIDER_STEP_CUSTOM(ProductionReadinessEvidence)
+AHFL_PROVIDER_STEP_CUSTOM(ConformanceReport)
+AHFL_PROVIDER_STEP_CUSTOM(SchemaCompatibilityReport)
+AHFL_PROVIDER_STEP_CUSTOM(ReleaseEvidenceArchiveManifest)
+AHFL_PROVIDER_STEP_CUSTOM(ApprovalReceipt)
+AHFL_PROVIDER_STEP_CUSTOM(OptInDecisionReport)
+AHFL_PROVIDER_STEP_CUSTOM(RuntimePolicyReport)
+AHFL_PROVIDER_STEP_CUSTOM(ProductionIntegrationDryRunReport)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Single-dependency nodes (AHFL_PROVIDER_STEP_1)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// --- Runtime bootstrap ---
+AHFL_PROVIDER_STEP_1(RuntimePreflight,                build_provider_runtime_preflight_plan,                plan,        DriverBinding)
+AHFL_PROVIDER_STEP_1(RuntimeReadiness,                build_provider_runtime_readiness_review,              review,      RuntimePreflight)
+
+// --- SDK envelope & handoff ---
+AHFL_PROVIDER_STEP_1(SdkEnvelope,                     build_provider_sdk_request_envelope_plan,             plan,        RuntimePreflight)
+AHFL_PROVIDER_STEP_1(SdkHandoffReadiness,             build_provider_sdk_handoff_readiness_review,          review,      SdkEnvelope)
+
+// --- Host execution ---
+AHFL_PROVIDER_STEP_1(HostExecution,                   build_provider_host_execution_plan,                   plan,        SdkEnvelope)
+AHFL_PROVIDER_STEP_1(HostExecutionReadiness,          build_provider_host_execution_readiness_review,       review,      HostExecution)
+AHFL_PROVIDER_STEP_1(LocalHostExecutionReceipt,       build_provider_local_host_execution_receipt,          receipt,     HostExecution)
+AHFL_PROVIDER_STEP_1(LocalHostExecutionReceiptReview, build_provider_local_host_execution_receipt_review,   review,      LocalHostExecutionReceipt)
+
+// --- SDK adapter ---
+AHFL_PROVIDER_STEP_1(SdkAdapterRequest,               build_provider_sdk_adapter_request_plan,              plan,        LocalHostExecutionReceipt)
+AHFL_PROVIDER_STEP_1(SdkAdapterResponsePlaceholder,   build_provider_sdk_adapter_response_placeholder,      placeholder, SdkAdapterRequest)
+AHFL_PROVIDER_STEP_1(SdkAdapterReadiness,             build_provider_sdk_adapter_readiness_review,          review,      SdkAdapterResponsePlaceholder)
+AHFL_PROVIDER_STEP_1(SdkAdapterInterface,             build_provider_sdk_adapter_interface_plan,            plan,        SdkAdapterRequest)
+AHFL_PROVIDER_STEP_1(SdkAdapterInterfaceReview,       build_provider_sdk_adapter_interface_review,          review,      SdkAdapterInterface)
+
+// --- Configuration ---
+AHFL_PROVIDER_STEP_1(ConfigLoad,                      build_provider_config_load_plan,                      plan,        SdkAdapterInterface)
+AHFL_PROVIDER_STEP_1(ConfigSnapshot,                  build_provider_config_snapshot_placeholder,           snapshot,    ConfigLoad)
+AHFL_PROVIDER_STEP_1(ConfigReadiness,                 build_provider_config_readiness_review,               review,      ConfigSnapshot)
+
+// --- Secret resolver ---
+AHFL_PROVIDER_STEP_1(SecretResolverRequest,           build_provider_secret_resolver_request_plan,          plan,        ConfigSnapshot)
+AHFL_PROVIDER_STEP_1(SecretResolverResponse,          build_provider_secret_resolver_response_placeholder,  placeholder, SecretResolverRequest)
+AHFL_PROVIDER_STEP_1(SecretPolicyReview,              build_provider_secret_policy_review,                  review,      SecretResolverResponse)
+
+// --- Local host harness ---
+AHFL_PROVIDER_STEP_1(LocalHostHarnessRequest,         build_provider_local_host_harness_execution_request,  request,     SecretPolicyReview)
+AHFL_PROVIDER_STEP_1(LocalHostHarnessRecord,          build_provider_local_host_harness_execution_record,   record,      LocalHostHarnessRequest)
+AHFL_PROVIDER_STEP_1(LocalHostHarnessReview,          build_provider_local_host_harness_review,             review,      LocalHostHarnessRecord)
+
+// --- SDK payload ---
+AHFL_PROVIDER_STEP_1(SdkPayloadPlan,                  build_provider_sdk_payload_materialization_plan,      plan,        LocalHostHarnessReview)
+AHFL_PROVIDER_STEP_1(SdkPayloadAudit,                 build_provider_sdk_payload_audit_summary,             summary,     SdkPayloadPlan)
+
+// --- SDK mock adapter ---
+AHFL_PROVIDER_STEP_1(SdkMockAdapterContract,          build_provider_sdk_mock_adapter_contract,             contract,    SdkPayloadAudit)
+AHFL_PROVIDER_STEP_1(SdkMockAdapterExecution,         build_provider_sdk_mock_adapter_execution,            execution,   SdkMockAdapterContract)
+AHFL_PROVIDER_STEP_1(SdkMockAdapterReadiness,         build_provider_sdk_mock_adapter_readiness,            readiness,   SdkMockAdapterExecution)
+
+// --- Local filesystem alpha ---
+AHFL_PROVIDER_STEP_1(LocalFilesystemAlphaPlan,        build_provider_local_filesystem_alpha_plan,           plan,        SdkMockAdapterReadiness)
+AHFL_PROVIDER_STEP_1(LocalFilesystemAlphaResult,      build_provider_local_filesystem_alpha_result,         result,      LocalFilesystemAlphaPlan)
+AHFL_PROVIDER_STEP_1(LocalFilesystemAlphaReadiness,   build_provider_local_filesystem_alpha_readiness,      readiness,   LocalFilesystemAlphaResult)
+
+// --- Write path ---
+AHFL_PROVIDER_STEP_1(WriteRetryDecision,              build_provider_write_retry_decision,                  decision,    SdkMockAdapterExecution)
+AHFL_PROVIDER_STEP_1(WriteCommitReceipt,              build_provider_write_commit_receipt,                  receipt,     WriteRetryDecision)
+AHFL_PROVIDER_STEP_1(WriteCommitReview,               build_provider_write_commit_review,                   review,      WriteCommitReceipt)
+AHFL_PROVIDER_STEP_1(WriteRecoveryCheckpoint,         build_provider_write_recovery_checkpoint,             checkpoint,  WriteCommitReceipt)
+AHFL_PROVIDER_STEP_1(WriteRecoveryPlan,               build_provider_write_recovery_plan,                   plan,        WriteRecoveryCheckpoint)
+AHFL_PROVIDER_STEP_1(WriteRecoveryReview,             build_provider_write_recovery_review,                 review,      WriteRecoveryPlan)
+
+// --- Failure taxonomy & telemetry ---
+AHFL_PROVIDER_STEP_1(FailureTaxonomyReview,           build_provider_failure_taxonomy_review,               review,      FailureTaxonomyReport)
+AHFL_PROVIDER_STEP_1(ExecutionAuditEvent,             build_provider_execution_audit_event,                 event,       FailureTaxonomyReport)
+AHFL_PROVIDER_STEP_1(TelemetrySummary,                build_provider_telemetry_summary,                     summary,     ExecutionAuditEvent)
+AHFL_PROVIDER_STEP_1(OperatorReviewEvent,             build_provider_operator_review_event,                 review,      TelemetrySummary)
+
+// --- Compatibility & governance ---
+AHFL_PROVIDER_STEP_1(CompatibilityTestManifest,       build_provider_compatibility_test_manifest,           manifest,    OperatorReviewEvent)
+AHFL_PROVIDER_STEP_1(FixtureMatrix,                   build_provider_fixture_matrix,                        matrix,      CompatibilityTestManifest)
+AHFL_PROVIDER_STEP_1(Registry,                        build_provider_registry,                              registry,    CompatibilityReport)
+AHFL_PROVIDER_STEP_1(SelectionPlan,                   build_provider_selection_plan,                        plan,        Registry)
+AHFL_PROVIDER_STEP_1(CapabilityNegotiationReview,     build_provider_capability_negotiation_review,         review,      SelectionPlan)
+
+// --- Production readiness ---
+AHFL_PROVIDER_STEP_1(ProductionReadinessReview,       build_provider_production_readiness_review,           review,      ProductionReadinessEvidence)
+AHFL_PROVIDER_STEP_1(ProductionReadinessReport,       build_provider_production_readiness_report,           report,      ProductionReadinessReview)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Dual-dependency nodes (AHFL_PROVIDER_STEP_2)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+AHFL_PROVIDER_STEP_2(FailureTaxonomyReport,           build_provider_failure_taxonomy_report,               report,      SdkMockAdapterExecution, WriteRecoveryPlan)
+AHFL_PROVIDER_STEP_2(CompatibilityReport,             build_provider_compatibility_report,                  report,      FixtureMatrix,           TelemetrySummary)
+AHFL_PROVIDER_STEP_2(ConfigBundleValidationReport,    build_provider_config_bundle_validation_report,       report,      SelectionPlan,           ConfigSnapshot)
