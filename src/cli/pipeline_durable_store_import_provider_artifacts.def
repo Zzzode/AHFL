@@ -7,6 +7,8 @@
 //   builder        internal provider pipeline node builder
 //   printer        stable artifact printer facade
 //   command_token  stable CLI command token that emits this artifact
+//   visibility     Public (top-level meaningful pipeline output) or
+//                  Internal (intermediate pipeline node)
 
 #ifndef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
 #error "Define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT before including this file."
@@ -17,370 +19,432 @@ AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ProviderWriteAttemptPreview,
     build_provider_write_attempt_for_cli,
     print_durable_store_import_provider_write_attempt_json,
-    "emit-durable-store-import-provider-write-attempt")
+    "emit-durable-store-import-provider-write-attempt",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     RecoveryHandoff,
     ProviderRecoveryHandoffPreview,
     build_provider_recovery_handoff_for_cli,
     print_durable_store_import_provider_recovery_handoff,
-    "emit-durable-store-import-provider-recovery-handoff")
+    "emit-durable-store-import-provider-recovery-handoff",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     DriverBinding,
     ProviderDriverBindingPlan,
     build_provider_driver_binding_for_cli,
     print_durable_store_import_provider_driver_binding_json,
-    "emit-durable-store-import-provider-driver-binding")
+    "emit-durable-store-import-provider-driver-binding",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     DriverReadiness,
     ProviderDriverReadinessReview,
     build_provider_driver_readiness_for_cli,
     print_durable_store_import_provider_driver_readiness,
-    "emit-durable-store-import-provider-driver-readiness")
+    "emit-durable-store-import-provider-driver-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     RuntimePreflight,
     ProviderRuntimePreflightPlan,
     build_provider_runtime_preflight_for_cli,
     print_durable_store_import_provider_runtime_preflight_json,
-    "emit-durable-store-import-provider-runtime-preflight")
+    "emit-durable-store-import-provider-runtime-preflight",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     RuntimeReadiness,
     ProviderRuntimeReadinessReview,
     build_provider_runtime_readiness_for_cli,
     print_durable_store_import_provider_runtime_readiness,
-    "emit-durable-store-import-provider-runtime-readiness")
+    "emit-durable-store-import-provider-runtime-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkEnvelope,
     ProviderSdkRequestEnvelopePlan,
     build_provider_sdk_envelope_for_cli,
     print_durable_store_import_provider_sdk_envelope_json,
-    "emit-durable-store-import-provider-sdk-envelope")
+    "emit-durable-store-import-provider-sdk-envelope",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkHandoffReadiness,
     ProviderSdkHandoffReadinessReview,
     build_provider_sdk_handoff_readiness_for_cli,
     print_durable_store_import_provider_sdk_handoff_readiness,
-    "emit-durable-store-import-provider-sdk-handoff-readiness")
+    "emit-durable-store-import-provider-sdk-handoff-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     HostExecution,
     ProviderHostExecutionPlan,
     build_provider_host_execution_for_cli,
     print_durable_store_import_provider_host_execution_json,
-    "emit-durable-store-import-provider-host-execution")
+    "emit-durable-store-import-provider-host-execution",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     HostExecutionReadiness,
     ProviderHostExecutionReadinessReview,
     build_provider_host_execution_readiness_for_cli,
     print_durable_store_import_provider_host_execution_readiness,
-    "emit-durable-store-import-provider-host-execution-readiness")
+    "emit-durable-store-import-provider-host-execution-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalHostExecutionReceipt,
     ProviderLocalHostExecutionReceipt,
     build_provider_local_host_execution_receipt_for_cli,
     print_durable_store_import_provider_local_host_execution_receipt_json,
-    "emit-durable-store-import-provider-local-host-execution-receipt")
+    "emit-durable-store-import-provider-local-host-execution-receipt",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalHostExecutionReceiptReview,
     ProviderLocalHostExecutionReceiptReview,
     build_provider_local_host_execution_receipt_review_for_cli,
     print_durable_store_import_provider_local_host_execution_receipt_review,
-    "emit-durable-store-import-provider-local-host-execution-receipt-review")
+    "emit-durable-store-import-provider-local-host-execution-receipt-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkAdapterRequest,
     ProviderSdkAdapterRequestPlan,
     build_provider_sdk_adapter_request_for_cli,
     print_durable_store_import_provider_sdk_adapter_request_json,
-    "emit-durable-store-import-provider-sdk-adapter-request")
+    "emit-durable-store-import-provider-sdk-adapter-request",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkAdapterResponsePlaceholder,
     ProviderSdkAdapterResponsePlaceholder,
     build_provider_sdk_adapter_response_placeholder_for_cli,
     print_durable_store_import_provider_sdk_adapter_response_placeholder_json,
-    "emit-durable-store-import-provider-sdk-adapter-response-placeholder")
+    "emit-durable-store-import-provider-sdk-adapter-response-placeholder",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkAdapterReadiness,
     ProviderSdkAdapterReadinessReview,
     build_provider_sdk_adapter_readiness_for_cli,
     print_durable_store_import_provider_sdk_adapter_readiness,
-    "emit-durable-store-import-provider-sdk-adapter-readiness")
+    "emit-durable-store-import-provider-sdk-adapter-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkAdapterInterface,
     ProviderSdkAdapterInterfacePlan,
     build_provider_sdk_adapter_interface_for_cli,
     print_durable_store_import_provider_sdk_adapter_interface_json,
-    "emit-durable-store-import-provider-sdk-adapter-interface")
+    "emit-durable-store-import-provider-sdk-adapter-interface",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkAdapterInterfaceReview,
     ProviderSdkAdapterInterfaceReview,
     build_provider_sdk_adapter_interface_review_for_cli,
     print_durable_store_import_provider_sdk_adapter_interface_review,
-    "emit-durable-store-import-provider-sdk-adapter-interface-review")
+    "emit-durable-store-import-provider-sdk-adapter-interface-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ConfigLoad,
     ProviderConfigLoadPlan,
     build_provider_config_load_for_cli,
     print_durable_store_import_provider_config_load_json,
-    "emit-durable-store-import-provider-config-load")
+    "emit-durable-store-import-provider-config-load",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ConfigSnapshot,
     ProviderConfigSnapshotPlaceholder,
     build_provider_config_snapshot_for_cli,
     print_durable_store_import_provider_config_snapshot_json,
-    "emit-durable-store-import-provider-config-snapshot")
+    "emit-durable-store-import-provider-config-snapshot",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ConfigReadiness,
     ProviderConfigReadinessReview,
     build_provider_config_readiness_for_cli,
     print_durable_store_import_provider_config_readiness,
-    "emit-durable-store-import-provider-config-readiness")
+    "emit-durable-store-import-provider-config-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SecretResolverRequest,
     ProviderSecretResolverRequestPlan,
     build_provider_secret_resolver_request_for_cli,
     print_durable_store_import_provider_secret_resolver_request_json,
-    "emit-durable-store-import-provider-secret-resolver-request")
+    "emit-durable-store-import-provider-secret-resolver-request",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SecretResolverResponse,
     ProviderSecretResolverResponsePlaceholder,
     build_provider_secret_resolver_response_for_cli,
     print_durable_store_import_provider_secret_resolver_response_json,
-    "emit-durable-store-import-provider-secret-resolver-response")
+    "emit-durable-store-import-provider-secret-resolver-response",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SecretPolicyReview,
     ProviderSecretPolicyReview,
     build_provider_secret_policy_review_for_cli,
     print_durable_store_import_provider_secret_policy_review,
-    "emit-durable-store-import-provider-secret-policy-review")
+    "emit-durable-store-import-provider-secret-policy-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalHostHarnessRequest,
     ProviderLocalHostHarnessExecutionRequest,
     build_provider_local_host_harness_request_for_cli,
     print_durable_store_import_provider_local_host_harness_request_json,
-    "emit-durable-store-import-provider-local-host-harness-request")
+    "emit-durable-store-import-provider-local-host-harness-request",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalHostHarnessRecord,
     ProviderLocalHostHarnessExecutionRecord,
     build_provider_local_host_harness_record_for_cli,
     print_durable_store_import_provider_local_host_harness_record_json,
-    "emit-durable-store-import-provider-local-host-harness-record")
+    "emit-durable-store-import-provider-local-host-harness-record",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalHostHarnessReview,
     ProviderLocalHostHarnessReview,
     build_provider_local_host_harness_review_for_cli,
     print_durable_store_import_provider_local_host_harness_review,
-    "emit-durable-store-import-provider-local-host-harness-review")
+    "emit-durable-store-import-provider-local-host-harness-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkPayloadPlan,
     ProviderSdkPayloadMaterializationPlan,
     build_provider_sdk_payload_plan_for_cli,
     print_durable_store_import_provider_sdk_payload_plan_json,
-    "emit-durable-store-import-provider-sdk-payload-plan")
+    "emit-durable-store-import-provider-sdk-payload-plan",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkPayloadAudit,
     ProviderSdkPayloadAuditSummary,
     build_provider_sdk_payload_audit_for_cli,
     print_durable_store_import_provider_sdk_payload_audit,
-    "emit-durable-store-import-provider-sdk-payload-audit")
+    "emit-durable-store-import-provider-sdk-payload-audit",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkMockAdapterContract,
     ProviderSdkMockAdapterContract,
     build_provider_sdk_mock_adapter_contract_for_cli,
     print_durable_store_import_provider_sdk_mock_adapter_contract_json,
-    "emit-durable-store-import-provider-sdk-mock-adapter-contract")
+    "emit-durable-store-import-provider-sdk-mock-adapter-contract",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkMockAdapterExecution,
     ProviderSdkMockAdapterExecutionResult,
     build_provider_sdk_mock_adapter_execution_for_cli,
     print_durable_store_import_provider_sdk_mock_adapter_execution_json,
-    "emit-durable-store-import-provider-sdk-mock-adapter-execution")
+    "emit-durable-store-import-provider-sdk-mock-adapter-execution",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SdkMockAdapterReadiness,
     ProviderSdkMockAdapterReadiness,
     build_provider_sdk_mock_adapter_readiness_for_cli,
     print_durable_store_import_provider_sdk_mock_adapter_readiness,
-    "emit-durable-store-import-provider-sdk-mock-adapter-readiness")
+    "emit-durable-store-import-provider-sdk-mock-adapter-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalFilesystemAlphaPlan,
     ProviderLocalFilesystemAlphaPlan,
     build_provider_local_filesystem_alpha_plan_for_cli,
     print_durable_store_import_provider_local_filesystem_alpha_plan_json,
-    "emit-durable-store-import-provider-local-filesystem-alpha-plan")
+    "emit-durable-store-import-provider-local-filesystem-alpha-plan",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalFilesystemAlphaResult,
     ProviderLocalFilesystemAlphaResult,
     build_provider_local_filesystem_alpha_result_for_cli,
     print_durable_store_import_provider_local_filesystem_alpha_result_json,
-    "emit-durable-store-import-provider-local-filesystem-alpha-result")
+    "emit-durable-store-import-provider-local-filesystem-alpha-result",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     LocalFilesystemAlphaReadiness,
     ProviderLocalFilesystemAlphaReadiness,
     build_provider_local_filesystem_alpha_readiness_for_cli,
     print_durable_store_import_provider_local_filesystem_alpha_readiness,
-    "emit-durable-store-import-provider-local-filesystem-alpha-readiness")
+    "emit-durable-store-import-provider-local-filesystem-alpha-readiness",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteRetryDecision,
     ProviderWriteRetryDecision,
     build_provider_write_retry_decision_for_cli,
     print_durable_store_import_provider_write_retry_decision_json,
-    "emit-durable-store-import-provider-write-retry-decision")
+    "emit-durable-store-import-provider-write-retry-decision",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteCommitReceipt,
     ProviderWriteCommitReceipt,
     build_provider_write_commit_receipt_for_cli,
     print_durable_store_import_provider_write_commit_receipt_json,
-    "emit-durable-store-import-provider-write-commit-receipt")
+    "emit-durable-store-import-provider-write-commit-receipt",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteCommitReview,
     ProviderWriteCommitReview,
     build_provider_write_commit_review_for_cli,
     print_durable_store_import_provider_write_commit_review,
-    "emit-durable-store-import-provider-write-commit-review")
+    "emit-durable-store-import-provider-write-commit-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteRecoveryCheckpoint,
     ProviderWriteRecoveryCheckpoint,
     build_provider_write_recovery_checkpoint_for_cli,
     print_durable_store_import_provider_write_recovery_checkpoint_json,
-    "emit-durable-store-import-provider-write-recovery-checkpoint")
+    "emit-durable-store-import-provider-write-recovery-checkpoint",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteRecoveryPlan,
     ProviderWriteRecoveryPlan,
     build_provider_write_recovery_plan_for_cli,
     print_durable_store_import_provider_write_recovery_plan_json,
-    "emit-durable-store-import-provider-write-recovery-plan")
+    "emit-durable-store-import-provider-write-recovery-plan",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteRecoveryReview,
     ProviderWriteRecoveryReview,
     build_provider_write_recovery_review_for_cli,
     print_durable_store_import_provider_write_recovery_review,
-    "emit-durable-store-import-provider-write-recovery-review")
+    "emit-durable-store-import-provider-write-recovery-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     FailureTaxonomyReport,
     ProviderFailureTaxonomyReport,
     build_provider_failure_taxonomy_report_for_cli,
     print_durable_store_import_provider_failure_taxonomy_report_json,
-    "emit-durable-store-import-provider-failure-taxonomy-report")
+    "emit-durable-store-import-provider-failure-taxonomy-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     FailureTaxonomyReview,
     ProviderFailureTaxonomyReview,
     build_provider_failure_taxonomy_review_for_cli,
     print_durable_store_import_provider_failure_taxonomy_review,
-    "emit-durable-store-import-provider-failure-taxonomy-review")
+    "emit-durable-store-import-provider-failure-taxonomy-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ExecutionAuditEvent,
     ProviderExecutionAuditEvent,
     build_provider_execution_audit_event_for_cli,
     print_durable_store_import_provider_execution_audit_event_json,
-    "emit-durable-store-import-provider-execution-audit-event")
+    "emit-durable-store-import-provider-execution-audit-event",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     TelemetrySummary,
     ProviderTelemetrySummary,
     build_provider_telemetry_summary_for_cli,
     print_durable_store_import_provider_telemetry_summary_json,
-    "emit-durable-store-import-provider-telemetry-summary")
+    "emit-durable-store-import-provider-telemetry-summary",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     OperatorReviewEvent,
     ProviderOperatorReviewEvent,
     build_provider_operator_review_event_for_cli,
     print_durable_store_import_provider_operator_review_event,
-    "emit-durable-store-import-provider-operator-review-event")
+    "emit-durable-store-import-provider-operator-review-event",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     CompatibilityTestManifest,
     ProviderCompatibilityTestManifest,
     build_provider_compatibility_test_manifest_for_cli,
     print_durable_store_import_provider_compatibility_test_manifest_json,
-    "emit-durable-store-import-provider-compatibility-test-manifest")
+    "emit-durable-store-import-provider-compatibility-test-manifest",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     FixtureMatrix,
     ProviderFixtureMatrix,
     build_provider_fixture_matrix_for_cli,
     print_durable_store_import_provider_fixture_matrix_json,
-    "emit-durable-store-import-provider-fixture-matrix")
+    "emit-durable-store-import-provider-fixture-matrix",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     CompatibilityReport,
     ProviderCompatibilityReport,
     build_provider_compatibility_report_for_cli,
     print_durable_store_import_provider_compatibility_report_json,
-    "emit-durable-store-import-provider-compatibility-report")
+    "emit-durable-store-import-provider-compatibility-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     Registry,
     ProviderRegistry,
     build_provider_registry_for_cli,
     print_durable_store_import_provider_registry_json,
-    "emit-durable-store-import-provider-registry")
+    "emit-durable-store-import-provider-registry",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SelectionPlan,
     ProviderSelectionPlan,
     build_provider_selection_plan_for_cli,
     print_durable_store_import_provider_selection_plan_json,
-    "emit-durable-store-import-provider-selection-plan")
+    "emit-durable-store-import-provider-selection-plan",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     CapabilityNegotiationReview,
     ProviderCapabilityNegotiationReview,
     build_provider_capability_negotiation_review_for_cli,
     print_durable_store_import_provider_capability_negotiation_review,
-    "emit-durable-store-import-provider-capability-negotiation-review")
+    "emit-durable-store-import-provider-capability-negotiation-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ProductionReadinessEvidence,
     ProviderProductionReadinessEvidence,
     build_provider_production_readiness_evidence_for_cli,
     print_durable_store_import_provider_production_readiness_evidence_json,
-    "emit-durable-store-import-provider-production-readiness-evidence")
+    "emit-durable-store-import-provider-production-readiness-evidence",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ProductionReadinessReview,
     ProviderProductionReadinessReview,
     build_provider_production_readiness_review_for_cli,
     print_durable_store_import_provider_production_readiness_review_json,
-    "emit-durable-store-import-provider-production-readiness-review")
+    "emit-durable-store-import-provider-production-readiness-review",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ProductionReadinessReport,
     ProviderProductionReadinessReport,
     build_provider_production_readiness_report_for_cli,
     print_durable_store_import_provider_production_readiness_report,
-    "emit-durable-store-import-provider-production-readiness-report")
+    "emit-durable-store-import-provider-production-readiness-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ConformanceReport,
     ProviderConformanceReport,
     build_provider_conformance_report_for_cli,
     print_durable_store_import_provider_conformance_report,
-    "emit-durable-store-import-provider-conformance-report")
+    "emit-durable-store-import-provider-conformance-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     SchemaCompatibilityReport,
     ProviderSchemaCompatibilityReport,
     build_provider_schema_compatibility_report_for_cli,
     print_durable_store_import_provider_schema_compatibility_report_json,
-    "emit-durable-store-import-provider-schema-compatibility-report")
+    "emit-durable-store-import-provider-schema-compatibility-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ConfigBundleValidationReport,
     ProviderConfigBundleValidationReport,
     build_provider_config_bundle_validation_report_for_cli,
     print_durable_store_import_provider_config_bundle_validation_report,
-    "emit-durable-store-import-provider-config-bundle-validation-report")
+    "emit-durable-store-import-provider-config-bundle-validation-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ReleaseEvidenceArchiveManifest,
     ReleaseEvidenceArchiveManifest,
     build_provider_release_evidence_archive_manifest_for_cli,
     print_durable_store_import_provider_release_evidence_archive_manifest,
-    "emit-durable-store-import-provider-release-evidence-archive-manifest")
+    "emit-durable-store-import-provider-release-evidence-archive-manifest",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ApprovalReceipt,
     ApprovalReceipt,
     build_provider_approval_receipt_for_cli,
     print_durable_store_import_provider_approval_receipt_json,
-    "emit-durable-store-import-provider-approval-receipt")
+    "emit-durable-store-import-provider-approval-receipt",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     OptInDecisionReport,
     ProviderOptInDecisionReport,
     build_provider_opt_in_decision_report_for_cli,
     print_durable_store_import_provider_opt_in_decision_report,
-    "emit-durable-store-import-provider-opt-in-decision-report")
+    "emit-durable-store-import-provider-opt-in-decision-report",
+    Internal)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     RuntimePolicyReport,
     ProviderRuntimePolicyReport,
     build_provider_runtime_policy_report_for_cli,
     print_durable_store_import_provider_runtime_policy_report,
-    "emit-durable-store-import-provider-runtime-policy-report")
+    "emit-durable-store-import-provider-runtime-policy-report",
+    Public)
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     ProductionIntegrationDryRunReport,
     ProviderProductionIntegrationDryRunReport,
     build_provider_production_integration_dry_run_report_for_cli,
     print_durable_store_import_provider_production_integration_dry_run_report,
-    "emit-durable-store-import-provider-production-integration-dry-run-report")
+    "emit-durable-store-import-provider-production-integration-dry-run-report",
+    Public)

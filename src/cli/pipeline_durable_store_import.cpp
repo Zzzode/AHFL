@@ -2,6 +2,7 @@
 
 #include "cli_pipeline_artifacts.hpp"
 #include "pipeline_emit.hpp"
+#include "provider_pipeline_cache.hpp"
 
 #include "durable_store_import/artifacts.hpp"
 
@@ -426,7 +427,8 @@ build_provider_write_attempt_for_cli(
     const ahfl::handoff::PackageMetadata &metadata,
     const ahfl::dry_run::CapabilityMockSet &mock_set,
     const CommandLineOptions &options,
-    std::string_view command_name) {
+    std::string_view command_name,
+    ProviderPipelineCache & /*cache*/) {
     const auto execution = build_adapter_execution_for_cli(
         program, metadata, mock_set, options, command_name);
     if (!execution.has_value()) {
@@ -445,14 +447,14 @@ build_provider_write_attempt_for_cli(
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderRecoveryHandoffPreview>
 build_provider_recovery_handoff_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto write_attempt = build_provider_write_attempt_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!write_attempt.has_value()) {
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto *write_attempt = cache.get_WriteAttempt();
+    if (write_attempt == nullptr) {
         return std::nullopt;
     }
 
@@ -468,14 +470,14 @@ build_provider_recovery_handoff_for_cli(
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverBindingPlan>
 build_provider_driver_binding_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto write_attempt = build_provider_write_attempt_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!write_attempt.has_value()) {
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto *write_attempt = cache.get_WriteAttempt();
+    if (write_attempt == nullptr) {
         return std::nullopt;
     }
 
@@ -491,14 +493,14 @@ build_provider_driver_binding_for_cli(
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderDriverReadinessReview>
 build_provider_driver_readiness_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto plan = build_provider_driver_binding_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!plan.has_value()) {
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto *plan = cache.get_DriverBinding();
+    if (plan == nullptr) {
         return std::nullopt;
     }
 

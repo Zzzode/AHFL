@@ -440,7 +440,7 @@ infer_effective_command(const CommandLineOptions &options) {
     return count;
 }
 
-void print_usage(std::ostream &out) {
+void print_usage(std::ostream &out, bool show_internal) {
     const auto project_aware_commands =
         format_pipe_separated_commands(command_list(CommandListKind::UsageProjectAware));
     out << "Usage:\n"
@@ -452,9 +452,52 @@ void print_usage(std::ostream &out) {
 
     print_usage_line(out, CommandKind::Check);
     for (const auto command : command_list(CommandListKind::Action)) {
+        if (!show_internal && is_internal_provider_command(command)) {
+            continue;
+        }
         print_usage_line(out, command);
     }
+    if (!show_internal) {
+        out << "  (use --emit-internal to show all internal provider artifacts)\n";
+    }
     out << "  ahflc [--dump-ast] <input.ahfl>\n";
+}
+
+// ---------------------------------------------------------------------------
+// is_internal_provider_command — self-contained via .def files
+// ---------------------------------------------------------------------------
+
+namespace {
+
+enum class LocalArtifactKind {
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind, ...) kind,
+#include "cli/pipeline_durable_store_import_provider_artifacts.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
+};
+
+enum class LocalVisibility { Public, Internal };
+
+constexpr LocalVisibility local_visibility(LocalArtifactKind kind) {
+    switch (kind) {
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind_name, artifact_type, builder, printer, command_token, visibility) \
+    case LocalArtifactKind::kind_name: return LocalVisibility::visibility;
+#include "cli/pipeline_durable_store_import_provider_artifacts.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
+    }
+    return LocalVisibility::Internal;
+}
+
+} // namespace
+
+bool is_internal_provider_command(CommandKind command) {
+    switch (command) {
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(kind, token, u, a, i, p, c, artifact_kind)  \
+    case CommandKind::kind:                                                                         \
+        return local_visibility(LocalArtifactKind::artifact_kind) == LocalVisibility::Internal;
+#include "cli/durable_store_import_provider_commands.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
+    default: return false;
+    }
 }
 
 } // namespace ahfl::cli
