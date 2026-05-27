@@ -3,6 +3,7 @@
 #include "../pipeline_durable_store_import.hpp"
 #include "../pipeline_durable_store_import_provider_steps.hpp"
 #include "../pipeline_emit.hpp"
+#include "../provider_pipeline_cache.hpp"
 
 #include "durable_store_import/artifacts.hpp"
 #include "durable_store_import/provider.hpp"
@@ -20,24 +21,19 @@ namespace dsi = ahfl::durable_store_import;
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderProductionReadinessEvidence>
 build_provider_production_readiness_evidence_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto negotiation =
-        build_provider_capability_negotiation_review_for_cli(
-            program, metadata, mock_set, options, command_name);
-    const auto compatibility = build_provider_compatibility_report_for_cli(
-        program, metadata, mock_set, options, command_name);
-    const auto audit = build_provider_execution_audit_event_for_cli(
-        program, metadata, mock_set, options, command_name);
-    const auto recovery = build_provider_write_recovery_plan_for_cli(
-        program, metadata, mock_set, options, command_name);
-    const auto taxonomy = build_provider_failure_taxonomy_report_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!negotiation.has_value() || !compatibility.has_value() || !audit.has_value() ||
-        !recovery.has_value() || !taxonomy.has_value()) {
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto *negotiation = cache.get_CapabilityNegotiationReview();
+    const auto *compatibility = cache.get_CompatibilityReport();
+    const auto *audit = cache.get_ExecutionAuditEvent();
+    const auto *recovery = cache.get_WriteRecoveryPlan();
+    const auto *taxonomy = cache.get_FailureTaxonomyReport();
+    if (negotiation == nullptr || compatibility == nullptr || audit == nullptr ||
+        recovery == nullptr || taxonomy == nullptr) {
         return std::nullopt;
     }
 
@@ -52,14 +48,14 @@ build_provider_production_readiness_evidence_for_cli(
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderProductionReadinessReview>
 build_provider_production_readiness_review_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto evidence = build_provider_production_readiness_evidence_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!evidence.has_value()) {
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto *evidence = cache.get_ProductionReadinessEvidence();
+    if (evidence == nullptr) {
         return std::nullopt;
     }
 
@@ -107,25 +103,14 @@ make_default_rejected_approval_decision(const dsi::ApprovalRequest &request) {
 }
 
 [[nodiscard]] std::optional<ReleaseGateArtifacts>
-build_release_gate_artifacts_for_cli(const ahfl::ir::Program &program,
-                                     const ahfl::handoff::PackageMetadata &metadata,
-                                     const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                     const CommandLineOptions &options,
-                                     std::string_view command_name) {
-    const auto compatibility =
-        build_provider_compatibility_report_for_cli(
-            program, metadata, mock_set, options, command_name);
-    const auto registry = build_provider_registry_for_cli(
-        program, metadata, mock_set, options, command_name);
-    const auto readiness =
-        build_provider_production_readiness_evidence_for_cli(
-            program, metadata, mock_set, options, command_name);
-    const auto selection_plan = build_provider_selection_plan_for_cli(
-        program, metadata, mock_set, options, command_name);
-    const auto snapshot = build_provider_config_snapshot_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!compatibility.has_value() || !registry.has_value() || !readiness.has_value() ||
-        !selection_plan.has_value() || !snapshot.has_value()) {
+build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache) {
+    const auto *compatibility = cache.get_CompatibilityReport();
+    const auto *registry = cache.get_Registry();
+    const auto *readiness = cache.get_ProductionReadinessEvidence();
+    const auto *selection_plan = cache.get_SelectionPlan();
+    const auto *snapshot = cache.get_ConfigSnapshot();
+    if (compatibility == nullptr || registry == nullptr || readiness == nullptr ||
+        selection_plan == nullptr || snapshot == nullptr) {
         return std::nullopt;
     }
 
@@ -204,13 +189,13 @@ build_provider_runtime_policy_report_from_gate(const ReleaseGateArtifacts &gate,
 } // namespace
 
 [[nodiscard]] std::optional<dsi::ApprovalReceipt>
-build_provider_approval_receipt_for_cli(const ahfl::ir::Program &program,
-                                        const ahfl::handoff::PackageMetadata &metadata,
-                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                        const CommandLineOptions &options,
-                                        std::string_view command_name) {
-    const auto gate =
-        build_release_gate_artifacts_for_cli(program, metadata, mock_set, options, command_name);
+build_provider_approval_receipt_for_cli(const ahfl::ir::Program & /*program*/,
+                                        const ahfl::handoff::PackageMetadata & /*metadata*/,
+                                        const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+                                        const CommandLineOptions & /*options*/,
+                                        std::string_view /*command_name*/,
+                                        ProviderPipelineCache &cache) {
+    const auto gate = build_release_gate_artifacts_for_cli(cache);
     if (!gate.has_value()) {
         return std::nullopt;
     }
@@ -218,13 +203,13 @@ build_provider_approval_receipt_for_cli(const ahfl::ir::Program &program,
 }
 
 [[nodiscard]] std::optional<dsi::ProviderOptInDecisionReport>
-build_provider_opt_in_decision_report_for_cli(const ahfl::ir::Program &program,
-                                             const ahfl::handoff::PackageMetadata &metadata,
-                                             const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                             const CommandLineOptions &options,
-                                             std::string_view command_name) {
-    const auto gate =
-        build_release_gate_artifacts_for_cli(program, metadata, mock_set, options, command_name);
+build_provider_opt_in_decision_report_for_cli(const ahfl::ir::Program & /*program*/,
+                                             const ahfl::handoff::PackageMetadata & /*metadata*/,
+                                             const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+                                             const CommandLineOptions & /*options*/,
+                                             std::string_view /*command_name*/,
+                                             ProviderPipelineCache &cache) {
+    const auto gate = build_release_gate_artifacts_for_cli(cache);
     if (!gate.has_value()) {
         return std::nullopt;
     }
@@ -236,13 +221,13 @@ build_provider_opt_in_decision_report_for_cli(const ahfl::ir::Program &program,
 }
 
 [[nodiscard]] std::optional<dsi::ProviderRuntimePolicyReport>
-build_provider_runtime_policy_report_for_cli(const ahfl::ir::Program &program,
-                                             const ahfl::handoff::PackageMetadata &metadata,
-                                             const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                             const CommandLineOptions &options,
-                                             std::string_view command_name) {
-    const auto gate =
-        build_release_gate_artifacts_for_cli(program, metadata, mock_set, options, command_name);
+build_provider_runtime_policy_report_for_cli(const ahfl::ir::Program & /*program*/,
+                                             const ahfl::handoff::PackageMetadata & /*metadata*/,
+                                             const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+                                             const CommandLineOptions & /*options*/,
+                                             std::string_view /*command_name*/,
+                                             ProviderPipelineCache &cache) {
+    const auto gate = build_release_gate_artifacts_for_cli(cache);
     if (!gate.has_value()) {
         return std::nullopt;
     }
@@ -259,13 +244,13 @@ build_provider_runtime_policy_report_for_cli(const ahfl::ir::Program &program,
 
 [[nodiscard]] std::optional<dsi::ProviderProductionIntegrationDryRunReport>
 build_provider_production_integration_dry_run_report_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto gate =
-        build_release_gate_artifacts_for_cli(program, metadata, mock_set, options, command_name);
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto gate = build_release_gate_artifacts_for_cli(cache);
     if (!gate.has_value()) {
         return std::nullopt;
     }
@@ -295,14 +280,14 @@ build_provider_production_integration_dry_run_report_for_cli(
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ProviderProductionReadinessReport>
 build_provider_production_readiness_report_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto review = build_provider_production_readiness_review_for_cli(
-        program, metadata, mock_set, options, command_name);
-    if (!review.has_value()) {
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto *review = cache.get_ProductionReadinessReview();
+    if (review == nullptr) {
         return std::nullopt;
     }
 
@@ -317,13 +302,13 @@ build_provider_production_readiness_report_for_cli(
 
 [[nodiscard]] std::optional<ahfl::durable_store_import::ReleaseEvidenceArchiveManifest>
 build_provider_release_evidence_archive_manifest_for_cli(
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    std::string_view command_name) {
-    const auto gate =
-        build_release_gate_artifacts_for_cli(program, metadata, mock_set, options, command_name);
+    const ahfl::ir::Program & /*program*/,
+    const ahfl::handoff::PackageMetadata & /*metadata*/,
+    const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+    const CommandLineOptions & /*options*/,
+    std::string_view /*command_name*/,
+    ProviderPipelineCache &cache) {
+    const auto gate = build_release_gate_artifacts_for_cli(cache);
     if (!gate.has_value()) {
         return std::nullopt;
     }

@@ -82,6 +82,7 @@ struct CommandLineOptions {
     std::optional<std::string_view> formal_model_out;
     bool explain_requested{false};
     bool optimize_requested{false};
+    bool show_internal_artifacts{false};
     std::vector<std::string_view> search_roots;
     std::vector<std::string_view> positional;
 };
@@ -113,6 +114,9 @@ core_backend_for_command(std::optional<CommandKind> command);
 [[nodiscard]] bool is_core_backend_command(CommandKind command);
 
 void set_command_option(CommandLineOptions &options, CommandKind command);
-void print_usage(std::ostream &out);
+void print_usage(std::ostream &out, bool show_internal = false);
+
+// Returns true if the command maps to an internal (non-public) provider artifact.
+[[nodiscard]] bool is_internal_provider_command(CommandKind command);
 
 } // namespace ahfl::cli
