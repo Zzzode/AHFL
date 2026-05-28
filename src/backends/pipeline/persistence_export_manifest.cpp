@@ -1,18 +1,18 @@
-#include "backends/persistence_export_manifest.hpp"
+#include "backends/pipeline/persistence_export_manifest.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class PersistenceExportManifestJsonPrinter final : private PrettyJsonWriter {
+class PersistenceExportManifestJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit PersistenceExportManifestJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit PersistenceExportManifestJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const persistence_export::PersistenceExportManifest &manifest) {
         print_object(0, [&](const auto &field) {
@@ -90,115 +90,6 @@ class PersistenceExportManifestJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
-        });
-    }
-
-    void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
-    }
-
-    void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
-    void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
-    void print_manifest_status(persistence_export::PersistenceExportManifestStatus status) {
-        switch (status) {
-        case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-            write_string("ready_to_import");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
     void print_manifest_boundary_kind(persistence_export::ManifestBoundaryKind kind) {
         switch (kind) {
         case persistence_export::ManifestBoundaryKind::LocalBundleOnly:

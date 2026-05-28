@@ -1,18 +1,18 @@
-#include "backends/replay_view.hpp"
+#include "backends/pipeline/replay_view.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class ReplayViewJsonPrinter final : private PrettyJsonWriter {
+class ReplayViewJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit ReplayViewJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ReplayViewJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const replay_view::ReplayView &replay) {
         print_object(0, [&](const auto &field) {
@@ -41,19 +41,7 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
                 out_ << "null";
             });
             field("input_fixture", [&]() { write_string(replay.input_fixture); });
-            field("workflow_status", [&]() {
-                switch (replay.workflow_status) {
-                case runtime_session::WorkflowSessionStatus::Completed:
-                    write_string("completed");
-                    return;
-                case runtime_session::WorkflowSessionStatus::Failed:
-                    write_string("failed");
-                    return;
-                case runtime_session::WorkflowSessionStatus::Partial:
-                    write_string("partial");
-                    return;
-                }
-            });
+            field("workflow_status", [&]() { print_workflow_status(replay.workflow_status); });
             field("replay_status", [&]() {
                 switch (replay.replay_status) {
                 case replay_view::ReplayStatus::Consistent:
@@ -94,14 +82,6 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
     void print_consistency(const replay_view::ReplayConsistencySummary &consistency,
                            int indent_level) {
         print_object(indent_level, [&](const auto &field) {
@@ -174,33 +154,6 @@ class ReplayViewJsonPrinter final : private PrettyJsonWriter {
                     return;
                 }
             });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
         });
     }
 };

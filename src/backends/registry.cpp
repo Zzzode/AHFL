@@ -21,13 +21,12 @@ bool BackendRegistry::register_backend(BackendEntry entry) {
     return true;
 }
 
-bool BackendRegistry::emit(BackendKind kind, const EmitContext &ctx) const {
+EmitResult BackendRegistry::emit(BackendKind kind, const EmitContext &ctx) const {
     const auto *entry = find(kind);
     if (entry == nullptr) {
-        return false;
+        return std::unexpected("backend not registered");
     }
-    entry->emitter(ctx);
-    return true;
+    return entry->emitter(ctx);
 }
 
 const BackendEntry *BackendRegistry::find(BackendKind kind) const {

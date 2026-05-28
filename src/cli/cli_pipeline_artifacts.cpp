@@ -1,6 +1,6 @@
 #include "cli_pipeline_artifacts.hpp"
 
-#include "backends/execution_plan.hpp"
+#include "backends/pipeline/execution_plan.hpp"
 
 #include <iostream>
 #include <optional>

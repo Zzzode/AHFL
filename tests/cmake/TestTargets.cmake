@@ -39,7 +39,7 @@ add_executable(ahfl_handoff_package_compat_tests
 )
 target_link_libraries(ahfl_handoff_package_compat_tests
     PRIVATE
-        ahfl_backend_native_json
+        ahfl_backend_pipeline_handoff
 )
 ahfl_apply_project_warnings(ahfl_handoff_package_compat_tests)
 

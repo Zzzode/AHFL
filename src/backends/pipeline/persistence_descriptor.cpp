@@ -1,19 +1,19 @@
-#include "backends/persistence_descriptor.hpp"
+#include "backends/pipeline/persistence_descriptor.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 #include <vector>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class PersistenceDescriptorJsonPrinter final : private PrettyJsonWriter {
+class PersistenceDescriptorJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit PersistenceDescriptorJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit PersistenceDescriptorJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const persistence_descriptor::CheckpointPersistenceDescriptor &descriptor) {
         print_object(0, [&](const auto &field) {
@@ -77,95 +77,6 @@ class PersistenceDescriptorJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
-        });
-    }
-
-    void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
-    }
-
-    void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
-    void print_persistence_status(persistence_descriptor::PersistenceDescriptorStatus status) {
-        switch (status) {
-        case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-            write_string("ready_to_export");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-            write_string("blocked");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
     void print_basis_kind(persistence_descriptor::PersistenceBasisKind kind) {
         switch (kind) {
         case persistence_descriptor::PersistenceBasisKind::LocalPlanningOnly:
@@ -192,14 +103,6 @@ class PersistenceDescriptorJsonPrinter final : private PrettyJsonWriter {
             write_string("workflow_partial");
             return;
         }
-    }
-
-    void print_string_array(const std::vector<std::string> &values, int indent_level) {
-        print_array(indent_level, [&](const auto &item) {
-            for (const auto &value : values) {
-                item([&]() { write_string(value); });
-            }
-        });
     }
 
     void print_cursor(const persistence_descriptor::PersistenceCursor &cursor, int indent_level) {

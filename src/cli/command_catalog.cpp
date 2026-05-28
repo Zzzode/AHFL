@@ -148,8 +148,12 @@ constexpr CommandSpec kCommandSpecs[] = {
     {CommandKind::EmitSummary, "emit-summary", 100, 97, 103},
     {CommandKind::EmitSmv, "emit-smv", 101, 98, 104},
     {CommandKind::EmitAssuranceJson, "emit-assurance-json", 102, 99, 105},
-    {CommandKind::ValidateAssurance, "validate-assurance", 103, 100, 106, 12},
-    {CommandKind::VerifyFormal, "verify-formal", 104, 101, 107, 13},
+    {CommandKind::EmitK8sCrd, "emit-k8s-crd", 103, 100, 106},
+    {CommandKind::EmitOpenApi, "emit-openapi", 104, 101, 107},
+    {CommandKind::EmitTerraform, "emit-terraform", 105, 102, 108},
+    {CommandKind::EmitWasm, "emit-wasm", 106, 103, 109},
+    {CommandKind::ValidateAssurance, "validate-assurance", 107, 104, 110, 12},
+    {CommandKind::VerifyFormal, "verify-formal", 108, 105, 111, 13},
 };
 
 [[nodiscard]] const CommandSpec *find_command_spec(CommandKind command) {
@@ -162,15 +166,6 @@ constexpr CommandSpec kCommandSpecs[] = {
     return nullptr;
 }
 
-[[nodiscard]] const CommandSpec *find_command_spec(std::string_view token) {
-    for (const auto &spec : kCommandSpecs) {
-        if (spec.token == token) {
-            return &spec;
-        }
-    }
-
-    return nullptr;
-}
 
 [[nodiscard]] constexpr int command_list_order(const CommandSpec &spec, CommandListKind list_kind) {
     switch (list_kind) {
@@ -243,47 +238,81 @@ static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSup
     return spec != nullptr && command_list_order(*spec, list_kind) != kNotListed;
 }
 
-[[nodiscard]] std::string format_pipe_separated_commands(std::span<const CommandKind> commands) {
-    std::string result;
-    for (std::size_t index = 0; index < commands.size(); ++index) {
-        if (index > 0) {
-            result += "|";
+/// Derive the canonical short token for a given old token.
+[[nodiscard]] std::string derive_short_form(std::string_view old_token) {
+    constexpr std::string_view kProviderPrefix = "emit-durable-store-import-provider-";
+    constexpr std::string_view kDurableStorePrefix = "emit-durable-store-import-";
+    constexpr std::string_view kEmitPrefix = "emit-";
+    constexpr std::string_view kDumpPrefix = "dump-";
+    constexpr std::string_view kVerifyPrefix = "verify-";
+    constexpr std::string_view kValidatePrefix = "validate-";
+
+    if (old_token.starts_with(kProviderPrefix)) {
+        std::string result = "provider/";
+        result += old_token.substr(kProviderPrefix.size());
+        return result;
+    }
+    if (old_token.starts_with(kDurableStorePrefix)) {
+        std::string result = "store/";
+        result += old_token.substr(kDurableStorePrefix.size());
+        return result;
+    }
+    // emit-store-import-X stays as "store-import-X" (plain top-level artifact)
+    // to avoid collision with durable-store-import-X → store/X.
+    if (old_token.starts_with(kEmitPrefix)) {
+        return std::string(old_token.substr(kEmitPrefix.size()));
+    }
+    if (old_token.starts_with(kDumpPrefix)) {
+        return std::string(old_token.substr(kDumpPrefix.size()));
+    }
+    if (old_token.starts_with(kVerifyPrefix)) {
+        return std::string(old_token.substr(kVerifyPrefix.size()));
+    }
+    if (old_token.starts_with(kValidatePrefix)) {
+        return std::string(old_token.substr(kValidatePrefix.size()));
+    }
+    return std::string(old_token);
+}
+
+/// Check whether `old_token` belongs to `group` and its short form equals `artifact_id`.
+[[nodiscard]] bool matches_artifact_id(std::string_view old_token, ActionGroup group,
+                                       std::string_view artifact_id) {
+    switch (group) {
+    case ActionGroup::Emit: {
+        constexpr std::string_view kProviderPrefix = "emit-durable-store-import-provider-";
+        constexpr std::string_view kDurableStorePrefix = "emit-durable-store-import-";
+        constexpr std::string_view kEmitPrefix = "emit-";
+
+        if (artifact_id.starts_with("provider/")) {
+            auto suffix = artifact_id.substr(9);
+            return old_token.starts_with(kProviderPrefix) &&
+                   old_token.substr(kProviderPrefix.size()) == suffix;
         }
-        result += command_name(commands[index]);
+        if (artifact_id.starts_with("store/")) {
+            auto suffix = artifact_id.substr(6);
+            // Only emit-durable-store-import-X maps to store/X.
+            // emit-store-import-X stays as plain "store-import-X" (no domain prefix).
+            return old_token.starts_with(kDurableStorePrefix) &&
+                   old_token.substr(kDurableStorePrefix.size()) == suffix;
+        }
+        // Plain artifact-id (no domain prefix) — match "emit-{id}"
+        return old_token.starts_with(kEmitPrefix) &&
+               old_token.substr(kEmitPrefix.size()) == artifact_id;
     }
-    return result;
-}
-
-[[nodiscard]] std::string_view usage_suffix_for_command(CommandKind command) {
-    if (command == CommandKind::Check) {
-        return "[--search-root <dir>]... [--dump-ast] <input.ahfl>";
+    case ActionGroup::Dump: {
+        constexpr std::string_view kPrefix = "dump-";
+        return old_token.starts_with(kPrefix) && old_token.substr(kPrefix.size()) == artifact_id;
     }
-
-    if (command == CommandKind::DumpProject) {
-        return "[--search-root <dir>]... <entry.ahfl>";
+    case ActionGroup::Verify: {
+        constexpr std::string_view kPrefix = "verify-";
+        return old_token.starts_with(kPrefix) && old_token.substr(kPrefix.size()) == artifact_id;
     }
-
-    if (is_capability_input_supported_command(command)) {
-        return "--package <ahfl.package.json> --capability-mocks <mocks.json> "
-               "--input-fixture <fixture> [--workflow <canonical>] [--run-id <id>] "
-               "[--search-root <dir>]... <input.ahfl>";
+    case ActionGroup::Validate: {
+        constexpr std::string_view kPrefix = "validate-";
+        return old_token.starts_with(kPrefix) && old_token.substr(kPrefix.size()) == artifact_id;
     }
-
-    if (command == CommandKind::VerifyFormal) {
-        return "[--model-checker <path>] [--formal-model-out <model.smv>] "
-               "[--package <ahfl.package.json>] "
-               "[--search-root <dir>]... <input.ahfl>";
     }
-
-    if (is_package_supported_command(command)) {
-        return "[--package <ahfl.package.json>] [--search-root <dir>]... <input.ahfl>";
-    }
-
-    return "[--search-root <dir>]... <input.ahfl>";
-}
-
-void print_usage_line(std::ostream &out, CommandKind command) {
-    out << "  ahflc " << command_name(command) << " " << usage_suffix_for_command(command) << '\n';
+    return false;
 }
 
 } // namespace
@@ -318,17 +347,23 @@ void print_usage_line(std::ostream &out, CommandKind command) {
         if (index > 0) {
             result += (index + 1 == commands.size()) ? ", or " : ", ";
         }
-        result += command_name(commands[index]);
+        // Format as two-token CLI syntax: "emit <artifact-id>", "dump <target>", etc.
+        auto token = command_name(commands[index]);
+        if (token.starts_with("emit-")) {
+            result += "emit ";
+            result += command_short_name(commands[index]);
+        } else if (token.starts_with("dump-")) {
+            result += "dump ";
+            result += command_short_name(commands[index]);
+        } else if (token.starts_with("verify-")) {
+            result += "verify";
+        } else if (token.starts_with("validate-")) {
+            result += "validate";
+        } else {
+            result += token;
+        }
     }
     return result;
-}
-
-[[nodiscard]] std::optional<CommandKind> command_token_to_kind(std::string_view argument) {
-    if (const auto *const spec = find_command_spec(argument); spec != nullptr) {
-        return spec->kind;
-    }
-
-    return std::nullopt;
 }
 
 [[nodiscard]] std::string_view command_name(CommandKind command) {
@@ -389,6 +424,14 @@ core_backend_for_command(std::optional<CommandKind> command) {
         return ahfl::BackendKind::Smv;
     case CommandKind::EmitAssuranceJson:
         return ahfl::BackendKind::AssuranceJson;
+    case CommandKind::EmitK8sCrd:
+        return ahfl::BackendKind::InfraK8sCrd;
+    case CommandKind::EmitOpenApi:
+        return ahfl::BackendKind::InfraOpenApi;
+    case CommandKind::EmitTerraform:
+        return ahfl::BackendKind::InfraTerraform;
+    case CommandKind::EmitWasm:
+        return ahfl::BackendKind::InfraWasm;
     default:
         return std::nullopt;
     }
@@ -441,26 +484,98 @@ infer_effective_command(const CommandLineOptions &options) {
 }
 
 void print_usage(std::ostream &out, bool show_internal) {
-    const auto project_aware_commands =
-        format_pipe_separated_commands(command_list(CommandListKind::UsageProjectAware));
     out << "Usage:\n"
-        << "  ahflc <" << project_aware_commands
-        << "> [--package <ahfl.package.json>] --project <ahfl.project.json>\n"
-        << "  ahflc <" << project_aware_commands
-        << "> [--package <ahfl.package.json>] --workspace <ahfl.workspace.json> --project-name "
-           "<name>\n";
+        << "  ahflc check [options] <input.ahfl>\n"
+        << "  ahflc emit <artifact> [options] <input.ahfl>\n"
+        << "  ahflc dump <target> [options] <input.ahfl>\n"
+        << "  ahflc verify [options] <input.ahfl>\n"
+        << "  ahflc validate [options] <input.ahfl>\n"
+        << "\n"
+        << "Actions:\n"
+        << "  check               Type-check source files\n"
+        << "  emit <artifact>     Emit a build artifact (see list below)\n"
+        << "  dump <target>       Diagnostic dump (ast, types, project)\n"
+        << "  verify              Formal verification via NuSMV/nuXmv\n"
+        << "  validate            Assurance validation checks\n"
+        << "\n"
+        << "Artifacts (ahflc emit <artifact>):\n";
 
-    print_usage_line(out, CommandKind::Check);
-    for (const auto command : command_list(CommandListKind::Action)) {
-        if (!show_internal && is_internal_provider_command(command)) {
-            continue;
+    // Core artifacts with descriptions
+    out << "  Core:\n"
+        << "    ir                         AHFL intermediate representation\n"
+        << "    ir-json                    IR in JSON format\n"
+        << "    native-json                Native backend JSON\n"
+        << "    execution-plan             Execution plan for workflows\n"
+        << "    execution-journal          Execution journal trace\n"
+        << "    replay-view                Replay view snapshot\n"
+        << "    audit-report               Audit trail report\n"
+        << "    scheduler-snapshot         Scheduler state snapshot\n"
+        << "    scheduler-review           Scheduler review output\n"
+        << "    checkpoint-record          Checkpoint record\n"
+        << "    checkpoint-review          Checkpoint review\n"
+        << "    persistence-descriptor     Persistence layer descriptor\n"
+        << "    persistence-review         Persistence review\n"
+        << "    export-manifest            Export manifest\n"
+        << "    export-review              Export review\n"
+        << "    store-import-descriptor    Store import descriptor\n"
+        << "    store-import-review        Store import review\n"
+        << "    runtime-session            Runtime session snapshot\n"
+        << "    dry-run-trace              Dry-run execution trace\n"
+        << "    package-review             Package-level review\n"
+        << "    summary                    Human-readable summary\n"
+        << "    smv                        NuSMV model (for verify)\n"
+        << "    assurance-json             Assurance model (for validate)\n";
+
+    // Store pipeline (durable-store-import artifacts under store/)
+    out << "\n  Store Pipeline (store/...):\n";
+    for (const auto &spec : kCommandSpecs) {
+        if (spec.token.starts_with("emit-durable-store-import-") &&
+            !spec.token.starts_with("emit-durable-store-import-provider-")) {
+            out << "    " << derive_short_form(spec.token) << '\n';
         }
-        print_usage_line(out, command);
+    }
+
+    // Provider pipeline
+    out << "\n  Provider Pipeline (provider/...):";
+    if (!show_internal) {
+        out << "  [public only]";
+    }
+    out << '\n';
+    for (const auto &spec : kCommandSpecs) {
+        if (!spec.token.starts_with("emit-durable-store-import-provider-")) continue;
+        if (!show_internal && is_internal_provider_command(spec.kind)) continue;
+        out << "    " << derive_short_form(spec.token) << '\n';
     }
     if (!show_internal) {
-        out << "  (use --emit-internal to show all internal provider artifacts)\n";
+        out << "    (use --show-hidden to show all provider artifacts)\n";
     }
-    out << "  ahflc [--dump-ast] <input.ahfl>\n";
+
+    // Dump targets
+    out << "\n  Dump targets: ast, types, project\n";
+
+    // Options grouped by scope
+    out << "\nInput Options:\n"
+        << "  --package <path>            Package descriptor\n"
+        << "  --project <path>            Project descriptor\n"
+        << "  --workspace <path>          Workspace descriptor\n"
+        << "  --project-name <name>       Target project in workspace\n"
+        << "  --capability-mocks <path>   Capability mock input\n"
+        << "  --search-root <dir>         Additional source search path (repeatable)\n";
+
+    out << "\nRuntime Options:\n"
+        << "  --workflow <canonical>      Target workflow (multi-workflow packages)\n"
+        << "  --input-fixture <fixture>   Runtime fixture selection\n"
+        << "  --run-id <id>              Stable run identity\n";
+
+    out << "\nVerification Options:\n"
+        << "  --model-checker <path>     NuSMV/nuXmv binary path\n"
+        << "  --formal-model-out <path>  Write SMV model to file\n";
+
+    out << "\nGeneral Options:\n"
+        << "  --show-hidden              Show hidden internal artifacts\n"
+        << "  --explain                  Verbose diagnostic output\n"
+        << "  -O                         Enable optimization passes\n"
+        << "  -h, --help                 Show this help\n";
 }
 
 // ---------------------------------------------------------------------------
@@ -498,6 +613,35 @@ bool is_internal_provider_command(CommandKind command) {
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
     default: return false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Subcommand dispatch: ahflc emit <artifact-id>, ahflc dump <target>, etc.
+// ---------------------------------------------------------------------------
+
+std::optional<ActionGroup> action_group_from_token(std::string_view token) {
+    if (token == "emit") return ActionGroup::Emit;
+    if (token == "dump") return ActionGroup::Dump;
+    if (token == "verify") return ActionGroup::Verify;
+    if (token == "validate") return ActionGroup::Validate;
+    return std::nullopt;
+}
+
+std::optional<CommandKind> resolve_subcommand(ActionGroup group, std::string_view artifact_id) {
+    for (const auto &spec : kCommandSpecs) {
+        if (matches_artifact_id(spec.token, group, artifact_id)) {
+            return spec.kind;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string command_short_name(CommandKind command) {
+    const auto *spec = find_command_spec(command);
+    if (spec == nullptr) {
+        return "check";
+    }
+    return derive_short_form(spec->token);
 }
 
 } // namespace ahfl::cli
