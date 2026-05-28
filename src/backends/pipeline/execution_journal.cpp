@@ -1,18 +1,18 @@
-#include "backends/execution_journal.hpp"
+#include "backends/pipeline/execution_journal.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class ExecutionJournalJsonPrinter final : private PrettyJsonWriter {
+class ExecutionJournalJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit ExecutionJournalJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit ExecutionJournalJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const execution_journal::ExecutionJournal &journal) {
         print_object(0, [&](const auto &field) {
@@ -50,14 +50,6 @@ class ExecutionJournalJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
     void print_event(const execution_journal::ExecutionJournalEvent &event, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("kind", [&]() {
@@ -125,33 +117,6 @@ class ExecutionJournalJsonPrinter final : private PrettyJsonWriter {
                     }
                 });
             });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
         });
     }
 };

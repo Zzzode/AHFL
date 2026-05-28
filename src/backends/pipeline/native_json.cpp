@@ -1,7 +1,6 @@
-#include "backends/native_json.hpp"
+#include "backends/pipeline/native_json.hpp"
 
 #include <algorithm>
-#include <cstddef>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -9,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 #include "support/overloaded.hpp"
 
 namespace ahfl {
@@ -32,28 +31,6 @@ namespace {
     return !provenance.module_name.empty() || !provenance.source_path.empty();
 }
 
-[[nodiscard]] std::string_view
-workflow_node_start_condition_name(handoff::WorkflowNodeStartConditionKind kind) {
-    switch (kind) {
-    case handoff::WorkflowNodeStartConditionKind::Immediate:
-        return "immediate";
-    case handoff::WorkflowNodeStartConditionKind::AfterDependenciesCompleted:
-        return "after_dependencies_completed";
-    }
-
-    return "invalid";
-}
-
-[[nodiscard]] std::string_view
-workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionConditionKind kind) {
-    switch (kind) {
-    case handoff::WorkflowNodeCompletionConditionKind::TargetReachedFinalState:
-        return "target_reached_final_state";
-    }
-
-    return "invalid";
-}
-
 [[nodiscard]] std::string_view policy_obligation_kind_name(handoff::PolicyObligationKind kind) {
     switch (kind) {
     case handoff::PolicyObligationKind::Requires:
@@ -73,17 +50,6 @@ workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionCondition
     return "invalid";
 }
 
-[[nodiscard]] std::string_view workflow_value_source_kind_name(ir::WorkflowValueSourceKind kind) {
-    switch (kind) {
-    case ir::WorkflowValueSourceKind::WorkflowInput:
-        return "workflow_input";
-    case ir::WorkflowValueSourceKind::WorkflowNodeOutput:
-        return "workflow_node_output";
-    }
-
-    return "invalid";
-}
-
 [[nodiscard]] std::string_view
 formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     switch (kind) {
@@ -98,9 +64,9 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
     return "invalid";
 }
 
-class NativeJsonPrinter final : private PrettyJsonWriter {
+class NativeJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit NativeJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit NativeJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const handoff::Package &package) {
         print_object(0, [&](const auto &field) {
@@ -153,32 +119,6 @@ class NativeJsonPrinter final : private PrettyJsonWriter {
         });
     }
 
-    void print_workflow_value_summary(const ir::WorkflowExprSummary &summary, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("reads", [&]() {
-                print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &read : summary.reads) {
-                        item([&]() {
-                            print_object(indent_level + 2, [&](const auto &read_field) {
-                                read_field("kind", [&]() {
-                                    write_string(workflow_value_source_kind_name(read.kind));
-                                });
-                                read_field("root_name", [&]() { write_string(read.root_name); });
-                                read_field("members", [&]() {
-                                    print_array(indent_level + 3, [&](const auto &member_item) {
-                                        for (const auto &member : read.members) {
-                                            member_item([&]() { write_string(member); });
-                                        }
-                                    });
-                                });
-                            });
-                        });
-                    }
-                });
-            });
-        });
-    }
-
     void print_workflow_execution_graph(const handoff::WorkflowExecutionGraph &graph,
                                         int indent_level) {
         print_object(indent_level, [&](const auto &field) {
@@ -198,29 +138,6 @@ class NativeJsonPrinter final : private PrettyJsonWriter {
                                 edge_field("to_node", [&]() { write_string(edge.to_node); });
                             });
                         });
-                    }
-                });
-            });
-        });
-    }
-
-    void print_workflow_node_lifecycle(const handoff::WorkflowNodeLifecycleSummary &lifecycle,
-                                       int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("start_condition", [&]() {
-                write_string(workflow_node_start_condition_name(lifecycle.start_condition));
-            });
-            field("completion_condition", [&]() {
-                write_string(
-                    workflow_node_completion_condition_name(lifecycle.completion_condition));
-            });
-            field("completion_latched",
-                  [&]() { out_ << (lifecycle.completion_latched ? "true" : "false"); });
-            field("target_initial_state", [&]() { write_string(lifecycle.target_initial_state); });
-            field("target_final_states", [&]() {
-                print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &state : lifecycle.target_final_states) {
-                        item([&]() { write_string(state); });
                     }
                 });
             });
@@ -350,7 +267,7 @@ class NativeJsonPrinter final : private PrettyJsonWriter {
                                     });
                                 });
                                 node_field("lifecycle", [&]() {
-                                    print_workflow_node_lifecycle(node.lifecycle, indent_level + 3);
+                                    print_lifecycle(node.lifecycle, indent_level + 3);
                                 });
                             });
                         });

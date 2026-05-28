@@ -110,8 +110,8 @@ constexpr OptionSpec kOptionSpecs[] = {
      "Enable structured explanations", ""},
     {"--optimize", "-O", OptionArgKind::Flag, set_optimize,
      "Enable optimization passes", ""},
-    {"--emit-internal", "", OptionArgKind::Flag, set_show_internal,
-     "Show internal provider artifacts in help and allow their emission", ""},
+    {"--show-hidden", "", OptionArgKind::Flag, set_show_internal,
+     "Show hidden internal artifacts in help and allow their emission", ""},
 };
 
 // ---------------------------------------------------------------------------
@@ -183,11 +183,46 @@ parse_options_from_table(std::span<const std::string_view> arguments,
             continue;
         }
 
-        // Try recognizing as a command token.
-        const auto command = command_token_to_kind(argument);
-        if (command.has_value() && !options.selected_command.has_value() &&
+        // Try two-token subcommand dispatch (ahflc emit <artifact-id>).
+        if (auto group = action_group_from_token(argument); group.has_value()) {
+            // Zero-target actions: verify and validate have a single implicit target.
+            if (*group == ActionGroup::Verify) {
+                if (!options.selected_command.has_value() && options.positional.empty()) {
+                    set_command_option(options, CommandKind::VerifyFormal);
+                    continue;
+                }
+            } else if (*group == ActionGroup::Validate) {
+                if (!options.selected_command.has_value() && options.positional.empty()) {
+                    set_command_option(options, CommandKind::ValidateAssurance);
+                    continue;
+                }
+            } else {
+                // emit/dump require a target artifact-id.
+                if (index + 1 < arguments.size() && !arguments[index + 1].empty() &&
+                    arguments[index + 1].front() != '-') {
+                    auto artifact_id = arguments[++index];
+                    if (auto cmd = resolve_subcommand(*group, artifact_id); cmd.has_value()) {
+                        if (!options.selected_command.has_value() &&
+                            options.positional.empty()) {
+                            set_command_option(options, *cmd);
+                            continue;
+                        }
+                    }
+                    std::cerr << "error: unknown artifact '" << artifact_id
+                              << "' for action '" << argument << "'\n";
+                    print_usage(std::cerr);
+                    return ParseResult{true, 2};
+                }
+                std::cerr << "error: '" << argument << "' requires an artifact name\n";
+                print_usage(std::cerr);
+                return ParseResult{true, 2};
+            }
+        }
+
+        // Recognize "check" as a standalone command.
+        if (argument == "check" && !options.selected_command.has_value() &&
             options.positional.empty()) {
-            set_command_option(options, *command);
+            set_command_option(options, CommandKind::Check);
             continue;
         }
 

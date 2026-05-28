@@ -1,5 +1,6 @@
-#include "backends/store_import_review.hpp"
+#include "backends/pipeline/store_import_review.hpp"
 #include "printer_helpers.hpp"
+#include "backends/pipeline/review_helpers.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -11,72 +12,6 @@ namespace ahfl {
 namespace {
 
 using backend_printer::line;
-
-[[nodiscard]] std::string workflow_status_name(runtime_session::WorkflowSessionStatus status) {
-    switch (status) {
-    case runtime_session::WorkflowSessionStatus::Completed:
-        return "completed";
-    case runtime_session::WorkflowSessionStatus::Failed:
-        return "failed";
-    case runtime_session::WorkflowSessionStatus::Partial:
-        return "partial";
-    }
-
-    return "invalid";
-}
-
-[[nodiscard]] std::string checkpoint_status_name(checkpoint_record::CheckpointRecordStatus status) {
-    switch (status) {
-    case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-        return "ready_to_persist";
-    case checkpoint_record::CheckpointRecordStatus::Blocked:
-        return "blocked";
-    case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-        return "terminal_completed";
-    case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-        return "terminal_failed";
-    case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-        return "terminal_partial";
-    }
-
-    return "invalid";
-}
-
-[[nodiscard]] std::string
-persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
-    switch (status) {
-    case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
-        return "ready_to_export";
-    case persistence_descriptor::PersistenceDescriptorStatus::Blocked:
-        return "blocked";
-    case persistence_descriptor::PersistenceDescriptorStatus::TerminalCompleted:
-        return "terminal_completed";
-    case persistence_descriptor::PersistenceDescriptorStatus::TerminalFailed:
-        return "terminal_failed";
-    case persistence_descriptor::PersistenceDescriptorStatus::TerminalPartial:
-        return "terminal_partial";
-    }
-
-    return "invalid";
-}
-
-[[nodiscard]] std::string
-manifest_status_name(persistence_export::PersistenceExportManifestStatus status) {
-    switch (status) {
-    case persistence_export::PersistenceExportManifestStatus::ReadyToImport:
-        return "ready_to_import";
-    case persistence_export::PersistenceExportManifestStatus::Blocked:
-        return "blocked";
-    case persistence_export::PersistenceExportManifestStatus::TerminalCompleted:
-        return "terminal_completed";
-    case persistence_export::PersistenceExportManifestStatus::TerminalFailed:
-        return "terminal_failed";
-    case persistence_export::PersistenceExportManifestStatus::TerminalPartial:
-        return "terminal_partial";
-    }
-
-    return "invalid";
-}
 
 [[nodiscard]] std::string descriptor_status_name(store_import::StoreImportDescriptorStatus status) {
     switch (status) {
@@ -156,38 +91,6 @@ descriptor_boundary_kind_name(store_import::StoreImportBoundaryKind kind) {
     return "invalid";
 }
 
-[[nodiscard]] std::string failure_kind_name(runtime_session::RuntimeFailureKind kind) {
-    switch (kind) {
-    case runtime_session::RuntimeFailureKind::MockMissing:
-        return "mock_missing";
-    case runtime_session::RuntimeFailureKind::NodeFailed:
-        return "node_failed";
-    case runtime_session::RuntimeFailureKind::WorkflowFailed:
-        return "workflow_failed";
-    }
-
-    return "invalid";
-}
-
-void print_failure_summary(std::ostream &out,
-                           int indent_level,
-                           std::string_view label,
-                           const std::optional<runtime_session::RuntimeFailureSummary> &summary) {
-    line(out, indent_level, std::string(label) + " {");
-    if (!summary.has_value()) {
-        line(out, indent_level + 1, "value none");
-        line(out, indent_level, "}");
-        return;
-    }
-
-    line(out, indent_level + 1, "kind " + failure_kind_name(summary->kind));
-    line(out,
-         indent_level + 1,
-         "node_name " + (summary->node_name.has_value() ? *summary->node_name : "none"));
-    line(out, indent_level + 1, "message " + summary->message);
-    line(out, indent_level, "}");
-}
-
 void print_staging_blocker(std::ostream &out,
                            int indent_level,
                            const std::optional<store_import::StagingBlocker> &blocker) {
@@ -208,22 +111,6 @@ void print_staging_blocker(std::ostream &out,
     line(out, indent_level, "}");
 }
 
-void print_string_list(std::ostream &out,
-                       int indent_level,
-                       std::string_view label,
-                       const std::vector<std::string> &values) {
-    line(out, indent_level, std::string(label) + " {");
-    line(out, indent_level + 1, "count " + std::to_string(values.size()));
-    if (values.empty()) {
-        line(out, indent_level + 1, "- none");
-    } else {
-        for (const auto &value : values) {
-            line(out, indent_level + 1, "- " + value);
-        }
-    }
-    line(out, indent_level, "}");
-}
-
 } // namespace
 
 void print_store_import_review(const store_import::StoreImportReviewSummary &summary,
@@ -237,10 +124,10 @@ void print_store_import_review(const store_import::StoreImportReviewSummary &sum
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + workflow_status_name(summary.workflow_status));
-    line(out, 0, "checkpoint_status " + checkpoint_status_name(summary.checkpoint_status));
-    line(out, 0, "persistence_status " + persistence_status_name(summary.persistence_status));
-    line(out, 0, "manifest_status " + manifest_status_name(summary.manifest_status));
+    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out, 0, "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
+    line(out, 0, "persistence_status " + pipeline_review::persistence_status_name(summary.persistence_status));
+    line(out, 0, "manifest_status " + pipeline_review::manifest_status_name(summary.manifest_status));
     line(out, 0, "descriptor_status " + descriptor_status_name(summary.descriptor_status));
     line(out, 0, "export_package_identity " + summary.export_package_identity);
     line(out, 0, "store_import_candidate_identity " + summary.store_import_candidate_identity);
@@ -261,9 +148,9 @@ void print_store_import_review(const store_import::StoreImportReviewSummary &sum
                   ? artifact_kind_name(*summary.next_required_staging_artifact_kind)
                   : "none"));
 
-    print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_staging_blocker(out, 0, summary.staging_blocker);
-    print_string_list(out, 0, "staging_artifact_preview", summary.staging_artifact_preview);
+    pipeline_review::print_string_list(out, 0, "staging_artifact_preview", summary.staging_artifact_preview);
 }
 
 } // namespace ahfl

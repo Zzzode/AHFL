@@ -60,15 +60,15 @@ int main() {
         ahfl::BackendKind::Ir,
         "duplicate-ir",
         "duplicate IR backend",
-        [](const ahfl::EmitContext &) {},
+        [](const ahfl::EmitContext &) -> ahfl::EmitResult { return {}; },
     };
     check(!registry.register_backend(std::move(duplicate)), "duplicate backend kind is rejected");
     check(registry.size() == original_size, "duplicate registration does not mutate registry");
 
     ahfl::ir::Program program;
     std::ostringstream out;
-    check(ahfl::emit_backend(ahfl::BackendKind::Ir, program, out, nullptr),
-          "emit_backend returns true for registered backend");
+    auto result = ahfl::emit_backend(ahfl::BackendKind::Ir, program, out, nullptr);
+    check(result.has_value(), "emit_backend succeeds for registered backend");
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return pass_count == test_count ? 0 : 1;

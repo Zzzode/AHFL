@@ -28,7 +28,6 @@ namespace ahfl::cli {
 
 using ahfl::cli::command_list;
 using ahfl::cli::command_name;
-using ahfl::cli::command_token_to_kind;
 using ahfl::cli::CommandKind;
 using ahfl::cli::CommandLineOptions;
 using ahfl::cli::CommandListKind;
@@ -100,12 +99,13 @@ emit_core_backend(std::optional<CommandKind> effective_command,
         return std::nullopt;
     }
 
-    if (!ahfl::emit_backend(*backend, program, out, package_metadata)) {
+    auto result = ahfl::emit_backend(*backend, program, out, package_metadata);
+    if (!result.has_value()) {
         std::cerr << "internal error: core backend command ";
         if (effective_command.has_value()) {
             std::cerr << "'" << command_name(*effective_command) << "' ";
         }
-        std::cerr << "has no registered backend\n";
+        std::cerr << "failed: " << result.error() << "\n";
         return 1;
     }
 

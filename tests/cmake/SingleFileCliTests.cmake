@@ -4,7 +4,7 @@ ahfl_add_check_test(
 )
 
 add_test(NAME ahflc.dump_ast.example
-    COMMAND $<TARGET_FILE:ahflc> dump-ast
+    COMMAND $<TARGET_FILE:ahflc> dump ast
             "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
 )
 set_tests_properties(ahflc.dump_ast.example PROPERTIES
@@ -12,7 +12,7 @@ set_tests_properties(ahflc.dump_ast.example PROPERTIES
 )
 
 add_test(NAME ahflc.dump_types.example
-    COMMAND $<TARGET_FILE:ahflc> dump-types
+    COMMAND $<TARGET_FILE:ahflc> dump types
             "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
 )
 set_tests_properties(ahflc.dump_types.example PROPERTIES
@@ -21,55 +21,55 @@ set_tests_properties(ahflc.dump_types.example PROPERTIES
 
 ahfl_add_output_test(
     ahflc.emit_ir.example
-    emit-ir
+    "emit ir"
     "${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/refund_audit_core_v0_1.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.alias_const
-    emit-ir
+    "emit ir"
     "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.expr_temporal
-    emit-ir
+    "emit ir"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.flow_workflow_semantics
-    emit-ir
+    "emit ir"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir.workflow_value_flow
-    emit-ir
+    "emit ir"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ir"
 )
 
 ahfl_add_output_test(
     ahflc.emit_summary.workflow_value_flow
-    emit-summary
+    "emit summary"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
     "${AHFL_TESTS_DIR}/golden/summary/ok_workflow_value_flow.summary"
 )
 
 ahfl_add_output_test(
     ahflc.emit_assurance_json.effects
-    emit-assurance-json
+    "emit assurance-json"
     "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
     "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.assurance.json"
 )
 
 add_test(NAME ahflc.validate_assurance.effects
-    COMMAND $<TARGET_FILE:ahflc> validate-assurance
+    COMMAND $<TARGET_FILE:ahflc> validate
             "${AHFL_TESTS_DIR}/golden/assurance/ok_effects.ahfl"
 )
 set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
@@ -78,63 +78,63 @@ set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_missing_effect
-    validate-assurance
+    validate
     "${AHFL_TESTS_DIR}/golden/assurance/fail_missing_effect.ahfl"
     "missing_effect_spec"
 )
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_financial_missing_controls
-    validate-assurance
+    validate
     "${AHFL_TESTS_DIR}/golden/assurance/fail_financial_missing_controls.ahfl"
     "missing_financial_compensation"
 )
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_external_missing_audit
-    validate-assurance
+    validate
     "${AHFL_TESTS_DIR}/golden/assurance/fail_external_missing_audit.ahfl"
     "audit_event"
 )
 
 ahfl_add_command_fail_test(
     ahflc.validate_assurance.fail_retry_idempotency
-    validate-assurance
+    validate
     "${AHFL_TESTS_DIR}/golden/assurance/fail_retry_idempotency.ahfl"
     "retry_safe_if_idempotent_without_key"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir_json.expr_temporal
-    emit-ir-json
+    "emit ir-json"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.alias_const
-    emit-smv
+    "emit smv"
     "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"
     "${AHFL_TESTS_DIR}/golden/formal/ok_alias_const.smv"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.expr_temporal
-    emit-smv
+    "emit smv"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
     "${AHFL_TESTS_DIR}/golden/formal/ok_expr_temporal.smv"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.flow_workflow_semantics
-    emit-smv
+    "emit smv"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.smv"
 )
 
 ahfl_add_output_test(
     ahflc.emit_smv.bounded_data_semantics
-    emit-smv
+    "emit smv"
     "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.ahfl"
     "${AHFL_TESTS_DIR}/golden/formal/ok_bounded_data_semantics.smv"
 )
@@ -150,7 +150,7 @@ ahfl_add_check_test(
 )
 
 add_test(NAME ahflc.verify_formal.fake_pass
-    COMMAND $<TARGET_FILE:ahflc> verify-formal
+    COMMAND $<TARGET_FILE:ahflc> verify
             --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
             --formal-model-out
             "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_flow_workflow_semantics.verify.smv"
@@ -163,7 +163,7 @@ set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
 add_test(NAME ahflc.verify_formal.fake_fail
     COMMAND ${CMAKE_COMMAND}
             "-DAHFLC=$<TARGET_FILE:ahflc>"
-            "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
             "-DEXPECTED_REGEX=formal verification failed"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
@@ -171,7 +171,7 @@ add_test(NAME ahflc.verify_formal.fake_fail
 
 if(AHFL_SMV_CHECKER)
     add_test(NAME ahflc.verify_formal.real_smv
-        COMMAND $<TARGET_FILE:ahflc> verify-formal
+        COMMAND $<TARGET_FILE:ahflc> verify
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_real_smv_control.verify.smv"
@@ -182,7 +182,7 @@ if(AHFL_SMV_CHECKER)
     )
 
     add_test(NAME ahflc.verify_formal.real_smv_observation_assumptions
-        COMMAND $<TARGET_FILE:ahflc> verify-formal
+        COMMAND $<TARGET_FILE:ahflc> verify
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_expr_temporal.verify.smv"
@@ -193,7 +193,7 @@ if(AHFL_SMV_CHECKER)
     )
 
     add_test(NAME ahflc.verify_formal.real_smv_effect_events
-        COMMAND $<TARGET_FILE:ahflc> verify-formal
+        COMMAND $<TARGET_FILE:ahflc> verify
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_effects.verify.smv"
@@ -204,7 +204,7 @@ if(AHFL_SMV_CHECKER)
     )
 
     add_test(NAME ahflc.verify_formal.real_smv_bounded_data_semantics
-        COMMAND $<TARGET_FILE:ahflc> verify-formal
+        COMMAND $<TARGET_FILE:ahflc> verify
                 --model-checker "${AHFL_SMV_CHECKER}"
                 --formal-model-out
                 "${CMAKE_CURRENT_BINARY_DIR}/formal/ok_bounded_data_semantics.verify.smv"
@@ -217,7 +217,7 @@ if(AHFL_SMV_CHECKER)
     add_test(NAME ahflc.verify_formal.real_smv_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
+                "-DAHFLC_ARGS=verify;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_real_smv_control.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_real_smv_control.ahfl"
                 "-DEXPECTED_REGEX=counterexample AHFL mapping"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
@@ -226,7 +226,7 @@ if(AHFL_SMV_CHECKER)
     add_test(NAME ahflc.verify_formal.real_smv_bounded_data_counterexample
         COMMAND ${CMAKE_COMMAND}
                 "-DAHFLC=$<TARGET_FILE:ahflc>"
-                "-DAHFLC_ARGS=verify-formal;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
+                "-DAHFLC_ARGS=verify;--model-checker;${AHFL_SMV_CHECKER};--formal-model-out;${CMAKE_CURRENT_BINARY_DIR}/formal/fail_bounded_data_semantics.verify.smv;${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
                 "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/fail_bounded_data_semantics.ahfl"
                 "-DEXPECTED_REGEX=formal verification failed"
                 -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
@@ -235,21 +235,21 @@ endif()
 
 ahfl_add_output_test(
     ahflc.emit_ir_json.flow_workflow_semantics
-    emit-ir-json
+    "emit ir-json"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
     "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_ir_json.workflow_value_flow
-    emit-ir-json
+    "emit ir-json"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.json"
 )
 
 ahfl_add_output_test(
     ahflc.emit_native_json.workflow_value_flow
-    emit-native-json
+    "emit native-json"
     "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
     "${AHFL_TESTS_DIR}/golden/native/ok_workflow_value_flow.native.json"
 )
@@ -261,7 +261,7 @@ ahfl_discover_package_golden_tests()
 
 ahfl_add_output_test(
     ahflc.emit_native_json.expr_temporal
-    emit-native-json
+    "emit native-json"
     "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
     "${AHFL_TESTS_DIR}/golden/native/ok_expr_temporal.native.json"
 )
@@ -272,7 +272,7 @@ ahfl_add_check_test(
 )
 
 add_test(NAME ahflc.dump_types.alias_schema
-    COMMAND $<TARGET_FILE:ahflc> dump-types
+    COMMAND $<TARGET_FILE:ahflc> dump types
             "${AHFL_TESTS_DIR}/golden/typecheck/ok_agent_schema_alias.ahfl"
 )
 set_tests_properties(ahflc.dump_types.alias_schema PROPERTIES

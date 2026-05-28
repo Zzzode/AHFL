@@ -1,5 +1,6 @@
 #pragma once
 
+#include <any>
 #include <functional>
 #include <ostream>
 #include <string>
@@ -17,6 +18,7 @@ struct EmitContext {
     const ir::Program &program;
     std::ostream &out;
     const handoff::PackageMetadata *package_metadata;
+    std::any extension; // Backend-specific typed config
 };
 
 /// A registered backend entry.
@@ -24,7 +26,7 @@ struct BackendEntry {
     BackendKind kind;
     std::string name;          // e.g. "smv", "native-json"
     std::string description;   // Human-readable description
-    std::function<void(const EmitContext &)> emitter;
+    std::function<EmitResult(const EmitContext &)> emitter;
 };
 
 /// Central registry of all available backends.
@@ -36,8 +38,8 @@ class BackendRegistry {
     bool register_backend(BackendEntry entry);
 
     /// Emit using a registered backend.
-    /// Returns false if the kind is not registered.
-    bool emit(BackendKind kind, const EmitContext &ctx) const;
+    /// Returns an error if the kind is not registered or the backend fails.
+    [[nodiscard]] EmitResult emit(BackendKind kind, const EmitContext &ctx) const;
 
     /// Look up a backend by kind.
     [[nodiscard]] const BackendEntry *find(BackendKind kind) const;

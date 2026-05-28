@@ -1,18 +1,18 @@
-#include "backends/runtime_session.hpp"
+#include "backends/pipeline/runtime_session.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class RuntimeSessionJsonPrinter final : private PrettyJsonWriter {
+class RuntimeSessionJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit RuntimeSessionJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit RuntimeSessionJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const runtime_session::RuntimeSession &session) {
         print_object(0, [&](const auto &field) {
@@ -36,19 +36,7 @@ class RuntimeSessionJsonPrinter final : private PrettyJsonWriter {
                 }
                 out_ << "null";
             });
-            field("workflow_status", [&]() {
-                switch (session.workflow_status) {
-                case runtime_session::WorkflowSessionStatus::Completed:
-                    write_string("completed");
-                    return;
-                case runtime_session::WorkflowSessionStatus::Failed:
-                    write_string("failed");
-                    return;
-                case runtime_session::WorkflowSessionStatus::Partial:
-                    write_string("partial");
-                    return;
-                }
-            });
+            field("workflow_status", [&]() { print_workflow_status(session.workflow_status); });
             field("failure_summary", [&]() {
                 if (session.failure_summary.has_value()) {
                     print_failure_summary(*session.failure_summary, 1);
@@ -79,73 +67,6 @@ class RuntimeSessionJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
-    void print_workflow_value_summary(const ir::WorkflowExprSummary &summary, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("reads", [&]() {
-                print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &read : summary.reads) {
-                        item([&]() {
-                            print_object(indent_level + 2, [&](const auto &read_field) {
-                                read_field("kind", [&]() {
-                                    write_string(read.kind ==
-                                                         ir::WorkflowValueSourceKind::WorkflowInput
-                                                     ? "workflow_input"
-                                                     : "workflow_node_output");
-                                });
-                                read_field("root_name", [&]() { write_string(read.root_name); });
-                                read_field("members", [&]() {
-                                    print_array(indent_level + 3, [&](const auto &member_item) {
-                                        for (const auto &member : read.members) {
-                                            member_item([&]() { write_string(member); });
-                                        }
-                                    });
-                                });
-                            });
-                        });
-                    }
-                });
-            });
-        });
-    }
-
-    void print_lifecycle(const handoff::WorkflowNodeLifecycleSummary &lifecycle, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("start_condition", [&]() {
-                write_string(lifecycle.start_condition ==
-                                     handoff::WorkflowNodeStartConditionKind::Immediate
-                                 ? "immediate"
-                                 : "after_dependencies_completed");
-            });
-            field("completion_condition", [&]() { write_string("target_reached_final_state"); });
-            field("completion_latched",
-                  [&]() { out_ << (lifecycle.completion_latched ? "true" : "false"); });
-            field("target_initial_state", [&]() { write_string(lifecycle.target_initial_state); });
-            field("target_final_states", [&]() {
-                print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &state : lifecycle.target_final_states) {
-                        item([&]() { write_string(state); });
-                    }
-                });
-            });
-        });
-    }
-
-    void print_capability_binding_ref(const handoff::CapabilityBindingReference &binding,
-                                      int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("capability_name", [&]() { write_string(binding.capability_name); });
-            field("binding_key", [&]() { write_string(binding.binding_key); });
-        });
-    }
-
     void print_mock_usage(const runtime_session::RuntimeSessionMockUsage &usage, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("selector", [&]() { write_string(usage.selector); });
@@ -178,33 +99,6 @@ class RuntimeSessionJsonPrinter final : private PrettyJsonWriter {
         print_object(indent_level, [&](const auto &field) {
             field("sequential_mode",
                   [&]() { out_ << (options.sequential_mode ? "true" : "false"); });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
         });
     }
 

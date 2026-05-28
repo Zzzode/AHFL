@@ -1,4 +1,4 @@
-#include "backends/summary.hpp"
+#include "backends/pipeline/summary.hpp"
 #include "printer_helpers.hpp"
 
 #include <cstddef>

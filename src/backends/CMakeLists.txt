@@ -2,6 +2,10 @@
 if(AHFL_ENABLE_BACKEND_FORMAL)
     add_library(ahfl_backend_smv STATIC
         formal/smv.cpp
+        formal/smv_indexing.cpp
+        formal/smv_collection.cpp
+        formal/smv_specs.cpp
+        formal/smv_formula.cpp
     )
 
     target_link_libraries(ahfl_backend_smv
@@ -14,225 +18,100 @@ endif()
 
 # --- Pipeline observation/persistence/execution backends ---
 if(AHFL_ENABLE_BACKEND_PIPELINE)
+    add_library(ahfl_backend_pipeline_common STATIC
+        pipeline/json_helpers.cpp
+        pipeline/review_helpers.cpp
+    )
+
+    target_link_libraries(ahfl_backend_pipeline_common
+        PUBLIC
+            ahfl_ir
+            ahfl_observation
+            ahfl_persistence
+            ahfl_execution_pipeline
+            ahfl_handoff
+    )
+
+    ahfl_apply_project_warnings(ahfl_backend_pipeline_common)
+
+    # -- Observation domain --
+    add_library(ahfl_backend_pipeline_observation STATIC
+        pipeline/audit_report.cpp
+        pipeline/scheduler_snapshot.cpp
+        pipeline/checkpoint_record.cpp
+        pipeline/checkpoint_review.cpp
+        pipeline/scheduler_review.cpp
+    )
+
+    target_link_libraries(ahfl_backend_pipeline_observation
+        PUBLIC ahfl_backend_pipeline_common
+    )
+
+    ahfl_apply_project_warnings(ahfl_backend_pipeline_observation)
+
+    # -- Persistence domain --
+    add_library(ahfl_backend_pipeline_persistence STATIC
+        pipeline/persistence_descriptor.cpp
+        pipeline/persistence_review.cpp
+        pipeline/persistence_export_manifest.cpp
+        pipeline/persistence_export_review.cpp
+        pipeline/store_import_descriptor.cpp
+        pipeline/store_import_review.cpp
+    )
+
+    target_link_libraries(ahfl_backend_pipeline_persistence
+        PUBLIC ahfl_backend_pipeline_common
+    )
+
+    ahfl_apply_project_warnings(ahfl_backend_pipeline_persistence)
+
+    # -- Execution domain --
+    add_library(ahfl_backend_pipeline_execution STATIC
+        pipeline/execution_journal.cpp
+        pipeline/replay_view.cpp
+        pipeline/dry_run_trace.cpp
+        pipeline/runtime_session.cpp
+    )
+
+    target_link_libraries(ahfl_backend_pipeline_execution
+        PUBLIC ahfl_backend_pipeline_common
+    )
+
+    ahfl_apply_project_warnings(ahfl_backend_pipeline_execution)
+
+    # -- Handoff domain --
+    add_library(ahfl_backend_pipeline_handoff STATIC
+        pipeline/native_json.cpp
+        pipeline/execution_plan.cpp
+        pipeline/package_review.cpp
+    )
+
+    target_link_libraries(ahfl_backend_pipeline_handoff
+        PUBLIC ahfl_backend_pipeline_common
+    )
+
+    ahfl_apply_project_warnings(ahfl_backend_pipeline_handoff)
+
+    # -- Standalone backends (do NOT use pipeline_common) --
     add_library(ahfl_backend_assurance STATIC
-        assurance.cpp
+        pipeline/assurance.cpp
     )
 
     target_link_libraries(ahfl_backend_assurance
-        PUBLIC
-            ahfl_assurance
+        PUBLIC ahfl_assurance
     )
 
     ahfl_apply_project_warnings(ahfl_backend_assurance)
 
     add_library(ahfl_backend_summary STATIC
-        summary.cpp
+        pipeline/summary.cpp
     )
 
     target_link_libraries(ahfl_backend_summary
-        PUBLIC
-            ahfl_ir
+        PUBLIC ahfl_ir
     )
 
     ahfl_apply_project_warnings(ahfl_backend_summary)
-
-    add_library(ahfl_backend_native_json STATIC
-        native_json.cpp
-    )
-
-    target_link_libraries(ahfl_backend_native_json
-        PUBLIC
-            ahfl_handoff
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_native_json)
-
-    add_library(ahfl_backend_execution_plan STATIC
-        execution_plan.cpp
-    )
-
-    target_link_libraries(ahfl_backend_execution_plan
-        PUBLIC
-            ahfl_handoff
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_execution_plan)
-
-    add_library(ahfl_backend_execution_journal STATIC
-        execution_journal.cpp
-    )
-
-    target_link_libraries(ahfl_backend_execution_journal
-        PUBLIC
-            ahfl_execution_pipeline
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_execution_journal)
-
-    add_library(ahfl_backend_replay_view STATIC
-        replay_view.cpp
-    )
-
-    target_link_libraries(ahfl_backend_replay_view
-        PUBLIC
-            ahfl_execution_pipeline
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_replay_view)
-
-    add_library(ahfl_backend_audit_report STATIC
-        audit_report.cpp
-    )
-
-    target_link_libraries(ahfl_backend_audit_report
-        PUBLIC
-            ahfl_observation
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_audit_report)
-
-    add_library(ahfl_backend_scheduler_snapshot STATIC
-        scheduler_snapshot.cpp
-    )
-
-    target_link_libraries(ahfl_backend_scheduler_snapshot
-        PUBLIC
-            ahfl_observation
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_scheduler_snapshot)
-
-    add_library(ahfl_backend_checkpoint_record STATIC
-        checkpoint_record.cpp
-    )
-
-    target_link_libraries(ahfl_backend_checkpoint_record
-        PUBLIC
-            ahfl_observation
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_checkpoint_record)
-
-    add_library(ahfl_backend_checkpoint_review STATIC
-        checkpoint_review.cpp
-    )
-
-    target_link_libraries(ahfl_backend_checkpoint_review
-        PUBLIC
-            ahfl_observation
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_checkpoint_review)
-
-    add_library(ahfl_backend_persistence_descriptor STATIC
-        persistence_descriptor.cpp
-    )
-
-    target_link_libraries(ahfl_backend_persistence_descriptor
-        PUBLIC
-            ahfl_persistence
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_persistence_descriptor)
-
-    add_library(ahfl_backend_persistence_review STATIC
-        persistence_review.cpp
-    )
-
-    target_link_libraries(ahfl_backend_persistence_review
-        PUBLIC
-            ahfl_persistence
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_persistence_review)
-
-    add_library(ahfl_backend_persistence_export_manifest STATIC
-        persistence_export_manifest.cpp
-    )
-
-    target_link_libraries(ahfl_backend_persistence_export_manifest
-        PUBLIC
-            ahfl_persistence
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_persistence_export_manifest)
-
-    add_library(ahfl_backend_persistence_export_review STATIC
-        persistence_export_review.cpp
-    )
-
-    target_link_libraries(ahfl_backend_persistence_export_review
-        PUBLIC
-            ahfl_persistence
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_persistence_export_review)
-
-    add_library(ahfl_backend_store_import_descriptor STATIC
-        store_import_descriptor.cpp
-    )
-
-    target_link_libraries(ahfl_backend_store_import_descriptor
-        PUBLIC
-            ahfl_persistence
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_store_import_descriptor)
-
-    add_library(ahfl_backend_store_import_review STATIC
-        store_import_review.cpp
-    )
-
-    target_link_libraries(ahfl_backend_store_import_review
-        PUBLIC
-            ahfl_persistence
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_store_import_review)
-
-    add_library(ahfl_backend_scheduler_review STATIC
-        scheduler_review.cpp
-    )
-
-    target_link_libraries(ahfl_backend_scheduler_review
-        PUBLIC
-            ahfl_observation
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_scheduler_review)
-
-    add_library(ahfl_backend_dry_run_trace STATIC
-        dry_run_trace.cpp
-    )
-
-    target_link_libraries(ahfl_backend_dry_run_trace
-        PUBLIC
-            ahfl_execution_pipeline
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_dry_run_trace)
-
-    add_library(ahfl_backend_runtime_session STATIC
-        runtime_session.cpp
-    )
-
-    target_link_libraries(ahfl_backend_runtime_session
-        PUBLIC
-            ahfl_execution_pipeline
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_runtime_session)
-
-    add_library(ahfl_backend_package_review STATIC
-        package_review.cpp
-    )
-
-    target_link_libraries(ahfl_backend_package_review
-        PUBLIC
-            ahfl_handoff
-    )
-
-    ahfl_apply_project_warnings(ahfl_backend_package_review)
 endif()
 
 # --- Infrastructure backends ---
@@ -278,26 +157,13 @@ if(AHFL_ENABLE_BACKEND_FORMAL)
 endif()
 if(AHFL_ENABLE_BACKEND_PIPELINE)
     list(APPEND _backend_targets
+        ahfl_backend_pipeline_common
+        ahfl_backend_pipeline_observation
+        ahfl_backend_pipeline_persistence
+        ahfl_backend_pipeline_execution
+        ahfl_backend_pipeline_handoff
         ahfl_backend_assurance
         ahfl_backend_summary
-        ahfl_backend_native_json
-        ahfl_backend_execution_plan
-        ahfl_backend_execution_journal
-        ahfl_backend_replay_view
-        ahfl_backend_audit_report
-        ahfl_backend_scheduler_snapshot
-        ahfl_backend_checkpoint_record
-        ahfl_backend_checkpoint_review
-        ahfl_backend_persistence_descriptor
-        ahfl_backend_persistence_review
-        ahfl_backend_persistence_export_manifest
-        ahfl_backend_persistence_export_review
-        ahfl_backend_store_import_descriptor
-        ahfl_backend_store_import_review
-        ahfl_backend_scheduler_review
-        ahfl_backend_dry_run_trace
-        ahfl_backend_runtime_session
-        ahfl_backend_package_review
     )
 endif()
 if(AHFL_ENABLE_BACKEND_INFRA)
@@ -325,24 +191,10 @@ if(AHFL_ENABLE_BACKEND_FORMAL)
 endif()
 if(AHFL_ENABLE_BACKEND_PIPELINE)
     target_link_libraries(ahfl_backend PUBLIC
-        ahfl_backend_audit_report
-        ahfl_backend_scheduler_review
-        ahfl_backend_dry_run_trace
-        ahfl_backend_execution_plan
-        ahfl_backend_execution_journal
-        ahfl_backend_replay_view
-        ahfl_backend_scheduler_snapshot
-        ahfl_backend_checkpoint_record
-        ahfl_backend_checkpoint_review
-        ahfl_backend_persistence_descriptor
-        ahfl_backend_persistence_review
-        ahfl_backend_persistence_export_manifest
-        ahfl_backend_persistence_export_review
-        ahfl_backend_store_import_descriptor
-        ahfl_backend_store_import_review
-        ahfl_backend_native_json
-        ahfl_backend_package_review
-        ahfl_backend_runtime_session
+        ahfl_backend_pipeline_observation
+        ahfl_backend_pipeline_persistence
+        ahfl_backend_pipeline_execution
+        ahfl_backend_pipeline_handoff
         ahfl_backend_assurance
         ahfl_backend_summary
     )
@@ -357,5 +209,10 @@ if(AHFL_ENABLE_BACKEND_INFRA)
 endif()
 
 target_include_directories(ahfl_backend PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+if(AHFL_ENABLE_BACKEND_INFRA)
+    target_compile_definitions(ahfl_backend PRIVATE AHFL_ENABLE_BACKEND_INFRA=1)
+    target_sources(ahfl_backend PRIVATE infra/lower.cpp)
+endif()
 
 ahfl_apply_project_warnings(ahfl_backend)
