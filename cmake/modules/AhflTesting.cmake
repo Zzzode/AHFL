@@ -79,9 +79,9 @@ endfunction()
 function(ahfl_discover_package_golden_tests)
     # Subcommands that only need --package (no mocks/fixture/run-id)
     set(_package_only_subcommands
-        "emit-native-json"
-        "emit-package-review"
-        "emit-execution-plan"
+        "emit native-json"
+        "emit package-review"
+        "emit execution-plan"
     )
 
     file(GLOB_RECURSE golden_files "${AHFL_TESTS_DIR}/golden/*with_package*")
@@ -100,14 +100,28 @@ function(ahfl_discover_package_golden_tests)
         # Derive the subcommand from artifact_suffix.
         # Special cases first, then general rule.
         if(artifact_suffix STREQUAL "native.json")
-            set(subcommand "emit-native-json")
+            set(subcommand "emit native-json")
         elseif(artifact_suffix STREQUAL "review")
-            set(subcommand "emit-package-review")
+            set(subcommand "emit package-review")
         elseif(artifact_suffix MATCHES "\\.json$")
             string(REGEX REPLACE "\\.json$" "" _base "${artifact_suffix}")
-            set(subcommand "emit-${_base}")
+            # Convert long-form artifact base to short-form artifact-id
+            if(_base MATCHES "^durable-store-import-provider-(.+)$")
+                set(subcommand "emit provider/${CMAKE_MATCH_1}")
+            elseif(_base MATCHES "^durable-store-import-(.+)$")
+                set(subcommand "emit store/${CMAKE_MATCH_1}")
+            else()
+                set(subcommand "emit ${_base}")
+            endif()
         else()
-            set(subcommand "emit-${artifact_suffix}")
+            # Non-json suffix: apply same prefix-stripping rules
+            if(artifact_suffix MATCHES "^durable-store-import-provider-(.+)$")
+                set(subcommand "emit provider/${CMAKE_MATCH_1}")
+            elseif(artifact_suffix MATCHES "^durable-store-import-(.+)$")
+                set(subcommand "emit store/${CMAKE_MATCH_1}")
+            else()
+                set(subcommand "emit ${artifact_suffix}")
+            endif()
         endif()
 
         # Determine source_stem, fixture, run_id, mocks_stem from variant_stem.
@@ -131,16 +145,26 @@ function(ahfl_discover_package_golden_tests)
             continue()
         endif()
 
-        # Build test name: ahflc.<subcommand_underscored>.<name_stem>.with_package
-        # subcommand: replace dashes with underscores
-        string(REPLACE "-" "_" subcommand_underscored "${subcommand}")
+        # Build test name from original artifact_suffix for stability.
+        # This ensures LabelTests.cmake references remain valid even when
+        # the CLI subcommand syntax changes.
+        if(artifact_suffix STREQUAL "native.json")
+            set(test_name_base "emit_native_json")
+        elseif(artifact_suffix STREQUAL "review")
+            set(test_name_base "emit_package_review")
+        elseif(artifact_suffix MATCHES "\\.json$")
+            string(REGEX REPLACE "\\.json$" "" _base "${artifact_suffix}")
+            string(REPLACE "-" "_" test_name_base "emit_${_base}")
+        else()
+            string(REPLACE "-" "_" test_name_base "emit_${artifact_suffix}")
+        endif()
         # name_stem: strip "ok_" prefix from variant_stem if present
         if(variant_stem MATCHES "^ok_(.*)")
             set(name_stem "${CMAKE_MATCH_1}")
         else()
             set(name_stem "${variant_stem}")
         endif()
-        set(test_name "ahflc.${subcommand_underscored}.${name_stem}.with_package")
+        set(test_name "ahflc.${test_name_base}.${name_stem}.with_package")
 
         # Register the test.
         list(FIND _package_only_subcommands "${subcommand}" _pkg_only_idx)

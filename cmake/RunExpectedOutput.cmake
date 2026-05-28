@@ -19,8 +19,10 @@ if(DEFINED AHFLC_ARGS AND NOT AHFLC_ARGS STREQUAL "")
     separate_arguments(ahflc_args UNIX_COMMAND "${AHFLC_ARGS}")
 endif()
 
+separate_arguments(subcommand_args UNIX_COMMAND "${SUBCOMMAND}")
+
 execute_process(
-    COMMAND "${AHFLC}" "${SUBCOMMAND}" ${ahflc_args} "${INPUT_FILE}"
+    COMMAND "${AHFLC}" ${subcommand_args} ${ahflc_args} "${INPUT_FILE}"
     RESULT_VARIABLE result_code
     OUTPUT_VARIABLE actual_output
     ERROR_VARIABLE actual_error

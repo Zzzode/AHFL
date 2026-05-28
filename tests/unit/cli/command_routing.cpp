@@ -187,6 +187,109 @@ int main() {
     check(provider_artifact_nodes_have_printers(),
           "provider artifact nodes map to artifact printers");
 
+    // --- Subcommand dispatch tests ---
+
+    std::printf("\n=== Subcommand Dispatch Tests ===\n\n");
+
+    // action_group_from_token
+    check(ahfl::cli::action_group_from_token("emit") == ahfl::cli::ActionGroup::Emit,
+          "action_group_from_token: emit");
+    check(ahfl::cli::action_group_from_token("dump") == ahfl::cli::ActionGroup::Dump,
+          "action_group_from_token: dump");
+    check(ahfl::cli::action_group_from_token("verify") == ahfl::cli::ActionGroup::Verify,
+          "action_group_from_token: verify");
+    check(ahfl::cli::action_group_from_token("validate") == ahfl::cli::ActionGroup::Validate,
+          "action_group_from_token: validate");
+    check(!ahfl::cli::action_group_from_token("check").has_value(),
+          "action_group_from_token: check returns nullopt");
+    check(!ahfl::cli::action_group_from_token("emit-ir").has_value(),
+          "action_group_from_token: flat token returns nullopt");
+
+    // resolve_subcommand — core emit artifacts
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "ir") ==
+              ahfl::cli::CommandKind::EmitIr,
+          "resolve: emit ir");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "ir-json") ==
+              ahfl::cli::CommandKind::EmitIrJson,
+          "resolve: emit ir-json");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "scheduler-snapshot") ==
+              ahfl::cli::CommandKind::EmitSchedulerSnapshot,
+          "resolve: emit scheduler-snapshot");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "summary") ==
+              ahfl::cli::CommandKind::EmitSummary,
+          "resolve: emit summary");
+
+    // resolve_subcommand — store domain (unified: both durable-store-import and store-import → store/)
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "store/request") ==
+              ahfl::cli::CommandKind::EmitDurableStoreImportRequest,
+          "resolve: emit store/request");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "store/decision") ==
+              ahfl::cli::CommandKind::EmitDurableStoreImportDecision,
+          "resolve: emit store/decision");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "store/receipt") ==
+              ahfl::cli::CommandKind::EmitDurableStoreImportReceipt,
+          "resolve: emit store/receipt");
+    // resolve_subcommand — store-import (plain top-level, no domain prefix)
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "store-import-descriptor") ==
+              ahfl::cli::CommandKind::EmitStoreImportDescriptor,
+          "resolve: emit store-import-descriptor");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "store-import-review") ==
+              ahfl::cli::CommandKind::EmitStoreImportReview,
+          "resolve: emit store-import-review");
+
+    // resolve_subcommand — provider domain
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/write-attempt") ==
+              ahfl::cli::CommandKind::EmitDurableStoreImportProviderWriteAttempt,
+          "resolve: emit provider/write-attempt");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/driver-binding") ==
+              ahfl::cli::CommandKind::EmitDurableStoreImportProviderDriverBinding,
+          "resolve: emit provider/driver-binding");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit,
+              "provider/production-readiness-report") ==
+              ahfl::cli::CommandKind::EmitDurableStoreImportProviderProductionReadinessReport,
+          "resolve: emit provider/production-readiness-report");
+
+    // resolve_subcommand — dump, verify, validate
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "ast") ==
+              ahfl::cli::CommandKind::DumpAst,
+          "resolve: dump ast");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "types") ==
+              ahfl::cli::CommandKind::DumpTypes,
+          "resolve: dump types");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "project") ==
+              ahfl::cli::CommandKind::DumpProject,
+          "resolve: dump project");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Verify, "formal") ==
+              ahfl::cli::CommandKind::VerifyFormal,
+          "resolve: verify formal");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Validate, "assurance") ==
+              ahfl::cli::CommandKind::ValidateAssurance,
+          "resolve: validate assurance");
+
+    // resolve_subcommand — unknown artifacts
+    check(!ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "nonexistent").has_value(),
+          "resolve: emit nonexistent returns nullopt");
+    check(!ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "invalid").has_value(),
+          "resolve: dump invalid returns nullopt");
+
+    // command_short_name — roundtrip validation
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitIr) == "ir",
+          "short_name: EmitIr -> ir");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitDurableStoreImportRequest) ==
+              "store/request",
+          "short_name: EmitDurableStoreImportRequest -> store/request");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitStoreImportDescriptor) ==
+              "store-import-descriptor",
+          "short_name: EmitStoreImportDescriptor -> store-import-descriptor");
+    check(ahfl::cli::command_short_name(
+              ahfl::cli::CommandKind::EmitDurableStoreImportProviderWriteAttempt) ==
+              "provider/write-attempt",
+          "short_name: provider write-attempt");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::DumpAst) == "ast",
+          "short_name: DumpAst -> ast");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::VerifyFormal) == "formal",
+          "short_name: VerifyFormal -> formal");
+
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return pass_count == test_count ? 0 : 1;
 }

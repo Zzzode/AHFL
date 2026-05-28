@@ -1,18 +1,18 @@
-#include "backends/audit_report.hpp"
+#include "backends/pipeline/audit_report.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class AuditReportJsonPrinter final : private PrettyJsonWriter {
+class AuditReportJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit AuditReportJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit AuditReportJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const audit_report::AuditReport &report) {
         print_object(0, [&](const auto &field) {
@@ -61,51 +61,6 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
-    void print_workflow_value_summary(const ir::WorkflowExprSummary &summary, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("reads", [&]() {
-                print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &read : summary.reads) {
-                        item([&]() {
-                            print_object(indent_level + 2, [&](const auto &read_field) {
-                                read_field("kind", [&]() {
-                                    write_string(read.kind ==
-                                                         ir::WorkflowValueSourceKind::WorkflowInput
-                                                     ? "workflow_input"
-                                                     : "workflow_node_output");
-                                });
-                                read_field("root_name", [&]() { write_string(read.root_name); });
-                                read_field("members", [&]() {
-                                    print_array(indent_level + 3, [&](const auto &member_item) {
-                                        for (const auto &member : read.members) {
-                                            member_item([&]() { write_string(member); });
-                                        }
-                                    });
-                                });
-                            });
-                        });
-                    }
-                });
-            });
-        });
-    }
-
-    void print_capability_binding_ref(const handoff::CapabilityBindingReference &binding,
-                                      int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("capability_name", [&]() { write_string(binding.capability_name); });
-            field("binding_key", [&]() { write_string(binding.binding_key); });
-        });
-    }
-
     void print_plan_node(const audit_report::AuditPlanNodeSummary &node, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("node_name", [&]() { write_string(node.node_name); });
@@ -195,19 +150,7 @@ class AuditReportJsonPrinter final : private PrettyJsonWriter {
         print_object(indent_level, [&](const auto &field) {
             field("source_runtime_session_format_version",
                   [&]() { write_string(summary.source_runtime_session_format_version); });
-            field("workflow_status", [&]() {
-                switch (summary.workflow_status) {
-                case runtime_session::WorkflowSessionStatus::Completed:
-                    write_string("completed");
-                    return;
-                case runtime_session::WorkflowSessionStatus::Failed:
-                    write_string("failed");
-                    return;
-                case runtime_session::WorkflowSessionStatus::Partial:
-                    write_string("partial");
-                    return;
-                }
-            });
+            field("workflow_status", [&]() { print_workflow_status(summary.workflow_status); });
             field("nodes", [&]() {
                 print_array(indent_level + 1, [&](const auto &item) {
                     for (const auto &node : summary.nodes) {

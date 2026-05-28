@@ -1,4 +1,5 @@
-#include "backends/scheduler_review.hpp"
+#include "backends/pipeline/scheduler_review.hpp"
+#include "backends/pipeline/review_helpers.hpp"
 #include "printer_helpers.hpp"
 
 #include <cstddef>
@@ -11,36 +12,6 @@ namespace ahfl {
 namespace {
 
 using backend_printer::line;
-
-[[nodiscard]] std::string workflow_status_name(runtime_session::WorkflowSessionStatus status) {
-    switch (status) {
-    case runtime_session::WorkflowSessionStatus::Completed:
-        return "completed";
-    case runtime_session::WorkflowSessionStatus::Failed:
-        return "failed";
-    case runtime_session::WorkflowSessionStatus::Partial:
-        return "partial";
-    }
-
-    return "invalid";
-}
-
-[[nodiscard]] std::string snapshot_status_name(scheduler_snapshot::SchedulerSnapshotStatus status) {
-    switch (status) {
-    case scheduler_snapshot::SchedulerSnapshotStatus::Runnable:
-        return "runnable";
-    case scheduler_snapshot::SchedulerSnapshotStatus::Waiting:
-        return "waiting";
-    case scheduler_snapshot::SchedulerSnapshotStatus::TerminalCompleted:
-        return "terminal_completed";
-    case scheduler_snapshot::SchedulerSnapshotStatus::TerminalFailed:
-        return "terminal_failed";
-    case scheduler_snapshot::SchedulerSnapshotStatus::TerminalPartial:
-        return "terminal_partial";
-    }
-
-    return "invalid";
-}
 
 [[nodiscard]] std::string
 blocked_reason_name(scheduler_snapshot::SchedulerBlockedReasonKind reason) {
@@ -71,54 +42,6 @@ blocked_reason_name(scheduler_snapshot::SchedulerBlockedReasonKind reason) {
     }
 
     return "invalid";
-}
-
-[[nodiscard]] std::string failure_kind_name(runtime_session::RuntimeFailureKind kind) {
-    switch (kind) {
-    case runtime_session::RuntimeFailureKind::MockMissing:
-        return "mock_missing";
-    case runtime_session::RuntimeFailureKind::NodeFailed:
-        return "node_failed";
-    case runtime_session::RuntimeFailureKind::WorkflowFailed:
-        return "workflow_failed";
-    }
-
-    return "invalid";
-}
-
-void print_string_list(std::ostream &out,
-                       int indent_level,
-                       std::string_view label,
-                       const std::vector<std::string> &values) {
-    line(out, indent_level, std::string(label) + " {");
-    line(out, indent_level + 1, "count " + std::to_string(values.size()));
-    if (values.empty()) {
-        line(out, indent_level + 1, "- none");
-    } else {
-        for (const auto &value : values) {
-            line(out, indent_level + 1, "- " + value);
-        }
-    }
-    line(out, indent_level, "}");
-}
-
-void print_failure_summary(std::ostream &out,
-                           int indent_level,
-                           std::string_view label,
-                           const std::optional<runtime_session::RuntimeFailureSummary> &summary) {
-    line(out, indent_level, std::string(label) + " {");
-    if (!summary.has_value()) {
-        line(out, indent_level + 1, "value none");
-        line(out, indent_level, "}");
-        return;
-    }
-
-    line(out, indent_level + 1, "kind " + failure_kind_name(summary->kind));
-    line(out,
-         indent_level + 1,
-         "node_name " + (summary->node_name.has_value() ? *summary->node_name : "none"));
-    line(out, indent_level + 1, "message " + summary->message);
-    line(out, indent_level, "}");
 }
 
 void print_ready_nodes(const std::vector<scheduler_snapshot::SchedulerReviewReadyNode> &nodes,
@@ -197,8 +120,8 @@ void print_scheduler_review(const scheduler_snapshot::SchedulerDecisionSummary &
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + workflow_status_name(summary.workflow_status));
-    line(out, 0, "snapshot_status " + snapshot_status_name(summary.snapshot_status));
+    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out, 0, "snapshot_status " + pipeline_review::snapshot_status_name(summary.snapshot_status));
     line(out,
          0,
          std::string("checkpoint_friendly ") + (summary.checkpoint_friendly ? "true" : "false"));
@@ -214,8 +137,8 @@ void print_scheduler_review(const scheduler_snapshot::SchedulerDecisionSummary &
          "terminal_reason " +
              (summary.terminal_reason.has_value() ? *summary.terminal_reason : "none"));
 
-    print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
-    print_string_list(out, 0, "executed_prefix", summary.completed_prefix);
+    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_string_list(out, 0, "executed_prefix", summary.completed_prefix);
     print_ready_nodes(summary.ready_nodes, out);
     print_blocked_nodes(summary.blocked_nodes, out);
 }

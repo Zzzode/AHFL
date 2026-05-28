@@ -62,6 +62,10 @@ enum class CommandKind {
     EmitSummary,
     EmitSmv,
     EmitAssuranceJson,
+    EmitK8sCrd,
+    EmitOpenApi,
+    EmitTerraform,
+    EmitWasm,
     ValidateAssurance,
     VerifyFormal,
 };
@@ -95,8 +99,18 @@ enum class CommandListKind {
     CapabilityInputSupported,
 };
 
+// ---------------------------------------------------------------------------
+// Subcommand dispatch (ahflc emit <artifact-id>, ahflc dump <target>, etc.)
+// ---------------------------------------------------------------------------
+
+enum class ActionGroup { Emit, Dump, Verify, Validate };
+
+[[nodiscard]] std::optional<ActionGroup> action_group_from_token(std::string_view token);
+[[nodiscard]] std::optional<CommandKind> resolve_subcommand(ActionGroup group,
+                                                            std::string_view artifact_id);
+[[nodiscard]] std::string command_short_name(CommandKind command);
+
 [[nodiscard]] std::string_view command_name(CommandKind command);
-[[nodiscard]] std::optional<CommandKind> command_token_to_kind(std::string_view argument);
 [[nodiscard]] std::optional<std::string_view> emitted_artifact_id(CommandKind command);
 [[nodiscard]] const std::vector<CommandKind> &command_list(CommandListKind list_kind);
 [[nodiscard]] std::string format_comma_or_commands(std::span<const CommandKind> commands);

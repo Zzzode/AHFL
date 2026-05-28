@@ -1,18 +1,18 @@
-#include "backends/scheduler_snapshot.hpp"
+#include "backends/pipeline/scheduler_snapshot.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
+class SchedulerSnapshotJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit SchedulerSnapshotJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit SchedulerSnapshotJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const scheduler_snapshot::SchedulerSnapshot &snapshot) {
         print_object(0, [&](const auto &field) {
@@ -79,112 +79,6 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
-    void print_workflow_value_summary(const ir::WorkflowExprSummary &summary, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("reads", [&]() {
-                print_array(indent_level + 1, [&](const auto &item) {
-                    for (const auto &read : summary.reads) {
-                        item([&]() {
-                            print_object(indent_level + 2, [&](const auto &read_field) {
-                                read_field("kind", [&]() {
-                                    write_string(read.kind ==
-                                                         ir::WorkflowValueSourceKind::WorkflowInput
-                                                     ? "workflow_input"
-                                                     : "workflow_node_output");
-                                });
-                                read_field("root_name", [&]() { write_string(read.root_name); });
-                                read_field("members", [&]() {
-                                    print_array(indent_level + 3, [&](const auto &member_item) {
-                                        for (const auto &member : read.members) {
-                                            member_item([&]() { write_string(member); });
-                                        }
-                                    });
-                                });
-                            });
-                        });
-                    }
-                });
-            });
-        });
-    }
-
-    void print_capability_binding_ref(const handoff::CapabilityBindingReference &binding,
-                                      int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("capability_name", [&]() { write_string(binding.capability_name); });
-            field("binding_key", [&]() { write_string(binding.binding_key); });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
-        });
-    }
-
-    void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
-    }
-
-    void print_snapshot_status(scheduler_snapshot::SchedulerSnapshotStatus status) {
-        switch (status) {
-        case scheduler_snapshot::SchedulerSnapshotStatus::Runnable:
-            write_string("runnable");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::Waiting:
-            write_string("waiting");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
     void print_blocked_reason(scheduler_snapshot::SchedulerBlockedReasonKind reason) {
         switch (reason) {
         case scheduler_snapshot::SchedulerBlockedReasonKind::WaitingOnDependencies:
@@ -197,14 +91,6 @@ class SchedulerSnapshotJsonPrinter final : private PrettyJsonWriter {
             write_string("upstream_partial");
             return;
         }
-    }
-
-    void print_string_array(const std::vector<std::string> &values, int indent_level) {
-        print_array(indent_level, [&](const auto &item) {
-            for (const auto &value : values) {
-                item([&]() { write_string(value); });
-            }
-        });
     }
 
     void print_ready_node(const scheduler_snapshot::SchedulerReadyNode &node, int indent_level) {

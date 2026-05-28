@@ -1,19 +1,19 @@
-#include "backends/checkpoint_record.hpp"
+#include "backends/pipeline/checkpoint_record.hpp"
 
 #include <cstddef>
 #include <ostream>
 #include <string_view>
 #include <vector>
 
-#include "support/json.hpp"
+#include "backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
 
-class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
+class CheckpointRecordJsonPrinter final : private PipelineJsonHelpers {
   public:
-    explicit CheckpointRecordJsonPrinter(std::ostream &out) : PrettyJsonWriter(out) {}
+    explicit CheckpointRecordJsonPrinter(std::ostream &out) : PipelineJsonHelpers(out) {}
 
     void print(const checkpoint_record::CheckpointRecord &record) {
         print_object(0, [&](const auto &field) {
@@ -74,95 +74,6 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
     }
 
   private:
-    void print_package_identity(const handoff::PackageIdentity &identity, int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("format_version", [&]() { write_string(identity.format_version); });
-            field("name", [&]() { write_string(identity.name); });
-            field("version", [&]() { write_string(identity.version); });
-        });
-    }
-
-    void print_failure_summary(const runtime_session::RuntimeFailureSummary &summary,
-                               int indent_level) {
-        print_object(indent_level, [&](const auto &field) {
-            field("kind", [&]() {
-                switch (summary.kind) {
-                case runtime_session::RuntimeFailureKind::MockMissing:
-                    write_string("mock_missing");
-                    return;
-                case runtime_session::RuntimeFailureKind::NodeFailed:
-                    write_string("node_failed");
-                    return;
-                case runtime_session::RuntimeFailureKind::WorkflowFailed:
-                    write_string("workflow_failed");
-                    return;
-                }
-            });
-            field("node_name", [&]() {
-                if (summary.node_name.has_value()) {
-                    write_string(*summary.node_name);
-                    return;
-                }
-                out_ << "null";
-            });
-            field("message", [&]() { write_string(summary.message); });
-        });
-    }
-
-    void print_workflow_status(runtime_session::WorkflowSessionStatus status) {
-        switch (status) {
-        case runtime_session::WorkflowSessionStatus::Completed:
-            write_string("completed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Failed:
-            write_string("failed");
-            return;
-        case runtime_session::WorkflowSessionStatus::Partial:
-            write_string("partial");
-            return;
-        }
-    }
-
-    void print_snapshot_status(scheduler_snapshot::SchedulerSnapshotStatus status) {
-        switch (status) {
-        case scheduler_snapshot::SchedulerSnapshotStatus::Runnable:
-            write_string("runnable");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::Waiting:
-            write_string("waiting");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case scheduler_snapshot::SchedulerSnapshotStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
-    void print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
-        switch (status) {
-        case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
-            write_string("ready_to_persist");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::Blocked:
-            write_string("blocked");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalCompleted:
-            write_string("terminal_completed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalFailed:
-            write_string("terminal_failed");
-            return;
-        case checkpoint_record::CheckpointRecordStatus::TerminalPartial:
-            write_string("terminal_partial");
-            return;
-        }
-    }
-
     void print_basis_kind(checkpoint_record::CheckpointBasisKind kind) {
         switch (kind) {
         case checkpoint_record::CheckpointBasisKind::LocalOnly:
@@ -189,14 +100,6 @@ class CheckpointRecordJsonPrinter final : private PrettyJsonWriter {
             write_string("workflow_partial");
             return;
         }
-    }
-
-    void print_string_array(const std::vector<std::string> &values, int indent_level) {
-        print_array(indent_level, [&](const auto &item) {
-            for (const auto &value : values) {
-                item([&]() { write_string(value); });
-            }
-        });
     }
 
     void print_cursor(const checkpoint_record::CheckpointCursor &cursor, int indent_level) {

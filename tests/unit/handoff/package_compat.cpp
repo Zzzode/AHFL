@@ -1,4 +1,4 @@
-#include "backends/native_json.hpp"
+#include "backends/pipeline/native_json.hpp"
 #include "ahfl/handoff/package.hpp"
 #include "ahfl/ir/ir.hpp"
 

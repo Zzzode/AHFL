@@ -56,6 +56,7 @@ ctest --preset test-asan --output-on-failure
 - `std::variant` for tagged unions (IR nodes, Value types)
 - Diagnostics via `DiagnosticBuilder` with source ranges
 - No external runtime dependencies besides vendored ANTLR4
+- No forward compatibility will be maintained. We adopt aggressive refactoring guided by industry best practices.
 
 ## Key Files
 
