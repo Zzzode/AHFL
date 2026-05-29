@@ -173,7 +173,7 @@ ahflc emit-durable-store-import-provider-runtime-preflight \
 
 ### 声明式选项表
 
-所有 CLI 选项在 `src/cli/option_table.cpp` 中通过 `OptionSpec` 结构声明：
+所有 CLI 选项在 `src/tooling/cli/option_table.cpp` 中通过 `OptionSpec` 结构声明：
 
 ```cpp
 struct OptionSpec {

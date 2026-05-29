@@ -23,14 +23,14 @@
 
 当前 CLI 实现主要位于：
 
-- `src/cli/ahflc.cpp`
-- `include/ahfl/backends/driver.hpp`
+- `src/tooling/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/driver.hpp`
 
 其中：
 
-1. `src/cli/ahflc.cpp`
+1. `src/tooling/cli/ahflc.cpp`
    - 命令解析与流水线编排
-2. `include/ahfl/backends/driver.hpp`
+2. `include/ahfl/compiler/backends/driver.hpp`
    - backend driver 的真实模块头
 
 CLI 的职责是：
@@ -197,7 +197,7 @@ CLI 当前把输出命令显式分成两类：
 
 在单文件和 project-aware 模式下，validate 成功之前不会进入这两类输出路径。
 
-Durable-store import 的 request / review / decision / receipt / provider SDK adapter 等输出属于 package pipeline artifact，不属于 compiler backend。CLI 可以继续通过 package pipeline 暴露这些 machine artifact，但对应 printer 应集中在 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/durable_store_import/artifacts.cpp`，并通过 `ahfl_durable_store_import_artifacts` 链接，而不是依赖 `src/backends`、`ahfl_backend_*` target，或为每个 artifact 增加一对浅 header/source。
+Durable-store import 的 request / review / decision / receipt / provider SDK adapter 等输出属于 package pipeline artifact，不属于 compiler backend。CLI 可以继续通过 package pipeline 暴露这些 machine artifact，但对应 printer 应集中在 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/pipeline/persistence/durable_store_import/artifacts.cpp`，并通过 `ahfl_durable_store_import_artifacts` 链接，而不是依赖 `src/compiler/backends`、`ahfl_backend_*` target，或为每个 artifact 增加一对浅 header/source。
 
 这条边界非常重要，因为它保证：
 
@@ -292,12 +292,12 @@ project-aware 模式输出：
 
 建议按下面顺序读：
 
-1. `src/cli/ahflc.cpp`
-2. `include/ahfl/frontend/frontend.hpp`
-3. `include/ahfl/semantics/resolver.hpp`
-4. `include/ahfl/semantics/typecheck.hpp`
-5. `include/ahfl/semantics/validate.hpp`
-6. `include/ahfl/backends/driver.hpp`
+1. `src/tooling/cli/ahflc.cpp`
+2. `include/ahfl/compiler/frontend/frontend.hpp`
+3. `include/ahfl/compiler/semantics/resolver.hpp`
+4. `include/ahfl/compiler/semantics/typecheck.hpp`
+5. `include/ahfl/compiler/semantics/validate.hpp`
+6. `include/ahfl/compiler/backends/driver.hpp`
 
 阅读重点：
 

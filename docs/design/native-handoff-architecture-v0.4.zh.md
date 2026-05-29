@@ -15,16 +15,16 @@
 
 适用范围：
 
-- `include/ahfl/frontend/frontend.hpp`
-- `include/ahfl/handoff/package.hpp`
-- `src/frontend/frontend.cpp`
-- `src/handoff/package.cpp`
-- `include/ahfl/ir/ir.hpp`
-- `src/ir/ir.cpp`
-- `src/ir/ir_json.cpp`
-- `include/ahfl/backends/driver.hpp`
-- `src/backends/driver.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `include/ahfl/compiler/handoff/package.hpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `src/compiler/handoff/package.cpp`
+- `include/ahfl/compiler/ir/ir.hpp`
+- `src/compiler/ir/ir_lower.cpp`
+- `src/compiler/ir/ir_json.cpp`
+- `include/ahfl/compiler/backends/driver.hpp`
+- `src/compiler/backends/driver.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `docs/reference/`
 - `tests/`
 

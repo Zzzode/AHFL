@@ -133,14 +133,14 @@ V0.5 仍保留三条等价的 project-aware 输入路径：
 ### 1. 只验证 project-aware 输入
 
 ```bash
-./build/dev/src/cli/ahflc check \
+./build/dev/src/tooling/cli/ahflc check \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
 ### 2. 发射带 package authoring 的 native package
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
 ```
@@ -148,7 +148,7 @@ V0.5 仍保留三条等价的 project-aware 输入路径：
 ### 3. 用 display name 做 authoring review
 
 ```bash
-./build/dev/src/cli/ahflc emit-package-review \
+./build/dev/src/tooling/cli/ahflc emit-package-review \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.display.package.json

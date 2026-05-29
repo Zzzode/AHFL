@@ -16,25 +16,25 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-persistence-descriptor \
+./build/dev/src/tooling/cli/ahflc emit-persistence-descriptor \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/cli/ahflc emit-persistence-review \
+./build/dev/src/tooling/cli/ahflc emit-persistence-review \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/cli/ahflc emit-persistence-descriptor \
+./build/dev/src/tooling/cli/ahflc emit-persistence-descriptor \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.fail.mocks.json \
   --input-fixture fixture.request.failed \
   --run-id run-failed-001
-./build/dev/src/cli/ahflc emit-persistence-review \
+./build/dev/src/tooling/cli/ahflc emit-persistence-review \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.package.json \
@@ -52,8 +52,8 @@ ctest --preset test-dev --output-on-failure -L v0.12-persistence-golden
 通常要改的文件：
 
 - `include/ahfl/persistence_descriptor/descriptor.hpp`
-- `src/persistence_descriptor/descriptor.cpp`
-- `src/backends/persistence_descriptor.cpp`
+- `src/pipeline/persistence/descriptor/descriptor.cpp`
+- `src/compiler/backends/persistence_descriptor.cpp`
 - `tests/persistence_descriptor/`
 - `tests/persistence/`
 
@@ -62,8 +62,8 @@ ctest --preset test-dev --output-on-failure -L v0.12-persistence-golden
 通常要改的文件：
 
 - `include/ahfl/persistence_descriptor/review.hpp`
-- `src/persistence_descriptor/review.cpp`
-- `src/backends/persistence_review.cpp`
+- `src/pipeline/persistence/descriptor/review.cpp`
+- `src/compiler/backends/persistence_review.cpp`
 - `tests/persistence_descriptor/`
 - `tests/persistence/`
 
@@ -71,11 +71,11 @@ ctest --preset test-dev --output-on-failure -L v0.12-persistence-golden
 
 通常要改的文件：
 
-- `include/ahfl/backends/persistence_descriptor.hpp`
-- `include/ahfl/backends/persistence_review.hpp`
-- `src/backends/persistence_descriptor.cpp`
-- `src/backends/persistence_review.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/persistence_descriptor.hpp`
+- `include/ahfl/compiler/backends/persistence_review.hpp`
+- `src/compiler/backends/persistence_descriptor.cpp`
+- `src/compiler/backends/persistence_review.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`
 - `tests/cmake/LabelTests.cmake`

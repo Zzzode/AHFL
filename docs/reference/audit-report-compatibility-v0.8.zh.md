@@ -201,7 +201,7 @@
 
 后续任何 audit report 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/audit_report/report.hpp`、`src/audit_report/`、`src/backends/audit_report.cpp` 与相关 CLI
+1. 更新 `include/ahfl/audit_report/report.hpp`、`src/pipeline/observation/audit_report/`、`src/compiler/backends/audit_report.cpp` 与相关 CLI
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响的 `tests/audit/` golden
 4. 更新或新增 direct regression 与 CLI regression

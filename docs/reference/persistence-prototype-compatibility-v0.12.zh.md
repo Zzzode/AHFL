@@ -149,12 +149,12 @@ consumer 的最小版本检查顺序是：
 V0.12 当前已把 compatibility contract 落到下列实现入口：
 
 1. `CheckpointPersistenceDescriptor`
-   - model / validation / bootstrap 入口位于 `include/ahfl/persistence_descriptor/descriptor.hpp` 与 `src/persistence_descriptor/descriptor.cpp`
-   - machine-facing JSON 输出入口位于 `include/ahfl/backends/persistence_descriptor.hpp` 与 `src/backends/persistence_descriptor.cpp`
+   - model / validation / bootstrap 入口位于 `include/ahfl/persistence_descriptor/descriptor.hpp` 与 `src/pipeline/persistence/descriptor/descriptor.cpp`
+   - machine-facing JSON 输出入口位于 `include/ahfl/compiler/backends/persistence_descriptor.hpp` 与 `src/compiler/backends/persistence_descriptor.cpp`
    - CLI 输出命令是 `ahflc emit-persistence-descriptor`
 2. `PersistenceReviewSummary`
-   - model / validation / projection 入口位于 `include/ahfl/persistence_descriptor/review.hpp` 与 `src/persistence_descriptor/review.cpp`
-   - reviewer-facing text 输出入口位于 `include/ahfl/backends/persistence_review.hpp` 与 `src/backends/persistence_review.cpp`
+   - model / validation / projection 入口位于 `include/ahfl/persistence_descriptor/review.hpp` 与 `src/pipeline/persistence/descriptor/review.cpp`
+   - reviewer-facing text 输出入口位于 `include/ahfl/compiler/backends/persistence_review.hpp` 与 `src/compiler/backends/persistence_review.cpp`
    - CLI 输出命令是 `ahflc emit-persistence-review`
 3. 回归标签
    - direct model / validation：`v0.12-persistence-descriptor-model`

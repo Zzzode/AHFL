@@ -15,7 +15,7 @@
 
 本文主要回答五个问题：
 
-1. `src/frontend/frontend.cpp` 里的 hand-written lowering 是怎么组织的。
+1. `src/compiler/syntax/frontend/frontend.cpp` 里的 hand-written lowering 是怎么组织的。
 2. 为什么 `ProgramBuilder` 被视为 parse tree 和 AST 之间的唯一稳定边界。
 3. 表达式、temporal formula、statement、type syntax 为什么要在 frontend 就 lower 成结构化树。
 4. `SourceRange` 和原始 `text` 是如何在 lowering 时绑定的。
@@ -45,8 +45,8 @@ project-aware 模式下，frontend 还额外负责：
 
 当前公共头位于：
 
-- `include/ahfl/frontend/frontend.hpp`
-- `include/ahfl/frontend/ast.hpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `include/ahfl/compiler/frontend/ast.hpp`
 
 对外稳定入口包括：
 
@@ -59,7 +59,7 @@ project-aware 模式下，frontend 还额外负责：
 其中最重要的约束是：
 
 1. 公共头只暴露 hand-written AST 和 source graph。
-2. ANTLR parse tree、token stream、generated parser context 只停留在 `src/frontend/frontend.cpp`。
+2. ANTLR parse tree、token stream、generated parser context 只停留在 `src/compiler/syntax/frontend/frontend.cpp`。
 
 ## ProgramBuilder 的角色
 
@@ -368,7 +368,7 @@ frontend 当前通过一组 helper 统一处理位置：
 
 1. grammar
 2. `ProgramBuilder`
-3. `include/ahfl/frontend/ast.hpp`
+3. `include/ahfl/compiler/frontend/ast.hpp`
 4. `AstPrinter`
 
 不要跳过 AST 层，直接在 resolver/typecheck 里读 grammar 细节。
@@ -392,17 +392,17 @@ frontend 当前通过一组 helper 统一处理位置：
 
 建议按下面顺序读：
 
-1. `include/ahfl/frontend/ast.hpp`
-2. `include/ahfl/frontend/frontend.hpp`
-3. `src/frontend/frontend.cpp` 中的 helper 与 `ProgramBuilder`
-4. `src/frontend/frontend.cpp` 中的 `AstPrinter`
-5. `src/frontend/project.cpp` 中的 project descriptor / source graph 装载路径
+1. `include/ahfl/compiler/frontend/ast.hpp`
+2. `include/ahfl/compiler/frontend/frontend.hpp`
+3. `src/compiler/syntax/frontend/frontend.cpp` 中的 helper 与 `ProgramBuilder`
+4. `src/compiler/syntax/frontend/frontend.cpp` 中的 `AstPrinter`
+5. `src/compiler/syntax/frontend/project.cpp` 中的 project descriptor / source graph 装载路径
 
 阅读重点：
 
 1. 先看 AST node kind 和 syntax kind。
 2. 再看 `ProgramBuilder` 如何从 grammar 分支映射到 AST。
-3. 最后看 `src/frontend/project.cpp` 中的 source graph 构建，以及 `frontend.cpp` / `project.cpp` 之间的 debug 边界。
+3. 最后看 `src/compiler/syntax/frontend/project.cpp` 中的 source graph 构建，以及 `frontend.cpp` / `project.cpp` 之间的 debug 边界。
 
 ## 对后续实现的约束
 

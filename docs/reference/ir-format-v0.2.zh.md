@@ -34,13 +34,13 @@
 通过：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir <input.ahfl>
+./build/dev/src/tooling/cli/ahflc emit-ir <input.ahfl>
 ```
 
 或：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir --search-root <dir>... <entry.ahfl>
+./build/dev/src/tooling/cli/ahflc emit-ir --search-root <dir>... <entry.ahfl>
 ```
 
 文本 IR 适合：
@@ -54,13 +54,13 @@
 通过：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json <input.ahfl>
+./build/dev/src/tooling/cli/ahflc emit-ir-json <input.ahfl>
 ```
 
 或：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json --search-root <dir>... <entry.ahfl>
+./build/dev/src/tooling/cli/ahflc emit-ir-json --search-root <dir>... <entry.ahfl>
 ```
 
 JSON IR 适合：

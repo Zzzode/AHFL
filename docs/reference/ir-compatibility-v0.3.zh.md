@@ -26,7 +26,7 @@
 
 当前实现中的单一来源位于：
 
-- `include/ahfl/ir/ir.hpp`
+- `include/ahfl/compiler/ir/ir.hpp`
   - `ahfl::ir::kFormatVersion`
 
 该版本号会同时出现在：
@@ -163,7 +163,7 @@
 
 后续任何 IR 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/ir/ir.hpp` 与对应实现
+1. 更新 `include/ahfl/compiler/ir/ir.hpp` 与对应实现
 2. 更新本文档与 [ir-format-v0.3.zh.md](./ir-format-v0.3.zh.md)
 3. 更新受影响 golden
 4. 更新或新增回归测试

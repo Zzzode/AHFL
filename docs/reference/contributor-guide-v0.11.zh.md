@@ -16,25 +16,25 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-checkpoint-record \
+./build/dev/src/tooling/cli/ahflc emit-checkpoint-record \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/cli/ahflc emit-checkpoint-review \
+./build/dev/src/tooling/cli/ahflc emit-checkpoint-review \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/cli/ahflc emit-checkpoint-record \
+./build/dev/src/tooling/cli/ahflc emit-checkpoint-record \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.fail.mocks.json \
   --input-fixture fixture.request.failed \
   --run-id run-failed-001
-./build/dev/src/cli/ahflc emit-checkpoint-review \
+./build/dev/src/tooling/cli/ahflc emit-checkpoint-review \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.package.json \
@@ -52,7 +52,7 @@ ctest --preset test-dev --output-on-failure -L v0.11-checkpoint-golden
 通常要改的文件：
 
 - `include/ahfl/checkpoint_record/record.hpp`
-- `src/checkpoint_record/record.cpp`
+- `src/pipeline/observation/checkpoint_record/record.cpp`
 - `tests/checkpoint_record/`
 - `tests/checkpoint/`
 
@@ -61,8 +61,8 @@ ctest --preset test-dev --output-on-failure -L v0.11-checkpoint-golden
 通常要改的文件：
 
 - `include/ahfl/checkpoint_record/review.hpp`
-- `src/checkpoint_record/review.cpp`
-- `src/backends/checkpoint_review.cpp`
+- `src/pipeline/observation/checkpoint_record/review.cpp`
+- `src/compiler/backends/checkpoint_review.cpp`
 - `tests/checkpoint_record/`
 - `tests/checkpoint/`
 
@@ -70,11 +70,11 @@ ctest --preset test-dev --output-on-failure -L v0.11-checkpoint-golden
 
 通常要改的文件：
 
-- `include/ahfl/backends/checkpoint_record.hpp`
-- `include/ahfl/backends/checkpoint_review.hpp`
-- `src/backends/checkpoint_record.cpp`
-- `src/backends/checkpoint_review.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/checkpoint_record.hpp`
+- `include/ahfl/compiler/backends/checkpoint_review.hpp`
+- `src/compiler/backends/checkpoint_record.cpp`
+- `src/compiler/backends/checkpoint_review.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`
 - `tests/cmake/LabelTests.cmake`

@@ -19,16 +19,16 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-execution-plan \
+./build/dev/src/tooling/cli/ahflc emit-execution-plan \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
-./build/dev/src/cli/ahflc emit-runtime-session \
+./build/dev/src/tooling/cli/ahflc emit-runtime-session \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001
-./build/dev/src/cli/ahflc emit-execution-journal \
+./build/dev/src/tooling/cli/ahflc emit-execution-journal \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
@@ -44,9 +44,9 @@ ctest --preset test-dev --output-on-failure -L 'v0.7-(runtime-session-model|runt
 通常要改的文件：
 
 - `include/ahfl/runtime_session/session.hpp`
-- `src/runtime_session/session.cpp`
-- `include/ahfl/backends/runtime_session.hpp`
-- `src/backends/runtime_session.cpp`
+- `src/pipeline/execution/runtime_session/session.cpp`
+- `include/ahfl/compiler/backends/runtime_session.hpp`
+- `src/compiler/backends/runtime_session.cpp`
 - `tests/runtime_session/`
 - `tests/session/`
 
@@ -55,16 +55,16 @@ ctest --preset test-dev --output-on-failure -L 'v0.7-(runtime-session-model|runt
 通常要改的文件：
 
 - `include/ahfl/execution_journal/journal.hpp`
-- `src/execution_journal/journal.cpp`
+- `src/pipeline/execution/execution_journal/journal.cpp`
 - `tests/execution_journal/`
 
 ### 3. 改 journal 输出 / CLI 参数面
 
 通常要改的文件：
 
-- `include/ahfl/backends/execution_journal.hpp`
-- `src/backends/execution_journal.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/execution_journal.hpp`
+- `src/compiler/backends/execution_journal.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/journal/`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`

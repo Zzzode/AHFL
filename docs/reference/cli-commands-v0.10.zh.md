@@ -77,25 +77,25 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
 下面这组命令覆盖当前推荐的 `plan -> session -> journal -> replay -> snapshot -> review` 路径：
 
 ```bash
-./build/dev/src/cli/ahflc emit-execution-plan \
+./build/dev/src/tooling/cli/ahflc emit-execution-plan \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
 
-./build/dev/src/cli/ahflc emit-runtime-session \
+./build/dev/src/tooling/cli/ahflc emit-runtime-session \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.pending.mocks.json \
   --input-fixture fixture.request.partial \
   --run-id run-partial-001
 
-./build/dev/src/cli/ahflc emit-execution-journal \
+./build/dev/src/tooling/cli/ahflc emit-execution-journal \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.pending.mocks.json \
   --input-fixture fixture.request.partial \
   --run-id run-partial-001
 
-./build/dev/src/cli/ahflc emit-replay-view \
+./build/dev/src/tooling/cli/ahflc emit-replay-view \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.package.json \
@@ -103,7 +103,7 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
   --input-fixture fixture.request.partial \
   --run-id run-partial-001
 
-./build/dev/src/cli/ahflc emit-scheduler-snapshot \
+./build/dev/src/tooling/cli/ahflc emit-scheduler-snapshot \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.package.json \
@@ -111,7 +111,7 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
   --input-fixture fixture.request.partial \
   --run-id run-partial-001
 
-./build/dev/src/cli/ahflc emit-scheduler-review \
+./build/dev/src/tooling/cli/ahflc emit-scheduler-review \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.package.json \
@@ -187,7 +187,7 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc verify-formal \
+./build/dev/src/tooling/cli/ahflc verify-formal \
   --model-checker /path/to/NuSMV \
   --formal-model-out build/formal/review-workflow.smv \
   tests/formal/ok_real_smv_control.ahfl

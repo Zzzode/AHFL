@@ -7,10 +7,10 @@
 - `docs/design/module-loading-v0.2.zh.md`
 - `docs/design/compiler-phase-boundaries-v0.2.zh.md`
 - `docs/plan/roadmap-v0.2.zh.md`
-- `include/ahfl/support/source.hpp`
-- `include/ahfl/frontend/frontend.hpp`
-- `src/frontend/frontend.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/base/support/source.hpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `src/tooling/cli/ahflc.cpp`
 
 ## 目标
 
@@ -79,7 +79,7 @@ V0.2 推荐引入三层对象，而不是继续用单个 `ParseResult` 同时承
 
 本文不要求最终代码完全使用以下命名，但要求边界形状等价。
 
-在 `include/ahfl/support/source.hpp` 中，V0.2 可以新增：
+在 `include/ahfl/base/support/source.hpp` 中，V0.2 可以新增：
 
 ```cpp
 struct SourceId {
@@ -99,7 +99,7 @@ struct ImportRequest {
 };
 ```
 
-在 `include/ahfl/frontend/frontend.hpp` 中，V0.2 可以新增：
+在 `include/ahfl/compiler/frontend/frontend.hpp` 中，V0.2 可以新增：
 
 ```cpp
 struct SourceUnit {
@@ -179,7 +179,7 @@ V0.2 不改变大阶段顺序，仍然是：
 
 V0.2 对 CLI 的约束是：
 
-1. `src/cli/ahflc.cpp` 继续只负责参数分发和驱动流水线
+1. `src/tooling/cli/ahflc.cpp` 继续只负责参数分发和驱动流水线
 2. CLI 可以新增 project-aware 参数，例如 entry file 与 search root
 3. CLI 不应直接承担 module lookup 和 source graph 构建逻辑
 

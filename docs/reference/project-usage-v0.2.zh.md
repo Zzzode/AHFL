@@ -106,7 +106,7 @@ agent AliasAgent {
 检查整个 project：
 
 ```bash
-./build/dev/src/cli/ahflc check \
+./build/dev/src/tooling/cli/ahflc check \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -114,7 +114,7 @@ agent AliasAgent {
 查看 source graph 装载结果：
 
 ```bash
-./build/dev/src/cli/ahflc dump-project \
+./build/dev/src/tooling/cli/ahflc dump-project \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -122,7 +122,7 @@ agent AliasAgent {
 查看 project-aware AST：
 
 ```bash
-./build/dev/src/cli/ahflc dump-ast \
+./build/dev/src/tooling/cli/ahflc dump-ast \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -130,7 +130,7 @@ agent AliasAgent {
 查看合并后的类型环境：
 
 ```bash
-./build/dev/src/cli/ahflc dump-types \
+./build/dev/src/tooling/cli/ahflc dump-types \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -138,7 +138,7 @@ agent AliasAgent {
 导出 project-aware IR：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir \
+./build/dev/src/tooling/cli/ahflc emit-ir \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -146,7 +146,7 @@ agent AliasAgent {
 导出 project-aware JSON IR：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json \
+./build/dev/src/tooling/cli/ahflc emit-ir-json \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -154,7 +154,7 @@ agent AliasAgent {
 导出 project-aware backend summary：
 
 ```bash
-./build/dev/src/cli/ahflc emit-summary \
+./build/dev/src/tooling/cli/ahflc emit-summary \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -162,7 +162,7 @@ agent AliasAgent {
 导出 project-aware SMV：
 
 ```bash
-./build/dev/src/cli/ahflc emit-smv \
+./build/dev/src/tooling/cli/ahflc emit-smv \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```

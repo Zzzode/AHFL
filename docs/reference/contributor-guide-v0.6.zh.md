@@ -20,10 +20,10 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-execution-plan \
+./build/dev/src/tooling/cli/ahflc emit-execution-plan \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
-./build/dev/src/cli/ahflc emit-dry-run-trace \
+./build/dev/src/tooling/cli/ahflc emit-dry-run-trace \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
@@ -38,10 +38,10 @@ ctest --preset test-dev --output-on-failure -L 'v0.6-execution-plan-validation|v
 
 通常要改的文件：
 
-- `include/ahfl/handoff/package.hpp`
-- `src/handoff/package.cpp`
-- `include/ahfl/backends/execution_plan.hpp`
-- `src/backends/execution_plan.cpp`
+- `include/ahfl/compiler/handoff/package.hpp`
+- `src/compiler/handoff/package.cpp`
+- `include/ahfl/compiler/backends/execution_plan.hpp`
+- `src/compiler/backends/execution_plan.cpp`
 - `tests/handoff/package_model.cpp`
 - `tests/plan/`
 
@@ -50,17 +50,17 @@ ctest --preset test-dev --output-on-failure -L 'v0.6-execution-plan-validation|v
 通常要改的文件：
 
 - `include/ahfl/dry_run/runner.hpp`
-- `src/dry_run/mock.cpp`
-- `src/dry_run/runner.cpp`
+- `src/pipeline/execution/dry_run/mock.cpp`
+- `src/pipeline/execution/dry_run/runner.cpp`
 - `tests/dry_run/`
 
 ### 3. 改 trace 输出 / CLI 参数面
 
 通常要改的文件：
 
-- `include/ahfl/backends/dry_run_trace.hpp`
-- `src/backends/dry_run_trace.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/dry_run_trace.hpp`
+- `src/compiler/backends/dry_run_trace.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/trace/`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`

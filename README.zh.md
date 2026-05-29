@@ -74,13 +74,13 @@ cmake --preset dev
 cmake --build --preset build-dev
 
 # 类型检查
-./build/dev/src/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
 
 # 输出 IR
-./build/dev/src/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
 
 # 真实 LLM 执行（需要配置 ~/.ahfl/llm_config.json）
-./build/dev/src/cli/ahfl-run examples/refund_audit_core_v0_1.ahfl --workflow RefundWorkflow
+./build/dev/src/tooling/cli/ahfl-run examples/refund_audit_core_v0_1.ahfl --workflow RefundWorkflow
 
 # 运行测试
 ctest --preset test-dev
