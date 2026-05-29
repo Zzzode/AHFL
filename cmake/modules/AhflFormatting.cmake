@@ -45,7 +45,7 @@ function(ahfl_enable_format_targets root_dir clang_format_bin)
         "${root_dir}/src/*.hpp"
         "${root_dir}/src/*.cpp"
     )
-    list(FILTER AHFL_FORMAT_SOURCES EXCLUDE REGEX ".*/src/parser/generated/.*")
+    list(FILTER AHFL_FORMAT_SOURCES EXCLUDE REGEX ".*/src/compiler/syntax/parser/generated/.*")
 
     # ── 格式化目标 ────────────────────────────────────────────────────────
     add_custom_target(format

@@ -1,8 +1,8 @@
-#include "ahfl/frontend/frontend.hpp"
-#include "ahfl/ir/ir.hpp"
-#include "ahfl/semantics/resolver.hpp"
-#include "ahfl/semantics/typecheck.hpp"
-#include "ahfl/semantics/validate.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
+#include "ahfl/compiler/semantics/validate.hpp"
 
 #include <filesystem>
 #include <iostream>

@@ -4,7 +4,7 @@
 #include <exception>
 #include <string>
 
-#include "ahfl/frontend/frontend.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
 
 namespace {
 
