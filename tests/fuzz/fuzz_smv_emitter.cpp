@@ -4,12 +4,12 @@
 #include <string>
 #include <variant>
 
-#include "formal/bmc.hpp"
-#include "formal/nuxmv_backend.hpp"
-#include "ahfl/frontend/frontend.hpp"
-#include "ahfl/ir/ir.hpp"
-#include "ahfl/semantics/resolver.hpp"
-#include "ahfl/semantics/typecheck.hpp"
+#include "verification/formal/bmc.hpp"
+#include "verification/formal/nuxmv_backend.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
 namespace {
 

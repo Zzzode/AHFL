@@ -15,7 +15,7 @@ if ! command -v mull-runner &> /dev/null; then
     echo "  brew install mull (macOS) or see https://github.com/mull-project/mull"
     echo ""
     echo "Running in dry-run mode..."
-    echo "Would test mutations in: ahfl_syntax, ahfl_ir, ahfl_formal"
+    echo "Would test mutations in: ahfl_compiler_syntax, ahfl_compiler_ir, ahfl_verification_formal"
     echo "Against test suites: ahfl_project_parse_tests, ahfl_project_check_tests, ahfl_bmc_tests"
     exit 0
 fi
