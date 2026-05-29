@@ -125,97 +125,97 @@ add_test(NAME ahfl.check.project.ok_expression_type_isolated
 )
 
 add_test(NAME ahfl.handoff.package.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.validate_normalizes_display_names
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-package-normalizes-display-names
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.package_reader_summary.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             package-reader-summary-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.package_reader_summary.fail_missing_export
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             package-reader-summary-rejects-missing-export
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_planner_bootstrap.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             execution-planner-bootstrap-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_planner_bootstrap.fail_agent_entry
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             execution-planner-bootstrap-rejects-agent-entry
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_planner_bootstrap.fail_missing_dependency
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             execution-planner-bootstrap-rejects-missing-dependency
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_plan.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             execution-plan-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_plan.fail_agent_entry
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             execution-plan-rejects-agent-entry
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_plan.validate_project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-execution-plan-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_plan.validate_fail_missing_entry_workflow
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-execution-plan-rejects-missing-entry-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.execution_plan.validate_fail_unknown_value_read
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-execution-plan-rejects-unknown-value-read
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.validate_rejects_wrong_kind
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-package-rejects-wrong-kind
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.validate_rejects_duplicate_normalized_targets
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-package-rejects-duplicate-normalized-targets
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.validate_rejects_unknown_capability
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             validate-package-rejects-unknown-capability
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.handoff.package.file_expr_temporal
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_tests>
             file-expr-temporal
             "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
 )
@@ -257,67 +257,67 @@ add_test(NAME ahfl.dry_run.local.fail_unused_mock
 )
 
 add_test(NAME ahfl.runtime_session.model.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             build-runtime-session-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.model.fail_missing_workflow
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             build-runtime-session-rejects-missing-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.model.fail_missing_mock
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             build-runtime-session-rejects-missing-mock
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.model.partial_pending_mock
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             build-runtime-session-partial-on-pending-mock
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.model.fail_node_failure
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             build-runtime-session-failed-on-node-failure
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.validation.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             validate-runtime-session-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.validation.fail_incomplete_completed_workflow
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             validate-runtime-session-rejects-incomplete-completed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.validation.fail_missing_used_mock
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             validate-runtime-session-rejects-missing-used-mock
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.validation.partial_workflow_ok
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             validate-runtime-session-accepts-partial-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.validation.failed_workflow_ok
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             validate-runtime-session-accepts-failed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.runtime_session.validation.fail_failed_without_failure_summary
-    COMMAND $<TARGET_FILE:ahfl_runtime_session_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_session_tests>
             validate-runtime-session-rejects-failed-without-failure-summary
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
@@ -378,49 +378,49 @@ add_test(NAME ahfl.execution_journal.bootstrap.fail_invalid_runtime_session
 )
 
 add_test(NAME ahfl.replay_view.model.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             build-replay-view-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.model.failed_workflow
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             build-replay-view-failed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.model.partial_workflow
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             build-replay-view-partial-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.model.fail_invalid_execution_journal
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             build-replay-view-rejects-invalid-execution-journal
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.model.fail_session_journal_mismatch
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             build-replay-view-rejects-session-journal-mismatch
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.validation.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             validate-replay-view-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.validation.fail_missing_completed_progression
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             validate-replay-view-rejects-missing-completed-progression
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.replay_view.validation.fail_execution_order_index_mismatch
-    COMMAND $<TARGET_FILE:ahfl_replay_view_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_replay_view_tests>
             validate-replay-view-rejects-execution-order-index-mismatch
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
@@ -715,237 +715,237 @@ add_test(NAME ahfl.checkpoint_review.compat.fail_ready_terminal_reason
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-ok
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-blocked-ok
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.validate_terminal_failed_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-terminal-failed-ok
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.validate_terminal_partial_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-terminal-partial-ok
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_missing_planned_identity
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-missing-planned-identity
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_non_prefix_cursor
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-non-prefix-cursor
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_export_ready_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-export-ready-with-blocker
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_unsupported_checkpoint_record_format
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-unsupported-checkpoint-record-format
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_ready_from_blocked_checkpoint
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-ready-from-blocked-checkpoint
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_terminal_failed_export_ready
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-terminal-failed-export-ready
 )
 
 add_test(NAME ahfl.persistence_descriptor.model.fail_store_adjacent_blocked
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-descriptor-rejects-store-adjacent-blocked
 )
 
 add_test(NAME ahfl.persistence_descriptor.bootstrap.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-descriptor-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_descriptor.bootstrap.failed_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-descriptor-failed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_descriptor.bootstrap.partial_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-descriptor-partial-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_descriptor.bootstrap.fail_invalid_checkpoint_record
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-descriptor-rejects-invalid-checkpoint-record
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_descriptor.bootstrap.fail_checkpoint_workflow_mismatch
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-descriptor-rejects-checkpoint-workflow-mismatch
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-review-ok
 )
 
 add_test(NAME ahfl.persistence_review.model.fail_unsupported_source_descriptor_format
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             validate-persistence-review-rejects-unsupported-source-descriptor-format
 )
 
 add_test(NAME ahfl.persistence_review.model.fail_invalid_descriptor
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-review-rejects-invalid-descriptor
 )
 
 add_test(NAME ahfl.persistence_review.model.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-review-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_review.model.failed_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-review-failed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_review.model.partial_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_descriptor_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_descriptor_tests>
             build-persistence-review-partial-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-ok
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-blocked-ok
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.validate_terminal_failed_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-terminal-failed-ok
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.validate_terminal_partial_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-terminal-partial-ok
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_missing_export_package_identity
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-missing-export-package-identity
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_duplicate_artifact_name
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-duplicate-artifact-name
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_ready_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-ready-with-blocker
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_ready_from_blocked_persistence
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-ready-from-blocked-persistence
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_unsupported_source_descriptor_format
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-unsupported-source-descriptor-format
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_store_import_adjacent_blocked
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-store-import-adjacent-blocked
 )
 
 add_test(NAME ahfl.persistence_export_manifest.model.fail_terminal_failed_without_failure_summary
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-manifest-rejects-terminal-failed-without-failure-summary
 )
 
 add_test(NAME ahfl.persistence_export_manifest.bootstrap.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-manifest-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_manifest.bootstrap.failed_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-manifest-failed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_manifest.bootstrap.partial_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-manifest-partial-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_manifest.bootstrap.fail_invalid_descriptor
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-manifest-rejects-invalid-descriptor
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_manifest.bootstrap.fail_descriptor_workflow_mismatch
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-manifest-rejects-descriptor-workflow-mismatch
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-review-ok
 )
 
 add_test(NAME ahfl.persistence_export_review.model.fail_unsupported_source_manifest_format
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             validate-persistence-export-review-rejects-unsupported-source-manifest-format
 )
 
 add_test(NAME ahfl.persistence_export_review.model.fail_invalid_manifest
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-review-rejects-invalid-manifest
 )
 
 add_test(NAME ahfl.persistence_export_review.model.project_workflow_value_flow
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-review-project-workflow-value-flow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_review.model.failed_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-review-failed-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
 
 add_test(NAME ahfl.persistence_export_review.model.partial_workflow
-    COMMAND $<TARGET_FILE:ahfl_persistence_export_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_persistence_export_tests>
             build-persistence-export-review-partial-workflow
             "${AHFL_TESTS_DIR}/integration/workflow_value_flow/ahfl.project.json"
 )
@@ -1070,1212 +1070,1212 @@ add_test(NAME ahfl.store_import_review.model.fail_invalid_descriptor
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.validate_terminal_failed_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-terminal-failed-ok
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.validate_terminal_partial_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-terminal-partial-ok
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.fail_missing_request_identity
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-rejects-missing-request-identity
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.fail_duplicate_artifact_name
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-rejects-duplicate-artifact-name
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.fail_ready_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-rejects-ready-with-blocker
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.fail_unsupported_source_descriptor_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-rejects-unsupported-source-descriptor-format
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.fail_adapter_contract_blocked
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-rejects-adapter-contract-blocked
 )
 
 add_test(NAME ahfl.durable_store_import_request.model.fail_terminal_failed_without_failure_summary
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-request-rejects-terminal-failed-without-failure-summary
 )
 
 add_test(NAME ahfl.durable_store_import_request.bootstrap.ready_descriptor
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             build-durable-store-import-request-ready-descriptor
 )
 
 add_test(NAME ahfl.durable_store_import_request.bootstrap.completed_descriptor
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             build-durable-store-import-request-completed-descriptor
 )
 
 add_test(NAME ahfl.durable_store_import_request.bootstrap.fail_invalid_descriptor
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             build-durable-store-import-request-rejects-invalid-descriptor
 )
 
 add_test(NAME ahfl.durable_store_import_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_review.model.fail_unsupported_source_request_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             validate-durable-store-import-review-rejects-unsupported-source-request-format
 )
 
 add_test(NAME ahfl.durable_store_import_review.model.ready_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             build-durable-store-import-review-ready-request
 )
 
 add_test(NAME ahfl.durable_store_import_review.model.failed_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             build-durable-store-import-review-failed-request
 )
 
 add_test(NAME ahfl.durable_store_import_review.model.fail_invalid_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_tests>
             build-durable-store-import-review-rejects-invalid-request
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.validate_deferred_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-deferred-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.fail_missing_decision_identity
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-rejects-missing-decision-identity
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.fail_accepted_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-rejects-accepted-with-blocker
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.fail_unsupported_source_request_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-rejects-unsupported-source-request-format
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.fail_adapter_decision_consumable_blocked
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-rejects-adapter-decision-consumable-blocked
 )
 
 add_test(NAME ahfl.durable_store_import_decision.model.fail_rejected_without_failure_summary
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-rejects-rejected-without-failure-summary
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.validate_deferred_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-deferred-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.fail_missing_receipt_identity
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-rejects-missing-receipt-identity
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.fail_unsupported_source_decision_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-rejects-unsupported-source-decision-format
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.model.fail_ready_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-rejects-ready-with-blocker
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.bootstrap.ready_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-ready-decision
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.bootstrap.blocked_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-blocked-decision
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.bootstrap.deferred_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-deferred-decision
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.bootstrap.rejected_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-rejected-decision
 )
 
 add_test(NAME ahfl.durable_store_import_receipt.bootstrap.fail_invalid_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-rejects-invalid-decision
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_deferred_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-deferred-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.fail_missing_request_identity
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-rejects-missing-request-identity
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.fail_unsupported_source_receipt_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-rejects-unsupported-source-receipt-format
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.model.fail_ready_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-request-rejects-ready-with-blocker
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.ready_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-request-ready-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.blocked_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-request-blocked-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.deferred_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-request-deferred-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.rejected_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-request-rejected-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_request.bootstrap.fail_invalid_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-request-rejects-invalid-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_review.model.fail_unsupported_source_request_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-review-rejects-unsupported-source-request-format
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_review.bootstrap.ready_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-review-ready-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_review.bootstrap.rejected_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-review-rejected-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_review.bootstrap.fail_invalid_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-review-rejects-invalid-request
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.validate_deferred_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-deferred-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.fail_missing_response_identity
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-rejects-missing-response-identity
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.fail_unsupported_source_request_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-rejects-unsupported-source-request-format
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.model.fail_accepted_with_blocker
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-rejects-accepted-with-blocker
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.bootstrap.ready_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-response-ready-request
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response.bootstrap.fail_invalid_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-response-rejects-invalid-request
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-persistence-response-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response_review.bootstrap.ready_response
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-response-review-ready-response-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response_review.bootstrap.rejected_response
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-response-review-rejected-response-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_persistence_response_review.bootstrap.fail_invalid_response
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-persistence-response-review-rejects-invalid-response
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-ok
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.validate_deferred_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-deferred-ok
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.fail_missing_persistence_id
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-rejects-missing-persistence-id
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.fail_non_mutating_accepted
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-rejects-non-mutating-accepted
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.model.fail_mutated_non_accepted
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-adapter-execution-rejects-mutated-non-accepted
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.bootstrap.ready_response
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-adapter-execution-ready-response
 )
 
 add_test(NAME ahfl.durable_store_import_adapter_execution.bootstrap.fail_invalid_response
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-adapter-execution-rejects-invalid-response
 )
 
 add_test(NAME ahfl.durable_store_import_recovery_preview.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-recovery-preview-ok
 )
 
 add_test(NAME ahfl.durable_store_import_recovery_preview.bootstrap.ready_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-recovery-preview-ready-execution-ok
 )
 
 add_test(NAME ahfl.durable_store_import_recovery_preview.bootstrap.rejected_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-recovery-preview-rejected-execution-ok
 )
 
 add_test(NAME ahfl.durable_store_import_recovery_preview.bootstrap.fail_invalid_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-recovery-preview-rejects-invalid-execution
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-attempt-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-attempt-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.model.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-write-attempt-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_adapter_config.model.fail_secret_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-adapter-config-rejects-secret-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_adapter_config.model.fail_provider_coordinates
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-adapter-config-rejects-provider-coordinates
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.model.fail_planned_without_provider_id
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-attempt-rejects-planned-without-provider-id
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.model.fail_not_planned_mutating_intent
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-attempt-rejects-not-planned-mutating-intent
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.bootstrap.ready_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-write-attempt-ready-execution
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_attempt.bootstrap.fail_invalid_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-write-attempt-rejects-invalid-execution
 )
 
 add_test(NAME ahfl.durable_store_import_provider_recovery_handoff.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-recovery-handoff-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_recovery_handoff.bootstrap.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-recovery-handoff-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_recovery_handoff.bootstrap.fail_invalid_write_attempt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-recovery-handoff-rejects-invalid-write-attempt
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-binding-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.validate_rejected_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-binding-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-binding-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.missing_profile_load_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-binding-missing-profile-load-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.profile_mismatch
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-binding-profile-mismatch-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_profile.model.fail_secret_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-profile-rejects-secret-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_profile.model.fail_provider_coordinates
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-profile-rejects-provider-coordinates
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.fail_sdk_invocation
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-binding-rejects-sdk-invocation
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.fail_bound_without_descriptor
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-binding-rejects-bound-without-descriptor
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.model.fail_bound_without_profile_load
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-binding-rejects-bound-without-profile-load
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.bootstrap.ready_write_attempt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-binding-ready-write-attempt
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_binding.bootstrap.fail_invalid_write_attempt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-binding-rejects-invalid-write-attempt
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-driver-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_readiness.bootstrap.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-readiness-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_driver_readiness.bootstrap.fail_invalid_binding_plan
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-driver-readiness-rejects-invalid-binding-plan
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-preflight-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-preflight-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-runtime-preflight-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.profile_mismatch
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-runtime-preflight-profile-mismatch-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_profile.model.fail_secret_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-profile-rejects-secret-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_profile.model.fail_provider_coordinates
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-profile-rejects-provider-coordinates
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.fail_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-preflight-rejects-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.model.fail_ready_without_envelope
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-preflight-rejects-ready-without-envelope
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.bootstrap.ready_binding
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-runtime-preflight-ready-binding
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_preflight.bootstrap.fail_invalid_driver_binding
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-runtime-preflight-rejects-invalid-driver-binding
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-runtime-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_readiness.bootstrap.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-runtime-readiness-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_runtime_readiness.bootstrap.fail_invalid_preflight
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-runtime-readiness-rejects-invalid-preflight
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-envelope-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-envelope-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.model.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-envelope-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.model.policy_mismatch
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-envelope-policy-mismatch-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_policy.model.fail_secret_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-policy-rejects-secret-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_policy.model.fail_provider_coordinates
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-policy-rejects-provider-coordinates
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.model.fail_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-envelope-rejects-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.model.fail_ready_without_handoff
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-envelope-rejects-ready-without-handoff
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.bootstrap.ready_preflight
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-envelope-ready-preflight
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_envelope.bootstrap.fail_invalid_preflight
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-envelope-rejects-invalid-preflight
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_handoff_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-handoff-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_handoff_readiness.bootstrap.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-handoff-readiness-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_handoff_readiness.bootstrap.fail_invalid_envelope
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-handoff-readiness-rejects-invalid-envelope
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-execution-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-execution-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.model.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-host-execution-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.model.policy_mismatch
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-host-execution-policy-mismatch-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_policy.model.fail_secret_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-policy-rejects-secret-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_policy.model.fail_host_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-policy-rejects-host-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.model.fail_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-execution-rejects-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.model.fail_ready_without_descriptor
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-execution-rejects-ready-without-descriptor
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.bootstrap.ready_envelope
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-host-execution-ready-envelope
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution.bootstrap.fail_invalid_envelope
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-host-execution-rejects-invalid-envelope
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-host-execution-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution_readiness.bootstrap.unsupported_capability
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-host-execution-readiness-unsupported-capability-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_host_execution_readiness.bootstrap.fail_invalid_host_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-host-execution-readiness-rejects-invalid-host-execution
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-execution-receipt-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-execution-receipt-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt.model.fail_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-execution-receipt-rejects-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt.model.fail_ready_without_identity
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-execution-receipt-rejects-ready-without-identity
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt.bootstrap.ready_host_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-local-host-execution-receipt-ready-host-execution
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt.bootstrap.fail_invalid_host_execution
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-local-host-execution-receipt-rejects-invalid-host-execution
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-execution-receipt-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt_review.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-local-host-execution-receipt-review-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_execution_receipt_review.bootstrap.fail_invalid_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-local-host-execution-receipt-review-rejects-invalid-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_request.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_request.model.validate_blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-request-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_request.model.fail_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-request-rejects-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_request.model.fail_forbidden_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-request-rejects-forbidden-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_request.bootstrap.ready_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-adapter-request-ready-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_response_placeholder.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-response-placeholder-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_response_placeholder.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-adapter-response-placeholder-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_readiness.bootstrap.fail_invalid_placeholder
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-adapter-readiness-rejects-invalid-placeholder
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_interface.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-interface-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_interface.model.fail_forbidden_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-interface-rejects-forbidden-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_interface.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-adapter-interface-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_interface_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-adapter-interface-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_adapter_interface_review.bootstrap.fail_invalid_plan
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-sdk-adapter-interface-review-rejects-invalid-plan
 )
 
 add_test(NAME ahfl.durable_store_import_provider_config_load.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-config-load-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_config_load.model.fail_forbidden_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-config-load-rejects-forbidden-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_config_load.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-config-load-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_config_snapshot.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-config-snapshot-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_config_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-config-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_config_readiness.bootstrap.fail_invalid_snapshot
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-config-readiness-rejects-invalid-snapshot
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-secret-resolver-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.model.fail_forbidden_material
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-secret-resolver-request-rejects-forbidden-material
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.model.fail_side_effects
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-secret-resolver-request-rejects-side-effects
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_resolver_request.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-secret-resolver-request-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_resolver_response.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-secret-resolver-response-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_policy_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-secret-policy-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_secret_policy_review.bootstrap.fail_invalid_placeholder
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-secret-policy-review-rejects-invalid-placeholder
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_harness_request.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-harness-request-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_harness_request.model.fail_sandbox_escape
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-harness-request-rejects-sandbox-escape
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_harness_record.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-harness-record-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_harness_record.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             run-durable-store-import-provider-local-host-harness-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_host_harness_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-host-harness-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_payload_plan.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-payload-plan-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_payload_plan.model.fail_forbidden_fields
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-payload-plan-rejects-forbidden-fields
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_payload_audit.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-payload-audit-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_mock_adapter_contract.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-mock-adapter-contract-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_mock_adapter_execution.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             run-durable-store-import-provider-sdk-mock-adapter-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_sdk_mock_adapter_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-sdk-mock-adapter-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_filesystem_alpha_plan.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-filesystem-alpha-plan-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_filesystem_alpha_result.model.validate_dry_run_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-filesystem-alpha-result-dry-run-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_filesystem_alpha_result.integration.opt_in_write_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             run-durable-store-import-provider-local-filesystem-alpha-opt-in-write-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_local_filesystem_alpha_readiness.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-local-filesystem-alpha-readiness-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_retry_decision.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-retry-decision-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_retry_decision.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-write-retry-decision-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_commit_receipt.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-commit-receipt-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_commit_receipt.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-write-commit-receipt-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_commit_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-commit-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_recovery_checkpoint.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-recovery-checkpoint-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_recovery.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-write-recovery-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_write_recovery_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-write-recovery-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_failure_taxonomy_report.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-failure-taxonomy-report-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_failure_taxonomy.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-failure-taxonomy-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_failure_taxonomy_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-failure-taxonomy-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_execution_audit_event.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-execution-audit-event-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_execution_audit_event.bootstrap.matrix_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-execution-audit-event-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_telemetry_summary.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-telemetry-summary-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_operator_review_event.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-operator-review-event-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_compatibility_test_manifest.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-compatibility-test-manifest-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_fixture_matrix.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-fixture-matrix-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_compatibility_report.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-compatibility-report-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_compatibility_report.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-compatibility-report-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_registry.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-registry-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_selection_plan.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-selection-plan-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_capability_negotiation_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-capability-negotiation-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_selection_plan.bootstrap.fallback_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-selection-fallback-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_production_readiness_evidence.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-production-readiness-evidence-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_production_readiness_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-production-readiness-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_production_readiness_report.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-provider-production-readiness-report-ok
 )
 
 add_test(NAME ahfl.durable_store_import_provider_production_readiness.bootstrap.blocked_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-provider-production-readiness-blocked-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_review.model.fail_unsupported_source_receipt_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-receipt-review-rejects-unsupported-source-receipt-format
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_review.bootstrap.ready_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-review-ready-receipt-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_review.bootstrap.rejected_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-review-rejected-receipt-ok
 )
 
 add_test(NAME ahfl.durable_store_import_receipt_review.bootstrap.fail_invalid_receipt
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-receipt-review-rejects-invalid-receipt
 )
 
 add_test(NAME ahfl.durable_store_import_decision.bootstrap.ready_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-decision-ready-request
 )
 
 add_test(NAME ahfl.durable_store_import_decision.bootstrap.completed_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-decision-completed-request
 )
 
 add_test(NAME ahfl.durable_store_import_decision.bootstrap.fail_invalid_request
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-decision-rejects-invalid-request
 )
 
 add_test(NAME ahfl.durable_store_import_decision_review.model.validate_ok
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-review-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision_review.model.fail_unsupported_source_decision_format
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             validate-durable-store-import-decision-review-rejects-unsupported-source-decision-format
 )
 
 add_test(NAME ahfl.durable_store_import_decision_review.bootstrap.accepted_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-decision-review-accepted-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision_review.bootstrap.rejected_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-decision-review-rejected-ok
 )
 
 add_test(NAME ahfl.durable_store_import_decision_review.bootstrap.fail_invalid_decision
-    COMMAND $<TARGET_FILE:ahfl_durable_store_import_decision_tests>
+    COMMAND $<TARGET_FILE:ahfl_pipeline_durable_store_import_decision_tests>
             build-durable-store-import-decision-review-rejects-invalid-decision
 )
 
 add_test(NAME ahfl.handoff.package_compat.normalize_identity_format_version
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_compat_tests>
             normalize-identity-format-version
 )
 
 add_test(NAME ahfl.handoff.package_compat.omit_empty_provenance
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_compat_tests>
             omit-empty-provenance
 )
 
 add_test(NAME ahfl.handoff.package_compat.escape_control_characters
-    COMMAND $<TARGET_FILE:ahfl_handoff_package_compat_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_handoff_package_compat_tests>
             escape-control-characters
 )
 
@@ -3770,47 +3770,47 @@ add_test(NAME ahfl.opt_in_guard.model.test_default_deny
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_build_all_gates_pass
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-build-all-gates-pass
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_build_deny_opt_in_not_granted
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-build-deny-opt-in-not-granted
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_build_deny_approval_missing
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-build-deny-approval-missing
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_build_deny_config_invalid
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-build-deny-config-invalid
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_build_deny_registry_mismatch
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-build-deny-registry-mismatch
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_build_deny_readiness_not_met
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-build-deny-readiness-not-met
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_validate_format_version
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-validate-format-version
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_validate_decision_consistency
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-validate-decision-consistency
 )
 
 add_test(NAME ahfl.runtime_policy.model.test_default_deny
-    COMMAND $<TARGET_FILE:ahfl_runtime_policy_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_engine_policy_tests>
             test-default-deny
 )
 
@@ -3860,7 +3860,7 @@ add_test(NAME ahfl.production_integration.model.test_validate_non_mutating_mode
 )
 
 add_test(NAME ahfl.evaluator.eval_all
-    COMMAND $<TARGET_FILE:ahfl_evaluator_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_tests>
 )
 
 add_test(NAME ahfl.executor.exec_all
@@ -3885,7 +3885,7 @@ add_test(NAME ahfl.runtime.e2e_workflow
 )
 
 add_test(NAME ahfl.llm_provider.all
-    COMMAND $<TARGET_FILE:ahfl_llm_provider_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_provider_llm_tests>
 )
 
 add_test(NAME ahfl.runtime.http_transport_all
@@ -3897,11 +3897,11 @@ add_test(NAME ahfl.runtime.grpc_transport_all
 )
 
 add_test(NAME ahfl.json.value_all
-    COMMAND $<TARGET_FILE:ahfl_json_value_tests>
+    COMMAND $<TARGET_FILE:ahfl_base_json_value_tests>
 )
 
 add_test(NAME ahfl.secret.provider_all
-    COMMAND $<TARGET_FILE:ahfl_secret_provider_tests>
+    COMMAND $<TARGET_FILE:ahfl_runtime_provider_secret_provider_tests>
 )
 
 add_test(NAME ahfl.secret.vault_rotation_all
@@ -3917,11 +3917,11 @@ add_test(NAME ahfl.llm_provider.streaming_all
 )
 
 add_test(NAME ahfl.lsp.json_rpc_all
-    COMMAND $<TARGET_FILE:ahfl_lsp_json_rpc_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_lsp_json_rpc_tests>
 )
 
 add_test(NAME ahfl.lsp.handler_all
-    COMMAND $<TARGET_FILE:ahfl_lsp_handler_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_lsp_handler_tests>
 )
 
 add_test(NAME ahfl.runtime.connection_pool_all
@@ -3949,7 +3949,7 @@ add_test(NAME ahfl.formal.model_checker_backends_all
 )
 
 add_test(NAME ahfl.formal.integration_improvement_all
-    COMMAND $<TARGET_FILE:ahfl_formal_integration_tests>
+    COMMAND $<TARGET_FILE:ahfl_verification_formal_integration_tests>
 )
 
 add_test(NAME ahfl.formal.counterexample_parse_all
@@ -3969,31 +3969,31 @@ add_test(NAME ahfl.runtime.distributed_all
 )
 
 add_test(NAME ahfl.formatter.formatter_all
-    COMMAND $<TARGET_FILE:ahfl_formatter_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_formatter_tests>
 )
 
 add_test(NAME ahfl.repl.repl_all
-    COMMAND $<TARGET_FILE:ahfl_repl_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_repl_tests>
 )
 
 add_test(NAME ahfl.dap.basic_all
-    COMMAND $<TARGET_FILE:ahfl_dap_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_dap_tests>
 )
 
 add_test(NAME ahfl.telemetry.telemetry_all
-    COMMAND $<TARGET_FILE:ahfl_telemetry_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_telemetry_tests>
 )
 
 add_test(NAME ahfl.profiling.profiling_all
-    COMMAND $<TARGET_FILE:ahfl_profiling_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_profiling_tests>
 )
 
 add_test(NAME ahfl.abi.compat_all
-    COMMAND $<TARGET_FILE:ahfl_abi_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_abi_tests>
 )
 
 add_test(NAME ahfl.incremental.incremental_all
-    COMMAND $<TARGET_FILE:ahfl_incremental_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_incremental_tests>
 )
 
 if(AHFL_ENABLE_BACKEND_INFRA)
@@ -4003,7 +4003,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
 endif()
 
 add_test(NAME ahfl.backends.registry_all
-    COMMAND $<TARGET_FILE:ahfl_backend_registry_tests>
+    COMMAND $<TARGET_FILE:ahfl_compiler_backends_registry_tests>
 )
 
 add_test(NAME ahfl.cli.command_routing_all
@@ -4017,7 +4017,7 @@ if(AHFL_ENABLE_BACKEND_INFRA)
 endif()
 
 add_test(NAME ahfl.package.package_all
-    COMMAND $<TARGET_FILE:ahfl_package_tests>
+    COMMAND $<TARGET_FILE:ahfl_tooling_package_tests>
 )
 
 add_test(NAME ahfl.property.lowering_equiv

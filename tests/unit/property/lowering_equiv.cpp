@@ -1,5 +1,5 @@
 #include <cstdio>
-#include "testing/ast_generator.hpp"
+#include "tooling/testing/ast_generator.hpp"
 
 static int test_count = 0;
 static int pass_count = 0;

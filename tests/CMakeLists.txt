@@ -1,6 +1,12 @@
 set(AHFL_EXAMPLES_DIR "${PROJECT_SOURCE_DIR}/examples")
 set(AHFL_TESTS_DIR "${PROJECT_SOURCE_DIR}/tests")
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+add_test(NAME ahfl.architecture.boundaries
+    COMMAND ${Python3_EXECUTABLE} "${PROJECT_SOURCE_DIR}/scripts/check-architecture.py"
+)
+
 function(ahfl_label_tests)
     set(multi_value_args LABELS TESTS)
     cmake_parse_arguments(AHFL "" "" "${multi_value_args}" ${ARGN})

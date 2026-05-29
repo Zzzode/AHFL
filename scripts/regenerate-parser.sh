@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUTPUT_DIR="${ROOT_DIR}/src/parser/generated"
+OUTPUT_DIR="${ROOT_DIR}/src/compiler/syntax/parser/generated"
 LOCK_FILE="${ROOT_DIR}/grammar/antlr-toolchain.lock"
 WORK_DIR="$(mktemp -d)"
 ANTLR_JAR="${ANTLR_JAR:-}"

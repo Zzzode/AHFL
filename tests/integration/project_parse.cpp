@@ -1,5 +1,5 @@
-#include "ahfl/frontend/frontend.hpp"
-#include "ahfl/support/source.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/base/support/source.hpp"
 
 #include <filesystem>
 #include <iostream>

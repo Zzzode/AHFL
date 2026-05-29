@@ -3,9 +3,9 @@
         "tool": "mull",
         "version": "0.21.0",
         "targets": [
-            "ahfl_syntax",
-            "ahfl_ir",
-            "ahfl_formal"
+            "ahfl_compiler_syntax",
+            "ahfl_compiler_ir",
+            "ahfl_verification_formal"
         ],
         "test_suites": [
             "ahfl_project_parse_tests",

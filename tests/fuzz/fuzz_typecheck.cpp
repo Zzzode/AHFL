@@ -4,9 +4,9 @@
 #include <exception>
 #include <string>
 
-#include "ahfl/frontend/frontend.hpp"
-#include "ahfl/semantics/resolver.hpp"
-#include "ahfl/semantics/typecheck.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
 namespace {
 
