@@ -23,23 +23,28 @@ AHFL/
 │       ├── AhflFormatting.cmake
 │       └── AhflTesting.cmake
 ├── include/ahfl/
-│   ├── backends/
-│   ├── frontend/
-│   ├── handoff/
-│   ├── ir/
-│   ├── semantics/
-│   ├── support/
-│   └── *.hpp              # 兼容转发头
+│   ├── base/
+│   │   └── support/
+│   └── compiler/
+│       ├── backends/
+│       ├── frontend/
+│       ├── handoff/
+│       ├── ir/
+│       └── semantics/
 ├── src/
-│   ├── backends/
-│   ├── cli/
-│   ├── frontend/
-│   │   └── ast.cpp
-│   ├── handoff/
-│   ├── ir/
-│   ├── parser/
-│   │   └── generated/
-│   └── semantics/
+│   ├── base/
+│   ├── compiler/
+│   │   ├── backends/
+│   │   ├── handoff/
+│   │   ├── ir/
+│   │   ├── semantics/
+│   │   └── syntax/
+│   │       ├── frontend/
+│   │       └── parser/generated/
+│   ├── pipeline/
+│   ├── runtime/
+│   ├── tooling/
+│   └── verification/
 ├── tests/
 ├── docs/
 │   ├── spec/
@@ -77,7 +82,7 @@ AHFL/
 
 ## 源码职责边界
 
-### `include/ahfl/support`
+### `include/ahfl/base/support`
 
 放最底层、无业务语义的公共基础设施：
 
@@ -90,7 +95,7 @@ AHFL/
 1. 不依赖 frontend / semantics / ir / backend
 2. 尽量保持 header-only 或极薄依赖
 
-### `include/ahfl/frontend` + `src/frontend`
+### `include/ahfl/compiler/frontend` + `src/compiler/syntax/frontend`
 
 放 surface syntax 与 parse/lowering 边界：
 
@@ -100,10 +105,10 @@ AHFL/
 
 要求：
 
-1. `src/frontend/frontend.cpp` 是唯一允许常规接触 ANTLR parse tree 的手写模块
+1. `src/compiler/syntax/frontend/frontend.cpp` 是唯一允许常规接触 ANTLR parse tree 的手写模块
 2. frontend 不承载 resolver、typecheck、validate 规则
 
-### `include/ahfl/semantics` + `src/semantics`
+### `include/ahfl/compiler/semantics` + `src/compiler/semantics`
 
 放静态语义阶段：
 
@@ -118,7 +123,7 @@ AHFL/
 2. 不直接依赖 generated parser 类型
 3. 不直接承担 backend emission
 
-### `include/ahfl/ir` + `src/ir`
+### `include/ahfl/compiler/ir` + `src/compiler/ir`
 
 放 validate 通过后的稳定中间表示与其序列化：
 
@@ -131,7 +136,7 @@ AHFL/
 1. 不回看 parse tree
 2. IR 是 backend 的稳定输入边界
 
-### `include/ahfl/handoff` + `src/handoff`
+### `include/ahfl/compiler/handoff` + `src/compiler/handoff`
 
 放 V0.4 之后新增的 runtime-facing handoff package 模型与其 lowering：
 
@@ -145,7 +150,7 @@ AHFL/
 2. 不在这一层承载 CLI 参数解析或 runtime deployment 细节
 3. 不把 handoff package 反向塞回 `ir` 或 `backends` 的私有实现
 
-### `include/ahfl/durable_store_import` + `src/durable_store_import`
+### `src/pipeline/persistence/durable_store_import`
 
 放 durable-store import 的领域模型、validator、builder 与 artifact printer：
 
@@ -156,11 +161,11 @@ AHFL/
 要求：
 
 1. 领域模型与校验留在 `durable_store_import` Module 内
-2. artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，由 `ahfl_durable_store_import_artifacts` 承载
+2. artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，由 `ahfl_pipeline_durable_store_import_artifacts` 承载
 3. 不把 request / review / decision / receipt / provider SDK adapter printer 放回 `backends`
 4. 不在 artifact printer 中执行网络、secret、host env、filesystem write 等副作用
 
-### `include/ahfl/backends` + `src/backends`
+### `include/ahfl/compiler/backends` + `src/compiler/backends`
 
 放 backend driver 与 backend-specific lowering：
 
@@ -174,7 +179,7 @@ AHFL/
 2. 抽象边界必须有文档，不允许藏在 emitter 实现里
 3. 不承载 durable-store import artifact printer；这些属于 `durable_store_import` 的 `artifacts.hpp` / `artifacts.cpp` seam
 
-### `src/cli`
+### `src/tooling/cli`
 
 放最终可执行入口：
 
@@ -186,7 +191,7 @@ AHFL/
 2. 不吸收 backend 的实现细节
 3. 后续若 CLI 继续膨胀，应优先做 backend/driver 抽象而不是继续堆在这里
 
-### `src/parser/generated`
+### `src/compiler/syntax/parser/generated`
 
 只放 ANTLR 生成物。
 
@@ -200,8 +205,8 @@ AHFL/
 
 当前仓库只保留模块化 include 路径：
 
-1. 模块化路径，例如 `ahfl/frontend/ast.hpp`
-2. 领域路径，例如 `ahfl/backends/driver.hpp`
+1. 模块化路径，例如 `ahfl/compiler/frontend/ast.hpp`
+2. 领域路径，例如 `ahfl/compiler/backends/driver.hpp`
 
 规则：
 
@@ -235,18 +240,18 @@ AHFL/
 
 ## 新增文件的放置规则
 
-1. 新的 AST / parsing 代码放 `frontend`
-2. 新的 resolver / type / validator 代码放 `semantics`
-3. 新的稳定 IR 与其序列化放 `ir`
-4. 新的 runtime-facing handoff 模型与 lowering 放 `handoff`
-5. 新的 backend lowering 放 `backends`
-6. 新的 CLI/driver 代码放 `cli`
-7. 新的 generated parser 文件只放 `src/parser/generated`
+1. 新的 AST / parsing 代码放 `src/compiler/syntax/frontend`
+2. 新的 resolver / type / validator 代码放 `src/compiler/semantics`
+3. 新的稳定 IR 与其序列化放 `src/compiler/ir`
+4. 新的 runtime-facing handoff 模型与 lowering 放 `src/compiler/handoff`
+5. 新的 backend lowering 放 `src/compiler/backends`
+6. 新的 CLI/driver 代码放 `src/tooling/cli`
+7. 新的 generated parser 文件只放 `src/compiler/syntax/parser/generated`
 8. 新的 CMake helper 不直接塞根目录，放 `cmake/modules`
 
 ## 当前已知后续演进点
 
 1. `tests/` 目前仍是数据文件分组，后续若测试规模继续增大，可再拆成多个 `tests/*/CMakeLists.txt`
 2. backend API 已在 Issue 20 中抽象为独立 driver；后续新增 backend 应继续沿用该分层，而不是把分发逻辑重新塞回 `ahflc`
-3. 平铺兼容头是过渡层，不应成为长期继续堆功能的位置
-4. V0.4 已新增独立 `handoff` 层；后续 Native/runtime-facing 数据模型应优先落在该层，而不是继续堆进 `ir` 或 `backends`
+3. 仓库不保留平铺兼容头；public header 必须直接落在 `include/ahfl/base` 或 `include/ahfl/compiler` 的真实领域路径下
+4. V0.4 已新增独立 `compiler/handoff` 层；后续 Native/runtime-facing 数据模型应优先落在该层，而不是继续堆进 `compiler/ir` 或 `compiler/backends`

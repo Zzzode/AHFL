@@ -13,11 +13,11 @@
 
 适用范围：
 
-- `include/ahfl/handoff/package.hpp`
-- `src/handoff/package.cpp`
-- `src/backends/native_json.cpp`
-- `src/backends/`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/handoff/package.hpp`
+- `src/compiler/handoff/package.cpp`
+- `src/compiler/backends/pipeline/native_json.cpp`
+- `src/compiler/backends/`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/native/`
 - `tests/handoff/`
 - `docs/reference/`

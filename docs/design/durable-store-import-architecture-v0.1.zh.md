@@ -1,6 +1,6 @@
 # AHFL Durable Store Import 架构 V0.1
 
-本文合并原先 V0.15 到 V0.45 的 `native-durable-store-*` 逐版本 bootstrap 设计文档，作为 durable-store-import 与 provider artifact pipeline 的当前设计入口。历史版本文档不再作为维护入口；当前实现以 `src/durable_store_import/`、`src/cli/` 下的 registry 与 leaf header 为准。
+本文合并原先 V0.15 到 V0.45 的 `native-durable-store-*` 逐版本 bootstrap 设计文档，作为 durable-store-import 与 provider artifact pipeline 的当前设计入口。历史版本文档不再作为维护入口；当前实现以 `src/pipeline/persistence/durable_store_import/`、`src/tooling/cli/` 下的 registry 与 leaf header 为准。
 
 ## 设计目标
 
@@ -48,13 +48,13 @@ core chain 负责从 store-import descriptor 走到 local fake durable-store exe
 
 | Stage | Artifact role | Implementation header |
 | --- | --- | --- |
-| Request | durable-store-import-facing request boundary | `src/durable_store_import/request.hpp` |
-| Decision | adapter contract decision | `src/durable_store_import/decision.hpp` |
-| Receipt | adapter receipt boundary | `src/durable_store_import/receipt.hpp` |
-| ReceiptPersistenceStage | receipt persistence state transition source of truth | `src/durable_store_import/receipt_persistence_stage.hpp` |
-| Receipt persistence projections | CLI / golden stable request and response projections | `src/durable_store_import/receipt_persistence.hpp`, `src/durable_store_import/receipt_persistence_response.hpp` |
-| Adapter execution | deterministic local fake durable-store execution | `src/durable_store_import/adapter_execution.hpp` |
-| Recovery preview | reviewer-facing recovery projection | `src/durable_store_import/recovery_preview.hpp` |
+| Request | durable-store-import-facing request boundary | `src/pipeline/persistence/durable_store_import/request.hpp` |
+| Decision | adapter contract decision | `src/pipeline/persistence/durable_store_import/decision.hpp` |
+| Receipt | adapter receipt boundary | `src/pipeline/persistence/durable_store_import/receipt.hpp` |
+| ReceiptPersistenceStage | receipt persistence state transition source of truth | `src/pipeline/persistence/durable_store_import/receipt_persistence_stage.hpp` |
+| Receipt persistence projections | CLI / golden stable request and response projections | `src/pipeline/persistence/durable_store_import/receipt_persistence.hpp`, `src/pipeline/persistence/durable_store_import/receipt_persistence_response.hpp` |
+| Adapter execution | deterministic local fake durable-store execution | `src/pipeline/persistence/durable_store_import/adapter_execution.hpp` |
+| Recovery preview | reviewer-facing recovery projection | `src/pipeline/persistence/durable_store_import/recovery_preview.hpp` |
 
 这些 stages 的共同规则：
 
@@ -73,27 +73,27 @@ provider pipeline 从 durable store import request 派生 provider-side contract
 
 | Domain | Role | Implementation headers |
 | --- | --- | --- |
-| Binding | provider adapter config、capability matrix、write attempt、driver binding | `src/durable_store_import/provider/binding/adapter.hpp`, `src/durable_store_import/provider/binding/driver.hpp` |
-| Runtime | runtime profile、preflight、SDK envelope | `src/durable_store_import/provider/runtime/runtime.hpp`, `src/durable_store_import/provider/runtime/sdk.hpp` |
-| HostExecution | host execution policy、local host receipt、harness、local filesystem alpha | `src/durable_store_import/provider/execution/*.hpp` |
-| Sdk | SDK adapter request、interface、payload materialization、mock adapter | `src/durable_store_import/provider/sdk/*.hpp` |
-| Configuration | config load、config snapshot、secret resolver placeholders | `src/durable_store_import/provider/configuration/*.hpp` |
-| Reliability | retry decision、commit receipt、recovery checkpoint / plan / review、failure taxonomy | `src/durable_store_import/provider/reliability/*.hpp` |
-| Governance | audit events、compatibility manifest/report、registry selection、conformance, schema compatibility | `src/durable_store_import/provider/governance/*.hpp` |
-| Production | release evidence, approval, opt-in, runtime policy, integration dry run | `src/durable_store_import/provider/production/*.hpp` |
+| Binding | provider adapter config、capability matrix、write attempt、driver binding | `src/pipeline/persistence/durable_store_import/provider/binding/adapter.hpp`, `src/pipeline/persistence/durable_store_import/provider/binding/driver.hpp` |
+| Runtime | runtime profile、preflight、SDK envelope | `src/pipeline/persistence/durable_store_import/provider/runtime/runtime.hpp`, `src/pipeline/persistence/durable_store_import/provider/runtime/sdk.hpp` |
+| HostExecution | host execution policy、local host receipt、harness、local filesystem alpha | `src/pipeline/persistence/durable_store_import/provider/execution/*.hpp` |
+| Sdk | SDK adapter request、interface、payload materialization、mock adapter | `src/pipeline/persistence/durable_store_import/provider/sdk/*.hpp` |
+| Configuration | config load、config snapshot、secret resolver placeholders | `src/pipeline/persistence/durable_store_import/provider/configuration/*.hpp` |
+| Reliability | retry decision、commit receipt、recovery checkpoint / plan / review、failure taxonomy | `src/pipeline/persistence/durable_store_import/provider/reliability/*.hpp` |
+| Governance | audit events、compatibility manifest/report、registry selection、conformance, schema compatibility | `src/pipeline/persistence/durable_store_import/provider/governance/*.hpp` |
+| Production | release evidence, approval, opt-in, runtime policy, integration dry run | `src/pipeline/persistence/durable_store_import/provider/production/*.hpp` |
 
 Provider artifact metadata 的 source of truth 是：
 
-- `src/durable_store_import/provider_artifacts.def`
-- `src/durable_store_import/provider/artifacts.hpp`
-- `src/durable_store_import/provider/artifacts.cpp`
+- `src/pipeline/persistence/durable_store_import/provider_artifacts.def`
+- `src/pipeline/persistence/durable_store_import/provider/artifacts.hpp`
+- `src/pipeline/persistence/durable_store_import/provider/artifacts.cpp`
 
 CLI provider emission 的 source of truth 是：
 
-- `src/cli/durable_store_import_provider_commands.def`
-- `src/cli/pipeline_durable_store_import_provider_artifacts.def`
-- `src/cli/pipeline_durable_store_import_provider.hpp`
-- `src/cli/pipeline_durable_store_import_provider.cpp`
+- `src/tooling/cli/durable_store_import_provider_commands.def`
+- `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def`
+- `src/tooling/cli/pipeline_durable_store_import_provider.hpp`
+- `src/tooling/cli/pipeline_durable_store_import_provider.cpp`
 
 ## CLI Provider Pipeline 边界
 
@@ -109,10 +109,10 @@ ProviderPipeline::build(ProviderArtifactKind kind)
 
 当前 include 规则：
 
-1. public headers 只保留真实领域路径，例如 `ahfl/frontend/frontend.hpp`、`ahfl/ir/ir.hpp`、`ahfl/backends/driver.hpp`。
+1. public headers 只保留真实领域路径，例如 `ahfl/compiler/frontend/frontend.hpp`、`ahfl/compiler/ir/ir.hpp`、`ahfl/compiler/backends/driver.hpp`。
 2. internal headers 使用 `src/` 下真实 Module 路径，例如 `durable_store_import/provider/runtime/runtime.hpp`。
 3. 不新增 `include/ahfl/*.hpp` 平铺 facade。
-4. 不新增 `src/durable_store_import/provider_*.hpp` 一跳兼容 shim。
+4. 不新增 `src/pipeline/persistence/durable_store_import/provider_*.hpp` 一跳兼容 shim。
 5. artifact metadata 中的 `source_header` 必须指向真实 leaf header，不得指向已删除的兼容路径。
 
 ## 非目标

@@ -117,10 +117,10 @@ V0.14 当前已冻结 `StoreImportDescriptor` contract 的实现落点：
 
 1. model / validation / bootstrap
    - `include/ahfl/store_import/descriptor.hpp`
-   - `src/store_import/descriptor.cpp`
+   - `src/pipeline/persistence/store_import/descriptor.cpp`
 2. machine-facing JSON 输出
-   - `include/ahfl/backends/store_import_descriptor.hpp`
-   - `src/backends/store_import_descriptor.cpp`
+   - `include/ahfl/compiler/backends/store_import_descriptor.hpp`
+   - `src/compiler/backends/store_import_descriptor.cpp`
 3. CLI 输出命令
    - `ahflc emit-store-import-descriptor`
 4. 回归标签
@@ -190,10 +190,10 @@ V0.14 当前已冻结 `StoreImportReviewSummary` contract 的实现落点：
 
 1. model / validation / projection
    - `include/ahfl/store_import/review.hpp`
-   - `src/store_import/review.cpp`
+   - `src/pipeline/persistence/store_import/review.cpp`
 2. reviewer-facing text 输出
-   - `include/ahfl/backends/store_import_review.hpp`
-   - `src/backends/store_import_review.cpp`
+   - `include/ahfl/compiler/backends/store_import_review.hpp`
+   - `src/compiler/backends/store_import_review.cpp`
 3. CLI 输出命令
    - `ahflc emit-store-import-review`
 4. 回归标签

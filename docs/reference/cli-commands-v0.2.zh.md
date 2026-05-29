@@ -42,13 +42,13 @@ ahflc emit-smv [--search-root <dir>]... <input.ahfl>
 单文件示例：
 
 ```bash
-./build/dev/src/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc check examples/refund_audit_core_v0_1.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc check \
+./build/dev/src/tooling/cli/ahflc check \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -64,13 +64,13 @@ project-aware 示例：
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-ast examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc dump-ast examples/refund_audit_core_v0_1.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-ast \
+./build/dev/src/tooling/cli/ahflc dump-ast \
   --project tests/project/check_ok/ahfl.project.json
 ```
 
@@ -89,13 +89,13 @@ project-aware 示例：
 单文件示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-types examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc dump-types examples/refund_audit_core_v0_1.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-types \
+./build/dev/src/tooling/cli/ahflc dump-types \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -110,7 +110,7 @@ project-aware 示例：
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-project \
+./build/dev/src/tooling/cli/ahflc dump-project \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -124,13 +124,13 @@ project-aware 示例：
 单文件示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit-ir examples/refund_audit_core_v0_1.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir \
+./build/dev/src/tooling/cli/ahflc emit-ir \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -148,13 +148,13 @@ project-aware 模式下，文本 IR 会为每个 declaration 输出：
 单文件示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit-ir-json examples/refund_audit_core_v0_1.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json \
+./build/dev/src/tooling/cli/ahflc emit-ir-json \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -180,13 +180,13 @@ project-aware 模式下，JSON IR 的每个 declaration 会携带：
 单文件示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-summary tests/ir/ok_workflow_value_flow.ahfl
+./build/dev/src/tooling/cli/ahflc emit-summary tests/ir/ok_workflow_value_flow.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-summary \
+./build/dev/src/tooling/cli/ahflc emit-summary \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
@@ -205,13 +205,13 @@ project-aware 示例：
 单文件示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-smv examples/refund_audit_core_v0_1.ahfl
+./build/dev/src/tooling/cli/ahflc emit-smv examples/refund_audit_core_v0_1.ahfl
 ```
 
 project-aware 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-smv \
+./build/dev/src/tooling/cli/ahflc emit-smv \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```

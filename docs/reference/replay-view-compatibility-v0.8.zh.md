@@ -198,7 +198,7 @@
 
 后续任何 replay view 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/replay_view/replay.hpp`、`src/replay_view/`、`src/backends/replay_view.cpp` 与相关 CLI
+1. 更新 `include/ahfl/replay_view/replay.hpp`、`src/pipeline/execution/replay_view/`、`src/compiler/backends/replay_view.cpp` 与相关 CLI
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响的 `tests/replay/` golden
 4. 更新或新增 direct regression 与 CLI regression

@@ -8,12 +8,12 @@
 
 | Area | Source |
 | --- | --- |
-| Core durable-store-import models | `src/durable_store_import/*.hpp` |
-| Receipt persistence transition rules | `src/durable_store_import/receipt_persistence_stage.hpp` |
-| Provider model domains | `src/durable_store_import/provider/**/*.hpp` |
-| Provider artifact descriptors | `src/durable_store_import/provider_artifacts.def` |
-| Provider CLI artifact registry | `src/cli/pipeline_durable_store_import_provider_artifacts.def` |
-| Provider CLI command registry | `src/cli/durable_store_import_provider_commands.def` |
+| Core durable-store-import models | `src/pipeline/persistence/durable_store_import/*.hpp` |
+| Receipt persistence transition rules | `src/pipeline/persistence/durable_store_import/receipt_persistence_stage.hpp` |
+| Provider model domains | `src/pipeline/persistence/durable_store_import/provider/**/*.hpp` |
+| Provider artifact descriptors | `src/pipeline/persistence/durable_store_import/provider_artifacts.def` |
+| Provider CLI artifact registry | `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def` |
+| Provider CLI command registry | `src/tooling/cli/durable_store_import_provider_commands.def` |
 | Provider command routing tests | `tests/cli/command_routing.cpp` |
 | Golden command registration | `tests/cmake/TestTargets.cmake` |
 
@@ -41,20 +41,20 @@ emit-durable-store-import-decision-review
 
 内部 C++ API 不提供 `build_durable_store_import_*` 兼容 shim；新增模型和 review action 应使用短语义名，并由 artifact printer 映射到稳定 JSON 字符串。
 
-Provider 命令由 `src/cli/durable_store_import_provider_commands.def` 注册生成。不要复制 command handler 来新增 provider 命令；新增时应在 `src/cli/pipeline_durable_store_import_provider_artifacts.def` 添加一条 artifact 记录，在 `src/cli/durable_store_import_provider_commands.def` 添加一条 command 记录，再交给 `ProviderPipeline` 统一 dispatch。
+Provider 命令由 `src/tooling/cli/durable_store_import_provider_commands.def` 注册生成。不要复制 command handler 来新增 provider 命令；新增时应在 `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def` 添加一条 artifact 记录，在 `src/tooling/cli/durable_store_import_provider_commands.def` 添加一条 command 记录，再交给 `ProviderPipeline` 统一 dispatch。
 
 ## Provider 领域映射
 
 | Domain | Primary command examples | Model headers |
 | --- | --- | --- |
-| Binding | `emit-durable-store-import-provider-write-attempt`, `emit-durable-store-import-provider-driver-binding` | `src/durable_store_import/provider/binding/*.hpp` |
-| Runtime | `emit-durable-store-import-provider-runtime-preflight`, `emit-durable-store-import-provider-sdk-envelope` | `src/durable_store_import/provider/runtime/*.hpp` |
-| Host execution | `emit-durable-store-import-provider-host-execution`, `emit-durable-store-import-provider-local-host-harness-request` | `src/durable_store_import/provider/execution/*.hpp` |
-| SDK | `emit-durable-store-import-provider-sdk-adapter-request`, `emit-durable-store-import-provider-sdk-payload-plan` | `src/durable_store_import/provider/sdk/*.hpp` |
-| Configuration | `emit-durable-store-import-provider-config-load`, `emit-durable-store-import-provider-secret-resolver-request` | `src/durable_store_import/provider/configuration/*.hpp` |
-| Reliability | `emit-durable-store-import-provider-write-retry-decision`, `emit-durable-store-import-provider-write-commit-receipt` | `src/durable_store_import/provider/reliability/*.hpp` |
-| Governance | `emit-durable-store-import-provider-compatibility-report`, `emit-durable-store-import-provider-registry` | `src/durable_store_import/provider/governance/*.hpp` |
-| Production | `emit-durable-store-import-provider-production-readiness-report`, `emit-durable-store-import-provider-runtime-policy-report` | `src/durable_store_import/provider/production/*.hpp` |
+| Binding | `emit-durable-store-import-provider-write-attempt`, `emit-durable-store-import-provider-driver-binding` | `src/pipeline/persistence/durable_store_import/provider/binding/*.hpp` |
+| Runtime | `emit-durable-store-import-provider-runtime-preflight`, `emit-durable-store-import-provider-sdk-envelope` | `src/pipeline/persistence/durable_store_import/provider/runtime/*.hpp` |
+| Host execution | `emit-durable-store-import-provider-host-execution`, `emit-durable-store-import-provider-local-host-harness-request` | `src/pipeline/persistence/durable_store_import/provider/execution/*.hpp` |
+| SDK | `emit-durable-store-import-provider-sdk-adapter-request`, `emit-durable-store-import-provider-sdk-payload-plan` | `src/pipeline/persistence/durable_store_import/provider/sdk/*.hpp` |
+| Configuration | `emit-durable-store-import-provider-config-load`, `emit-durable-store-import-provider-secret-resolver-request` | `src/pipeline/persistence/durable_store_import/provider/configuration/*.hpp` |
+| Reliability | `emit-durable-store-import-provider-write-retry-decision`, `emit-durable-store-import-provider-write-commit-receipt` | `src/pipeline/persistence/durable_store_import/provider/reliability/*.hpp` |
+| Governance | `emit-durable-store-import-provider-compatibility-report`, `emit-durable-store-import-provider-registry` | `src/pipeline/persistence/durable_store_import/provider/governance/*.hpp` |
+| Production | `emit-durable-store-import-provider-production-readiness-report`, `emit-durable-store-import-provider-runtime-policy-report` | `src/pipeline/persistence/durable_store_import/provider/production/*.hpp` |
 
 ## 回归命令
 
@@ -86,8 +86,8 @@ Use the exact version label only when bisecting historical artifact behavior. Fo
 When adding or changing a durable-store/provider artifact:
 
 1. Update the model header and implementation in the relevant domain folder.
-2. Update `src/durable_store_import/provider_artifacts.def` if the artifact is provider-owned.
-3. Update `src/cli/pipeline_durable_store_import_provider_artifacts.def` and `src/cli/durable_store_import_provider_commands.def` for provider CLI emission.
+2. Update `src/pipeline/persistence/durable_store_import/provider_artifacts.def` if the artifact is provider-owned.
+3. Update `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def` and `src/tooling/cli/durable_store_import_provider_commands.def` for provider CLI emission.
 4. Add or update model validation tests.
 5. Add or update golden CLI output when the command surface changes.
 6. Run `tests/cli/command_routing.cpp` coverage through `ahfl.cli.command_routing_all`.

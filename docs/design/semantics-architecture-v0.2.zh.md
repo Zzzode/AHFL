@@ -58,9 +58,9 @@ AST / SourceGraph
 
 当前公共头文件为：
 
-- `include/ahfl/semantics/resolver.hpp`
-- `include/ahfl/semantics/typecheck.hpp`
-- `include/ahfl/semantics/validate.hpp`
+- `include/ahfl/compiler/semantics/resolver.hpp`
+- `include/ahfl/compiler/semantics/typecheck.hpp`
+- `include/ahfl/compiler/semantics/validate.hpp`
 
 其 API 形态非常刻意：
 
@@ -99,7 +99,7 @@ AST / SourceGraph
 
 ### 实现组织
 
-`src/semantics/resolver.cpp` 中的 `ResolverPass` 采用多阶段遍历，而不是单次边走边判定。
+`src/compiler/semantics/resolver.cpp` 中的 `ResolverPass` 采用多阶段遍历，而不是单次边走边判定。
 
 在 project-aware 模式下，固定顺序为：
 
@@ -432,12 +432,12 @@ index_declarations
 
 如果要快速建立心智模型，推荐按下面顺序读：
 
-1. `include/ahfl/semantics/resolver.hpp`
-2. `include/ahfl/semantics/typecheck.hpp`
-3. `include/ahfl/semantics/validate.hpp`
-4. `src/semantics/resolver.cpp`
-5. `src/semantics/typecheck.cpp`
-6. `src/semantics/validate.cpp`
+1. `include/ahfl/compiler/semantics/resolver.hpp`
+2. `include/ahfl/compiler/semantics/typecheck.hpp`
+3. `include/ahfl/compiler/semantics/validate.hpp`
+4. `src/compiler/semantics/resolver.cpp`
+5. `src/compiler/semantics/typecheck.cpp`
+6. `src/compiler/semantics/validate.cpp`
 
 阅读重点：
 

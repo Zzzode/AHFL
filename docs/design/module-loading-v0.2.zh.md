@@ -13,10 +13,10 @@
 - `docs/spec/core-language-v0.1.zh.md`
 - `docs/design/compiler-phase-boundaries-v0.2.zh.md`
 - `docs/plan/roadmap-v0.2.zh.md`
-- `include/ahfl/frontend/frontend.hpp`
-- `src/frontend/frontend.cpp`
-- `include/ahfl/semantics/resolver.hpp`
-- `src/semantics/resolver.cpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `include/ahfl/compiler/semantics/resolver.hpp`
+- `src/compiler/semantics/resolver.cpp`
 
 ## 目标
 

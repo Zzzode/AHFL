@@ -157,7 +157,7 @@ dry-run trace 当前依赖两类正式输入：
 
 后续任何 dry-run trace 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/dry_run/runner.hpp`、`src/dry_run/`、`src/backends/dry_run_trace.cpp` 与相关 CLI
+1. 更新 `include/ahfl/dry_run/runner.hpp`、`src/pipeline/execution/dry_run/`、`src/compiler/backends/dry_run_trace.cpp` 与相关 CLI
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响的 `tests/trace/` golden
 4. 更新或新增回归测试

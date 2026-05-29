@@ -26,39 +26,39 @@
 
 ```
 .ahfl Source
-  → ANTLR4 Lexer/Parser     (src/parser/generated/)
-  → AST Lowering             (src/frontend/)
-  → Resolver                 (src/semantics/resolver.cpp)
-  → TypeChecker              (src/semantics/typecheck.cpp)
-  → Validator                (src/semantics/validate.cpp)
-  → IR Lowering              (src/ir/ir.cpp)
-  → Backend Dispatch         (src/backends/driver.cpp)
-      ├── IR Text / JSON     (src/ir/)
-      ├── NativeJson         (src/backends/)
-      ├── SMV                (src/backends/smv.cpp)
-      ├── ExecutionPlan      (src/backends/)
-      ├── AssuranceJson      (src/backends/)
-      ├── PackageReview      (src/backends/)
-      └── Summary            (src/backends/)
+  → ANTLR4 Lexer/Parser     (src/compiler/syntax/parser/generated/)
+  → AST Lowering             (src/compiler/syntax/frontend/)
+  → Resolver                 (src/compiler/semantics/resolver.cpp)
+  → TypeChecker              (src/compiler/semantics/typecheck.cpp)
+  → Validator                (src/compiler/semantics/validate.cpp)
+  → IR Lowering              (src/compiler/ir/ir_lower.cpp)
+  → Backend Dispatch         (src/compiler/backends/driver.cpp)
+      ├── IR Text / JSON     (src/compiler/ir/)
+      ├── NativeJson         (src/compiler/backends/)
+      ├── SMV                (src/compiler/backends/smv/smv.cpp)
+      ├── ExecutionPlan      (src/compiler/backends/)
+      ├── AssuranceJson      (src/compiler/backends/)
+      ├── PackageReview      (src/compiler/backends/)
+      └── Summary            (src/compiler/backends/)
   → [Optional] Runtime Execution
-      ├── ExpressionEvaluator (src/evaluator/)
-      ├── StatementExecutor   (src/evaluator/)
+      ├── ExpressionEvaluator (src/runtime/evaluator/)
+      ├── StatementExecutor   (src/runtime/evaluator/)
       ├── AgentRuntime        (src/runtime/)
       ├── WorkflowRuntime     (src/runtime/)
       ├── CapabilityBridge    (src/runtime/)
-      └── LLMProvider         (src/llm_provider/)
+      └── LLMProvider         (src/runtime/providers/llm/)
 ```
 
 ### 各阶段职责
 
 | 阶段 | 职责 | 关键文件 |
 |------|------|----------|
-| Parse | ANTLR4 parse tree → 手写 AST | `src/frontend/frontend.cpp` |
-| Resolve | 多命名空间符号表，跨文件 import 解析，循环检测 | `src/semantics/resolver.cpp` |
-| TypeCheck | 结构化类型推导，子类型关系，capability 调用上下文检查 | `src/semantics/typecheck.cpp` |
-| Validate | Agent/Flow/Workflow 结构约束（不可达状态、DAG 合法性等） | `src/semantics/validate.cpp` |
-| IR Lower | AST → variant-based IR，计算 StateHandler::Summary | `src/ir/ir.cpp` |
-| Backend | IR → 目标格式分发 | `src/backends/driver.cpp` |
+| Parse | ANTLR4 parse tree → 手写 AST | `src/compiler/syntax/frontend/frontend.cpp` |
+| Resolve | 多命名空间符号表，跨文件 import 解析，循环检测 | `src/compiler/semantics/resolver.cpp` |
+| TypeCheck | 结构化类型推导，子类型关系，capability 调用上下文检查 | `src/compiler/semantics/typecheck.cpp` |
+| Validate | Agent/Flow/Workflow 结构约束（不可达状态、DAG 合法性等） | `src/compiler/semantics/validate.cpp` |
+| IR Lower | AST → variant-based IR，计算 StateHandler::Summary | `src/compiler/ir/ir_lower.cpp` |
+| Backend | IR → 目标格式分发 | `src/compiler/backends/driver.cpp` |
 
 ---
 
@@ -165,11 +165,11 @@
 
 | 版本 | 聚焦 | 关键产物 | 关键文件 |
 |------|------|----------|----------|
-| V0.51 | Expression Evaluator | `EvalContext`、`Value` variant、字面量/二元/一元/路径/结构体求值 | `src/evaluator/evaluator.cpp` |
-| V0.52 | Statement Executor | `ExecContext`、Let/Assign/If/Goto/Return/Assert/ExprStmt | `src/evaluator/executor.cpp` |
-| V0.53 | Agent State Machine Runtime | `AgentRuntime`、状态转换循环、quota enforcement | `src/runtime/agent_runtime.cpp` |
-| V0.54 | Workflow Integration | `WorkflowRuntime`、DAG 拓扑调度、跨节点依赖 | `src/runtime/workflow_runtime.cpp` |
-| V0.55 | Capability Bridge | `CapabilityRegistry`、`FunctionCapability`、HTTP/gRPC stub、retry 策略 | `src/runtime/capability_bridge.cpp` |
+| V0.51 | Expression Evaluator | `EvalContext`、`Value` variant、字面量/二元/一元/路径/结构体求值 | `src/runtime/evaluator/evaluator.cpp` |
+| V0.52 | Statement Executor | `ExecContext`、Let/Assign/If/Goto/Return/Assert/ExprStmt | `src/runtime/evaluator/executor.cpp` |
+| V0.53 | Agent State Machine Runtime | `AgentRuntime`、状态转换循环、quota enforcement | `src/runtime/engine/agent_runtime.cpp` |
+| V0.54 | Workflow Integration | `WorkflowRuntime`、DAG 拓扑调度、跨节点依赖 | `src/runtime/engine/workflow_runtime.cpp` |
+| V0.55 | Capability Bridge | `CapabilityRegistry`、`FunctionCapability`、HTTP/gRPC stub、retry 策略 | `src/runtime/engine/capability_bridge.cpp` |
 
 **V0.55 Deferred 项**（仍未实现）：
 - Secret 管理集成
@@ -216,7 +216,7 @@ CapabilityRegistry
 
 ### 实现状态
 
-源文件已存在（`src/llm_provider/`），包含 `llm_capability_provider.cpp`、`http_client.cpp`、`prompt_builder.cpp`、`response_parser.cpp`，但里程碑尚未正式验收。
+源文件已存在（`src/runtime/providers/llm/`），包含 `llm_capability_provider.cpp`、`http_client.cpp`、`prompt_builder.cpp`、`response_parser.cpp`，但里程碑尚未正式验收。
 
 ---
 

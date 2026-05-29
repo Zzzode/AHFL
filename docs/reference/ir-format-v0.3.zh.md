@@ -32,13 +32,13 @@
 文本 IR：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir --project tests/project/check_ok/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc emit-ir --project tests/project/check_ok/ahfl.project.json
 ```
 
 JSON IR：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json --project tests/project/check_ok/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc emit-ir-json --project tests/project/check_ok/ahfl.project.json
 ```
 
 文本 IR 适合：

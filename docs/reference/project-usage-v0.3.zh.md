@@ -96,7 +96,7 @@ descriptor 不会替换现有 module loading 规则；`module -> relative path` 
 兼容 `--search-root` 入口：
 
 ```bash
-./build/dev/src/cli/ahflc check \
+./build/dev/src/tooling/cli/ahflc check \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -104,14 +104,14 @@ descriptor 不会替换现有 module loading 规则；`module -> relative path` 
 descriptor 驱动入口：
 
 ```bash
-./build/dev/src/cli/ahflc dump-ast \
+./build/dev/src/tooling/cli/ahflc dump-ast \
   --project tests/project/check_ok/ahfl.project.json
 ```
 
 workspace 选择入口：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json \
+./build/dev/src/tooling/cli/ahflc emit-ir-json \
   --workspace tests/project/ahfl.workspace.json \
   --project-name check-ok
 ```
@@ -119,28 +119,28 @@ workspace 选择入口：
 查看 source graph：
 
 ```bash
-./build/dev/src/cli/ahflc dump-project \
+./build/dev/src/tooling/cli/ahflc dump-project \
   --project tests/project/check_ok/ahfl.project.json
 ```
 
 查看 capability-oriented backend summary：
 
 ```bash
-./build/dev/src/cli/ahflc emit-summary \
+./build/dev/src/tooling/cli/ahflc emit-summary \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
 导出 Native handoff package：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
 导出 restricted formal backend：
 
 ```bash
-./build/dev/src/cli/ahflc emit-smv \
+./build/dev/src/tooling/cli/ahflc emit-smv \
   --workspace tests/project/ahfl.workspace.json \
   --project-name check-ok
 ```

@@ -24,7 +24,7 @@
 V0.4 当前统一通过：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json <input-mode>
+./build/dev/src/tooling/cli/ahflc emit-native-json <input-mode>
 ```
 
 其中 `<input-mode>` 与其他 project-aware 命令一致：
@@ -42,14 +42,14 @@ V0.4 当前统一通过：
 单文件：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   tests/ir/ok_expr_temporal.ahfl
 ```
 
 project-aware `--search-root`：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --search-root tests/project/workflow_value_flow \
   tests/project/workflow_value_flow/app/main.ahfl
 ```
@@ -57,14 +57,14 @@ project-aware `--search-root`：
 project manifest：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
 workspace：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow
 ```
@@ -138,9 +138,9 @@ ctest --test-dir build/dev --output-on-failure -L v0.4-package-compat
 
 若你要扩 handoff package 或新增 runtime-facing consumer，至少应同步更新：
 
-1. `include/ahfl/handoff/package.hpp`
-2. `src/handoff/package.cpp`
-3. `src/backends/native_json.cpp`
+1. `include/ahfl/compiler/handoff/package.hpp`
+2. `src/compiler/handoff/package.cpp`
+3. `src/compiler/backends/pipeline/native_json.cpp`
 4. `tests/handoff/`
 5. `tests/native/`
 6. [native-package-compatibility-v0.4.zh.md](./native-package-compatibility-v0.4.zh.md)

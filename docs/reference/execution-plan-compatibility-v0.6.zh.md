@@ -27,7 +27,7 @@
 
 当前实现中的单一来源位于：
 
-- `include/ahfl/handoff/package.hpp`
+- `include/ahfl/compiler/handoff/package.hpp`
   - `ahfl::handoff::kExecutionPlanFormatVersion`
 
 当前该版本号会出现在：
@@ -160,7 +160,7 @@
 
 后续任何 execution plan 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/handoff/package.hpp`、`src/handoff/package.cpp` 与相关 backend / CLI
+1. 更新 `include/ahfl/compiler/handoff/package.hpp`、`src/compiler/handoff/package.cpp` 与相关 backend / CLI
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响的 `tests/plan/` golden
 4. 更新或新增回归测试

@@ -13,13 +13,13 @@
 
 适用范围：
 
-- `include/ahfl/frontend/frontend.hpp`
-- `include/ahfl/handoff/package.hpp`
-- `src/frontend/frontend.cpp`
-- `src/frontend/project.cpp`
-- `src/handoff/package.cpp`
-- `src/backends/native_json.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `include/ahfl/compiler/handoff/package.hpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `src/compiler/syntax/frontend/project.cpp`
+- `src/compiler/handoff/package.cpp`
+- `src/compiler/backends/pipeline/native_json.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `docs/reference/`
 - `tests/`
 

@@ -46,14 +46,14 @@ Use the new V0.19 commands when you need the response boundary after a V0.18
 persistence request:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-receipt-persistence-response \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-receipt-persistence-response \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-receipt-persistence-response-review \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-receipt-persistence-response-review \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -119,14 +119,14 @@ Use the new V0.20 commands when you need the production-adjacent fake store
 execution boundary after a V0.19 response:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-adapter-execution \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-adapter-execution \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-recovery-preview \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-recovery-preview \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -248,14 +248,14 @@ Use the new V0.21 commands when you need the provider-neutral planning boundary
 after a V0.20 adapter execution receipt:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-attempt \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-attempt \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-recovery-handoff \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-recovery-handoff \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -333,14 +333,14 @@ Use the new V0.22 commands when you need the provider driver binding boundary
 after a V0.21 provider write attempt:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-driver-binding \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-driver-binding \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-driver-readiness \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-driver-readiness \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -419,14 +419,14 @@ Use the new V0.23 commands when you need the runtime / SDK adapter preflight
 boundary after a V0.22 provider driver binding:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-runtime-preflight \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-runtime-preflight \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-runtime-readiness \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-runtime-readiness \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -507,14 +507,14 @@ Use the new V0.24 commands when you need the SDK request envelope / host
 handoff boundary after a V0.23 provider runtime preflight:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-envelope \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-envelope \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-handoff-readiness \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-handoff-readiness \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -598,14 +598,14 @@ Use the new V0.25 commands when you need the host execution planning boundary
 after a V0.24 provider SDK request envelope:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-host-execution \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-host-execution \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-host-execution-readiness \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-host-execution-readiness \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -690,14 +690,14 @@ Use the new V0.26 commands when you need the simulated local host execution
 receipt boundary after a V0.25 provider host execution plan:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-execution-receipt \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-host-execution-receipt \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-execution-receipt-review \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-host-execution-receipt-review \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -787,21 +787,21 @@ Use the new V0.27 commands when you need the SDK adapter artifact boundary after
 a V0.26 provider local host execution receipt:
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-request \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-adapter-request \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-response-placeholder \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-adapter-response-placeholder \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-readiness \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-adapter-readiness \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -889,14 +889,14 @@ ahfl.provider-sdk-adapter-error-taxonomy.v1
 ### New CLI Commands
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-interface \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-adapter-interface \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-adapter-interface-review \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-adapter-interface-review \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -977,21 +977,21 @@ ahfl.provider-config-schema.v1
 ### New CLI Commands
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-config-load \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-config-load \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-config-snapshot \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-config-snapshot \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
 
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-config-readiness \
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-config-readiness \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
@@ -1056,17 +1056,17 @@ The new boundaries are intentionally non-production:
 ### New CLI Commands
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-secret-resolver-request ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-secret-resolver-response ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-secret-policy-review ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-harness-request ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-harness-record ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-host-harness-review ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-payload-plan ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-payload-audit ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-contract ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-execution ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-readiness ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-secret-resolver-request ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-secret-resolver-response ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-secret-policy-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-host-harness-request ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-host-harness-record ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-host-harness-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-payload-plan ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-payload-audit ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-contract ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-execution ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-sdk-mock-adapter-readiness ...
 ```
 
 ### Regression Commands
@@ -1112,12 +1112,12 @@ The new boundaries remain conservative:
 ### New CLI Commands
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-plan ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-result ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-readiness ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-retry-decision ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-commit-receipt ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-commit-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-plan ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-result ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-local-filesystem-alpha-readiness ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-retry-decision ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-commit-receipt ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-commit-review ...
 ```
 
 ### Regression Commands
@@ -1164,14 +1164,14 @@ The new boundaries remain artifact-only:
 ### New CLI Commands
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-recovery-checkpoint ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-recovery-plan ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-write-recovery-review ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-failure-taxonomy-report ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-failure-taxonomy-review ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-execution-audit-event ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-telemetry-summary ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-operator-review-event ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-recovery-checkpoint ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-recovery-plan ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-write-recovery-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-failure-taxonomy-report ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-failure-taxonomy-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-execution-audit-event ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-telemetry-summary ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-operator-review-event ...
 ```
 
 ### Compatibility Rules
@@ -1263,15 +1263,15 @@ The new boundaries remain deterministic and local:
 ### New CLI Commands
 
 ```sh
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-compatibility-test-manifest ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-fixture-matrix ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-compatibility-report ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-registry ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-selection-plan ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-capability-negotiation-review ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-production-readiness-evidence ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-production-readiness-review ...
-./build/dev/src/cli/ahflc emit-durable-store-import-provider-production-readiness-report ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-compatibility-test-manifest ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-fixture-matrix ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-compatibility-report ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-registry ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-selection-plan ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-capability-negotiation-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-production-readiness-evidence ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-production-readiness-review ...
+./build/dev/src/tooling/cli/ahflc emit-durable-store-import-provider-production-readiness-report ...
 ```
 
 ### Compatibility Rules
