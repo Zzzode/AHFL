@@ -12,12 +12,12 @@
 适用范围：
 
 - `grammar/AHFL.g4`
-- `src/parser/generated/*`
-- `src/frontend/frontend.cpp`
-- `include/ahfl/frontend/ast.hpp`
-- `src/semantics/*`
-- `src/ir/*`
-- `src/backends/*`
+- `src/compiler/syntax/parser/generated/*`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `include/ahfl/compiler/frontend/ast.hpp`
+- `src/compiler/semantics/*`
+- `src/compiler/ir/*`
+- `src/compiler/backends/*`
 
 ## 冻结的前端流水线
 
@@ -153,20 +153,20 @@ IR 必须满足：
 - `Frontend::parse_file` / `Frontend::parse_text`
   - 当前同时覆盖 `parse + ast`
   - 对外只返回 `ParseResult`
-- `src/frontend/frontend.cpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
   - 当前是唯一允许直接接触 ANTLR parse tree 的手写模块
-- `include/ahfl/frontend/ast.hpp`
+- `include/ahfl/compiler/frontend/ast.hpp`
   - 当前承载手写 AST 的公共边界
-- `src/semantics/resolver.cpp` + `include/ahfl/semantics/resolver.hpp`
+- `src/compiler/semantics/resolver.cpp` + `include/ahfl/compiler/semantics/resolver.hpp`
   - 当前承载 `resolve`
-- `src/semantics/typecheck.cpp` + `include/ahfl/semantics/typecheck.hpp`
+- `src/compiler/semantics/typecheck.cpp` + `include/ahfl/compiler/semantics/typecheck.hpp`
   - 当前承载 `typecheck`
-- `src/semantics/validate.cpp` + `include/ahfl/semantics/validate.hpp`
+- `src/compiler/semantics/validate.cpp` + `include/ahfl/compiler/semantics/validate.hpp`
   - 当前承载 `validate`
-- `src/ir/ir.cpp` + `include/ahfl/ir/ir.hpp`
+- `src/compiler/ir/ir_lower.cpp` + `include/ahfl/compiler/ir/ir.hpp`
   - 当前承载 `emit`
   - 对外暴露稳定的 IR 数据结构与文本输出入口
-- `src/backends/smv.cpp` + `include/ahfl/backends/smv.hpp`
+- `src/compiler/backends/smv/smv.cpp` + `include/ahfl/compiler/backends/smv.hpp`
   - 当前承载第一版 restricted formal backend
   - 只能消费 validate 之后的语义模型与 IR
 

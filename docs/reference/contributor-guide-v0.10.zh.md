@@ -19,25 +19,25 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-scheduler-snapshot \
+./build/dev/src/tooling/cli/ahflc emit-scheduler-snapshot \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/cli/ahflc emit-scheduler-review \
+./build/dev/src/tooling/cli/ahflc emit-scheduler-review \
   --package tests/ir/ok_workflow_value_flow.package.json \
   --capability-mocks tests/dry_run/ok_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001 \
   tests/ir/ok_workflow_value_flow.ahfl
-./build/dev/src/cli/ahflc emit-scheduler-snapshot \
+./build/dev/src/tooling/cli/ahflc emit-scheduler-snapshot \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.fail.mocks.json \
   --input-fixture fixture.request.failed \
   --run-id run-failed-001
-./build/dev/src/cli/ahflc emit-scheduler-review \
+./build/dev/src/tooling/cli/ahflc emit-scheduler-review \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.package.json \
@@ -55,7 +55,7 @@ ctest --preset test-dev --output-on-failure -L v0.10-scheduler-golden
 通常要改的文件：
 
 - `include/ahfl/scheduler_snapshot/snapshot.hpp`
-- `src/scheduler_snapshot/snapshot.cpp`
+- `src/pipeline/observation/scheduler_snapshot/snapshot.cpp`
 - `tests/scheduler_snapshot/`
 - `tests/scheduler/`
 
@@ -64,8 +64,8 @@ ctest --preset test-dev --output-on-failure -L v0.10-scheduler-golden
 通常要改的文件：
 
 - `include/ahfl/scheduler_snapshot/review.hpp`
-- `src/scheduler_snapshot/review.cpp`
-- `src/backends/scheduler_review.cpp`
+- `src/pipeline/observation/scheduler_snapshot/review.cpp`
+- `src/compiler/backends/scheduler_review.cpp`
 - `tests/scheduler_snapshot/`
 - `tests/scheduler/`
 
@@ -73,11 +73,11 @@ ctest --preset test-dev --output-on-failure -L v0.10-scheduler-golden
 
 通常要改的文件：
 
-- `include/ahfl/backends/scheduler_snapshot.hpp`
-- `include/ahfl/backends/scheduler_review.hpp`
-- `src/backends/scheduler_snapshot.cpp`
-- `src/backends/scheduler_review.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/scheduler_snapshot.hpp`
+- `include/ahfl/compiler/backends/scheduler_review.hpp`
+- `src/compiler/backends/scheduler_snapshot.cpp`
+- `src/compiler/backends/scheduler_review.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`
 - `tests/cmake/LabelTests.cmake`

@@ -12,10 +12,10 @@
 
 适用范围：
 
-- `include/ahfl/frontend/frontend.hpp`
-- `src/frontend/frontend.cpp`
-- `src/frontend/project.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `src/compiler/syntax/frontend/project.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `docs/reference/project-usage-v0.3.zh.md`
 - `docs/reference/cli-commands-v0.3.zh.md`
 
@@ -246,11 +246,11 @@ frontend 在 V0.3 中建议分成两步：
 
 当前实现已经按这个边界落地为两个编译单元：
 
-1. `src/frontend/project.cpp`
+1. `src/compiler/syntax/frontend/project.cpp`
    - descriptor 读取与字段校验
    - workspace -> project 选择
    - `ProjectInput -> SourceGraph` 装载
-2. `src/frontend/frontend.cpp`
+2. `src/compiler/syntax/frontend/frontend.cpp`
    - 单文件解析
    - AST lowering
    - AST / project AST 调试输出

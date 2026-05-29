@@ -20,28 +20,28 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-execution-plan \
+./build/dev/src/tooling/cli/ahflc emit-execution-plan \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
-./build/dev/src/cli/ahflc emit-runtime-session \
+./build/dev/src/tooling/cli/ahflc emit-runtime-session \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001
-./build/dev/src/cli/ahflc emit-execution-journal \
+./build/dev/src/tooling/cli/ahflc emit-execution-journal \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001
-./build/dev/src/cli/ahflc emit-replay-view \
+./build/dev/src/tooling/cli/ahflc emit-replay-view \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
   --input-fixture fixture.request.basic \
   --run-id run-001
-./build/dev/src/cli/ahflc emit-audit-report \
+./build/dev/src/tooling/cli/ahflc emit-audit-report \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json \
   --capability-mocks tests/dry_run/project_workflow_value_flow.mocks.json \
@@ -57,16 +57,16 @@ ctest --preset test-dev --output-on-failure -L 'v0.8-(replay-view-model|replay-v
 通常要改的文件：
 
 - `include/ahfl/replay_view/replay.hpp`
-- `src/replay_view/replay.cpp`
+- `src/pipeline/execution/replay_view/replay.cpp`
 - `tests/replay_view/`
 
 ### 2. 改 replay 输出 / CLI 参数面
 
 通常要改的文件：
 
-- `include/ahfl/backends/replay_view.hpp`
-- `src/backends/replay_view.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/replay_view.hpp`
+- `src/compiler/backends/replay_view.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/replay/`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`
@@ -76,16 +76,16 @@ ctest --preset test-dev --output-on-failure -L 'v0.8-(replay-view-model|replay-v
 通常要改的文件：
 
 - `include/ahfl/audit_report/report.hpp`
-- `src/audit_report/report.cpp`
+- `src/pipeline/observation/audit_report/report.cpp`
 - `tests/audit_report/`
 
 ### 4. 改 audit 输出 / CLI 参数面
 
 通常要改的文件：
 
-- `include/ahfl/backends/audit_report.hpp`
-- `src/backends/audit_report.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/audit_report.hpp`
+- `src/compiler/backends/audit_report.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/audit/`
 - `tests/cmake/SingleFileCliTests.cmake`
 - `tests/cmake/ProjectTests.cmake`

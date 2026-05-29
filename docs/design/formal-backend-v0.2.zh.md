@@ -4,13 +4,13 @@
 
 适用范围：
 
-- `include/ahfl/ir/ir.hpp`
-- `src/ir/ir.cpp`
-- `include/ahfl/backends/driver.hpp`
-- `src/backends/driver.cpp`
-- `include/ahfl/backends/smv.hpp`
-- `src/backends/smv.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/ir/ir.hpp`
+- `src/compiler/ir/ir_lower.cpp`
+- `include/ahfl/compiler/backends/driver.hpp`
+- `src/compiler/backends/driver.cpp`
+- `include/ahfl/compiler/backends/smv.hpp`
+- `src/compiler/backends/smv/smv.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/formal/*`
 - `docs/plan/roadmap-v0.1.zh.md`
 - `docs/plan/roadmap-v0.2.zh.md`

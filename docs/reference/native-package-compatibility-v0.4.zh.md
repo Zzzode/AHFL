@@ -28,7 +28,7 @@
 
 当前实现中的单一来源位于：
 
-- `include/ahfl/handoff/package.hpp`
+- `include/ahfl/compiler/handoff/package.hpp`
   - `ahfl::handoff::kFormatVersion`
 
 该版本号当前会出现在两个位置：
@@ -175,7 +175,7 @@
 
 后续任何 handoff package 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/handoff/package.hpp` 与对应实现
+1. 更新 `include/ahfl/compiler/handoff/package.hpp` 与对应实现
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响 native golden
 4. 更新或新增回归测试

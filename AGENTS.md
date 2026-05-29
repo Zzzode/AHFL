@@ -63,9 +63,9 @@ ctest --preset test-asan --output-on-failure
 - `docs/plan/project-status.zh.md` — 项目完整状态与演进记录
 - `docs/plan/issue-backlog-global-gaps.zh.md` — 未来工作清单
 - `grammar/AHFL.g4` — 语言文法定义
-- `include/ahfl/ir/ir.hpp` — IR 数据模型
-- `src/backends/driver.cpp` — 后端分发
-- `src/backends/smv.cpp` — 形式化验证后端
+- `include/ahfl/compiler/ir/ir.hpp` — IR 数据模型
+- `src/compiler/backends/driver.cpp` — 后端分发
+- `src/compiler/backends/smv/smv.cpp` — 形式化验证后端
 
 ## Commit Style
 

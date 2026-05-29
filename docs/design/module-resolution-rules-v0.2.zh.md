@@ -386,11 +386,11 @@ typecheck 和 IR lowering 当前都明确依赖 resolver 结果中的：
 
 建议按下面顺序读：
 
-1. `include/ahfl/semantics/resolver.hpp`
-2. `src/semantics/resolver.cpp`
+1. `include/ahfl/compiler/semantics/resolver.hpp`
+2. `src/compiler/semantics/resolver.cpp`
 3. `docs/design/module-loading-v0.2.zh.md`
-4. `src/semantics/typecheck.cpp`
-5. `src/ir/ir.cpp`
+4. `src/compiler/semantics/typecheck.cpp`
+5. `src/compiler/ir/ir_lower.cpp`
 
 ## 对后续实现的约束
 

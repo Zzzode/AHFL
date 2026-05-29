@@ -197,7 +197,7 @@
 
 后续任何 execution journal 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/execution_journal/journal.hpp`、`src/execution_journal/`、`src/backends/execution_journal.cpp` 与相关 CLI
+1. 更新 `include/ahfl/execution_journal/journal.hpp`、`src/pipeline/execution/execution_journal/`、`src/compiler/backends/execution_journal.cpp` 与相关 CLI
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响的 `tests/journal/` golden
 4. 更新或新增回归测试

@@ -120,9 +120,9 @@ V0.4 当前建议把 runtime-facing consumer 分成三类：
 
 1. 明确它属于哪类 consumer
 2. 明确它依赖 `metadata`、`execution_graph`、`capability_binding_slots`、`policy_obligations`、`formal_observations` 里的哪些边界
-3. 若需要新增共享字段，先改 `include/ahfl/handoff/package.hpp`
-4. 更新 `src/handoff/package.cpp` lowering
-5. 更新 `src/backends/native_json.cpp` 或新增受控 backend
+3. 若需要新增共享字段，先改 `include/ahfl/compiler/handoff/package.hpp`
+4. 更新 `src/compiler/handoff/package.cpp` lowering
+5. 更新 `src/compiler/backends/pipeline/native_json.cpp` 或新增受控 backend
 6. 补至少一个 `tests/native/` golden
 7. 更新 [native-package-compatibility-v0.4.zh.md](./native-package-compatibility-v0.4.zh.md)
 8. 更新本文档

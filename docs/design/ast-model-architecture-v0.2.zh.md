@@ -1,6 +1,6 @@
 # AHFL Core V0.2 AST Model Architecture
 
-本文说明 AHFL Core V0.2 hand-written AST 的对象模型、节点分层、所有权规则和扩展方式，面向需要新增语法节点、阅读 `include/ahfl/frontend/ast.hpp` 或调整 lowering 输出形状的工程实现者。
+本文说明 AHFL Core V0.2 hand-written AST 的对象模型、节点分层、所有权规则和扩展方式，面向需要新增语法节点、阅读 `include/ahfl/compiler/frontend/ast.hpp` 或调整 lowering 输出形状的工程实现者。
 
 关联文档：
 
@@ -43,7 +43,7 @@ AHFL 的 AST 是 parse tree lowering 之后的稳定语法边界。
 2. parse tree 生命周期不应穿透 frontend。
 3. 后续阶段需要稳定公共头，而不是 generated 类型。
 
-因此 `include/ahfl/frontend/ast.hpp` 的意义是：
+因此 `include/ahfl/compiler/frontend/ast.hpp` 的意义是：
 
 - 作为编译器内部的“稳定语法 ABI”
 
@@ -306,11 +306,11 @@ AST 中不应该有：
 
 建议按下面顺序读：
 
-1. `include/ahfl/frontend/ast.hpp`
-2. `src/frontend/frontend.cpp` 中的 `ProgramBuilder`
-3. `src/frontend/frontend.cpp` 中的 `AstPrinter`
-4. `src/semantics/resolver.cpp`
-5. `src/semantics/typecheck.cpp`
+1. `include/ahfl/compiler/frontend/ast.hpp`
+2. `src/compiler/syntax/frontend/frontend.cpp` 中的 `ProgramBuilder`
+3. `src/compiler/syntax/frontend/frontend.cpp` 中的 `AstPrinter`
+4. `src/compiler/semantics/resolver.cpp`
+5. `src/compiler/semantics/typecheck.cpp`
 
 阅读重点：
 

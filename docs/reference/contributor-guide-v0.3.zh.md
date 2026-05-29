@@ -22,9 +22,9 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc check --project tests/project/check_ok/ahfl.project.json
-./build/dev/src/cli/ahflc dump-ast --project tests/project/check_ok/ahfl.project.json
-./build/dev/src/cli/ahflc emit-summary --project tests/project/workflow_value_flow/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc check --project tests/project/check_ok/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc dump-ast --project tests/project/check_ok/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc emit-summary --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
 这三条命令分别覆盖：
@@ -36,7 +36,7 @@ cmake --build --preset build-dev --target ahflc
 若你要进入 V0.4 handoff 路径，再额外跑：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
@@ -52,9 +52,9 @@ cmake --build --preset build-dev --target ahflc
 
 通常要改的文件：
 
-- `include/ahfl/frontend/frontend.hpp`
-- `src/frontend/project.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `src/compiler/syntax/frontend/project.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/project/`
 - `tests/cmake/ProjectTests.cmake`
 - `tests/cmake/LabelTests.cmake`
@@ -68,11 +68,11 @@ cmake --build --preset build-dev --target ahflc
 
 通常要改的文件：
 
-- `include/ahfl/support/diagnostics.hpp`
-- `include/ahfl/support/source.hpp`
-- `src/frontend/frontend.cpp`
-- `src/frontend/project.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/base/support/diagnostics.hpp`
+- `include/ahfl/base/support/source.hpp`
+- `src/compiler/syntax/frontend/frontend.cpp`
+- `src/compiler/syntax/frontend/project.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/project/project_*.cpp`
 
 ### 3. 改 IR / compatibility contract
@@ -85,9 +85,9 @@ cmake --build --preset build-dev --target ahflc
 
 通常要改的文件：
 
-- `include/ahfl/ir/ir.hpp`
-- `src/ir/ir.cpp`
-- `src/ir/ir_json.cpp`
+- `include/ahfl/compiler/ir/ir.hpp`
+- `src/compiler/ir/ir_lower.cpp`
+- `src/compiler/ir/ir_json.cpp`
 - `tests/ir/`
 - `docs/reference/ir-format-v0.3.zh.md`
 - `docs/reference/ir-compatibility-v0.3.zh.md`
@@ -104,9 +104,9 @@ cmake --build --preset build-dev --target ahflc
 
 通常要改的文件：
 
-- `include/ahfl/backends/`
-- `src/backends/`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/`
+- `src/compiler/backends/`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/summary/` 或 `tests/formal/`
 - `docs/reference/backend-capability-matrix-v0.3.zh.md`
 
@@ -152,10 +152,10 @@ V0.3 当前要求文档、测试和实现保持同步：
 
 通常要改的文件：
 
-1. `include/ahfl/handoff/`
-2. `src/handoff/`
-3. `include/ahfl/backends/native_json.hpp`
-4. `src/backends/native_json.cpp`
+1. `include/ahfl/compiler/handoff/`
+2. `src/compiler/handoff/`
+3. `include/ahfl/compiler/backends/native_json.hpp`
+4. `src/compiler/backends/pipeline/native_json.cpp`
 5. `tests/handoff/`
 6. `tests/native/`
 7. `tests/cmake/ProjectTests.cmake`

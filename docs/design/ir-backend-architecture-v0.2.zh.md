@@ -48,7 +48,7 @@ AST / SourceGraph
 
 当前公共 IR 头位于：
 
-- `include/ahfl/ir/ir.hpp`
+- `include/ahfl/compiler/ir/ir.hpp`
 
 主要对象包括：
 
@@ -92,7 +92,7 @@ IR 的职责包括：
 
 ## IrLowerer 的设计
 
-`src/ir/ir.cpp` 中的 `IrLowerer` 负责把单文件或 `SourceGraph` lower 成 `ir::Program`。
+`src/compiler/ir/ir_lower.cpp` 中的 `IrLowerer` 负责把单文件或 `SourceGraph` lower 成 `ir::Program`。
 
 当前接口形态刻意保持简单：
 
@@ -286,8 +286,8 @@ program_ir.formal_observations = collect_formal_observations(program_ir)
 
 当前 backend 入口位于：
 
-- `include/ahfl/backends/driver.hpp`
-- `src/backends/driver.cpp`
+- `include/ahfl/compiler/backends/driver.hpp`
+- `src/compiler/backends/driver.cpp`
 
 核心对象：
 
@@ -332,12 +332,12 @@ driver 只暴露一组 backend-facing 入口：
 
 1. Core backend：消费 `ir::Program`，通过 `BackendKind` / `BackendRegistry` / `emit_backend(...)` 分发。
 2. Runtime artifact pipeline：消费 package metadata、execution plan、dry-run trace、runtime session、checkpoint、persistence、durable-store 等 machine artifact，由 `dispatch_package_command(...)` 显式分发。
-3. Durable store import artifact emitter：消费 `ahfl::durable_store_import` 领域模型，位于 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/durable_store_import/artifacts.cpp`，由 `ahfl_durable_store_import_artifacts` 构建目标承载。
+3. Durable store import artifact emitter：消费 `ahfl::durable_store_import` 领域模型，位于 `include/ahfl/durable_store_import/artifacts.hpp` 与 `src/pipeline/persistence/durable_store_import/artifacts.cpp`，由 `ahfl_durable_store_import_artifacts` 构建目标承载。
 4. Target generator：消费目标平台专用 config，例如 WASM、K8s CRD、OpenAPI、Terraform。
 
 这四类不能被混称为同一种 backend。若一个输出需要沿 runtime artifact chain 逐层构造状态，它应落在 package pipeline；若它只把稳定 IR 渲染成目标格式，它才应接入 core backend registry。
 
-`src/backends` 不承载 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等 artifact printer。这些 printer 不是 compiler backend：它们不消费 `ir::Program`，而是序列化 durable-store import 的领域 artifact。把它们收敛到 `src/durable_store_import/artifacts.cpp` 可以让 backend Module 保持 IR-facing，让 durable-store import Module 自己拥有 artifact 输出 Locality，同时避免每个 artifact 一对浅 header/source。
+`src/compiler/backends` 不承载 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等 artifact printer。这些 printer 不是 compiler backend：它们不消费 `ir::Program`，而是序列化 durable-store import 的领域 artifact。把它们收敛到 `src/pipeline/persistence/durable_store_import/artifacts.cpp` 可以让 backend Module 保持 IR-facing，让 durable-store import Module 自己拥有 artifact 输出 Locality，同时避免每个 artifact 一对浅 header/source。
 
 ## 当前 core backend 的边界
 
@@ -364,7 +364,7 @@ driver 只暴露一组 backend-facing 入口：
 
 ### 3. SMV
 
-`src/backends/smv.cpp` 消费稳定 IR，输出当前受限 formal backend。
+`src/compiler/backends/smv/smv.cpp` 消费稳定 IR，输出当前受限 formal backend。
 
 SMV 具体语义边界由 [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.md) 冻结；本文只强调它在架构上的位置：
 
@@ -385,7 +385,7 @@ SMV 具体语义边界由 [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.m
 建议顺序：
 
 1. 先确定它是否是 backend 共享语义。
-2. 若是，先改 `include/ahfl/ir/ir.hpp` 的节点形状。
+2. 若是，先改 `include/ahfl/compiler/ir/ir.hpp` 的节点形状。
 3. 再改 `IrLowerer`。
 4. 再改文本 IR / JSON IR / 相关 backend。
 
@@ -415,19 +415,19 @@ SMV 具体语义边界由 [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.m
 
 1. 先判断它是 core backend、runtime artifact pipeline，还是 target generator。
 2. 若是 core backend，扩展 `BackendKind` 并通过 `BackendRegistrar` 注册到 `BackendRegistry`。
-3. 若是 runtime artifact pipeline，沿已有 artifact chain 增加 helper / printer / dispatcher；durable-store import printer 必须放在 `artifacts.hpp` / `artifacts.cpp` 这个 seam 下，不要放回 `src/backends`。
+3. 若是 runtime artifact pipeline，沿已有 artifact chain 增加 helper / printer / dispatcher；durable-store import printer 必须放在 `artifacts.hpp` / `artifacts.cpp` 这个 seam 下，不要放回 `src/compiler/backends`。
 4. 若它需要的语义已有多个 backend 会共享，先把该语义推进 IR。
 
 ## 推荐阅读顺序
 
 建议按下面顺序读：
 
-1. `include/ahfl/ir/ir.hpp`
-2. `include/ahfl/backends/driver.hpp`
-3. `src/ir/ir.cpp`
-4. `src/ir/ir_json.cpp`
-5. `src/backends/driver.cpp`
-6. `src/backends/smv.cpp`
+1. `include/ahfl/compiler/ir/ir.hpp`
+2. `include/ahfl/compiler/backends/driver.hpp`
+3. `src/compiler/ir/ir_lower.cpp`
+4. `src/compiler/ir/ir_json.cpp`
+5. `src/compiler/backends/driver.cpp`
+6. `src/compiler/backends/smv/smv.cpp`
 
 阅读重点：
 

@@ -27,14 +27,14 @@
 
 AHFL 当前 backend 相关代码分布在：
 
-- `include/ahfl/backends/driver.hpp`
-- `src/backends/driver.cpp`
-- `include/ahfl/backends/smv.hpp`
-- `src/backends/smv.cpp`
-- `include/ahfl/ir/ir.hpp`
-- `src/ir/ir.cpp`
-- `src/ir/ir_json.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/driver.hpp`
+- `src/compiler/backends/driver.cpp`
+- `include/ahfl/compiler/backends/smv.hpp`
+- `src/compiler/backends/smv/smv.cpp`
+- `include/ahfl/compiler/ir/ir.hpp`
+- `src/compiler/ir/ir_lower.cpp`
+- `src/compiler/ir/ir_json.cpp`
+- `src/tooling/cli/ahflc.cpp`
 
 当前已经存在四类 backend 路径：
 
@@ -140,13 +140,13 @@ AHFL 当前 backend 相关代码分布在：
 
 新 backend 的实现应尽量放在：
 
-- `include/ahfl/backends/<name>.hpp`
-- `src/backends/<name>.cpp`
+- `include/ahfl/compiler/backends/<name>.hpp`
+- `src/compiler/backends/<name>.cpp`
 
 这里的“backend”只指消费 `ir::Program` 的 compiler-facing emitter。若输出消费的是 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等领域 artifact，它不是 backend；它应放在：
 
 - `include/ahfl/durable_store_import/artifacts.hpp`
-- `src/durable_store_import/artifacts.cpp`
+- `src/pipeline/persistence/durable_store_import/artifacts.cpp`
 
 并由 `ahfl_durable_store_import_artifacts` 构建目标承载。不要为每一种 durable-store import artifact 新增一对 header/source；新增 printer 应扩展这个 artifact emitter Module 的门面和实现。
 
@@ -166,7 +166,7 @@ AHFL 当前 backend 相关代码分布在：
 新增 core backend 后，应按统一方式接入：
 
 1. 扩展 `BackendKind`
-2. 在 `src/backends/driver.cpp` 中用 `BackendRegistrar` 注册 `BackendEntry`
+2. 在 `src/compiler/backends/driver.cpp` 中用 `BackendRegistrar` 注册 `BackendEntry`
 3. 让 CLI pipeline 在 validate 成功后先 lower 成 `ir::Program`，再调用 driver
 4. 检查 `emit_backend(...)` 的布尔返回值，未注册 backend 必须作为错误处理
 
@@ -194,7 +194,7 @@ CLI 仍然不应理解：
 
 如果新增 backend 需要 CLI 写一大段专属编排，通常说明 backend/driver 边界还没抽清。
 
-若新增的是 runtime-adjacent artifact command，不要接入 `BackendKind`。它应沿 `dispatch_package_command(...)` 所代表的 package pipeline 扩展，并显式声明自己消费哪一层 artifact。Durable-store import artifact printer 不能放在 `src/backends`，也不能新增 `ahfl_backend_durable_store_import_*` target。
+若新增的是 runtime-adjacent artifact command，不要接入 `BackendKind`。它应沿 `dispatch_package_command(...)` 所代表的 package pipeline 扩展，并显式声明自己消费哪一层 artifact。Durable-store import artifact printer 不能放在 `src/compiler/backends`，也不能新增 `ahfl_backend_durable_store_import_*` target。
 
 ## 新 backend 的最小测试面
 
@@ -330,12 +330,12 @@ CLI 仍然不应理解：
 
 若你需要一个最小可抄的 backend 扩展样例，当前应优先参考：
 
-- `include/ahfl/backends/summary.hpp`
-- `src/backends/summary.cpp`
-- `include/ahfl/backends/native_json.hpp`
-- `src/backends/native_json.cpp`
-- `src/backends/driver.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/backends/summary.hpp`
+- `src/compiler/backends/pipeline/summary.cpp`
+- `include/ahfl/compiler/backends/native_json.hpp`
+- `src/compiler/backends/pipeline/native_json.cpp`
+- `src/compiler/backends/driver.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/summary/*`
 - `tests/native/*`
 
@@ -355,12 +355,12 @@ CLI 仍然不应理解：
 
 建议按下面顺序读：
 
-1. `include/ahfl/backends/driver.hpp`
-2. `src/backends/driver.cpp`
-3. `include/ahfl/ir/ir.hpp`
-4. `src/ir/ir.cpp`
-5. `src/backends/smv.cpp`
-6. `src/cli/ahflc.cpp`
+1. `include/ahfl/compiler/backends/driver.hpp`
+2. `src/compiler/backends/driver.cpp`
+3. `include/ahfl/compiler/ir/ir.hpp`
+4. `src/compiler/ir/ir_lower.cpp`
+5. `src/compiler/backends/smv/smv.cpp`
+6. `src/tooling/cli/ahflc.cpp`
 
 ## 对后续实现的约束
 

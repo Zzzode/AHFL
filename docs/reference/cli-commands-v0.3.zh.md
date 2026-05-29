@@ -63,7 +63,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc check --project tests/project/check_ok/ahfl.project.json
+./build/dev/src/tooling/cli/ahflc check --project tests/project/check_ok/ahfl.project.json
 ```
 
 ### `dump-ast`
@@ -76,7 +76,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-ast \
+./build/dev/src/tooling/cli/ahflc dump-ast \
   --workspace tests/project/ahfl.workspace.json \
   --project-name check-ok
 ```
@@ -90,7 +90,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-types \
+./build/dev/src/tooling/cli/ahflc dump-types \
   --search-root tests/project/check_ok \
   tests/project/check_ok/app/main.ahfl
 ```
@@ -105,7 +105,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc dump-project \
+./build/dev/src/tooling/cli/ahflc dump-project \
   --project tests/project/check_ok/ahfl.project.json
 ```
 
@@ -119,7 +119,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir \
+./build/dev/src/tooling/cli/ahflc emit-ir \
   --workspace tests/project/ahfl.workspace.json \
   --project-name check-ok
 ```
@@ -134,7 +134,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-ir-json \
+./build/dev/src/tooling/cli/ahflc emit-ir-json \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
@@ -156,7 +156,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json
 ```
 
@@ -174,7 +174,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-summary tests/ir/ok_workflow_value_flow.ahfl
+./build/dev/src/tooling/cli/ahflc emit-summary tests/ir/ok_workflow_value_flow.ahfl
 ```
 
 ### `emit-smv`
@@ -187,7 +187,7 @@ ahflc emit-smv <input-mode>
 示例：
 
 ```bash
-./build/dev/src/cli/ahflc emit-smv \
+./build/dev/src/tooling/cli/ahflc emit-smv \
   --project tests/project/check_ok/ahfl.project.json
 ```
 

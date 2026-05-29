@@ -170,7 +170,7 @@
 
 后续任何 runtime session 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/runtime_session/session.hpp`、`src/runtime_session/`、`src/backends/runtime_session.cpp` 与相关 CLI
+1. 更新 `include/ahfl/runtime_session/session.hpp`、`src/pipeline/execution/runtime_session/`、`src/compiler/backends/runtime_session.cpp` 与相关 CLI
 2. 更新本文档及相关 reference/design 文档
 3. 更新受影响的 `tests/session/` golden
 4. 更新或新增回归测试

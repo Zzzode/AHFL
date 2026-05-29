@@ -21,10 +21,10 @@
 ```bash
 cmake --preset dev
 cmake --build --preset build-dev --target ahflc
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
-./build/dev/src/cli/ahflc emit-package-review \
+./build/dev/src/tooling/cli/ahflc emit-package-review \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.display.package.json
 ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
@@ -50,9 +50,9 @@ ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
 
 通常要改的文件：
 
-- `include/ahfl/frontend/frontend.hpp`
-- `src/frontend/project.cpp`
-- `src/cli/ahflc.cpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
+- `src/compiler/syntax/frontend/project.cpp`
+- `src/tooling/cli/ahflc.cpp`
 - `tests/project/`
 - `tests/cmake/ProjectTests.cmake`
 - `docs/reference/native-package-authoring-compatibility-v0.5.zh.md`
@@ -67,10 +67,10 @@ ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
 
 通常要改的文件：
 
-- `include/ahfl/handoff/package.hpp`
-- `src/handoff/package.cpp`
-- `include/ahfl/backends/native_json.hpp`
-- `src/backends/native_json.cpp`
+- `include/ahfl/compiler/handoff/package.hpp`
+- `src/compiler/handoff/package.cpp`
+- `include/ahfl/compiler/backends/native_json.hpp`
+- `src/compiler/backends/pipeline/native_json.cpp`
 - `tests/handoff/`
 - `tests/native/`
 
@@ -84,10 +84,10 @@ ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
 
 通常要改的文件：
 
-- `include/ahfl/handoff/package.hpp`
-- `src/handoff/package.cpp`
-- `include/ahfl/backends/package_review.hpp`
-- `src/backends/package_review.cpp`
+- `include/ahfl/compiler/handoff/package.hpp`
+- `src/compiler/handoff/package.cpp`
+- `include/ahfl/compiler/backends/package_review.hpp`
+- `src/compiler/backends/package_review.cpp`
 - `tests/handoff/package_model.cpp`
 - `tests/review/`
 

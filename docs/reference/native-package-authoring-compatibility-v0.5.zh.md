@@ -28,7 +28,7 @@
 
 当前实现中的单一来源位于：
 
-- `include/ahfl/frontend/frontend.hpp`
+- `include/ahfl/compiler/frontend/frontend.hpp`
   - `ahfl::kPackageAuthoringFormatVersion`
 
 当前契约要求：
@@ -132,8 +132,8 @@ authoring descriptor 与 emitted package 是两个独立版本层：
 
 后续任何 package authoring 变化，至少要同步完成四件事：
 
-1. 更新 `include/ahfl/frontend/frontend.hpp` 与 `src/frontend/project.cpp`
-2. 更新 `src/cli/ahflc.cpp`、`src/handoff/package.cpp` 等受影响映射路径
+1. 更新 `include/ahfl/compiler/frontend/frontend.hpp` 与 `src/compiler/syntax/frontend/project.cpp`
+2. 更新 `src/tooling/cli/ahflc.cpp`、`src/compiler/handoff/package.cpp` 等受影响映射路径
 3. 更新 `tests/project/`、`tests/native/`、`tests/review/` 或 `tests/handoff/` 中受影响回归
 4. 更新本文档与关联 reference/design 文档
 

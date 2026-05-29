@@ -37,7 +37,7 @@ ahfl.package.json
 ### 发射 native package
 
 ```bash
-./build/dev/src/cli/ahflc emit-native-json \
+./build/dev/src/tooling/cli/ahflc emit-native-json \
   --project tests/project/workflow_value_flow/ahfl.project.json \
   --package tests/project/workflow_value_flow/ahfl.package.json
 ```
@@ -45,7 +45,7 @@ ahfl.package.json
 ### 发射 package review
 
 ```bash
-./build/dev/src/cli/ahflc emit-package-review \
+./build/dev/src/tooling/cli/ahflc emit-package-review \
   --workspace tests/project/handoff.workspace.json \
   --project-name workflow-value-flow \
   --package tests/project/workflow_value_flow/ahfl.display.package.json

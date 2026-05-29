@@ -24,8 +24,8 @@
 
 diagnostics 的基础对象位于：
 
-- `include/ahfl/support/source.hpp`
-- `include/ahfl/support/diagnostics.hpp`
+- `include/ahfl/base/support/source.hpp`
+- `include/ahfl/base/support/diagnostics.hpp`
 
 这意味着 diagnostics 是全编译器共享基础设施，服务于：
 
@@ -370,19 +370,19 @@ diagnostics 架构直接影响测试策略，尤其是 project-aware 测试。
 
 建议按下面顺序读 diagnostics 链路：
 
-1. `include/ahfl/support/source.hpp`
-2. `include/ahfl/support/diagnostics.hpp`
-3. `src/frontend/frontend.cpp`
-4. `src/frontend/project.cpp`
-5. `src/semantics/resolver.cpp`
-6. `src/semantics/typecheck.cpp`
-7. `src/semantics/validate.cpp`
-8. `src/cli/ahflc.cpp`
+1. `include/ahfl/base/support/source.hpp`
+2. `include/ahfl/base/support/diagnostics.hpp`
+3. `src/compiler/syntax/frontend/frontend.cpp`
+4. `src/compiler/syntax/frontend/project.cpp`
+5. `src/compiler/semantics/resolver.cpp`
+6. `src/compiler/semantics/typecheck.cpp`
+7. `src/compiler/semantics/validate.cpp`
+8. `src/tooling/cli/ahflc.cpp`
 
 阅读重点：
 
 1. 先看 `Diagnostic` / `DiagnosticBag` 的字段和 helper。
-2. 再看 `src/frontend/project.cpp` 如何在 project/source-graph 装载时汇总 per-source diagnostics。
+2. 再看 `src/compiler/syntax/frontend/project.cpp` 如何在 project/source-graph 装载时汇总 per-source diagnostics。
 3. 最后看 CLI 如何在单文件和 project-aware 模式下分别 render。
 
 ## 对后续实现的约束
