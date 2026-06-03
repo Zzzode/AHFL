@@ -1,45 +1,13 @@
 #include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/provider/provider_artifact_catalog.hpp"
 
 #include <cstddef>
 
 namespace ahfl::cli {
 
-// ---------------------------------------------------------------------------
-// is_internal_provider_command — self-contained via .def files
-// ---------------------------------------------------------------------------
-
-namespace {
-
-enum class LocalArtifactKind {
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind, ...) kind,
-#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-};
-
-enum class LocalVisibility { Public, Internal };
-
-constexpr LocalVisibility local_visibility(LocalArtifactKind kind) {
-    switch (kind) {
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind_name, artifact_type, builder, printer, command_token, visibility) \
-    case LocalArtifactKind::kind_name: return LocalVisibility::visibility;
-#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-    }
-    return LocalVisibility::Internal;
-}
-
-} // namespace
-
 bool is_internal_provider_command(CommandKind command) {
-    switch (command) {
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(kind, token, position, inference_order,        \
-                                                       artifact_kind)                               \
-    case CommandKind::kind:                                                                         \
-        return local_visibility(LocalArtifactKind::artifact_kind) == LocalVisibility::Internal;
-#include "tooling/cli/provider/durable_store_import_provider_commands.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
-    default: return false;
-    }
+    const auto visibility = provider_artifact_visibility_for_command(command);
+    return visibility.has_value() && *visibility == ProviderArtifactVisibility::Internal;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,8 +104,10 @@ void print_usage(std::ostream &out, bool show_internal) {
     out << '\n';
     for (const auto command : command_list(CommandListKind::Action)) {
         auto name = command_name(command);
-        if (!name.starts_with("emit-durable-store-import-provider-")) continue;
-        if (!show_internal && is_internal_provider_command(command)) continue;
+        if (!name.starts_with("emit-durable-store-import-provider-"))
+            continue;
+        if (!show_internal && is_internal_provider_command(command))
+            continue;
         out << "    " << command_short_name(command) << '\n';
     }
     if (!show_internal) {
