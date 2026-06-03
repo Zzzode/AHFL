@@ -1,5 +1,4 @@
 #include "tooling/cli/command_catalog.hpp"
-#include "tooling/cli/provider/provider_artifact_catalog.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -13,6 +12,9 @@ constexpr int kNotListed = -1;
 struct CommandSpec {
     CommandKind kind;
     std::string_view token;
+    std::optional<ActionGroup> action_group;
+    std::string_view action_target;
+    std::string_view emitted_artifact_id;
     int usage_project_aware_order{kNotListed};
     int action_order{kNotListed};
     int inference_order{kNotListed};
@@ -20,142 +22,374 @@ struct CommandSpec {
     int capability_input_supported_order{kNotListed};
 };
 
-// Base constants for provider command order derivation.
-constexpr int kProviderUsageBase = 34;
-constexpr int kProviderActionBase = 31;
-constexpr int kProviderInferenceBase = 112;
-constexpr int kProviderPackageBase = 44;
-constexpr int kProviderCapabilityBase = 24;
+[[nodiscard]] constexpr CommandSpec command(CommandKind kind,
+                                            std::string_view token,
+                                            int usage_project_aware_order = kNotListed,
+                                            int action_order = kNotListed,
+                                            int inference_order = kNotListed,
+                                            int package_supported_order = kNotListed,
+                                            int capability_input_supported_order = kNotListed) {
+    return CommandSpec{
+        kind,
+        token,
+        std::nullopt,
+        {},
+        {},
+        usage_project_aware_order,
+        action_order,
+        inference_order,
+        package_supported_order,
+        capability_input_supported_order,
+    };
+}
+
+[[nodiscard]] constexpr CommandSpec
+routed_command(CommandKind kind,
+               std::string_view token,
+               ActionGroup action_group,
+               std::string_view action_target,
+               int usage_project_aware_order = kNotListed,
+               int action_order = kNotListed,
+               int inference_order = kNotListed,
+               int package_supported_order = kNotListed,
+               int capability_input_supported_order = kNotListed) {
+    return CommandSpec{
+        kind,
+        token,
+        action_group,
+        action_target,
+        {},
+        usage_project_aware_order,
+        action_order,
+        inference_order,
+        package_supported_order,
+        capability_input_supported_order,
+    };
+}
+
+[[nodiscard]] constexpr CommandSpec
+emit_command(CommandKind kind,
+             std::string_view token,
+             std::string_view action_target,
+             std::string_view emitted_artifact_id,
+             int usage_project_aware_order = kNotListed,
+             int action_order = kNotListed,
+             int inference_order = kNotListed,
+             int package_supported_order = kNotListed,
+             int capability_input_supported_order = kNotListed) {
+    return CommandSpec{
+        kind,
+        token,
+        ActionGroup::Emit,
+        action_target,
+        emitted_artifact_id,
+        usage_project_aware_order,
+        action_order,
+        inference_order,
+        package_supported_order,
+        capability_input_supported_order,
+    };
+}
 
 constexpr CommandSpec kCommandSpecs[] = {
-    {CommandKind::Check, "check", 0},
-    {CommandKind::DumpAst, "dump-ast", 1, 0, 73},
-    {CommandKind::DumpTypes, "dump-types", 3, 1, 72},
-    {CommandKind::DumpProject, "dump-project", 2, 2, 0},
-    {CommandKind::EmitIr, "emit-ir", 4, 3, 1},
-    {CommandKind::EmitIrJson, "emit-ir-json", 5, 4, 2},
-    {CommandKind::EmitNativeJson, "emit-native-json", 6, 5, 3, 0},
-    {CommandKind::EmitExecutionPlan, "emit-execution-plan", 7, 6, 4, 1},
-    {CommandKind::EmitExecutionJournal, "emit-execution-journal", 8, 7, 5, 2, 0},
-    {CommandKind::EmitReplayView, "emit-replay-view", 9, 8, 6, 3, 1},
-    {CommandKind::EmitAuditReport, "emit-audit-report", 10, 9, 7, 4, 2},
-    {CommandKind::EmitSchedulerSnapshot, "emit-scheduler-snapshot", 11, 10, 8, 5, 3},
-    {CommandKind::EmitCheckpointRecord, "emit-checkpoint-record", 12, 11, 9, 6, 4},
-    {CommandKind::EmitCheckpointReview, "emit-checkpoint-review", 13, 12, 10, 7, 5},
-    {CommandKind::EmitPersistenceDescriptor, "emit-persistence-descriptor", 14, 13, 11, 26, 6},
-    {CommandKind::EmitPersistenceReview, "emit-persistence-review", 15, 14, 12, 27, 7},
-    {CommandKind::EmitExportManifest, "emit-export-manifest", 16, 15, 13, 28, 8},
-    {CommandKind::EmitExportReview, "emit-export-review", 17, 16, 14, 29, 9},
-    {CommandKind::EmitStoreImportDescriptor, "emit-store-import-descriptor", 20, 17, 15, 30, 10},
-    {CommandKind::EmitStoreImportReview, "emit-store-import-review", 21, 18, 16, 31, 11},
-    {CommandKind::EmitDurableStoreImportRequest,
-     "emit-durable-store-import-request",
-     22,
-     19,
-     17,
-     32,
-     12},
-    {CommandKind::EmitDurableStoreImportReview,
-     "emit-durable-store-import-review",
-     23,
-     20,
-     18,
-     33,
-     13},
-    {CommandKind::EmitDurableStoreImportDecision,
-     "emit-durable-store-import-decision",
-     24,
-     21,
-     19,
-     34,
-     14},
-    {CommandKind::EmitDurableStoreImportReceipt,
-     "emit-durable-store-import-receipt",
-     25,
-     22,
-     20,
-     35,
-     15},
-    {CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
-     "emit-durable-store-import-receipt-persistence-request",
-     26,
-     23,
-     21,
-     36,
-     16},
-    {CommandKind::EmitDurableStoreImportDecisionReview,
-     "emit-durable-store-import-decision-review",
-     27,
-     24,
-     22,
-     37,
-     17},
-    {CommandKind::EmitDurableStoreImportReceiptReview,
-     "emit-durable-store-import-receipt-review",
-     28,
-     25,
-     23,
-     38,
-     18},
-    {CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
-     "emit-durable-store-import-receipt-persistence-review",
-     29,
-     26,
-     24,
-     39,
-     19},
-    {CommandKind::EmitDurableStoreImportReceiptPersistenceResponse,
-     "emit-durable-store-import-receipt-persistence-response",
-     30,
-     27,
-     25,
-     40,
-     20},
-    {CommandKind::EmitDurableStoreImportReceiptPersistenceResponseReview,
-     "emit-durable-store-import-receipt-persistence-response-review",
-     31,
-     28,
-     26,
-     41,
-     21},
-    {CommandKind::EmitDurableStoreImportAdapterExecution,
-     "emit-durable-store-import-adapter-execution",
-     32,
-     29,
-     27,
-     42,
-     22},
-    {CommandKind::EmitDurableStoreImportRecoveryPreview,
-     "emit-durable-store-import-recovery-preview",
-     33,
-     30,
-     28,
-     43,
-     23},
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
-    {CommandKind::command_kind,                                                                    \
-     command_token,                                                                                \
-     kProviderUsageBase + (order),                                                                 \
-     kProviderActionBase + (order),                                                                \
-     kProviderInferenceBase + (order),                                                             \
-     kProviderPackageBase + (order),                                                               \
-     kProviderCapabilityBase + (order)},
-#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-    {CommandKind::EmitSchedulerReview, "emit-scheduler-review", 96, 93, 99, 8, 86},
-    {CommandKind::EmitRuntimeSession, "emit-runtime-session", 97, 94, 100, 9, 87},
-    {CommandKind::EmitDryRunTrace, "emit-dry-run-trace", 98, 95, 101, 10, 88},
-    {CommandKind::EmitPackageReview, "emit-package-review", 99, 96, 102, 11},
-    {CommandKind::EmitSummary, "emit-summary", 100, 97, 103},
-    {CommandKind::EmitSmv, "emit-smv", 101, 98, 104},
-    {CommandKind::EmitAssuranceJson, "emit-assurance-json", 102, 99, 105},
-    {CommandKind::EmitK8sCrd, "emit-k8s-crd", 103, 100, 106},
-    {CommandKind::EmitOpenApi, "emit-openapi", 104, 101, 107},
-    {CommandKind::EmitTerraform, "emit-terraform", 105, 102, 108},
-    {CommandKind::EmitWasm, "emit-wasm", 106, 103, 109},
-    {CommandKind::ValidateAssurance, "validate-assurance", 107, 104, 110, 12},
-    {CommandKind::VerifyFormal, "verify-formal", 108, 105, 111, 13},
+    command(CommandKind::Check, "check", 0),
+    command(CommandKind::RunWorkflow, "run", 109, 106),
+    routed_command(CommandKind::DumpAst, "dump-ast", ActionGroup::Dump, "ast", 1, 0, 73),
+    routed_command(CommandKind::DumpTypes, "dump-types", ActionGroup::Dump, "types", 3, 1, 72),
+    routed_command(CommandKind::DumpProject, "dump-project", ActionGroup::Dump, "project", 2, 2, 0),
+    emit_command(CommandKind::EmitIr, "emit-ir", "ir", "ir", 4, 3, 1),
+    emit_command(CommandKind::EmitIrJson, "emit-ir-json", "ir-json", "ir-json", 5, 4, 2),
+    emit_command(
+        CommandKind::EmitNativeJson, "emit-native-json", "native-json", "native-json", 6, 5, 3, 0),
+    emit_command(CommandKind::EmitExecutionPlan,
+                 "emit-execution-plan",
+                 "execution-plan",
+                 "execution-plan",
+                 7,
+                 6,
+                 4,
+                 1),
+    emit_command(CommandKind::EmitExecutionJournal,
+                 "emit-execution-journal",
+                 "execution-journal",
+                 "execution-journal",
+                 8,
+                 7,
+                 5,
+                 2,
+                 0),
+    emit_command(CommandKind::EmitReplayView,
+                 "emit-replay-view",
+                 "replay-view",
+                 "replay-view",
+                 9,
+                 8,
+                 6,
+                 3,
+                 1),
+    emit_command(CommandKind::EmitAuditReport,
+                 "emit-audit-report",
+                 "audit-report",
+                 "audit-report",
+                 10,
+                 9,
+                 7,
+                 4,
+                 2),
+    emit_command(CommandKind::EmitSchedulerSnapshot,
+                 "emit-scheduler-snapshot",
+                 "scheduler-snapshot",
+                 "scheduler-snapshot",
+                 11,
+                 10,
+                 8,
+                 5,
+                 3),
+    emit_command(CommandKind::EmitCheckpointRecord,
+                 "emit-checkpoint-record",
+                 "checkpoint-record",
+                 "checkpoint-record",
+                 12,
+                 11,
+                 9,
+                 6,
+                 4),
+    emit_command(CommandKind::EmitCheckpointReview,
+                 "emit-checkpoint-review",
+                 "checkpoint-review",
+                 "checkpoint-review",
+                 13,
+                 12,
+                 10,
+                 7,
+                 5),
+    emit_command(CommandKind::EmitPersistenceDescriptor,
+                 "emit-persistence-descriptor",
+                 "persistence-descriptor",
+                 "persistence-descriptor",
+                 14,
+                 13,
+                 11,
+                 26,
+                 6),
+    emit_command(CommandKind::EmitPersistenceReview,
+                 "emit-persistence-review",
+                 "persistence-review",
+                 "persistence-review",
+                 15,
+                 14,
+                 12,
+                 27,
+                 7),
+    emit_command(CommandKind::EmitExportManifest,
+                 "emit-export-manifest",
+                 "export-manifest",
+                 "export-manifest",
+                 16,
+                 15,
+                 13,
+                 28,
+                 8),
+    emit_command(CommandKind::EmitExportReview,
+                 "emit-export-review",
+                 "export-review",
+                 "export-review",
+                 17,
+                 16,
+                 14,
+                 29,
+                 9),
+    emit_command(CommandKind::EmitStoreImportDescriptor,
+                 "emit-store-import-descriptor",
+                 "store-import-descriptor",
+                 "store-import-descriptor",
+                 20,
+                 17,
+                 15,
+                 30,
+                 10),
+    emit_command(CommandKind::EmitStoreImportReview,
+                 "emit-store-import-review",
+                 "store-import-review",
+                 "store-import-review",
+                 21,
+                 18,
+                 16,
+                 31,
+                 11),
+    emit_command(CommandKind::EmitDurableStoreImportRequest,
+                 "emit-durable-store-import-request",
+                 "store/request",
+                 "durable-store-import-request",
+                 22,
+                 19,
+                 17,
+                 32,
+                 12),
+    emit_command(CommandKind::EmitDurableStoreImportReview,
+                 "emit-durable-store-import-review",
+                 "store/review",
+                 "durable-store-import-review",
+                 23,
+                 20,
+                 18,
+                 33,
+                 13),
+    emit_command(CommandKind::EmitDurableStoreImportDecision,
+                 "emit-durable-store-import-decision",
+                 "store/decision",
+                 "durable-store-import-decision",
+                 24,
+                 21,
+                 19,
+                 34,
+                 14),
+    emit_command(CommandKind::EmitDurableStoreImportReceipt,
+                 "emit-durable-store-import-receipt",
+                 "store/receipt",
+                 "durable-store-import-receipt",
+                 25,
+                 22,
+                 20,
+                 35,
+                 15),
+    emit_command(CommandKind::EmitDurableStoreImportReceiptPersistenceRequest,
+                 "emit-durable-store-import-receipt-persistence-request",
+                 "store/receipt-persistence-request",
+                 "durable-store-import-receipt-persistence-request",
+                 26,
+                 23,
+                 21,
+                 36,
+                 16),
+    emit_command(CommandKind::EmitDurableStoreImportDecisionReview,
+                 "emit-durable-store-import-decision-review",
+                 "store/decision-review",
+                 "durable-store-import-decision-review",
+                 27,
+                 24,
+                 22,
+                 37,
+                 17),
+    emit_command(CommandKind::EmitDurableStoreImportReceiptReview,
+                 "emit-durable-store-import-receipt-review",
+                 "store/receipt-review",
+                 "durable-store-import-receipt-review",
+                 28,
+                 25,
+                 23,
+                 38,
+                 18),
+    emit_command(CommandKind::EmitDurableStoreImportReceiptPersistenceReview,
+                 "emit-durable-store-import-receipt-persistence-review",
+                 "store/receipt-persistence-review",
+                 "durable-store-import-receipt-persistence-review",
+                 29,
+                 26,
+                 24,
+                 39,
+                 19),
+    emit_command(CommandKind::EmitDurableStoreImportReceiptPersistenceResponse,
+                 "emit-durable-store-import-receipt-persistence-response",
+                 "store/receipt-persistence-response",
+                 "durable-store-import-receipt-persistence-response",
+                 30,
+                 27,
+                 25,
+                 40,
+                 20),
+    emit_command(CommandKind::EmitDurableStoreImportReceiptPersistenceResponseReview,
+                 "emit-durable-store-import-receipt-persistence-response-review",
+                 "store/receipt-persistence-response-review",
+                 "durable-store-import-receipt-persistence-response-review",
+                 31,
+                 28,
+                 26,
+                 41,
+                 21),
+    emit_command(CommandKind::EmitDurableStoreImportAdapterExecution,
+                 "emit-durable-store-import-adapter-execution",
+                 "store/adapter-execution",
+                 "durable-store-import-adapter-execution",
+                 32,
+                 29,
+                 27,
+                 42,
+                 22),
+    emit_command(CommandKind::EmitDurableStoreImportRecoveryPreview,
+                 "emit-durable-store-import-recovery-preview",
+                 "store/recovery-preview",
+                 "durable-store-import-recovery-preview",
+                 33,
+                 30,
+                 28,
+                 43,
+                 23),
+    emit_command(CommandKind::EmitSchedulerReview,
+                 "emit-scheduler-review",
+                 "scheduler-review",
+                 "scheduler-review",
+                 96,
+                 93,
+                 99,
+                 8,
+                 86),
+    emit_command(CommandKind::EmitRuntimeSession,
+                 "emit-runtime-session",
+                 "runtime-session",
+                 "runtime-session",
+                 97,
+                 94,
+                 100,
+                 9,
+                 87),
+    emit_command(CommandKind::EmitDryRunTrace,
+                 "emit-dry-run-trace",
+                 "dry-run-trace",
+                 "dry-run-trace",
+                 98,
+                 95,
+                 101,
+                 10,
+                 88),
+    emit_command(CommandKind::EmitPackageReview,
+                 "emit-package-review",
+                 "package-review",
+                 "package-review",
+                 99,
+                 96,
+                 102,
+                 11),
+    emit_command(CommandKind::EmitSummary, "emit-summary", "summary", "summary", 100, 97, 103),
+    emit_command(CommandKind::EmitSmv, "emit-smv", "smv", "smv", 101, 98, 104),
+    emit_command(CommandKind::EmitAssuranceJson,
+                 "emit-assurance-json",
+                 "assurance-json",
+                 "assurance-json",
+                 102,
+                 99,
+                 105),
+    emit_command(CommandKind::EmitK8sCrd, "emit-k8s-crd", "k8s-crd", "k8s-crd", 103, 100, 106),
+    emit_command(CommandKind::EmitOpenApi, "emit-openapi", "openapi", "openapi", 104, 101, 107),
+    emit_command(
+        CommandKind::EmitTerraform, "emit-terraform", "terraform", "terraform", 105, 102, 108),
+    emit_command(CommandKind::EmitWasm, "emit-wasm", "wasm", "wasm", 106, 103, 109),
+    routed_command(CommandKind::ValidateAssurance,
+                   "validate-assurance",
+                   ActionGroup::Validate,
+                   "assurance",
+                   107,
+                   104,
+                   110,
+                   12),
+    routed_command(CommandKind::VerifyFormal,
+                   "verify-formal",
+                   ActionGroup::Verify,
+                   "formal",
+                   108,
+                   105,
+                   111,
+                   13),
 };
 
 // Compile-time verification: array index must equal enum value for O(1) lookup.
@@ -247,88 +481,6 @@ static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSup
     return spec != nullptr && command_list_order(*spec, list_kind) != kNotListed;
 }
 
-/// Derive the canonical short token for a given old token.
-[[nodiscard]] std::string derive_short_form(std::string_view old_token) {
-    constexpr std::string_view kProviderPrefix = "emit-durable-store-import-provider-";
-    constexpr std::string_view kDurableStorePrefix = "emit-durable-store-import-";
-    constexpr std::string_view kEmitPrefix = "emit-";
-    constexpr std::string_view kDumpPrefix = "dump-";
-    constexpr std::string_view kVerifyPrefix = "verify-";
-    constexpr std::string_view kValidatePrefix = "validate-";
-
-    if (old_token.starts_with(kProviderPrefix)) {
-        std::string result = "provider/";
-        result += old_token.substr(kProviderPrefix.size());
-        return result;
-    }
-    if (old_token.starts_with(kDurableStorePrefix)) {
-        std::string result = "store/";
-        result += old_token.substr(kDurableStorePrefix.size());
-        return result;
-    }
-    // emit-store-import-X stays as "store-import-X" (plain top-level artifact)
-    // to avoid collision with durable-store-import-X → store/X.
-    if (old_token.starts_with(kEmitPrefix)) {
-        return std::string(old_token.substr(kEmitPrefix.size()));
-    }
-    if (old_token.starts_with(kDumpPrefix)) {
-        return std::string(old_token.substr(kDumpPrefix.size()));
-    }
-    if (old_token.starts_with(kVerifyPrefix)) {
-        return std::string(old_token.substr(kVerifyPrefix.size()));
-    }
-    if (old_token.starts_with(kValidatePrefix)) {
-        return std::string(old_token.substr(kValidatePrefix.size()));
-    }
-    return std::string(old_token);
-}
-
-/// Check whether `old_token` belongs to `group` and its short form equals `artifact_id`.
-[[nodiscard]] bool
-matches_artifact_id(std::string_view old_token, ActionGroup group, std::string_view artifact_id) {
-    switch (group) {
-    case ActionGroup::Emit: {
-        constexpr std::string_view kProviderPrefix = "emit-durable-store-import-provider-";
-        constexpr std::string_view kDurableStorePrefix = "emit-durable-store-import-";
-        constexpr std::string_view kEmitPrefix = "emit-";
-
-        if (artifact_id.starts_with("provider/")) {
-            auto suffix = artifact_id.substr(9);
-            return old_token.starts_with(kProviderPrefix) &&
-                   old_token.substr(kProviderPrefix.size()) == suffix;
-        }
-        if (artifact_id.starts_with("store/")) {
-            auto suffix = artifact_id.substr(6);
-            // Only emit-durable-store-import-X maps to store/X.
-            // emit-store-import-X stays as plain "store-import-X" (no domain prefix).
-            return old_token.starts_with(kDurableStorePrefix) &&
-                   old_token.substr(kDurableStorePrefix.size()) == suffix;
-        }
-        // Plain artifact-id (no domain prefix) — match "emit-{id}"
-        return old_token.starts_with(kEmitPrefix) &&
-               old_token.substr(kEmitPrefix.size()) == artifact_id;
-    }
-    case ActionGroup::Dump: {
-        constexpr std::string_view kPrefix = "dump-";
-        return old_token.starts_with(kPrefix) && old_token.substr(kPrefix.size()) == artifact_id;
-    }
-    case ActionGroup::Verify: {
-        constexpr std::string_view kPrefix = "verify-";
-        return old_token.starts_with(kPrefix) && old_token.substr(kPrefix.size()) == artifact_id;
-    }
-    case ActionGroup::Validate: {
-        constexpr std::string_view kPrefix = "validate-";
-        return old_token.starts_with(kPrefix) && old_token.substr(kPrefix.size()) == artifact_id;
-    }
-    }
-    return false;
-}
-
-[[nodiscard]] bool is_hidden_provider_command(CommandKind command) {
-    const auto visibility = provider_artifact_visibility_for_command(command);
-    return visibility.has_value() && *visibility == ProviderArtifactVisibility::Internal;
-}
-
 } // namespace
 
 [[nodiscard]] const std::vector<CommandKind> &command_list(CommandListKind list_kind) {
@@ -364,14 +516,11 @@ matches_artifact_id(std::string_view old_token, ActionGroup group, std::string_v
 }
 
 [[nodiscard]] std::optional<std::string_view> emitted_artifact_id(CommandKind command) {
-    constexpr std::string_view kEmitPrefix = "emit-";
-    auto token = command_name(command);
-    if (!token.starts_with(kEmitPrefix)) {
+    const auto *spec = find_command_spec(command);
+    if (spec == nullptr || spec->emitted_artifact_id.empty()) {
         return std::nullopt;
     }
-
-    token.remove_prefix(kEmitPrefix.size());
-    return token;
+    return spec->emitted_artifact_id;
 }
 
 [[nodiscard]] bool is_package_supported_command(CommandKind command) {
@@ -388,6 +537,39 @@ matches_artifact_id(std::string_view old_token, ActionGroup group, std::string_v
 
 [[nodiscard]] bool is_command_requiring_package(CommandKind command) {
     return is_capability_input_supported_command(command);
+}
+
+SelectedAction selected_action_from_options(const CommandLineOptions &options,
+                                            std::optional<CommandKind> effective_command) {
+    return SelectedAction{
+        .command = effective_command,
+        .provider_artifact = options.selected_provider_artifact,
+    };
+}
+
+std::string selected_action_name(const SelectedAction &action) {
+    if (action.provider_artifact.has_value()) {
+        return provider_artifact_command_name(*action.provider_artifact);
+    }
+    if (action.command.has_value()) {
+        return std::string(command_name(*action.command));
+    }
+    return "selected action";
+}
+
+bool selected_action_supports_package(const SelectedAction &action) {
+    return action.provider_artifact.has_value() ||
+           (action.command.has_value() && is_package_supported_command(*action.command));
+}
+
+bool selected_action_supports_capability_inputs(const SelectedAction &action) {
+    return action.provider_artifact.has_value() ||
+           (action.command.has_value() && supports_capability_inputs(action.command));
+}
+
+bool selected_action_requires_package(const SelectedAction &action) {
+    return action.provider_artifact.has_value() ||
+           (action.command.has_value() && is_command_requiring_package(*action.command));
 }
 
 [[nodiscard]] std::optional<ahfl::BackendKind>
@@ -434,6 +616,10 @@ void set_command_option(CommandLineOptions &options, CommandKind command) {
     options.selected_command = command;
 }
 
+void set_provider_artifact_option(CommandLineOptions &options, ProviderArtifactKind artifact) {
+    options.selected_provider_artifact = artifact;
+}
+
 [[nodiscard]] bool is_action_enabled(const CommandLineOptions &options, CommandKind command) {
     if (command != CommandKind::Check && options.selected_command == command) {
         return true;
@@ -469,6 +655,7 @@ infer_effective_command(const CommandLineOptions &options) {
     for (const auto command : command_list(CommandListKind::Action)) {
         count += static_cast<int>(is_action_enabled(options, command));
     }
+    count += static_cast<int>(options.selected_provider_artifact.has_value());
     return count;
 }
 
@@ -490,11 +677,10 @@ std::optional<ActionGroup> action_group_from_token(std::string_view token) {
 
 std::optional<CommandKind>
 resolve_subcommand(ActionGroup group, std::string_view artifact_id, bool include_hidden) {
+    static_cast<void>(include_hidden);
     for (const auto &spec : kCommandSpecs) {
-        if (matches_artifact_id(spec.token, group, artifact_id)) {
-            if (!include_hidden && is_hidden_provider_command(spec.kind)) {
-                continue;
-            }
+        if (spec.action_group.has_value() && *spec.action_group == group &&
+            spec.action_target == artifact_id) {
             return spec.kind;
         }
     }
@@ -510,7 +696,10 @@ std::string command_short_name(CommandKind command) {
     if (spec == nullptr) {
         return "check";
     }
-    return derive_short_form(spec->token);
+    if (spec->action_group.has_value()) {
+        return std::string(spec->action_target);
+    }
+    return std::string(spec->token);
 }
 
 } // namespace ahfl::cli

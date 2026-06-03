@@ -104,7 +104,7 @@ CLI 不再为每个 provider artifact 暴露独立 `emit_*_with_diagnostics` wra
 ProviderPipeline::build(ProviderArtifactKind kind)
 ```
 
-`ProviderArtifactKind`、command enum/token、visibility 和 provider-local order 都由 `pipeline_durable_store_import_provider_artifacts.def` 生成，并通过 `provider_artifact_catalog` 对 CLI registry/help 暴露。`ProviderPipeline` 只负责 artifact build/print，不再维护另一张 command 矩阵。新增 provider artifact 时应修改这一个 registry，而不是手写一组新的 command handler / printer closure / builder declaration。
+`ProviderArtifactKind`、provider-local `artifact_id`、visibility、provider-local order 和 dependency list 都由 `pipeline_durable_store_import_provider_artifacts.def` 生成，并通过 `provider_artifact_catalog` 对 CLI help、`ahflc emit provider/...` 解析和 build 前置依赖预取暴露。`ProviderPipeline` 只负责 artifact build/print，不再维护另一张 command 或 dependency 矩阵。新增 provider artifact 时应修改这一个 registry，而不是手写一组新的 command handler / printer closure / builder declaration / dependency graph entry。
 
 `visibility = Public` 的 artifact 是默认用户 CLI 暴露面；`visibility = Internal` 的 artifact 属于 pipeline 中间节点，只能在显式 `--show-hidden` 时通过 CLI emit，主要用于 golden 覆盖、诊断和回归定位。
 

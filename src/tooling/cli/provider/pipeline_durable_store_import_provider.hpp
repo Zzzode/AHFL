@@ -19,8 +19,15 @@
 namespace ahfl::cli {
 
 using ProviderArtifact = std::variant<std::monostate
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
+                                                        artifact_type,                             \
+                                                        builder,                                   \
+                                                        printer,                                   \
+                                                        artifact_id,                               \
+                                                        visibility,                                \
+                                                        order,                                     \
+                                                        dep_count,                                 \
+                                                        dependencies)                              \
     , ahfl::durable_store_import::artifact_type
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT

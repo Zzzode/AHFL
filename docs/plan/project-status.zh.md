@@ -202,7 +202,7 @@ CapabilityRegistry
 - LLM Provider 基础路径已实现：`LLMProviderConfig`、`HttpClient`、`PromptBuilder`、`ResponseParser`、`LLMCapabilityProvider`。
 - 配置解析使用 repo 内 `base/json` DOM，不再维护独立字符串 JSON 解析器。
 - `ResponseParser` 对非法 enum、缺失 struct 字段和类型解析失败返回 `nullopt`，避免把错误响应伪装成业务值。
-- `ahfl-run` 在 endpoint、model、api_key 缺失时拒绝启动。
+- `ahflc run` 统一承担真实 workflow 执行入口；endpoint、model、api_key 缺失时拒绝启动。
 
 ### 非目标 / 后续增强
 

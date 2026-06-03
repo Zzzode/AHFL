@@ -41,22 +41,22 @@ emit-durable-store-import-decision-review
 
 内部 C++ API 不提供 `build_durable_store_import_*` 兼容 shim；新增模型和 review action 应使用短语义名，并由 artifact printer 映射到稳定 JSON 字符串。
 
-Provider 命令元数据由 `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` 单表注册生成。不要复制 command handler 或新增第二张 command registry；新增时应在该 artifact 记录中同时声明 command enum、command token、visibility 和 provider-local order，再交给 `ProviderPipeline` 统一 dispatch。
+Provider artifact 元数据由 `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` 单表注册生成。不要复制 command handler 或新增第二张 command registry；新增时应在该 artifact 记录中同时声明 provider-local `artifact_id`、visibility 和 provider-local order，再交给 `ProviderPipeline` 统一 dispatch。
 
 默认 CLI 只解析 `visibility = Public` 的 provider artifact。`visibility = Internal` 的中间节点必须显式传入 `--show-hidden` 才可 emit，主要用于 golden 覆盖、诊断和回归定位。
 
 ## Provider 领域映射
 
-| Domain | Primary command examples | Model headers |
+| Domain | Primary artifact examples | Model headers |
 | --- | --- | --- |
-| Binding | `emit-durable-store-import-provider-write-attempt`, `emit-durable-store-import-provider-driver-binding` | `src/pipeline/persistence/durable_store_import/provider/binding/*.hpp` |
-| Runtime | `emit-durable-store-import-provider-runtime-preflight`, `emit-durable-store-import-provider-sdk-envelope` | `src/pipeline/persistence/durable_store_import/provider/runtime/*.hpp` |
-| Host execution | `emit-durable-store-import-provider-host-execution`, `emit-durable-store-import-provider-local-host-harness-request` | `src/pipeline/persistence/durable_store_import/provider/execution/*.hpp` |
-| SDK | `emit-durable-store-import-provider-sdk-adapter-request`, `emit-durable-store-import-provider-sdk-payload-plan` | `src/pipeline/persistence/durable_store_import/provider/sdk/*.hpp` |
-| Configuration | `emit-durable-store-import-provider-config-load`, `emit-durable-store-import-provider-secret-resolver-request` | `src/pipeline/persistence/durable_store_import/provider/configuration/*.hpp` |
-| Reliability | `emit-durable-store-import-provider-write-retry-decision`, `emit-durable-store-import-provider-write-commit-receipt` | `src/pipeline/persistence/durable_store_import/provider/reliability/*.hpp` |
-| Governance | `emit-durable-store-import-provider-compatibility-report`, `emit-durable-store-import-provider-registry` | `src/pipeline/persistence/durable_store_import/provider/governance/*.hpp` |
-| Production | `emit-durable-store-import-provider-production-readiness-report`, `emit-durable-store-import-provider-runtime-policy-report` | `src/pipeline/persistence/durable_store_import/provider/production/*.hpp` |
+| Binding | `provider/write-attempt`, `provider/driver-binding` | `src/pipeline/persistence/durable_store_import/provider/binding/*.hpp` |
+| Runtime | `provider/runtime-preflight`, `provider/sdk-envelope` | `src/pipeline/persistence/durable_store_import/provider/runtime/*.hpp` |
+| Host execution | `provider/host-execution`, `provider/local-host-harness-request` | `src/pipeline/persistence/durable_store_import/provider/execution/*.hpp` |
+| SDK | `provider/sdk-adapter-request`, `provider/sdk-payload-plan` | `src/pipeline/persistence/durable_store_import/provider/sdk/*.hpp` |
+| Configuration | `provider/config-load`, `provider/secret-resolver-request` | `src/pipeline/persistence/durable_store_import/provider/configuration/*.hpp` |
+| Reliability | `provider/write-retry-decision`, `provider/write-commit-receipt` | `src/pipeline/persistence/durable_store_import/provider/reliability/*.hpp` |
+| Governance | `provider/compatibility-report`, `provider/registry` | `src/pipeline/persistence/durable_store_import/provider/governance/*.hpp` |
+| Production | `provider/production-readiness-report`, `provider/runtime-policy-report` | `src/pipeline/persistence/durable_store_import/provider/production/*.hpp` |
 
 ## 回归命令
 
@@ -89,7 +89,7 @@ When adding or changing a durable-store/provider artifact:
 
 1. Update the model header and implementation in the relevant domain folder.
 2. Update `src/pipeline/persistence/durable_store_import/provider_artifacts.def` if the artifact is provider-owned.
-3. Update `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` for provider CLI emission; command enum/token/visibility/order must live in the same record.
+3. Update `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` for provider CLI emission; provider-local `artifact_id`/visibility/order/dependencies must live in the same record.
 4. Add or update model validation tests.
 5. Add or update golden CLI output when the command surface changes.
 6. Run `tests/unit/tooling/cli/command_routing.cpp` coverage through `ahfl.cli.command_routing_all`.

@@ -372,7 +372,7 @@ Issue 16 之后，formal backend 相关实现必须遵守以下约束：
 
 1. 新增 lowering 能力时，必须明确写出“保留语义”还是“抽象语义”
 2. 若采用 observation abstraction，必须说明 observation 的作用域、命名和是否去重
-3. 任何 formal backend 都不得重新读取 parse tree 或 `raw_text`
+3. 任何 formal backend 都不得重新读取 parse tree 或原始源码切片
 4. backend-specific emitter 必须消费 validate 后的语义模型或稳定 IR
 5. 若 `emit-smv` 继续扩张，必须先更新本文档，再新增 golden
 

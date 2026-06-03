@@ -265,7 +265,7 @@ V0.2 之后，很多查找都必须显式带：
 
 下面这些做法应尽量避免：
 
-1. 在 checker/backend 里重新解析 `raw_text`。
+1. 在 checker/backend 里重新解析原始源码切片。
 2. 在 frontend lowering 里顺手做类型规则。
 3. 在 validate 里重复写一份 resolver/typecheck 逻辑。
 4. 在 CLI 里塞 loader / backend 的具体实现细节。

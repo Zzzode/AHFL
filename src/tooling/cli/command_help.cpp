@@ -1,14 +1,8 @@
 #include "tooling/cli/command_catalog.hpp"
-#include "tooling/cli/provider/provider_artifact_catalog.hpp"
 
 #include <cstddef>
 
 namespace ahfl::cli {
-
-bool is_internal_provider_command(CommandKind command) {
-    const auto visibility = provider_artifact_visibility_for_command(command);
-    return visibility.has_value() && *visibility == ProviderArtifactVisibility::Internal;
-}
 
 // ---------------------------------------------------------------------------
 // format_comma_or_commands
@@ -46,6 +40,7 @@ bool is_internal_provider_command(CommandKind command) {
 void print_usage(std::ostream &out, bool show_internal) {
     out << "Usage:\n"
         << "  ahflc check [options] <input.ahfl>\n"
+        << "  ahflc run --workflow <name> --input '<json>' [options] <input.ahfl>\n"
         << "  ahflc emit <artifact> [options] <input.ahfl>\n"
         << "  ahflc dump <target> [options] <input.ahfl>\n"
         << "  ahflc verify [options] <input.ahfl>\n"
@@ -53,6 +48,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "\n"
         << "Actions:\n"
         << "  check               Type-check source files\n"
+        << "  run                 Execute a workflow with configured LLM capabilities\n"
         << "  emit <artifact>     Emit a build artifact (see list below)\n"
         << "  dump <target>       Diagnostic dump (ast, types, project)\n"
         << "  verify              Formal verification via NuSMV/nuXmv\n"
@@ -90,8 +86,7 @@ void print_usage(std::ostream &out, bool show_internal) {
     out << "\n  Store Pipeline (store/...):\n";
     for (const auto command : command_list(CommandListKind::Action)) {
         auto name = command_name(command);
-        if (name.starts_with("emit-durable-store-import-") &&
-            !name.starts_with("emit-durable-store-import-provider-")) {
+        if (name.starts_with("emit-durable-store-import-")) {
             out << "    " << command_short_name(command) << '\n';
         }
     }
@@ -102,13 +97,10 @@ void print_usage(std::ostream &out, bool show_internal) {
         out << "  [public only]";
     }
     out << '\n';
-    for (const auto command : command_list(CommandListKind::Action)) {
-        auto name = command_name(command);
-        if (!name.starts_with("emit-durable-store-import-provider-"))
+    for (const auto &artifact : provider_artifact_descriptors()) {
+        if (!show_internal && artifact.visibility == ProviderArtifactVisibility::Internal)
             continue;
-        if (!show_internal && is_internal_provider_command(command))
-            continue;
-        out << "    " << command_short_name(command) << '\n';
+        out << "    provider/" << artifact.artifact_id << '\n';
     }
     if (!show_internal) {
         out << "    (use --show-hidden to show all provider artifacts)\n";
@@ -128,6 +120,8 @@ void print_usage(std::ostream &out, bool show_internal) {
 
     out << "\nRuntime Options:\n"
         << "  --workflow <canonical>      Target workflow (multi-workflow packages)\n"
+        << "  --input <json>              Runtime input JSON for run\n"
+        << "  --llm-config <path>         LLM config for run (default: ~/.ahfl/llm_config.json)\n"
         << "  --input-fixture <fixture>   Runtime fixture selection\n"
         << "  --run-id <id>              Stable run identity\n";
 
