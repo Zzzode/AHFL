@@ -8,10 +8,11 @@
 #include <unordered_set>
 #include <vector>
 
+#include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "runtime/engine/capability_bridge.hpp"
 #include "runtime/evaluator/executor.hpp"
 #include "runtime/evaluator/value.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
 
 namespace ahfl::runtime {
 
@@ -60,8 +61,7 @@ class AgentRuntime {
     AgentRuntime(const ir::AgentDecl &agent, const ir::FlowDecl &flow, QuotaConfig quota = {});
 
     // 设置 capability invoker（用于执行 flow 中的 capability 调用）
-    void set_capability_invoker(
-        std::function<Value(const std::string &, const std::vector<Value> &)> invoker);
+    void set_capability_invoker(CapabilityInvoker invoker);
 
     // 执行 agent，从初始状态开始
     [[nodiscard]] AgentResult run(Value input);
@@ -73,7 +73,7 @@ class AgentRuntime {
     const ir::AgentDecl &agent_;
     const ir::FlowDecl &flow_;
     QuotaConfig quota_;
-    std::function<Value(const std::string &, const std::vector<Value> &)> capability_invoker_;
+    CapabilityInvoker capability_invoker_;
 
     // 查找 state handler
     [[nodiscard]] const ir::StateHandler *find_handler(const std::string &state_name) const;

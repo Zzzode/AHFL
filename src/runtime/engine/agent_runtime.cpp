@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <variant>
 
+#include "runtime/engine/capability_eval.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 
 namespace ahfl::runtime {
@@ -45,8 +46,7 @@ AgentRuntime::AgentRuntime(const ir::AgentDecl &agent, const ir::FlowDecl &flow,
     }
 }
 
-void AgentRuntime::set_capability_invoker(
-    std::function<Value(const std::string &, const std::vector<Value> &)> invoker) {
+void AgentRuntime::set_capability_invoker(CapabilityInvoker invoker) {
     capability_invoker_ = std::move(invoker);
 }
 
@@ -74,22 +74,7 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         exec_ctx.expr_eval =
             [invoker](const ir::Expr &expr,
                       const evaluator::EvalContext &eval_ctx) -> evaluator::EvalResult {
-            // 如果是 CallExpr，使用 capability invoker 处理
-            if (auto *call = std::get_if<ir::CallExpr>(&expr.node)) {
-                std::vector<evaluator::Value> arg_values;
-                for (const auto &arg_ptr : call->arguments) {
-                    // 递归求值参数（参数中可能嵌套 PathExpr 等）
-                    auto arg_result = evaluator::eval_expr(*arg_ptr, eval_ctx);
-                    if (arg_result.has_errors()) {
-                        return arg_result;
-                    }
-                    arg_values.push_back(std::move(arg_result.value));
-                }
-                auto result_value = invoker(call->callee, arg_values);
-                return evaluator::EvalResult{std::move(result_value), {}};
-            }
-            // 非 CallExpr 委托给标准求值器
-            return evaluator::eval_expr(expr, eval_ctx);
+            return eval_expr_with_capabilities(expr, eval_ctx, invoker);
         };
     }
 

@@ -4,8 +4,11 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -464,6 +467,105 @@ void test_missing_handler() {
     check(result.current_state == "Process", "missing_handler.stuck_at_process");
 }
 
+// ============================================================================
+// Test: capability failure is surfaced as diagnostics
+// ============================================================================
+
+void test_capability_failure_becomes_diagnostic() {
+    AgentDecl agent;
+    agent.name = "CapabilityAgent";
+    agent.states = {"Final"};
+    agent.initial_state = "Final";
+    agent.final_states = {"Final"};
+
+    FlowDecl flow;
+    flow.target = "CapabilityAgent";
+
+    CallExpr call;
+    call.callee = "UnavailableCapability";
+    flow.state_handlers.push_back(make_return_handler("Final", std::move(call)));
+
+    AgentRuntime runtime(agent, flow);
+    runtime.set_capability_invoker(
+        [](const std::string &name, const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::RetryExhausted,
+                .value = std::nullopt,
+                .error_message = "upstream unavailable for " + name,
+                .attempts = 3,
+            };
+        });
+
+    auto result = runtime.run(make_none());
+
+    check(result.status == AgentStatus::Failed, "capability_failure.status_failed");
+    check(result.diagnostics.has_error(), "capability_failure.has_diagnostic");
+    check(!result.output.has_value(), "capability_failure.no_output");
+}
+
+void test_capability_call_inside_composite_condition() {
+    AgentDecl agent;
+    agent.name = "CompositeCapabilityAgent";
+    agent.states = {"Init", "Approved", "Rejected"};
+    agent.initial_state = "Init";
+    agent.final_states = {"Approved", "Rejected"};
+    agent.transitions = {{"Init", "Approved"}, {"Init", "Rejected"}};
+
+    CallExpr call;
+    call.callee = "is_ready";
+
+    BinaryExpr condition;
+    condition.op = ExprBinaryOp::Equal;
+    condition.lhs = make_expr_ptr(std::move(call));
+    condition.rhs = make_expr_ptr(BoolLiteralExpr{true});
+
+    Block then_block;
+    then_block.statements.push_back(make_stmt_ptr(GotoStatement{"Approved"}));
+    Block else_block;
+    else_block.statements.push_back(make_stmt_ptr(GotoStatement{"Rejected"}));
+
+    StateHandler init;
+    init.state_name = "Init";
+    init.body.statements.push_back(make_stmt_ptr(IfStatement{
+        make_expr_ptr(std::move(condition)),
+        std::make_unique<Block>(std::move(then_block)),
+        std::make_unique<Block>(std::move(else_block)),
+    }));
+
+    FlowDecl flow;
+    flow.target = "CompositeCapabilityAgent";
+    flow.state_handlers.push_back(std::move(init));
+    flow.state_handlers.push_back(make_return_handler("Approved", StringLiteralExpr{"approved"}));
+    flow.state_handlers.push_back(make_return_handler("Rejected", StringLiteralExpr{"rejected"}));
+
+    AgentRuntime runtime(agent, flow);
+    runtime.set_capability_invoker(
+        [](const std::string &name, const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+            if (name == "is_ready") {
+                return CapabilityCallResult{
+                    .status = CapabilityCallStatus::Success,
+                    .value = make_bool(true),
+                    .error_message = {},
+                    .attempts = 1,
+                };
+            }
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Error,
+                .value = std::nullopt,
+                .error_message = "unexpected capability",
+                .attempts = 1,
+            };
+        });
+
+    auto result = runtime.run(make_none());
+
+    check(result.status == AgentStatus::Completed, "capability_composite.status_completed");
+    check(result.current_state == "Approved", "capability_composite.approved_state");
+    auto *output =
+        result.output.has_value() ? std::get_if<StringValue>(&result.output->node) : nullptr;
+    check(output != nullptr && output->value == "approved", "capability_composite.output");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -479,6 +581,8 @@ int main() {
     test_strict_no_transitions();
     test_build_agent_runtime();
     test_missing_handler();
+    test_capability_failure_becomes_diagnostic();
+    test_capability_call_inside_composite_condition();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

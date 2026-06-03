@@ -9,6 +9,9 @@ namespace ahfl::evaluator {
 
 namespace {
 
+[[nodiscard]] EvalResult
+eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *call_eval);
+
 // Helper: create an error result
 EvalResult make_error(std::string message) {
     EvalResult result;
@@ -67,11 +70,12 @@ EvalResult eval_duration_literal(const ir::DurationLiteralExpr &expr, const Eval
 // SomeExpr
 // ============================================================================
 
-EvalResult eval_some_expr(const ir::SomeExpr &expr, const EvalContext &ctx) {
+EvalResult
+eval_some_expr(const ir::SomeExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
     if (!expr.value) {
         return make_error("SomeExpr has null inner expression");
     }
-    auto inner = eval_expr(*expr.value, ctx);
+    auto inner = eval_expr_impl(*expr.value, ctx, call_eval);
     if (inner.has_errors())
         return inner;
     return EvalResult{make_optional_some(std::move(inner.value)), {}};
@@ -162,7 +166,9 @@ EvalResult eval_qualified_value_expr(const ir::QualifiedValueExpr &expr,
 // StructLiteralExpr
 // ============================================================================
 
-EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr, const EvalContext &ctx) {
+EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr,
+                               const EvalContext &ctx,
+                               const CallEvalFn *call_eval) {
     std::unordered_map<std::string, Value> fields;
     DiagnosticBag diagnostics;
 
@@ -173,7 +179,7 @@ EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr, const EvalCont
                 .emit();
             continue;
         }
-        auto result = eval_expr(*field_init.value, ctx);
+        auto result = eval_expr_impl(*field_init.value, ctx, call_eval);
         diagnostics.append(result.diagnostics);
         if (!result.has_errors()) {
             fields.emplace(field_init.name, std::move(result.value));
@@ -190,7 +196,9 @@ EvalResult eval_struct_literal(const ir::StructLiteralExpr &expr, const EvalCont
 // ListLiteralExpr
 // ============================================================================
 
-EvalResult eval_list_literal(const ir::ListLiteralExpr &expr, const EvalContext &ctx) {
+EvalResult eval_list_literal(const ir::ListLiteralExpr &expr,
+                             const EvalContext &ctx,
+                             const CallEvalFn *call_eval) {
     std::vector<Value> items;
     DiagnosticBag diagnostics;
 
@@ -199,7 +207,7 @@ EvalResult eval_list_literal(const ir::ListLiteralExpr &expr, const EvalContext 
             std::move(diagnostics.error()).message("list item has null expression").emit();
             continue;
         }
-        auto result = eval_expr(*item_expr, ctx);
+        auto result = eval_expr_impl(*item_expr, ctx, call_eval);
         diagnostics.append(result.diagnostics);
         if (!result.has_errors()) {
             items.push_back(std::move(result.value));
@@ -216,11 +224,12 @@ EvalResult eval_list_literal(const ir::ListLiteralExpr &expr, const EvalContext 
 // UnaryExpr
 // ============================================================================
 
-EvalResult eval_unary_expr(const ir::UnaryExpr &expr, const EvalContext &ctx) {
+EvalResult
+eval_unary_expr(const ir::UnaryExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
     if (!expr.operand) {
         return make_error("UnaryExpr has null operand");
     }
-    auto operand = eval_expr(*expr.operand, ctx);
+    auto operand = eval_expr_impl(*expr.operand, ctx, call_eval);
     if (operand.has_errors())
         return operand;
 
@@ -302,15 +311,16 @@ std::optional<NumericPair> extract_numeric(const Value &lhs, const Value &rhs) {
     return std::nullopt;
 }
 
-EvalResult eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx) {
+EvalResult
+eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
     if (!expr.lhs || !expr.rhs) {
         return make_error("BinaryExpr has null operand");
     }
 
-    auto lhs = eval_expr(*expr.lhs, ctx);
+    auto lhs = eval_expr_impl(*expr.lhs, ctx, call_eval);
     if (lhs.has_errors())
         return lhs;
-    auto rhs = eval_expr(*expr.rhs, ctx);
+    auto rhs = eval_expr_impl(*expr.rhs, ctx, call_eval);
     if (rhs.has_errors())
         return rhs;
 
@@ -491,11 +501,13 @@ EvalResult eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx) 
 // MemberAccessExpr
 // ============================================================================
 
-EvalResult eval_member_access(const ir::MemberAccessExpr &expr, const EvalContext &ctx) {
+EvalResult eval_member_access(const ir::MemberAccessExpr &expr,
+                              const EvalContext &ctx,
+                              const CallEvalFn *call_eval) {
     if (!expr.base) {
         return make_error("MemberAccessExpr has null base");
     }
-    auto base = eval_expr(*expr.base, ctx);
+    auto base = eval_expr_impl(*expr.base, ctx, call_eval);
     if (base.has_errors())
         return base;
 
@@ -523,14 +535,16 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr, const EvalContex
 // IndexAccessExpr
 // ============================================================================
 
-EvalResult eval_index_access(const ir::IndexAccessExpr &expr, const EvalContext &ctx) {
+EvalResult eval_index_access(const ir::IndexAccessExpr &expr,
+                             const EvalContext &ctx,
+                             const CallEvalFn *call_eval) {
     if (!expr.base || !expr.index) {
         return make_error("IndexAccessExpr has null operand");
     }
-    auto base = eval_expr(*expr.base, ctx);
+    auto base = eval_expr_impl(*expr.base, ctx, call_eval);
     if (base.has_errors())
         return base;
-    auto index = eval_expr(*expr.index, ctx);
+    auto index = eval_expr_impl(*expr.index, ctx, call_eval);
     if (index.has_errors())
         return index;
 
@@ -556,30 +570,34 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr, const EvalContext 
 // GroupExpr
 // ============================================================================
 
-EvalResult eval_group_expr(const ir::GroupExpr &expr, const EvalContext &ctx) {
+EvalResult
+eval_group_expr(const ir::GroupExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
     if (!expr.expr) {
         return make_error("GroupExpr has null inner expression");
     }
-    return eval_expr(*expr.expr, ctx);
+    return eval_expr_impl(*expr.expr, ctx, call_eval);
 }
 
 // ============================================================================
 // CallExpr - NOT SUPPORTED in v0.51
 // ============================================================================
 
-EvalResult eval_call_expr(const ir::CallExpr & /*expr*/, const EvalContext & /*ctx*/) {
+EvalResult
+eval_call_expr(const ir::CallExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
+    if (call_eval != nullptr && *call_eval) {
+        return (*call_eval)(expr, ctx);
+    }
     return make_error("CallExpr not supported in v0.51");
 }
-
-} // anonymous namespace
 
 // ============================================================================
 // Main eval_expr dispatcher
 // ============================================================================
 
-EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx) {
+EvalResult
+eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
     return std::visit(
-        [&ctx](const auto &node) -> EvalResult {
+        [&ctx, call_eval](const auto &node) -> EvalResult {
             using T = std::decay_t<decltype(node)>;
             if constexpr (std::is_same_v<T, ir::NoneLiteralExpr>) {
                 return eval_none_literal(node, ctx);
@@ -596,34 +614,44 @@ EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx) {
             } else if constexpr (std::is_same_v<T, ir::DurationLiteralExpr>) {
                 return eval_duration_literal(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::SomeExpr>) {
-                return eval_some_expr(node, ctx);
+                return eval_some_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::PathExpr>) {
                 return eval_path_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::QualifiedValueExpr>) {
                 return eval_qualified_value_expr(node, ctx);
             } else if constexpr (std::is_same_v<T, ir::CallExpr>) {
-                return eval_call_expr(node, ctx);
+                return eval_call_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::StructLiteralExpr>) {
-                return eval_struct_literal(node, ctx);
+                return eval_struct_literal(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::ListLiteralExpr>) {
-                return eval_list_literal(node, ctx);
+                return eval_list_literal(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::SetLiteralExpr>) {
                 return make_error("SetLiteralExpr not supported in v0.51");
             } else if constexpr (std::is_same_v<T, ir::MapLiteralExpr>) {
                 return make_error("MapLiteralExpr not supported in v0.51");
             } else if constexpr (std::is_same_v<T, ir::UnaryExpr>) {
-                return eval_unary_expr(node, ctx);
+                return eval_unary_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::BinaryExpr>) {
-                return eval_binary_expr(node, ctx);
+                return eval_binary_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::MemberAccessExpr>) {
-                return eval_member_access(node, ctx);
+                return eval_member_access(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::IndexAccessExpr>) {
-                return eval_index_access(node, ctx);
+                return eval_index_access(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::GroupExpr>) {
-                return eval_group_expr(node, ctx);
+                return eval_group_expr(node, ctx, call_eval);
             }
         },
         expr.node);
+}
+
+} // anonymous namespace
+
+EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx) {
+    return eval_expr_impl(expr, ctx, nullptr);
+}
+
+EvalResult eval_expr(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn &call_eval) {
+    return eval_expr_impl(expr, ctx, &call_eval);
 }
 
 } // namespace ahfl::evaluator

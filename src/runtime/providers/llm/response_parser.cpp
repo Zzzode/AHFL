@@ -6,9 +6,29 @@
 
 #include <algorithm>
 #include <string>
+#include <unordered_map>
+#include <utility>
 #include <variant>
 
 namespace ahfl::llm_provider {
+
+namespace {
+
+[[nodiscard]] ResponseParseResult parse_success(evaluator::Value value) {
+    return ResponseParseResult{
+        .value = std::move(value),
+        .error_message = {},
+    };
+}
+
+[[nodiscard]] ResponseParseResult parse_error(std::string message) {
+    return ResponseParseResult{
+        .value = std::nullopt,
+        .error_message = std::move(message),
+    };
+}
+
+} // namespace
 
 ResponseParser::ResponseParser(const ir::Program &program) : program_(program) {}
 
@@ -62,33 +82,33 @@ std::string ResponseParser::extract_json_value(const std::string &json_str,
     return "";
 }
 
-std::optional<evaluator::Value>
-ResponseParser::parse_primitive(const std::string &value_str, const std::string &type_name) const {
+ResponseParseResult ResponseParser::parse_primitive(const std::string &value_str,
+                                                    const std::string &type_name) const {
     if (type_name == "String") {
-        return evaluator::make_string(value_str);
+        return parse_success(evaluator::make_string(value_str));
     }
     if (type_name == "Int") {
         try {
-            return evaluator::make_int(std::stoll(value_str));
-        } catch (...) {
-            return std::nullopt;
+            return parse_success(evaluator::make_int(std::stoll(value_str)));
+        } catch (const std::exception &) {
+            return parse_error("expected Int but got '" + value_str + "'");
         }
     }
     if (type_name == "Float") {
         try {
-            return evaluator::make_float(std::stod(value_str));
-        } catch (...) {
-            return std::nullopt;
+            return parse_success(evaluator::make_float(std::stod(value_str)));
+        } catch (const std::exception &) {
+            return parse_error("expected Float but got '" + value_str + "'");
         }
     }
     if (type_name == "Bool") {
         if (value_str == "true") {
-            return evaluator::make_bool(true);
+            return parse_success(evaluator::make_bool(true));
         }
         if (value_str == "false") {
-            return evaluator::make_bool(false);
+            return parse_success(evaluator::make_bool(false));
         }
-        return std::nullopt;
+        return parse_error("expected Bool but got '" + value_str + "'");
     }
 
     // 枚举类型
@@ -96,20 +116,20 @@ ResponseParser::parse_primitive(const std::string &value_str, const std::string 
         // 验证 variant 是否合法
         for (const auto &variant : enum_decl->variants) {
             if (variant == value_str) {
-                return evaluator::make_enum(type_name, value_str);
+                return parse_success(evaluator::make_enum(type_name, value_str));
             }
         }
-        return std::nullopt;
+        return parse_error("unknown variant '" + value_str + "' for enum '" + type_name + "'");
     }
 
-    return std::nullopt;
+    return parse_error("unknown expected type: " + type_name);
 }
 
-std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &json_obj,
-                                                             const ir::StructDecl &decl) const {
+ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
+                                                 const ir::StructDecl &decl) const {
     auto parsed = ahfl::json::parse_json(json_obj);
     if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
-        return std::nullopt;
+        return parse_error("expected JSON object for struct '" + decl.name + "'");
     }
 
     std::unordered_map<std::string, evaluator::Value> fields;
@@ -117,7 +137,8 @@ std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &
     for (const auto &field : decl.fields) {
         const auto *field_json = (*parsed)->get(field.name);
         if (field_json == nullptr || field_json->is_null()) {
-            return std::nullopt;
+            return parse_error("missing required field '" + field.name + "' for struct '" +
+                               decl.name + "'");
         }
 
         std::string raw_value;
@@ -136,28 +157,37 @@ std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &
         // 检查是否是结构体类型
         if (const auto *nested_struct = find_struct(field.type)) {
             auto nested_val = parse_struct(raw_value, *nested_struct);
-            if (nested_val.has_value()) {
-                fields.emplace(field.name, std::move(*nested_val));
+            if (nested_val.success()) {
+                fields.emplace(field.name, std::move(*nested_val.value));
             } else {
-                return std::nullopt;
+                return parse_error("field '" + field.name + "': " + nested_val.error_message);
             }
             continue;
         }
 
         // 解析基本类型
         auto field_val = parse_primitive(raw_value, field.type);
-        if (field_val.has_value()) {
-            fields.emplace(field.name, std::move(*field_val));
+        if (field_val.success()) {
+            fields.emplace(field.name, std::move(*field_val.value));
         } else {
-            return std::nullopt;
+            return parse_error("field '" + field.name + "': " + field_val.error_message);
         }
     }
 
-    return evaluator::make_struct(decl.name, std::move(fields));
+    return parse_success(evaluator::make_struct(decl.name, std::move(fields)));
 }
 
 std::optional<evaluator::Value> ResponseParser::parse(const std::string &json_str,
                                                       const std::string &expected_type) const {
+    auto result = parse_with_diagnostics(json_str, expected_type);
+    if (result.success()) {
+        return std::move(result.value);
+    }
+    return std::nullopt;
+}
+
+ResponseParseResult ResponseParser::parse_with_diagnostics(const std::string &json_str,
+                                                           const std::string &expected_type) const {
     // 基本类型
     if (expected_type == "String" || expected_type == "Int" || expected_type == "Float" ||
         expected_type == "Bool") {
@@ -175,7 +205,7 @@ std::optional<evaluator::Value> ResponseParser::parse(const std::string &json_st
         return parse_struct(json_str, *struct_decl);
     }
 
-    return std::nullopt;
+    return parse_error("unknown expected type: " + expected_type);
 }
 
 } // namespace ahfl::llm_provider

@@ -1,7 +1,7 @@
 #include "runtime/engine/capability_bridge.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/engine/capability_eval.hpp"
 #include "runtime/evaluator/value.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -157,22 +157,26 @@ void test_retry_exhausted() {
 }
 
 // ============================================================================
-// Test 6: as_invoker_works
+// Test 6: as_invoker_preserves_structured_result
 // ============================================================================
 
-void test_as_invoker_works() {
+void test_as_invoker_preserves_structured_result() {
     CapabilityRegistry registry;
     registry.register_mock("greeting", make_string("hello"));
 
     auto invoker = registry.as_invoker();
-    auto value = invoker("greeting", {});
+    auto result = invoker("greeting", {});
 
-    auto *sv = std::get_if<StringValue>(&value.node);
+    check(result.status == CapabilityCallStatus::Success, "invoker.status_success");
+    check(result.value.has_value(), "invoker.has_value");
+    auto *sv = result.value.has_value() ? std::get_if<StringValue>(&result.value->node) : nullptr;
     check(sv != nullptr && sv->value == "hello", "invoker.value_hello");
 
-    // 未注册的 capability 返回 NoneValue
+    // 未注册的 capability 保留结构化失败，而不是被压成 NoneValue。
     auto missing = invoker("unknown", {});
-    check(std::holds_alternative<NoneValue>(missing.node), "invoker.missing_is_none");
+    check(missing.status == CapabilityCallStatus::Error, "invoker.missing_status_error");
+    check(!missing.value.has_value(), "invoker.missing_no_value");
+    check(!missing.error_message.empty(), "invoker.missing_has_error_message");
 }
 
 // ============================================================================
@@ -336,6 +340,106 @@ void test_eval_with_capability_call() {
     auto *sv = std::get_if<StringValue>(&result.value.node);
     check(sv != nullptr && sv->value == "hello_processed", "eval_cap.value_processed");
 
+    auto invoker = registry.as_invoker();
+    auto invoker_result = eval_expr_with_capabilities(expr, eval_ctx, invoker);
+    check(!invoker_result.has_errors(), "eval_cap.invoker_no_errors");
+    auto *invoker_sv = std::get_if<StringValue>(&invoker_result.value.node);
+    check(invoker_sv != nullptr && invoker_sv->value == "hello_processed",
+          "eval_cap.invoker_value_processed");
+
+    registry.register_function("inner_cap", [](const std::vector<Value> & /*args*/) -> Value {
+        return make_string("inner");
+    });
+    registry.register_function("outer_cap", [](const std::vector<Value> &args) -> Value {
+        if (!args.empty()) {
+            if (auto *arg = std::get_if<StringValue>(&args[0].node)) {
+                return make_string(arg->value + "_outer");
+            }
+        }
+        return make_none();
+    });
+
+    Expr nested_expr;
+    CallExpr outer_call;
+    outer_call.callee = "outer_cap";
+    auto inner_expr = std::make_unique<Expr>();
+    CallExpr inner_call;
+    inner_call.callee = "inner_cap";
+    inner_expr->node = std::move(inner_call);
+    outer_call.arguments.push_back(std::move(inner_expr));
+    nested_expr.node = std::move(outer_call);
+
+    auto nested_result = eval_expr_with_capabilities(nested_expr, eval_ctx, registry.as_invoker());
+    check(!nested_result.has_errors(), "eval_cap.nested_invoker_no_errors");
+    auto *nested_sv = std::get_if<StringValue>(&nested_result.value.node);
+    check(nested_sv != nullptr && nested_sv->value == "inner_outer",
+          "eval_cap.nested_invoker_value");
+
+    registry.register_function(
+        "is_ready", [](const std::vector<Value> & /*args*/) -> Value { return make_bool(true); });
+
+    Expr binary_expr;
+    BinaryExpr equality;
+    equality.op = ExprBinaryOp::Equal;
+    auto equality_lhs = std::make_unique<Expr>();
+    CallExpr ready_call;
+    ready_call.callee = "is_ready";
+    equality_lhs->node = std::move(ready_call);
+    auto equality_rhs = std::make_unique<Expr>();
+    equality_rhs->node = BoolLiteralExpr{true};
+    equality.lhs = std::move(equality_lhs);
+    equality.rhs = std::move(equality_rhs);
+    binary_expr.node = std::move(equality);
+
+    auto binary_result = eval_expr_with_capabilities(binary_expr, eval_ctx, registry.as_invoker());
+    check(!binary_result.has_errors(), "eval_cap.binary_call_no_errors");
+    auto *binary_bool = std::get_if<BoolValue>(&binary_result.value.node);
+    check(binary_bool != nullptr && binary_bool->value, "eval_cap.binary_call_value");
+
+    Expr optional_expr;
+    SomeExpr optional;
+    auto optional_value = std::make_unique<Expr>();
+    CallExpr optional_call;
+    optional_call.callee = "inner_cap";
+    optional_value->node = std::move(optional_call);
+    optional.value = std::move(optional_value);
+    optional_expr.node = std::move(optional);
+
+    auto optional_result =
+        eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());
+    check(!optional_result.has_errors(), "eval_cap.optional_call_no_errors");
+    auto *optional_value_result = std::get_if<OptionalValue>(&optional_result.value.node);
+    auto *optional_inner = optional_value_result != nullptr && optional_value_result->inner
+                               ? std::get_if<StringValue>(&optional_value_result->inner->node)
+                               : nullptr;
+    check(optional_inner != nullptr && optional_inner->value == "inner",
+          "eval_cap.optional_call_value");
+
+    Expr struct_expr;
+    StructLiteralExpr literal;
+    literal.type_name = "CapabilityResult";
+    auto field_value = std::make_unique<Expr>();
+    CallExpr field_call;
+    field_call.callee = "inner_cap";
+    field_value->node = std::move(field_call);
+    literal.fields.push_back(StructFieldInit{
+        .name = "value",
+        .value = std::move(field_value),
+    });
+    struct_expr.node = std::move(literal);
+
+    auto struct_result = eval_expr_with_capabilities(struct_expr, eval_ctx, registry.as_invoker());
+    check(!struct_result.has_errors(), "eval_cap.struct_call_no_errors");
+    auto *struct_value = std::get_if<StructValue>(&struct_result.value.node);
+    const StringValue *field_string = nullptr;
+    if (struct_value != nullptr) {
+        auto value_field = struct_value->fields.find("value");
+        if (value_field != struct_value->fields.end() && value_field->second) {
+            field_string = std::get_if<StringValue>(&value_field->second->node);
+        }
+    }
+    check(field_string != nullptr && field_string->value == "inner", "eval_cap.struct_call_value");
+
     // 测试 null registry 报错
     auto null_result = eval_expr_with_capabilities(expr, eval_ctx, nullptr);
     check(null_result.has_errors(), "eval_cap.null_registry_error");
@@ -358,7 +462,7 @@ int main() {
     test_invoke_not_found();
     test_retry_success_on_second();
     test_retry_exhausted();
-    test_as_invoker_works();
+    test_as_invoker_preserves_structured_result();
     test_http_capability_binding();
     test_grpc_capability_json_transcoding();
     test_circuit_breaker_state_transitions();
