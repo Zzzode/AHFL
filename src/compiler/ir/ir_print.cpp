@@ -1,4 +1,4 @@
-#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "base/support/overloaded.hpp"
