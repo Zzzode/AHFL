@@ -1,6 +1,6 @@
 #include "runtime/engine/workflow_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "runtime/evaluator/value.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -48,6 +48,7 @@ AgentDecl make_echo_agent(const std::string &name) {
     agent.states = {"Init", "Done"};
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
+    agent.transitions = {{"Init", "Done"}};
     return agent;
 }
 
@@ -120,9 +121,8 @@ FlowDecl make_failing_flow(const std::string &target) {
 }
 
 // 构造 workflow node（无 input 表达式）
-WorkflowNode make_node(const std::string &name,
-                       const std::string &target,
-                       std::vector<std::string> after = {}) {
+WorkflowNode
+make_node(const std::string &name, const std::string &target, std::vector<std::string> after = {}) {
     WorkflowNode node;
     node.name = name;
     node.target = target;
@@ -179,8 +179,7 @@ void test_single_node_workflow() {
     check(result.execution_order.size() == 1, "single_node.exec_order_size");
     check(result.execution_order[0] == "echo", "single_node.exec_order_name");
     check(result.node_results.size() == 1, "single_node.node_results_size");
-    check(result.node_results[0].status == AgentStatus::Completed,
-          "single_node.node_completed");
+    check(result.node_results[0].status == AgentStatus::Completed, "single_node.node_completed");
     check(!result.has_errors(), "single_node.no_errors");
 }
 
@@ -280,7 +279,8 @@ void test_node_failure_propagation() {
     WorkflowRuntime runtime(program);
     auto result = runtime.run("FailWorkflow", make_none());
 
-    check(result.status == WorkflowStatus::NodeFailed || result.status == WorkflowStatus::DependencyFailed,
+    check(result.status == WorkflowStatus::NodeFailed ||
+              result.status == WorkflowStatus::DependencyFailed,
           "failure.status_not_completed");
     check(result.node_results.size() == 2, "failure.node_results_size");
     // 第一个 node 失败
@@ -395,8 +395,7 @@ void test_node_input_uses_node_output() {
 
     // AgentA: 返回 struct {value: 100}
     program.declarations.push_back(make_echo_agent("AgentA"));
-    program.declarations.push_back(
-        make_struct_return_flow("AgentA", "AOutput", "value", "100"));
+    program.declarations.push_back(make_struct_return_flow("AgentA", "AOutput", "value", "100"));
 
     // AgentB: 简单返回整数 200
     program.declarations.push_back(make_echo_agent("AgentB"));
@@ -408,8 +407,7 @@ void test_node_input_uses_node_output() {
     workflow.output_type = "Output";
     workflow.nodes.push_back(make_node("a", "AgentA"));
     // b 的 input 引用 a.value (via PathExpr with Identifier root)
-    workflow.nodes.push_back(
-        make_node_with_node_output_path("b", "AgentB", "a", "value", {"a"}));
+    workflow.nodes.push_back(make_node_with_node_output_path("b", "AgentB", "a", "value", {"a"}));
     program.declarations.push_back(std::move(workflow));
 
     WorkflowRuntime runtime(program);
