@@ -1,8 +1,8 @@
 #include "tooling/cli/provider/pipeline_durable_store_import_provider.hpp"
 
+#include "tooling/cli/pipeline_emit.hpp"
 #include "tooling/cli/provider/pipeline_durable_store_import.hpp"
 #include "tooling/cli/provider/pipeline_durable_store_import_provider_steps.hpp"
-#include "tooling/cli/pipeline_emit.hpp"
 #include "tooling/cli/provider/provider_pipeline_cache.hpp"
 
 #include "pipeline/persistence/durable_store_import/artifacts.hpp"
@@ -70,17 +70,6 @@ build_provider_production_readiness_review_for_cli(
 
 namespace {
 
-struct ReleaseGateArtifacts {
-    dsi::ProviderCompatibilityReport compatibility;
-    dsi::ProviderRegistry registry;
-    dsi::ProviderProductionReadinessEvidence readiness_evidence;
-    dsi::ProviderConformanceReport conformance;
-    dsi::ProviderSchemaCompatibilityReport schema_report;
-    dsi::ProviderSelectionPlan selection_plan;
-    dsi::ProviderConfigBundleValidationReport config_report;
-    dsi::ReleaseEvidenceArchiveManifest release_archive;
-};
-
 [[nodiscard]] dsi::ProviderSchemaCompatibilityReport
 make_compatible_schema_report(const dsi::ProviderConformanceReport &conformance) {
     dsi::ProviderSchemaCompatibilityReport report;
@@ -101,6 +90,8 @@ make_default_rejected_approval_decision(const dsi::ApprovalRequest &request) {
     decision.rejection_details = "awaiting operator review and explicit approval";
     return decision;
 }
+
+} // namespace
 
 [[nodiscard]] std::optional<ReleaseGateArtifacts>
 build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache) {
@@ -129,10 +120,10 @@ build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache) {
         return std::nullopt;
     }
 
-    const auto archive = unwrap_cli_result(
-        dsi::build_release_evidence_archive_manifest(
-            *conformance, schema_report, *config_report, *readiness),
-        &dsi::ReleaseEvidenceArchiveManifestResult::manifest);
+    const auto archive =
+        unwrap_cli_result(dsi::build_release_evidence_archive_manifest(
+                              *conformance, schema_report, *config_report, *readiness),
+                          &dsi::ReleaseEvidenceArchiveManifestResult::manifest);
     if (!archive.has_value()) {
         return std::nullopt;
     }
@@ -149,18 +140,7 @@ build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache) {
     };
 }
 
-// Memoized access to release gate artifacts — avoids recomputing intermediate
-// conformance/schema/config/archive artifacts on each downstream step invocation.
-bool g_release_gate_computed = false;
-std::optional<ReleaseGateArtifacts> g_release_gate_cache;
-
-[[nodiscard]] const ReleaseGateArtifacts *get_release_gate(ProviderPipelineCache &cache) {
-    if (!g_release_gate_computed) {
-        g_release_gate_computed = true;
-        g_release_gate_cache = build_release_gate_artifacts_for_cli(cache);
-    }
-    return g_release_gate_cache.has_value() ? &*g_release_gate_cache : nullptr;
-}
+namespace {
 
 [[nodiscard]] std::optional<dsi::ApprovalReceipt>
 build_provider_approval_receipt_from_gate(const ReleaseGateArtifacts &gate) {
@@ -179,11 +159,9 @@ build_provider_approval_receipt_from_gate(const ReleaseGateArtifacts &gate) {
 [[nodiscard]] std::optional<dsi::ProviderOptInDecisionReport>
 build_provider_opt_in_decision_report_from_gate(const ReleaseGateArtifacts &gate,
                                                 const dsi::ApprovalReceipt &approval) {
-    return unwrap_cli_result(
-        dsi::build_provider_opt_in_decision_report(approval,
-                                                   gate.config_report,
-                                                   gate.selection_plan),
-        &dsi::ProviderOptInDecisionReportResult::report);
+    return unwrap_cli_result(dsi::build_provider_opt_in_decision_report(
+                                 approval, gate.config_report, gate.selection_plan),
+                             &dsi::ProviderOptInDecisionReportResult::report);
 }
 
 [[nodiscard]] std::optional<dsi::ProviderRuntimePolicyReport>
@@ -191,11 +169,8 @@ build_provider_runtime_policy_report_from_gate(const ReleaseGateArtifacts &gate,
                                                const dsi::ApprovalReceipt &approval,
                                                const dsi::ProviderOptInDecisionReport &opt_in) {
     return unwrap_cli_result(
-        dsi::build_provider_runtime_policy_report(opt_in,
-                                                  approval,
-                                                  gate.config_report,
-                                                  gate.selection_plan,
-                                                  gate.readiness_evidence),
+        dsi::build_provider_runtime_policy_report(
+            opt_in, approval, gate.config_report, gate.selection_plan, gate.readiness_evidence),
         &dsi::ProviderRuntimePolicyReportResult::report);
 }
 
@@ -208,7 +183,7 @@ build_provider_approval_receipt_for_cli(const ahfl::ir::Program & /*program*/,
                                         const CommandLineOptions & /*options*/,
                                         std::string_view /*command_name*/,
                                         ProviderPipelineCache &cache) {
-    const auto *gate = get_release_gate(cache);
+    const auto *gate = cache.get_release_gate_artifacts();
     if (gate == nullptr) {
         return std::nullopt;
     }
@@ -217,17 +192,17 @@ build_provider_approval_receipt_for_cli(const ahfl::ir::Program & /*program*/,
 
 [[nodiscard]] std::optional<dsi::ProviderOptInDecisionReport>
 build_provider_opt_in_decision_report_for_cli(const ahfl::ir::Program & /*program*/,
-                                             const ahfl::handoff::PackageMetadata & /*metadata*/,
-                                             const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
-                                             const CommandLineOptions & /*options*/,
-                                             std::string_view /*command_name*/,
-                                             ProviderPipelineCache &cache) {
-    const auto *gate = get_release_gate(cache);
+                                              const ahfl::handoff::PackageMetadata & /*metadata*/,
+                                              const ahfl::dry_run::CapabilityMockSet & /*mock_set*/,
+                                              const CommandLineOptions & /*options*/,
+                                              std::string_view /*command_name*/,
+                                              ProviderPipelineCache &cache) {
+    const auto *gate = cache.get_release_gate_artifacts();
     if (gate == nullptr) {
         return std::nullopt;
     }
-    const auto approval = build_provider_approval_receipt_from_gate(*gate);
-    if (!approval.has_value()) {
+    const auto *approval = cache.get_ApprovalReceipt();
+    if (approval == nullptr) {
         return std::nullopt;
     }
     return build_provider_opt_in_decision_report_from_gate(*gate, *approval);
@@ -240,16 +215,16 @@ build_provider_runtime_policy_report_for_cli(const ahfl::ir::Program & /*program
                                              const CommandLineOptions & /*options*/,
                                              std::string_view /*command_name*/,
                                              ProviderPipelineCache &cache) {
-    const auto *gate = get_release_gate(cache);
+    const auto *gate = cache.get_release_gate_artifacts();
     if (gate == nullptr) {
         return std::nullopt;
     }
-    const auto approval = build_provider_approval_receipt_from_gate(*gate);
-    if (!approval.has_value()) {
+    const auto *approval = cache.get_ApprovalReceipt();
+    if (approval == nullptr) {
         return std::nullopt;
     }
-    const auto opt_in = build_provider_opt_in_decision_report_from_gate(*gate, *approval);
-    if (!opt_in.has_value()) {
+    const auto *opt_in = cache.get_OptInDecisionReport();
+    if (opt_in == nullptr) {
         return std::nullopt;
     }
     return build_provider_runtime_policy_report_from_gate(*gate, *approval, *opt_in);
@@ -263,20 +238,20 @@ build_provider_production_integration_dry_run_report_for_cli(
     const CommandLineOptions & /*options*/,
     std::string_view /*command_name*/,
     ProviderPipelineCache &cache) {
-    const auto *gate = get_release_gate(cache);
+    const auto *gate = cache.get_release_gate_artifacts();
     if (gate == nullptr) {
         return std::nullopt;
     }
-    const auto approval = build_provider_approval_receipt_from_gate(*gate);
-    if (!approval.has_value()) {
+    const auto *approval = cache.get_ApprovalReceipt();
+    if (approval == nullptr) {
         return std::nullopt;
     }
-    const auto opt_in = build_provider_opt_in_decision_report_from_gate(*gate, *approval);
-    if (!opt_in.has_value()) {
+    const auto *opt_in = cache.get_OptInDecisionReport();
+    if (opt_in == nullptr) {
         return std::nullopt;
     }
-    const auto policy = build_provider_runtime_policy_report_from_gate(*gate, *approval, *opt_in);
-    if (!policy.has_value()) {
+    const auto *policy = cache.get_RuntimePolicyReport();
+    if (policy == nullptr) {
         return std::nullopt;
     }
 
@@ -321,7 +296,7 @@ build_provider_release_evidence_archive_manifest_for_cli(
     const CommandLineOptions & /*options*/,
     std::string_view /*command_name*/,
     ProviderPipelineCache &cache) {
-    const auto *gate = get_release_gate(cache);
+    const auto *gate = cache.get_release_gate_artifacts();
     if (gate == nullptr) {
         return std::nullopt;
     }

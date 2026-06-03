@@ -193,17 +193,21 @@ struct OptionSpec {
 
 ### Provider Artifact 可见性声明
 
-可见性在 `pipeline_durable_store_import_provider_artifacts.def` 的第 6 列声明：
+可见性在 `pipeline_durable_store_import_provider_artifacts.def` 的 `visibility` 字段声明；该记录同时是 provider artifact 与 CLI command 元数据的唯一来源：
 
 ```cpp
 AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(
     WriteAttempt,                          // kind
+    EmitDurableStoreImportProviderWriteAttempt,  // command_kind
     ProviderWriteAttemptPreview,           // artifact_type
     build_provider_write_attempt_for_cli,  // builder
     print_provider_write_attempt_preview,  // printer
     "emit-durable-store-import-provider-write-attempt",  // command_token
-    Public)                                // visibility: Public | Internal
+    Public,                                // visibility: Public | Internal
+    0)                                     // provider-local CLI/list order
 ```
+
+`Public` artifact 默认可通过 `ahflc emit provider/...` 解析；`Internal` artifact 需要显式 `--show-hidden`，不属于默认用户命令面。
 
 ### 泛型 Provider Step 宏
 

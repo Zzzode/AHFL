@@ -124,6 +124,13 @@ function(ahfl_discover_package_golden_tests)
             endif()
         endif()
 
+        # Auto-discovered provider goldens validate artifact output coverage,
+        # including internal pipeline nodes. The user-facing default provider
+        # surface is covered by command_routing and explicit public tests.
+        if(subcommand MATCHES "^emit provider/")
+            set(subcommand "${subcommand} --show-hidden")
+        endif()
+
         # Determine source_stem, fixture, run_id, mocks_stem from variant_stem.
         set(fixture "fixture.request.basic")
         set(run_id "run-001")

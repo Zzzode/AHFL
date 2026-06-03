@@ -1,4 +1,5 @@
 #include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/provider/provider_artifact_catalog.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -22,6 +23,7 @@ struct CommandSpec {
 // Base constants for provider command order derivation.
 constexpr int kProviderUsageBase = 34;
 constexpr int kProviderActionBase = 31;
+constexpr int kProviderInferenceBase = 112;
 constexpr int kProviderPackageBase = 44;
 constexpr int kProviderCapabilityBase = 24;
 
@@ -130,17 +132,17 @@ constexpr CommandSpec kCommandSpecs[] = {
      28,
      43,
      23},
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(kind, token, position, inference_order,      \
-                                                       artifact_kind)                               \
-    {CommandKind::kind,                                                                            \
-     token,                                                                                        \
-     kProviderUsageBase + (position),                                                              \
-     kProviderActionBase + (position),                                                             \
-     (inference_order),                                                                            \
-     kProviderPackageBase + (position),                                                            \
-     kProviderCapabilityBase + (position)},
-#include "tooling/cli/provider/durable_store_import_provider_commands.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
+    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+    {CommandKind::command_kind,                                                                    \
+     command_token,                                                                                \
+     kProviderUsageBase + (order),                                                                 \
+     kProviderActionBase + (order),                                                                \
+     kProviderInferenceBase + (order),                                                             \
+     kProviderPackageBase + (order),                                                               \
+     kProviderCapabilityBase + (order)},
+#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
     {CommandKind::EmitSchedulerReview, "emit-scheduler-review", 96, 93, 99, 8, 86},
     {CommandKind::EmitRuntimeSession, "emit-runtime-session", 97, 94, 100, 9, 87},
     {CommandKind::EmitDryRunTrace, "emit-dry-run-trace", 98, 95, 101, 10, 88},
@@ -157,20 +159,22 @@ constexpr CommandSpec kCommandSpecs[] = {
 };
 
 // Compile-time verification: array index must equal enum value for O(1) lookup.
-static_assert([] {
-    for (std::size_t i = 0; i < std::size(kCommandSpecs); ++i) {
-        if (static_cast<std::size_t>(kCommandSpecs[i].kind) != i)
-            return false;
-    }
-    return true;
-}(), "kCommandSpecs must be indexed by CommandKind enum value");
+static_assert(
+    [] {
+        for (std::size_t i = 0; i < std::size(kCommandSpecs); ++i) {
+            if (static_cast<std::size_t>(kCommandSpecs[i].kind) != i)
+                return false;
+        }
+        return true;
+    }(),
+    "kCommandSpecs must be indexed by CommandKind enum value");
 
 [[nodiscard]] const CommandSpec *find_command_spec(CommandKind command) {
     const auto idx = static_cast<std::size_t>(command);
-    if (idx >= std::size(kCommandSpecs)) return nullptr;
+    if (idx >= std::size(kCommandSpecs))
+        return nullptr;
     return &kCommandSpecs[idx];
 }
-
 
 [[nodiscard]] constexpr int command_list_order(const CommandSpec &spec, CommandListKind list_kind) {
     switch (list_kind) {
@@ -280,8 +284,8 @@ static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSup
 }
 
 /// Check whether `old_token` belongs to `group` and its short form equals `artifact_id`.
-[[nodiscard]] bool matches_artifact_id(std::string_view old_token, ActionGroup group,
-                                       std::string_view artifact_id) {
+[[nodiscard]] bool
+matches_artifact_id(std::string_view old_token, ActionGroup group, std::string_view artifact_id) {
     switch (group) {
     case ActionGroup::Emit: {
         constexpr std::string_view kProviderPrefix = "emit-durable-store-import-provider-";
@@ -318,6 +322,11 @@ static_assert(command_list_has_unique_orders<CommandListKind::CapabilityInputSup
     }
     }
     return false;
+}
+
+[[nodiscard]] bool is_hidden_provider_command(CommandKind command) {
+    const auto visibility = provider_artifact_visibility_for_command(command);
+    return visibility.has_value() && *visibility == ProviderArtifactVisibility::Internal;
 }
 
 } // namespace
@@ -468,20 +477,32 @@ infer_effective_command(const CommandLineOptions &options) {
 // ---------------------------------------------------------------------------
 
 std::optional<ActionGroup> action_group_from_token(std::string_view token) {
-    if (token == "emit") return ActionGroup::Emit;
-    if (token == "dump") return ActionGroup::Dump;
-    if (token == "verify") return ActionGroup::Verify;
-    if (token == "validate") return ActionGroup::Validate;
+    if (token == "emit")
+        return ActionGroup::Emit;
+    if (token == "dump")
+        return ActionGroup::Dump;
+    if (token == "verify")
+        return ActionGroup::Verify;
+    if (token == "validate")
+        return ActionGroup::Validate;
     return std::nullopt;
 }
 
-std::optional<CommandKind> resolve_subcommand(ActionGroup group, std::string_view artifact_id) {
+std::optional<CommandKind>
+resolve_subcommand(ActionGroup group, std::string_view artifact_id, bool include_hidden) {
     for (const auto &spec : kCommandSpecs) {
         if (matches_artifact_id(spec.token, group, artifact_id)) {
+            if (!include_hidden && is_hidden_provider_command(spec.kind)) {
+                continue;
+            }
             return spec.kind;
         }
     }
     return std::nullopt;
+}
+
+std::optional<CommandKind> resolve_subcommand(ActionGroup group, std::string_view artifact_id) {
+    return resolve_subcommand(group, artifact_id, false);
 }
 
 std::string command_short_name(CommandKind command) {

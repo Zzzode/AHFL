@@ -1,8 +1,8 @@
 // provider_step_graph.def — Provider artifact dependency graph (X-macro table)
 //
 // This file declaratively encodes the dependency graph for all provider pipeline
-// steps. It is intended to be included (possibly multiple times) by translation
-// units that define or need to enumerate provider builder functions.
+// steps. ProviderPipeline::build uses it through provider_artifact_graph to
+// prefetch dependencies before invoking the typed artifact builder.
 //
 // Three macro shapes are used:
 //
@@ -21,7 +21,7 @@
 //   AHFL_PROVIDER_STEP_CUSTOM(kind)
 //       A step whose builder requires hand-written logic (complex multi-dep,
 //       conditional branching, or non-standard result handling). The
-//       implementation lives in `provider_steps/*.cpp` and is maintained
+//       implementation lives in `provider/steps/*.cpp` and is maintained
 //       manually.
 //
 // Usage example (code generation):

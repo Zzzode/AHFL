@@ -8,6 +8,8 @@ add_executable(ahflc
     command_registry.cpp
     command_help.cpp
     pipeline_core_commands.cpp
+    provider/provider_artifact_catalog.cpp
+    provider/provider_artifact_graph.cpp
     provider/provider_pipeline_cache.cpp
     provider/pipeline_durable_store_import.cpp
     provider/pipeline_durable_store_import_provider.cpp
@@ -24,6 +26,8 @@ add_executable(ahflc
 target_link_libraries(ahflc
     PRIVATE
         ahfl_compiler
+        ahfl_runtime
+        ahfl_tooling_package
 )
 
 target_include_directories(ahflc PRIVATE ${PROJECT_SOURCE_DIR}/src)
@@ -35,11 +39,13 @@ add_executable(ahfl-run
     cli_analysis_helpers.cpp
     command_registry.cpp
     command_help.cpp
+    provider/provider_artifact_catalog.cpp
 )
 
 target_link_libraries(ahfl-run
     PRIVATE
         ahfl_compiler
+        ahfl_runtime
 )
 
 target_include_directories(ahfl-run PRIVATE ${PROJECT_SOURCE_DIR}/src)
