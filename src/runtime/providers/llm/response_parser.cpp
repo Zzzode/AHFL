@@ -82,7 +82,13 @@ ResponseParser::parse_primitive(const std::string &value_str, const std::string 
         }
     }
     if (type_name == "Bool") {
-        return evaluator::make_bool(value_str == "true");
+        if (value_str == "true") {
+            return evaluator::make_bool(true);
+        }
+        if (value_str == "false") {
+            return evaluator::make_bool(false);
+        }
+        return std::nullopt;
     }
 
     // 枚举类型
@@ -93,8 +99,7 @@ ResponseParser::parse_primitive(const std::string &value_str, const std::string 
                 return evaluator::make_enum(type_name, value_str);
             }
         }
-        // 不匹配则使用原值（容错）
-        return evaluator::make_enum(type_name, value_str);
+        return std::nullopt;
     }
 
     return std::nullopt;
@@ -112,9 +117,7 @@ std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &
     for (const auto &field : decl.fields) {
         const auto *field_json = (*parsed)->get(field.name);
         if (field_json == nullptr || field_json->is_null()) {
-            // 字段缺失，使用默认值
-            fields.emplace(field.name, evaluator::make_none());
-            continue;
+            return std::nullopt;
         }
 
         std::string raw_value;
@@ -136,7 +139,7 @@ std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &
             if (nested_val.has_value()) {
                 fields.emplace(field.name, std::move(*nested_val));
             } else {
-                fields.emplace(field.name, evaluator::make_none());
+                return std::nullopt;
             }
             continue;
         }
@@ -146,8 +149,7 @@ std::optional<evaluator::Value> ResponseParser::parse_struct(const std::string &
         if (field_val.has_value()) {
             fields.emplace(field.name, std::move(*field_val));
         } else {
-            // 如果类型解析失败，作为字符串保存
-            fields.emplace(field.name, evaluator::make_string(raw_value));
+            return std::nullopt;
         }
     }
 

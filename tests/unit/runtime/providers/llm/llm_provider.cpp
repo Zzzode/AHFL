@@ -2,14 +2,14 @@
 //
 // 验证 PromptBuilder、ResponseParser、LLMProviderConfig、LLMCapabilityProvider 的功能
 
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "runtime/engine/capability_bridge.hpp"
+#include "runtime/evaluator/value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/providers/llm/prompt_builder.hpp"
 #include "runtime/providers/llm/response_parser.hpp"
-#include "runtime/engine/capability_bridge.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -100,8 +100,7 @@ void test_prompt_builder() {
           "prompt_builder.system_prompt_contains_enum_variant");
     check(system.find("Technical") != std::string::npos,
           "prompt_builder.system_prompt_contains_enum_variant_2");
-    check(system.find("JSON") != std::string::npos,
-          "prompt_builder.system_prompt_mentions_json");
+    check(system.find("JSON") != std::string::npos, "prompt_builder.system_prompt_mentions_json");
 
     // user prompt 应包含参数值
     std::vector<Value> args;
@@ -182,6 +181,23 @@ void test_response_parser_enum() {
     }
 }
 
+void test_response_parser_rejects_invalid_enum() {
+    auto program = build_test_program();
+    ResponseParser parser(program);
+
+    auto result = parser.parse("Security", "Category");
+    check(!result.has_value(), "response_parser.invalid_enum_rejected");
+}
+
+void test_response_parser_rejects_missing_struct_field() {
+    auto program = build_test_program();
+    ResponseParser parser(program);
+
+    std::string json = R"({"category": "Technical"})";
+    auto result = parser.parse(json, "ClassifyResult");
+    check(!result.has_value(), "response_parser.missing_field_rejected");
+}
+
 // ============================================================================
 // Test: ResponseParser - 解析 bool 字段
 // ============================================================================
@@ -222,12 +238,10 @@ void test_config_env_expansion() {
     // 测试 expand_env_vars
     std::string input = "key=${AHFL_TEST_API_KEY}, url=${AHFL_TEST_ENDPOINT}";
     std::string expanded = expand_env_vars(input);
-    check(expanded.find("sk-test-12345") != std::string::npos,
-          "config.env_expansion_api_key");
+    check(expanded.find("sk-test-12345") != std::string::npos, "config.env_expansion_api_key");
     check(expanded.find("https://api.example.com/v1") != std::string::npos,
           "config.env_expansion_endpoint");
-    check(expanded.find("${") == std::string::npos,
-          "config.env_expansion_no_remaining_vars");
+    check(expanded.find("${") == std::string::npos, "config.env_expansion_no_remaining_vars");
 
     // 未定义的环境变量应被清除
     std::string with_unknown = "prefix_${AHFL_UNDEFINED_VAR_12345}_suffix";
@@ -248,6 +262,7 @@ void test_config_env_expansion() {
     check(config.endpoint == "https://api.example.com/v1", "config.load_endpoint");
     check(config.model == "glm-4", "config.load_model");
     check(config.api_key == "sk-test-12345", "config.load_api_key");
+    check(config.temperature == 0.2, "config.load_temperature");
     check(config.max_tokens == 2048, "config.load_max_tokens");
     check(config.timeout_seconds == 60, "config.load_timeout");
     check(config.max_retries == 3, "config.load_max_retries");
@@ -284,6 +299,8 @@ int main() {
     test_prompt_builder();
     test_response_parser_struct();
     test_response_parser_enum();
+    test_response_parser_rejects_invalid_enum();
+    test_response_parser_rejects_missing_struct_field();
     test_response_parser_bool_field();
     test_config_env_expansion();
     test_llm_capability_provider_register();

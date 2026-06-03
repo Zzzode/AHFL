@@ -1,9 +1,9 @@
 #include "runtime/engine/capability_bridge.hpp"
 
-#include "runtime/evaluator/value_json.hpp"
 #include "runtime/engine/connection_pool.hpp"
 #include "runtime/engine/grpc_transport.hpp"
 #include "runtime/engine/http_transport.hpp"
+#include "runtime/evaluator/value_json.hpp"
 
 #include <memory>
 #include <sstream>
@@ -112,9 +112,8 @@ std::vector<std::string> CapabilityRegistry::registered_names() const {
 }
 
 std::function<Value(const std::string &, const std::vector<Value> &)>
-CapabilityRegistry::as_invoker() const {
-    // 捕获 this 指针（const 不够，invoke 需要 non-const），使用 mutable copy
-    auto *self = const_cast<CapabilityRegistry *>(this);
+CapabilityRegistry::as_invoker() {
+    auto *self = this;
     return [self](const std::string &name, const std::vector<Value> &args) -> Value {
         auto result = self->invoke(name, args);
         if (result.status == CapabilityCallStatus::Success && result.value.has_value()) {
@@ -157,9 +156,8 @@ CapabilityCallResult CapabilityRegistry::invoke_with_retry(CapabilityBinding &bi
         if (attempt < max_attempts) {
             auto delay = binding.retry.initial_delay;
             for (std::size_t i = 1; i < attempt; ++i) {
-                delay = std::chrono::milliseconds(
-                    static_cast<long long>(
-                        static_cast<double>(delay.count()) * binding.retry.backoff_multiplier));
+                delay = std::chrono::milliseconds(static_cast<long long>(
+                    static_cast<double>(delay.count()) * binding.retry.backoff_multiplier));
             }
             if (delay.count() > 0) {
                 std::this_thread::sleep_for(delay);
@@ -265,8 +263,7 @@ CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityCo
         request.method = shared_config->method;
         request.headers = shared_config->headers;
         request.body = serialize_args_to_json(args);
-        request.timeout_seconds = static_cast<int>(
-            shared_config->timeout.deadline.count() / 1000);
+        request.timeout_seconds = static_cast<int>(shared_config->timeout.deadline.count() / 1000);
 
         // Ensure Content-Type is set
         if (request.headers.find("Content-Type") == request.headers.end()) {
@@ -300,7 +297,8 @@ CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityCo
             return CapabilityCallResult{
                 .status = CapabilityCallStatus::Error,
                 .value = std::nullopt,
-                .error_message = "HTTP " + std::to_string(response.status_code) + ": " + response.body,
+                .error_message =
+                    "HTTP " + std::to_string(response.status_code) + ": " + response.body,
                 .attempts = 1,
             };
         }
@@ -371,13 +369,12 @@ struct ParsedEndpoint {
         try {
             result.port = static_cast<uint16_t>(std::stoi(working.substr(colon_pos + 1)));
         } catch (...) {
-            result.port = result.use_tls ? static_cast<uint16_t>(443)
-                                         : static_cast<uint16_t>(50051);
+            result.port =
+                result.use_tls ? static_cast<uint16_t>(443) : static_cast<uint16_t>(50051);
         }
     } else {
         result.host = working;
-        result.port = result.use_tls ? static_cast<uint16_t>(443)
-                                     : static_cast<uint16_t>(50051);
+        result.port = result.use_tls ? static_cast<uint16_t>(443) : static_cast<uint16_t>(50051);
     }
 
     return result;
@@ -427,8 +424,8 @@ CapabilityBinding make_grpc_capability(const std::string &name, GRPCCapabilityCo
         GrpcRequest grpc_request;
         grpc_request.endpoint = std::move(endpoint);
         grpc_request.serialized_body = serialize_args_for_grpc(args);
-        grpc_request.timeout = std::chrono::duration_cast<std::chrono::seconds>(
-            shared_config->timeout.deadline);
+        grpc_request.timeout =
+            std::chrono::duration_cast<std::chrono::seconds>(shared_config->timeout.deadline);
 
         // Add metadata from config (future extension point)
         // grpc_request.metadata = ...

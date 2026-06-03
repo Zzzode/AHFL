@@ -5,14 +5,14 @@
 //
 // 该 CLI 编译 .ahfl 文件，使用 LLM Provider 真实执行 workflow。
 
-#include "tooling/cli/cli_analysis_helpers.hpp"
-#include "runtime/evaluator/value.hpp"
-#include "runtime/evaluator/value_json.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
-#include "runtime/providers/llm/llm_capability_provider.hpp"
-#include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/evaluator/value.hpp"
+#include "runtime/evaluator/value_json.hpp"
+#include "runtime/providers/llm/llm_capability_provider.hpp"
+#include "runtime/providers/llm/llm_provider_config.hpp"
+#include "tooling/cli/cli_analysis_helpers.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -305,6 +305,10 @@ int main(int argc, char **argv) {
     }
 
     auto llm_config = load_config(*config_content_opt);
+    if (llm_config.endpoint.empty() || llm_config.model.empty() || llm_config.api_key.empty()) {
+        std::cerr << "错误: LLM 配置缺少 endpoint、model 或 api_key\n";
+        return 1;
+    }
     std::cout << "LLM 配置已加载: model=" << llm_config.model << "\n";
 
     // 3. 解析输入 JSON

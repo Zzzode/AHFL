@@ -1,6 +1,6 @@
 #include "runtime/engine/agent_runtime.hpp"
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "runtime/evaluator/value.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -50,7 +50,8 @@ StateHandler make_goto_handler(const std::string &state, const std::string &targ
 StateHandler make_return_handler(const std::string &state, ExprNode return_expr) {
     StateHandler handler;
     handler.state_name = state;
-    handler.body.statements.push_back(make_stmt_ptr(ReturnStatement{make_expr_ptr(std::move(return_expr))}));
+    handler.body.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(std::move(return_expr))}));
     return handler;
 }
 
@@ -65,7 +66,8 @@ StateHandler make_empty_handler(const std::string &state) {
 StateHandler make_assert_fail_handler(const std::string &state) {
     StateHandler handler;
     handler.state_name = state;
-    handler.body.statements.push_back(make_stmt_ptr(AssertStatement{make_expr_ptr(BoolLiteralExpr{false})}));
+    handler.body.statements.push_back(
+        make_stmt_ptr(AssertStatement{make_expr_ptr(BoolLiteralExpr{false})}));
     return handler;
 }
 
@@ -88,10 +90,10 @@ StateHandler make_conditional_handler(const std::string &state,
     path_expr.path.root_name = "input";
     path_expr.path.members = {"approved"};
 
-    handler.body.statements.push_back(make_stmt_ptr(IfStatement{
-        make_expr_ptr(std::move(path_expr)),
-        std::make_unique<Block>(std::move(then_block)),
-        std::make_unique<Block>(std::move(else_block))}));
+    handler.body.statements.push_back(
+        make_stmt_ptr(IfStatement{make_expr_ptr(std::move(path_expr)),
+                                  std::make_unique<Block>(std::move(then_block)),
+                                  std::make_unique<Block>(std::move(else_block))}));
     return handler;
 }
 
@@ -118,6 +120,7 @@ void test_simple_linear_agent() {
     agent.states = {"Init", "Process", "Final"};
     agent.initial_state = "Init";
     agent.final_states = {"Final"};
+    agent.transitions = {{"Init", "Process"}, {"Process", "Final"}};
 
     // Flow 定义
     FlowDecl flow;
@@ -156,6 +159,12 @@ void test_conditional_goto_agent() {
     agent.states = {"Init", "Approved", "Rejected", "Done"};
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
+    agent.transitions = {
+        {"Init", "Approved"},
+        {"Init", "Rejected"},
+        {"Approved", "Done"},
+        {"Rejected", "Done"},
+    };
 
     FlowDecl flow;
     flow.target = "ConditionalAgent";
@@ -226,6 +235,7 @@ void test_non_final_state_fallthrough() {
     agent.states = {"Init", "Final"};
     agent.initial_state = "Init";
     agent.final_states = {"Final"};
+    agent.transitions = {{"Init", "Final"}};
 
     FlowDecl flow;
     flow.target = "FallthroughAgent";
@@ -250,6 +260,7 @@ void test_final_state_fallthrough() {
     agent.states = {"Init", "Final"};
     agent.initial_state = "Init";
     agent.final_states = {"Final"};
+    agent.transitions = {{"Init", "Final"}};
 
     FlowDecl flow;
     flow.target = "FinalFallAgent";
@@ -301,6 +312,7 @@ void test_quota_exceeded() {
     agent.states = {"A", "B", "Final"};
     agent.initial_state = "A";
     agent.final_states = {"Final"};
+    agent.transitions = {{"A", "B"}, {"B", "A"}};
 
     FlowDecl flow;
     flow.target = "QuotaAgent";
@@ -329,6 +341,7 @@ void test_infinite_loop_detection() {
     agent.states = {"Loop", "Final"};
     agent.initial_state = "Loop";
     agent.final_states = {"Final"};
+    agent.transitions = {{"Loop", "Loop"}};
 
     FlowDecl flow;
     flow.target = "LoopAgent";
@@ -367,19 +380,19 @@ void test_assert_failure() {
 }
 
 // ============================================================================
-// Test: 无 transitions 定义（permissive 模式）
+// Test: 无 transitions 定义（strict 模式）
 // ============================================================================
 
-void test_permissive_no_transitions() {
+void test_strict_no_transitions() {
     AgentDecl agent;
-    agent.name = "PermissiveAgent";
+    agent.name = "StrictAgent";
     agent.states = {"A", "B", "C"};
     agent.initial_state = "A";
     agent.final_states = {"C"};
-    // 不定义 transitions -> 允许任意跳转
+    // 不定义 transitions -> 拒绝所有 goto
 
     FlowDecl flow;
-    flow.target = "PermissiveAgent";
+    flow.target = "StrictAgent";
     flow.state_handlers.push_back(make_goto_handler("A", "C")); // 直接跳到 C
     flow.state_handlers.push_back(make_goto_handler("B", "C"));
     flow.state_handlers.push_back(make_return_handler("C", StringLiteralExpr{"done"}));
@@ -387,8 +400,8 @@ void test_permissive_no_transitions() {
     AgentRuntime runtime(agent, flow);
     auto result = runtime.run(make_none());
 
-    check(result.status == AgentStatus::Completed, "permissive.status_completed");
-    check(result.current_state == "C", "permissive.final_state_C");
+    check(result.status == AgentStatus::InvalidTransition, "strict_missing_transitions.status");
+    check(result.current_state == "A", "strict_missing_transitions.stays_at_source");
 }
 
 // ============================================================================
@@ -403,6 +416,7 @@ void test_build_agent_runtime() {
     agent.states = {"Init", "Done"};
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
+    agent.transitions = {{"Init", "Done"}};
     program.declarations.push_back(std::move(agent));
 
     FlowDecl flow;
@@ -435,6 +449,7 @@ void test_missing_handler() {
     agent.states = {"Init", "Process", "Final"};
     agent.initial_state = "Init";
     agent.final_states = {"Final"};
+    agent.transitions = {{"Init", "Process"}, {"Process", "Final"}};
 
     FlowDecl flow;
     flow.target = "MissingHandler";
@@ -461,7 +476,7 @@ int main() {
     test_quota_exceeded();
     test_infinite_loop_detection();
     test_assert_failure();
-    test_permissive_no_transitions();
+    test_strict_no_transitions();
     test_build_agent_runtime();
     test_missing_handler();
 

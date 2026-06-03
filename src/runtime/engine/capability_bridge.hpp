@@ -10,8 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+#include "runtime/evaluator/value.hpp"
 
 namespace ahfl::runtime {
 
@@ -56,7 +56,11 @@ struct CircuitBreakerConfig {
 // Circuit Breaker 状态（线程安全，通过 shared_ptr 共享给 handler lambda）
 class CircuitBreakerState {
   public:
-    enum class State { Closed, Open, HalfOpen };
+    enum class State {
+        Closed,
+        Open,
+        HalfOpen
+    };
 
     explicit CircuitBreakerState(CircuitBreakerConfig config) : config_(config) {}
 
@@ -95,7 +99,7 @@ class CapabilityRegistry {
     [[nodiscard]] bool has(const std::string &name) const;
     [[nodiscard]] std::vector<std::string> registered_names() const;
     [[nodiscard]] std::function<Value(const std::string &, const std::vector<Value> &)>
-    as_invoker() const;
+    as_invoker();
 
   private:
     std::unordered_map<std::string, CapabilityBinding> bindings_;

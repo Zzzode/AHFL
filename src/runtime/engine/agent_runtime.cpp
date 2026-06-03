@@ -241,9 +241,8 @@ const ir::StateHandler *AgentRuntime::find_handler(const std::string &state_name
 }
 
 bool AgentRuntime::is_valid_transition(const std::string &from, const std::string &to) const {
-    // 如果 transitions 为空，允许所有转换（permissive 模式）
     if (agent_.transitions.empty()) {
-        return true;
+        return false;
     }
     return std::any_of(
         agent_.transitions.begin(), agent_.transitions.end(), [&](const ir::TransitionDecl &t) {
