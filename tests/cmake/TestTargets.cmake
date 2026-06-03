@@ -554,14 +554,12 @@ ahfl_apply_project_warnings(ahfl_compiler_backends_registry_tests)
 
 add_executable(ahfl_cli_command_routing_tests
     unit/tooling/cli/command_routing.cpp
-    ${PROJECT_SOURCE_DIR}/src/tooling/cli/command_registry.cpp
-    ${PROJECT_SOURCE_DIR}/src/tooling/cli/command_help.cpp
-    ${PROJECT_SOURCE_DIR}/src/tooling/cli/provider/provider_artifact_catalog.cpp
-    ${PROJECT_SOURCE_DIR}/src/tooling/cli/provider/provider_artifact_graph.cpp
+    ${PROJECT_SOURCE_DIR}/src/tooling/cli/option_table.cpp
 )
 target_link_libraries(ahfl_cli_command_routing_tests
     PRIVATE
         ahfl_pipeline_durable_store_import
+        ahfl_cli_command_catalog
         ahfl_base_public
 )
 ahfl_apply_project_warnings(ahfl_cli_command_routing_tests)

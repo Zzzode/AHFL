@@ -34,6 +34,9 @@ struct CapabilityCallResult {
     std::size_t attempts{1};
 };
 
+using CapabilityInvoker =
+    std::function<CapabilityCallResult(const std::string &name, const std::vector<Value> &args)>;
+
 // Retry 配置
 struct RetryConfig {
     std::size_t max_retries{0};
@@ -98,8 +101,7 @@ class CapabilityRegistry {
                                               const std::vector<Value> &args);
     [[nodiscard]] bool has(const std::string &name) const;
     [[nodiscard]] std::vector<std::string> registered_names() const;
-    [[nodiscard]] std::function<Value(const std::string &, const std::vector<Value> &)>
-    as_invoker();
+    [[nodiscard]] CapabilityInvoker as_invoker();
 
   private:
     std::unordered_map<std::string, CapabilityBinding> bindings_;

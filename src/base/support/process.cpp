@@ -3,13 +3,13 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 #include <signal.h>
+#include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -29,12 +29,16 @@ class FdGuard {
   public:
     FdGuard() = default;
     explicit FdGuard(int fd) : fd_(fd) {}
-    ~FdGuard() { reset(); }
+    ~FdGuard() {
+        reset();
+    }
 
     FdGuard(const FdGuard &) = delete;
     FdGuard &operator=(const FdGuard &) = delete;
 
-    FdGuard(FdGuard &&other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
+    FdGuard(FdGuard &&other) noexcept : fd_(other.fd_) {
+        other.fd_ = -1;
+    }
     FdGuard &operator=(FdGuard &&other) noexcept {
         if (this != &other) {
             reset();
@@ -44,8 +48,12 @@ class FdGuard {
         return *this;
     }
 
-    [[nodiscard]] int get() const { return fd_; }
-    [[nodiscard]] bool valid() const { return fd_ >= 0; }
+    [[nodiscard]] int get() const {
+        return fd_;
+    }
+    [[nodiscard]] bool valid() const {
+        return fd_ >= 0;
+    }
 
     int release() {
         const int value = fd_;
@@ -62,6 +70,29 @@ class FdGuard {
 
   private:
     int fd_{-1};
+};
+
+class ProcessArgv {
+  public:
+    explicit ProcessArgv(const ProcessConfig &config) {
+        arguments_.reserve(config.arguments.size() + 1);
+        arguments_.push_back(config.executable);
+        arguments_.insert(arguments_.end(), config.arguments.begin(), config.arguments.end());
+
+        argv_.reserve(arguments_.size() + 1);
+        for (auto &argument : arguments_) {
+            argv_.push_back(argument.data());
+        }
+        argv_.push_back(nullptr);
+    }
+
+    [[nodiscard]] char *const *data() const {
+        return argv_.data();
+    }
+
+  private:
+    std::vector<std::string> arguments_;
+    std::vector<char *> argv_;
 };
 
 struct TempFile {
@@ -165,20 +196,11 @@ ProcessResult launch_process(const ProcessConfig &config) {
         posix_spawn_file_actions_addclose(&actions, stdin_write.get());
     }
 
-    std::vector<char *> argv;
-    argv.push_back(const_cast<char *>(config.executable.c_str()));
-    for (const auto &arg : config.arguments) {
-        argv.push_back(const_cast<char *>(arg.c_str()));
-    }
-    argv.push_back(nullptr);
+    const ProcessArgv argv{config};
 
     pid_t pid = 0;
-    const int spawn_error = posix_spawnp(&pid,
-                                         config.executable.c_str(),
-                                         &actions,
-                                         nullptr,
-                                         argv.data(),
-                                         environ);
+    const int spawn_error =
+        posix_spawnp(&pid, config.executable.c_str(), &actions, nullptr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
 
     if (spawn_error != 0) {
@@ -189,8 +211,8 @@ ProcessResult launch_process(const ProcessConfig &config) {
     stdin_read.reset();
     if (has_stdin) {
         if (!write_all(stdin_write.get(), *config.stdin_input)) {
-            result.stderr_output = "failed to write process stdin: " +
-                                   std::string(std::strerror(errno));
+            result.stderr_output =
+                "failed to write process stdin: " + std::string(std::strerror(errno));
         }
         stdin_write.reset();
     }

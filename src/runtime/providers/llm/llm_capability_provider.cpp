@@ -4,7 +4,8 @@
 
 #include "base/json/json_value.hpp"
 
-#include <iostream>
+#include <cstddef>
+#include <optional>
 #include <sstream>
 #include <variant>
 
@@ -67,8 +68,9 @@ LLMCapabilityProvider::extract_content_from_response(const std::string &response
     return "";
 }
 
-evaluator::Value LLMCapabilityProvider::invoke(const std::string &capability_name,
-                                               const std::vector<evaluator::Value> &args) {
+runtime::CapabilityCallResult
+LLMCapabilityProvider::invoke(const std::string &capability_name,
+                              const std::vector<evaluator::Value> &args) {
     // 查找 capability 的返回类型
     std::string return_type;
     for (const auto &decl : program_.declarations) {
@@ -81,8 +83,12 @@ evaluator::Value LLMCapabilityProvider::invoke(const std::string &capability_nam
     }
 
     if (return_type.empty()) {
-        std::cerr << "[LLMProvider] capability not found: " << capability_name << "\n";
-        return evaluator::make_none();
+        return runtime::CapabilityCallResult{
+            .status = runtime::CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message = "capability not found: " + capability_name,
+            .attempts = 0,
+        };
     }
 
     // 构建 prompt
@@ -95,35 +101,53 @@ evaluator::Value LLMCapabilityProvider::invoke(const std::string &capability_nam
     // 带重试的 HTTP 调用
     HttpResponse response;
     int attempts = 0;
-    while (attempts <= config_.max_retries) {
+    for (int attempt = 1; attempt <= config_.max_retries + 1; ++attempt) {
+        attempts = attempt;
         response = client_.chat_completions(request_json);
         if (response.success()) {
             break;
         }
-        ++attempts;
     }
 
     if (!response.success()) {
-        std::cerr << "[LLMProvider] HTTP request failed after " << attempts
-                  << " attempts, status=" << response.status_code << "\n";
-        return evaluator::make_none();
+        return runtime::CapabilityCallResult{
+            .status = config_.max_retries > 0 ? runtime::CapabilityCallStatus::RetryExhausted
+                                              : runtime::CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message = "HTTP request failed, status=" + std::to_string(response.status_code),
+            .attempts = static_cast<std::size_t>(attempts),
+        };
     }
 
     // 提取 LLM 返回的 content
     std::string content = extract_content_from_response(response.body);
     if (content.empty()) {
-        std::cerr << "[LLMProvider] empty content in response\n";
-        return evaluator::make_none();
+        return runtime::CapabilityCallResult{
+            .status = runtime::CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message = "empty content in LLM response",
+            .attempts = static_cast<std::size_t>(attempts),
+        };
     }
 
     // 解析为 AHFL Value
-    auto result = response_parser_.parse(content, return_type);
-    if (!result.has_value()) {
-        std::cerr << "[LLMProvider] failed to parse response for type: " << return_type << "\n";
-        return evaluator::make_none();
+    auto result = response_parser_.parse_with_diagnostics(content, return_type);
+    if (!result.success()) {
+        return runtime::CapabilityCallResult{
+            .status = runtime::CapabilityCallStatus::Error,
+            .value = std::nullopt,
+            .error_message = "failed to parse LLM response for type '" + return_type +
+                             "': " + result.error_message,
+            .attempts = static_cast<std::size_t>(attempts),
+        };
     }
 
-    return std::move(*result);
+    return runtime::CapabilityCallResult{
+        .status = runtime::CapabilityCallStatus::Success,
+        .value = std::move(*result.value),
+        .error_message = {},
+        .attempts = static_cast<std::size_t>(attempts),
+    };
 }
 
 void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) {
@@ -131,10 +155,12 @@ void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) 
     for (const auto &decl : program_.declarations) {
         if (auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
             std::string cap_name = cap->name;
-            registry.register_function(cap_name,
-                                       [this, cap_name](const std::vector<evaluator::Value> &args) {
-                                           return this->invoke(cap_name, args);
-                                       });
+            runtime::CapabilityBinding binding;
+            binding.name = cap_name;
+            binding.handler = [this, cap_name](const std::vector<evaluator::Value> &args) {
+                return this->invoke(cap_name, args);
+            };
+            registry.register_capability(std::move(binding));
         }
     }
 }

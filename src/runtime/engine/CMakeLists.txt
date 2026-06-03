@@ -4,12 +4,14 @@ add_library(ahfl_runtime_engine STATIC
     capability_bridge.cpp
     capability_eval.cpp
     connection_pool.cpp
+    curl_transport_adapter.cpp
     http_transport.cpp
     grpc_transport.cpp
     parallel_scheduler.cpp
     data_pipeline.cpp
     sandbox.cpp
     distributed.cpp
+    wire_value.cpp
 )
 
 target_link_libraries(ahfl_runtime_engine

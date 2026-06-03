@@ -3,6 +3,7 @@
 // 验证 PromptBuilder、ResponseParser、LLMProviderConfig、LLMCapabilityProvider 的功能
 
 #include "ahfl/compiler/ir/ir.hpp"
+#include "base/json/json_value.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
@@ -10,6 +11,7 @@
 #include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/providers/llm/prompt_builder.hpp"
 #include "runtime/providers/llm/response_parser.hpp"
+#include "runtime/providers/llm/tool_calling.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -187,6 +189,13 @@ void test_response_parser_rejects_invalid_enum() {
 
     auto result = parser.parse("Security", "Category");
     check(!result.has_value(), "response_parser.invalid_enum_rejected");
+
+    auto diagnostic_result = parser.parse_with_diagnostics("Security", "Category");
+    check(!diagnostic_result.success(), "response_parser.invalid_enum_diagnostic_failed");
+    check(diagnostic_result.error_message.find("Security") != std::string::npos,
+          "response_parser.invalid_enum_diagnostic_has_value");
+    check(diagnostic_result.error_message.find("Category") != std::string::npos,
+          "response_parser.invalid_enum_diagnostic_has_type");
 }
 
 void test_response_parser_rejects_missing_struct_field() {
@@ -196,6 +205,11 @@ void test_response_parser_rejects_missing_struct_field() {
     std::string json = R"({"category": "Technical"})";
     auto result = parser.parse(json, "ClassifyResult");
     check(!result.has_value(), "response_parser.missing_field_rejected");
+
+    auto diagnostic_result = parser.parse_with_diagnostics(json, "ClassifyResult");
+    check(!diagnostic_result.success(), "response_parser.missing_field_diagnostic_failed");
+    check(diagnostic_result.error_message.find("confidence") != std::string::npos,
+          "response_parser.missing_field_diagnostic_has_field");
 }
 
 // ============================================================================
@@ -224,6 +238,72 @@ void test_response_parser_bool_field() {
             }
         }
     }
+}
+
+void test_tool_request_json_uses_json_dom() {
+    std::vector<ToolDefinition> tools;
+    tools.push_back(ToolDefinition{
+        .name = "lookup",
+        .description = "Lookup \"quoted\" values\nsafely",
+        .params_schema_json = R"({"type":"object","properties":{"query":{"type":"string"}}})",
+    });
+
+    const auto request =
+        build_tool_request_json("system \"prompt\"", "user\nprompt", "model-x", tools);
+    auto parsed = ahfl::json::parse_json(request);
+    check(parsed.has_value() && *parsed && (*parsed)->is_object(),
+          "tool_request.json_parse_success");
+    if (!parsed.has_value() || !*parsed) {
+        return;
+    }
+    const auto *model = (*parsed)->get("model");
+    check(model != nullptr && model->as_string().has_value() && *model->as_string() == "model-x",
+          "tool_request.model_field");
+    const auto *tool_array = (*parsed)->get("tools");
+    check(tool_array != nullptr && tool_array->is_array() && tool_array->array_items.size() == 1,
+          "tool_request.tools_array");
+}
+
+void test_parse_tool_calls_uses_json_dom() {
+    const std::string response = R"JSON({
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "lookup",
+                                "arguments": "{\"query\":\"hello \\\"world\\\"\",\"limit\":2}"
+                            }
+                        },
+                        {
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "toggle",
+                                "arguments": {"enabled": true}
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    })JSON";
+
+    const auto calls = parse_tool_calls(response);
+    check(calls.size() == 2, "tool_calls.count");
+    if (calls.size() != 2) {
+        return;
+    }
+    check(calls[0].id == "call_1", "tool_calls.first_id");
+    check(calls[0].name == "lookup", "tool_calls.first_name");
+    check(calls[0].arguments_json == R"({"query":"hello \"world\"","limit":2})",
+          "tool_calls.first_arguments");
+    check(calls[1].id == "call_2", "tool_calls.second_id");
+    check(calls[1].name == "toggle", "tool_calls.second_name");
+    check(calls[1].arguments_json == R"({"enabled":true})", "tool_calls.second_arguments");
 }
 
 // ============================================================================
@@ -293,6 +373,21 @@ void test_llm_capability_provider_register() {
     check(registry.has("HandleTechnical"), "provider.register_handle_technical");
 }
 
+void test_llm_capability_provider_unknown_capability_returns_error() {
+    auto program = build_test_program();
+    LLMProviderConfig config;
+    config.endpoint = "http://localhost:9999";
+    config.model = "test-model";
+    config.api_key = "test-key";
+
+    LLMCapabilityProvider provider(program, config);
+    auto result = provider.invoke("UnknownCapability", {});
+
+    check(result.status == CapabilityCallStatus::Error, "provider.unknown.status_error");
+    check(!result.value.has_value(), "provider.unknown.no_value");
+    check(!result.error_message.empty(), "provider.unknown.has_error_message");
+}
+
 } // namespace
 
 int main() {
@@ -302,8 +397,11 @@ int main() {
     test_response_parser_rejects_invalid_enum();
     test_response_parser_rejects_missing_struct_field();
     test_response_parser_bool_field();
+    test_tool_request_json_uses_json_dom();
+    test_parse_tool_calls_uses_json_dom();
     test_config_env_expansion();
     test_llm_capability_provider_register();
+    test_llm_capability_provider_unknown_capability_returns_error();
 
     std::cout << "\n=== LLM Provider Tests ===\n";
     std::cout << pass_count << "/" << test_count << " passed\n";
