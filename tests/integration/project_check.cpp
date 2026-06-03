@@ -1,5 +1,6 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
@@ -28,8 +29,8 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     return text.find(needle) != std::string_view::npos;
 }
 
-[[nodiscard]] std::optional<std::string>
-find_first_let_type(const ahfl::ir::Program &program, std::string_view flow_target) {
+[[nodiscard]] std::optional<std::string> find_first_let_type(const ahfl::ir::Program &program,
+                                                             std::string_view flow_target) {
     for (const auto &declaration : program.declarations) {
         const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&declaration);
         if (flow == nullptr || flow->target != flow_target) {
@@ -120,7 +121,8 @@ int run_fail_node_input(const std::filesystem::path &entry, const std::filesyste
     return 0;
 }
 
-int run_fail_completed_state(const std::filesystem::path &entry, const std::filesystem::path &root) {
+int run_fail_completed_state(const std::filesystem::path &entry,
+                             const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
     const auto parse_result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry},
@@ -197,7 +199,8 @@ int run_ok_expression_type_isolated(const std::filesystem::path &entry,
         return 1;
     }
 
-    const auto ir_program = ahfl::lower_program_ir(parse_result.graph, resolve_result, type_check_result);
+    const auto ir_program =
+        ahfl::lower_program_ir(parse_result.graph, resolve_result, type_check_result);
     const auto one_reply_type = find_first_let_type(ir_program, "lib::one::OneAgent");
     const auto two_reply_type = find_first_let_type(ir_program, "lib::two::TwoAgent");
 

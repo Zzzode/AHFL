@@ -1,6 +1,7 @@
-#include "compiler/backends/pipeline/native_json.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
+#include "compiler/backends/pipeline/native_json.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -9,7 +10,8 @@
 
 namespace {
 
-[[nodiscard]] std::size_t count_occurrences(const std::string &haystack, const std::string &needle) {
+[[nodiscard]] std::size_t count_occurrences(const std::string &haystack,
+                                            const std::string &needle) {
     std::size_t count = 0;
     std::size_t position = 0;
 
@@ -96,8 +98,8 @@ int run_escape_control_characters() {
     };
 
     std::ostringstream native_output;
-    ahfl::print_package_native_json(ahfl::handoff::lower_package(ahfl::ir::Program{}, std::move(metadata)),
-                                    native_output);
+    ahfl::print_package_native_json(
+        ahfl::handoff::lower_package(ahfl::ir::Program{}, std::move(metadata)), native_output);
 
     const std::string expected_escape = "compat\\b\\f\\u0001\\n\\\\\\\"";
     if (!contains_text(native_output.str(), "\"name\": \"" + expected_escape + "\"")) {

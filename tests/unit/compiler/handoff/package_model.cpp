@@ -1,6 +1,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
@@ -50,8 +51,7 @@ namespace {
     return false;
 }
 
-[[nodiscard]] ahfl::handoff::PackageMetadata
-make_project_workflow_value_flow_metadata() {
+[[nodiscard]] ahfl::handoff::PackageMetadata make_project_workflow_value_flow_metadata() {
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
         .format_version = std::string(ahfl::handoff::kFormatVersion),
@@ -226,8 +226,7 @@ int run_package_reader_summary_project_workflow_value_flow(
 
     if (!summary.summary.identity.has_value() ||
         summary.summary.identity->name != "workflow-value-flow" ||
-        summary.summary.identity->version != "0.2.0" ||
-        !summary.summary.entry_target.has_value() ||
+        summary.summary.identity->version != "0.2.0" || !summary.summary.entry_target.has_value() ||
         summary.summary.entry_target->canonical_name != "app::main::ValueFlowWorkflow" ||
         summary.summary.export_targets.size() != 2 ||
         summary.summary.capability_binding_slots.size() != 1 ||
@@ -358,9 +357,9 @@ int run_execution_planner_bootstrap_rejects_missing_dependency(
         return 1;
     }
 
-    if (!ahfl::test_support::diagnostics_contain(
-            bootstrap.diagnostics,
-            "execution planner bootstrap dependency 'missing -> second' refers to unknown workflow node")) {
+    if (!ahfl::test_support::diagnostics_contain(bootstrap.diagnostics,
+                                                 "execution planner bootstrap dependency 'missing "
+                                                 "-> second' refers to unknown workflow node")) {
         bootstrap.diagnostics.render(std::cout);
         std::cerr << "missing dependency diagnostic\n";
         return 1;
@@ -369,7 +368,8 @@ int run_execution_planner_bootstrap_rejects_missing_dependency(
     return 0;
 }
 
-int run_execution_plan_project_workflow_value_flow(const std::filesystem::path &project_descriptor) {
+int run_execution_plan_project_workflow_value_flow(
+    const std::filesystem::path &project_descriptor) {
     auto package = load_project_package(project_descriptor);
     if (!package.has_value()) {
         return 1;
@@ -405,8 +405,7 @@ int run_execution_plan_project_workflow_value_flow(const std::filesystem::path &
 
     if (workflow.nodes.front().target != "lib::agents::AliasAgent" ||
         workflow.nodes.front().capability_bindings.size() != 1 ||
-        workflow.nodes.front().capability_bindings.front().capability_name !=
-            "lib::agents::Echo" ||
+        workflow.nodes.front().capability_bindings.front().capability_name != "lib::agents::Echo" ||
         workflow.nodes.front().capability_bindings.front().binding_key != "runtime.echo" ||
         workflow.nodes[1].after.size() != 1 || workflow.nodes[1].after.front() != "first" ||
         workflow.nodes[1].capability_bindings.size() != 1) {
@@ -497,8 +496,10 @@ int run_validate_execution_plan_rejects_missing_entry_workflow(
         return 1;
     }
 
-    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
-                             "execution plan validation entry workflow 'app::main::MissingWorkflow' does not exist in workflows")) {
+    if (!ahfl::test_support::diagnostics_contain(
+            validation.diagnostics,
+            "execution plan validation entry workflow 'app::main::MissingWorkflow' does not exist "
+            "in workflows")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing entry workflow validation diagnostic\n";
         return 1;
@@ -531,7 +532,8 @@ int run_validate_execution_plan_rejects_unknown_value_read(
 
     if (!ahfl::test_support::diagnostics_contain(
             validation.diagnostics,
-            "execution plan validation workflow 'app::main::ValueFlowWorkflow' node 'second' input_summary reads unknown workflow node output 'missing'")) {
+            "execution plan validation workflow 'app::main::ValueFlowWorkflow' node 'second' "
+            "input_summary reads unknown workflow node output 'missing'")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing unknown-value-read validation diagnostic\n";
         return 1;
@@ -650,12 +652,12 @@ int run_validate_package_rejects_duplicate_normalized_targets(
         return 1;
     }
 
-    if (!ahfl::test_support::diagnostics_contain(
-            validation.diagnostics,
-            "export target 'app::main::ValueFlowWorkflow' is duplicated after semantic normalization") ||
-        !ahfl::test_support::diagnostics_contain(
-            validation.diagnostics,
-            "capability binding for 'lib::agents::Echo' is duplicated after semantic normalization")) {
+    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                 "export target 'app::main::ValueFlowWorkflow' is "
+                                                 "duplicated after semantic normalization") ||
+        !ahfl::test_support::diagnostics_contain(validation.diagnostics,
+                                                 "capability binding for 'lib::agents::Echo' is "
+                                                 "duplicated after semantic normalization")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing duplicate-normalized diagnostics\n";
         return 1;
@@ -664,7 +666,8 @@ int run_validate_package_rejects_duplicate_normalized_targets(
     return 0;
 }
 
-int run_validate_package_rejects_unknown_capability(const std::filesystem::path &project_descriptor) {
+int run_validate_package_rejects_unknown_capability(
+    const std::filesystem::path &project_descriptor) {
     const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
@@ -680,8 +683,8 @@ int run_validate_package_rejects_unknown_capability(const std::filesystem::path 
         return 1;
     }
 
-    if (!ahfl::test_support::diagnostics_contain(validation.diagnostics,
-                             "unknown package authoring capability 'MissingCapability'")) {
+    if (!ahfl::test_support::diagnostics_contain(
+            validation.diagnostics, "unknown package authoring capability 'MissingCapability'")) {
         validation.diagnostics.render(std::cout);
         std::cerr << "missing unknown-capability diagnostic\n";
         return 1;
@@ -727,8 +730,9 @@ int run_file_expr_temporal(const std::filesystem::path &input_file) {
     const auto *capability_slot =
         ahfl::handoff::find_capability_binding_slot(package, "ir::expr_temporal::Decide");
     if (capability_slot == nullptr ||
-        !has_required_by(
-            *capability_slot, ahfl::handoff::ExecutableKind::Agent, "ir::expr_temporal::ExprAgent") ||
+        !has_required_by(*capability_slot,
+                         ahfl::handoff::ExecutableKind::Agent,
+                         "ir::expr_temporal::ExprAgent") ||
         !has_required_by(*capability_slot,
                          ahfl::handoff::ExecutableKind::Workflow,
                          "ir::expr_temporal::ExprWorkflow") ||
@@ -738,30 +742,26 @@ int run_file_expr_temporal(const std::filesystem::path &input_file) {
     }
 
     const auto *contract_requires = ahfl::handoff::find_policy_obligation(
-        package,
-        "ir::expr_temporal::ExprAgent",
-        ahfl::handoff::PolicyObligationKind::Requires,
-        0);
+        package, "ir::expr_temporal::ExprAgent", ahfl::handoff::PolicyObligationKind::Requires, 0);
     const auto *contract_invariant = ahfl::handoff::find_policy_obligation(
-        package,
-        "ir::expr_temporal::ExprAgent",
-        ahfl::handoff::PolicyObligationKind::Invariant,
-        1);
-    const auto *workflow_safety = ahfl::handoff::find_policy_obligation(
-        package,
-        "ir::expr_temporal::ExprWorkflow",
-        ahfl::handoff::PolicyObligationKind::WorkflowSafety,
-        0);
-    const auto *workflow_liveness = ahfl::handoff::find_policy_obligation(
-        package,
-        "ir::expr_temporal::ExprWorkflow",
-        ahfl::handoff::PolicyObligationKind::WorkflowLiveness,
-        0);
+        package, "ir::expr_temporal::ExprAgent", ahfl::handoff::PolicyObligationKind::Invariant, 1);
+    const auto *workflow_safety =
+        ahfl::handoff::find_policy_obligation(package,
+                                              "ir::expr_temporal::ExprWorkflow",
+                                              ahfl::handoff::PolicyObligationKind::WorkflowSafety,
+                                              0);
+    const auto *workflow_liveness =
+        ahfl::handoff::find_policy_obligation(package,
+                                              "ir::expr_temporal::ExprWorkflow",
+                                              ahfl::handoff::PolicyObligationKind::WorkflowLiveness,
+                                              0);
 
     if (contract_requires == nullptr || contract_requires->observation_symbols.size() != 1 ||
-        !has_observation_symbol(*contract_requires, "contract_ir_expr_temporal_ExprAgent_0_atom_0") ||
+        !has_observation_symbol(*contract_requires,
+                                "contract_ir_expr_temporal_ExprAgent_0_atom_0") ||
         contract_invariant == nullptr || contract_invariant->observation_symbols.size() != 1 ||
-        !has_observation_symbol(*contract_invariant, "contract_ir_expr_temporal_ExprAgent_1_atom_0") ||
+        !has_observation_symbol(*contract_invariant,
+                                "contract_ir_expr_temporal_ExprAgent_1_atom_0") ||
         workflow_safety == nullptr || !workflow_safety->observation_symbols.empty() ||
         workflow_liveness == nullptr || !workflow_liveness->observation_symbols.empty()) {
         std::cerr << "unexpected policy obligation surface\n";

@@ -76,7 +76,7 @@ template <typename ContextT>
 template <typename DeclT, typename ContextT, typename... Args>
 [[nodiscard]] Owned<DeclT> make_decl(const SourceFile &source, ContextT &context, Args &&...args) {
     const auto range = context_range(context, source);
-    return make_owned<DeclT>(std::forward<Args>(args)..., source_text(source, range), range);
+    return make_owned<DeclT>(std::forward<Args>(args)..., range);
 }
 
 [[nodiscard]] std::int64_t parse_integer_literal(std::string_view text) {

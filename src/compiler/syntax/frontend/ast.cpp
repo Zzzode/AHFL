@@ -949,8 +949,7 @@ std::vector<AstInvariantViolation> validate_program_invariants(const Program &pr
 
 Node::Node(NodeKind kind, ahfl::SourceRange range) : kind(kind), range(range) {}
 
-Decl::Decl(NodeKind kind, std::string raw_text, ahfl::SourceRange range)
-    : Node(kind, range), raw_text(std::move(raw_text)) {}
+Decl::Decl(NodeKind kind, ahfl::SourceRange range) : Node(kind, range) {}
 
 Program::Program(std::string source_name, ahfl::SourceRange range)
     : Node(NodeKind::Program, range), source_name(std::move(source_name)) {}
@@ -959,8 +958,8 @@ void Program::accept(Visitor &visitor) {
     visitor.visit(*this);
 }
 
-ModuleDecl::ModuleDecl(Owned<QualifiedName> name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::ModuleDecl, std::move(raw_text), range), name(std::move(name)) {}
+ModuleDecl::ModuleDecl(Owned<QualifiedName> name, ahfl::SourceRange range)
+    : Decl(NodeKind::ModuleDecl, range), name(std::move(name)) {}
 
 void ModuleDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -970,12 +969,8 @@ std::string ModuleDecl::headline() const {
     return with_name("module ", name->spelling());
 }
 
-ImportDecl::ImportDecl(Owned<QualifiedName> path,
-                       std::string alias,
-                       std::string raw_text,
-                       ahfl::SourceRange range)
-    : Decl(NodeKind::ImportDecl, std::move(raw_text), range), path(std::move(path)),
-      alias(std::move(alias)) {}
+ImportDecl::ImportDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range)
+    : Decl(NodeKind::ImportDecl, range), path(std::move(path)), alias(std::move(alias)) {}
 
 void ImportDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -989,8 +984,8 @@ std::string ImportDecl::headline() const {
     return "import " + path->spelling() + " as " + alias;
 }
 
-ConstDecl::ConstDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::ConstDecl, std::move(raw_text), range), name(std::move(name)) {}
+ConstDecl::ConstDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::ConstDecl, range), name(std::move(name)) {}
 
 void ConstDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1004,8 +999,8 @@ std::string ConstDecl::headline() const {
     return "const " + name + " : " + type->spelling();
 }
 
-TypeAliasDecl::TypeAliasDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::TypeAliasDecl, std::move(raw_text), range), name(std::move(name)) {}
+TypeAliasDecl::TypeAliasDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::TypeAliasDecl, range), name(std::move(name)) {}
 
 void TypeAliasDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1019,8 +1014,8 @@ std::string TypeAliasDecl::headline() const {
     return "type " + name + " = " + aliased_type->spelling();
 }
 
-StructDecl::StructDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::StructDecl, std::move(raw_text), range), name(std::move(name)) {}
+StructDecl::StructDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::StructDecl, range), name(std::move(name)) {}
 
 void StructDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1030,8 +1025,8 @@ std::string StructDecl::headline() const {
     return with_count("struct " + name, fields.size(), "field");
 }
 
-EnumDecl::EnumDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::EnumDecl, std::move(raw_text), range), name(std::move(name)) {}
+EnumDecl::EnumDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::EnumDecl, range), name(std::move(name)) {}
 
 void EnumDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1041,8 +1036,8 @@ std::string EnumDecl::headline() const {
     return with_count("enum " + name, variants.size(), "variant");
 }
 
-CapabilityDecl::CapabilityDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::CapabilityDecl, std::move(raw_text), range), name(std::move(name)) {}
+CapabilityDecl::CapabilityDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::CapabilityDecl, range), name(std::move(name)) {}
 
 void CapabilityDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1060,8 +1055,8 @@ std::string CapabilityDecl::headline() const {
     return builder.str();
 }
 
-PredicateDecl::PredicateDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::PredicateDecl, std::move(raw_text), range), name(std::move(name)) {}
+PredicateDecl::PredicateDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::PredicateDecl, range), name(std::move(name)) {}
 
 void PredicateDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1071,8 +1066,8 @@ std::string PredicateDecl::headline() const {
     return with_count("predicate " + name, params.size(), "param");
 }
 
-AgentDecl::AgentDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::AgentDecl, std::move(raw_text), range), name(std::move(name)) {}
+AgentDecl::AgentDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::AgentDecl, range), name(std::move(name)) {}
 
 void AgentDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1085,10 +1080,8 @@ std::string AgentDecl::headline() const {
     return builder.str();
 }
 
-ContractDecl::ContractDecl(Owned<QualifiedName> target,
-                           std::string raw_text,
-                           ahfl::SourceRange range)
-    : Decl(NodeKind::ContractDecl, std::move(raw_text), range), target(std::move(target)) {}
+ContractDecl::ContractDecl(Owned<QualifiedName> target, ahfl::SourceRange range)
+    : Decl(NodeKind::ContractDecl, range), target(std::move(target)) {}
 
 void ContractDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1098,8 +1091,8 @@ std::string ContractDecl::headline() const {
     return with_count("contract for " + target->spelling(), clauses.size(), "clause");
 }
 
-FlowDecl::FlowDecl(Owned<QualifiedName> target, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::FlowDecl, std::move(raw_text), range), target(std::move(target)) {}
+FlowDecl::FlowDecl(Owned<QualifiedName> target, ahfl::SourceRange range)
+    : Decl(NodeKind::FlowDecl, range), target(std::move(target)) {}
 
 void FlowDecl::accept(Visitor &visitor) {
     visitor.visit(*this);
@@ -1109,8 +1102,8 @@ std::string FlowDecl::headline() const {
     return with_count("flow for " + target->spelling(), state_handlers.size(), "handler");
 }
 
-WorkflowDecl::WorkflowDecl(std::string name, std::string raw_text, ahfl::SourceRange range)
-    : Decl(NodeKind::WorkflowDecl, std::move(raw_text), range), name(std::move(name)) {}
+WorkflowDecl::WorkflowDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::WorkflowDecl, range), name(std::move(name)) {}
 
 void WorkflowDecl::accept(Visitor &visitor) {
     visitor.visit(*this);

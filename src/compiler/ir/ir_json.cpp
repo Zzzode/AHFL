@@ -1,4 +1,4 @@
-#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,7 +13,6 @@
 namespace ahfl {
 
 namespace {
-
 
 [[nodiscard]] std::string_view path_root_kind_name(ir::PathRootKind kind) {
     switch (kind) {

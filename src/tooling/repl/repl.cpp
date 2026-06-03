@@ -1,12 +1,13 @@
 #include "tooling/repl/repl.hpp"
 
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 #include "verification/formal/bmc.hpp"
 #include "verification/formal/nuxmv_backend.hpp"
-#include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
-#include "ahfl/compiler/semantics/resolver.hpp"
-#include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <sstream>
 #include <utility>

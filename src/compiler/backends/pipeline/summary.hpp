@@ -3,6 +3,7 @@
 #include <ostream>
 
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 
 namespace ahfl {
 

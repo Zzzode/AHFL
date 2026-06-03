@@ -1,6 +1,8 @@
 #include "compiler/backends/pipeline/summary.hpp"
 #include "printer_helpers.hpp"
 
+#include "ahfl/compiler/ir/lowering.hpp"
+
 #include <cstddef>
 #include <ostream>
 #include <string_view>
