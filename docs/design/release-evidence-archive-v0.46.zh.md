@@ -4,8 +4,8 @@
 
 关联文档：
 
-- [roadmap-v0.46.zh.md](../plan/roadmap-v0.46.zh.md)
-- [issue-backlog-v0.46.zh.md](../plan/issue-backlog-v0.46.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

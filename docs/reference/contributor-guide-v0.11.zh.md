@@ -86,8 +86,8 @@ ctest --preset test-dev --output-on-failure -L v0.11-checkpoint-golden
 - `docs/reference/checkpoint-prototype-compatibility-v0.11.zh.md`
 - `docs/reference/native-consumer-matrix-v0.11.zh.md`
 - `docs/reference/contributor-guide-v0.11.zh.md`
-- `docs/plan/roadmap-v0.11.zh.md`
-- `docs/plan/issue-backlog-v0.11.zh.md`
+- `docs/plan/project-status.zh.md`
+- `docs/plan/issue-backlog-global-gaps.zh.md`
 
 ## 推荐扩展顺序
 

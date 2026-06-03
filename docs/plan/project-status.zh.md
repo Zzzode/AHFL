@@ -1,6 +1,6 @@
 # AHFL 项目状态与演进记录
 
-本文档合并了 V0.1–V0.56 的全部 roadmap 与 issue backlog，作为项目实现状态的唯一入口。
+本文档合并了 V0.1–V0.59 的全部 roadmap 与 issue backlog，作为项目实现状态的唯一入口。
 
 ---
 
@@ -9,14 +9,14 @@
 | 属性 | 值 |
 |------|-----|
 | 项目名称 | AHFL (Agent Handoff Flow Language) |
-| 当前版本 | v0.56 |
+| 当前版本 | v0.59 |
 | 语言标准 | C++23 |
 | 构建系统 | CMake 3.22+ / Ninja |
 | 解析器 | ANTLR4 (4.13.1, vendored) |
-| 外部依赖 | 无（zero-dependency 设计） |
+| 外部依赖 | ANTLR4 vendored；HTTP Provider 路径通过系统 `curl` 工具执行；无包管理器级第三方运行时依赖 |
 | 测试框架 | 自研 golden-file + 直接 C++ 测试 |
 | CI 平台 | GitHub Actions (ubuntu-24.04, macos-14, ASan) |
-| 许可证 | MIT |
+| 许可证 | Apache-2.0 |
 
 **定位**：面向 AI Agent 工作流的强类型 DSL 编译器，支持状态机建模、行为契约、DAG 编排、形式化验证 (NuSMV) 与端到端执行 (LLM Provider)。
 
@@ -180,11 +180,11 @@
 
 ---
 
-## 四、当前进行中（V0.56）
+## 四、当前实现重点（V0.56–V0.59）
 
 ### 目标
 
-实现 LLM Provider 适配器，将 AHFL Capability 与 OpenAI-compatible LLM API 打通。
+实现并收紧 LLM Provider 与 runtime 执行边界，将 AHFL Capability 与 OpenAI-compatible LLM API 打通，同时保持运行时输入解析 fail-closed。
 
 ### 架构
 
@@ -197,26 +197,20 @@ CapabilityRegistry
         └── ResponseParser (JSON → Value)
 ```
 
-### 里程碑
+### 当前状态
 
-- [ ] M0 冻结 LLM Provider 接口设计与依赖选型
-- [ ] M1 实现 HTTP Client 与 LLMProviderConfig
-- [ ] M2 实现 Schema-driven Prompt 生成器
-- [ ] M3 实现 JSON → Value 反序列化
-- [ ] M4 实现 LLMCapabilityProvider 并集成到 CapabilityRegistry
-- [ ] M5 建立 E2E 集成测试（真实 GLM API 调用）
+- LLM Provider 基础路径已实现：`LLMProviderConfig`、`HttpClient`、`PromptBuilder`、`ResponseParser`、`LLMCapabilityProvider`。
+- 配置解析使用 repo 内 `base/json` DOM，不再维护独立字符串 JSON 解析器。
+- `ResponseParser` 对非法 enum、缺失 struct 字段和类型解析失败返回 `nullopt`，避免把错误响应伪装成业务值。
+- `ahfl-run` 在 endpoint、model、api_key 缺失时拒绝启动。
 
-### 非目标
+### 非目标 / 后续增强
 
 - 多模型路由 / fallback（v0.57+）
 - Streaming 输出
 - Function Calling 协议
 - Token 预算控制
 - Prompt 缓存
-
-### 实现状态
-
-源文件已存在（`src/runtime/providers/llm/`），包含 `llm_capability_provider.cpp`、`http_client.cpp`、`prompt_builder.cpp`、`response_parser.cpp`，但里程碑尚未正式验收。
 
 ---
 
@@ -266,8 +260,9 @@ SMV 后端的 formal subset：
 ### 5.6 版本演进约定
 
 - 每版只推进一个 artifact/capability 边界
-- 新版不得向后不兼容地修改上游稳定字段
-- Breaking change 需要显式 MIGRATION 记录
+- 项目仍处于未成熟阶段，不承诺前向兼容
+- 允许按照行业最佳实践 aggressive refactor，但必须同步更新实现、测试、golden 与文档
+- Artifact schema/format 的 breaking change 需要显式记录影响面和验证证据
 
 ---
 

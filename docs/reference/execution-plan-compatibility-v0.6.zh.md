@@ -8,7 +8,7 @@
 - [native-package-compatibility-v0.4.zh.md](./native-package-compatibility-v0.4.zh.md)
 - [native-consumer-matrix-v0.5.zh.md](./native-consumer-matrix-v0.5.zh.md)
 - [native-execution-plan-architecture-v0.6.zh.md](../design/native-execution-plan-architecture-v0.6.zh.md)
-- [issue-backlog-v0.6.zh.md](../plan/issue-backlog-v0.6.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

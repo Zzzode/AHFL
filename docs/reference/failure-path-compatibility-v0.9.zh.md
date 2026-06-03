@@ -9,7 +9,7 @@
 - [replay-view-compatibility-v0.9.zh.md](./replay-view-compatibility-v0.9.zh.md)
 - [audit-report-compatibility-v0.9.zh.md](./audit-report-compatibility-v0.9.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](../design/native-partial-session-failure-bootstrap-v0.9.zh.md)
-- [issue-backlog-v0.9.zh.md](../plan/issue-backlog-v0.9.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

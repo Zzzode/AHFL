@@ -6,7 +6,7 @@
 
 - [export-package-prototype-compatibility-v0.13.zh.md](./export-package-prototype-compatibility-v0.13.zh.md)
 - [native-store-import-prototype-bootstrap-v0.14.zh.md](../design/native-store-import-prototype-bootstrap-v0.14.zh.md)
-- [issue-backlog-v0.14.zh.md](../plan/issue-backlog-v0.14.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

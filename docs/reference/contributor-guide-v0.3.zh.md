@@ -165,8 +165,8 @@ V0.3 当前要求文档、测试和实现保持同步：
 
 如果你是第一次进仓库，建议按下面顺序读：
 
-1. [roadmap-v0.3.zh.md](../plan/roadmap-v0.3.zh.md)
-2. [issue-backlog-v0.3.zh.md](../plan/issue-backlog-v0.3.zh.md)
+1. [project-status.zh.md](../plan/project-status.zh.md)
+2. [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 3. [project-usage-v0.3.zh.md](./project-usage-v0.3.zh.md)
 4. [cli-commands-v0.3.zh.md](./cli-commands-v0.3.zh.md)
 5. [ir-format-v0.3.zh.md](./ir-format-v0.3.zh.md)

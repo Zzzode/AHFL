@@ -7,7 +7,7 @@
 - [compiler-architecture-v0.2.zh.md](./compiler-architecture-v0.2.zh.md)
 - [compiler-phase-boundaries-v0.2.zh.md](./compiler-phase-boundaries-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.md)
-- [roadmap-v0.2.zh.md](../plan/roadmap-v0.2.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
 
 ## 目标
 
