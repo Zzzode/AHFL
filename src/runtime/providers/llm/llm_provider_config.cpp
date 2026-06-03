@@ -2,8 +2,13 @@
 
 #include "runtime/providers/llm/llm_provider_config.hpp"
 
+#include "base/json/json_value.hpp"
+
 #include <cstdlib>
+#include <limits>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace ahfl::llm_provider {
 
@@ -35,72 +40,49 @@ std::string expand_env_vars(const std::string &input) {
 
 namespace {
 
-// 简单 JSON 解析：从 JSON 对象字符串中提取指定 key 的 string value
-std::string extract_string_field(const std::string &json, const std::string &key) {
-    // 查找 "key"
-    std::string search_key = "\"" + key + "\"";
-    auto pos = json.find(search_key);
-    if (pos == std::string::npos) {
-        return "";
+[[nodiscard]] std::optional<std::string> string_field(const ahfl::json::JsonValue &object,
+                                                      std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr) {
+        return std::nullopt;
     }
-    // 跳过 key 和冒号
-    pos += search_key.size();
-    pos = json.find(':', pos);
-    if (pos == std::string::npos) {
-        return "";
+    const auto value = field->as_string();
+    if (!value.has_value()) {
+        return std::nullopt;
     }
-    ++pos;
-    // 跳过空格
-    while (pos < json.size() &&
-           (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) {
-        ++pos;
-    }
-    if (pos >= json.size()) {
-        return "";
-    }
-    // 如果是字符串值
-    if (json[pos] == '"') {
-        ++pos;
-        std::string value;
-        while (pos < json.size() && json[pos] != '"') {
-            if (json[pos] == '\\' && pos + 1 < json.size()) {
-                ++pos; // 跳过转义
-            }
-            value += json[pos];
-            ++pos;
-        }
-        return value;
-    }
-    // 如果是数字或布尔值
-    std::string value;
-    while (pos < json.size() && json[pos] != ',' && json[pos] != '}' && json[pos] != ' ' &&
-           json[pos] != '\n') {
-        value += json[pos];
-        ++pos;
-    }
-    return value;
+    return std::string(*value);
 }
 
-double parse_double(const std::string &s, double default_val) {
-    if (s.empty()) {
-        return default_val;
+[[nodiscard]] std::optional<double> number_field(const ahfl::json::JsonValue &object,
+                                                 std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr) {
+        return std::nullopt;
     }
-    try {
-        return std::stod(s);
-    } catch (...) {
-        return default_val;
-    }
+    return field->as_float();
 }
 
-int parse_int(const std::string &s, int default_val) {
-    if (s.empty()) {
-        return default_val;
+[[nodiscard]] std::optional<int> int_field(const ahfl::json::JsonValue &object,
+                                           std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr) {
+        return std::nullopt;
     }
-    try {
-        return std::stoi(s);
-    } catch (...) {
-        return default_val;
+    const auto value = field->as_int();
+    if (!value.has_value() || *value < std::numeric_limits<int>::min() ||
+        *value > std::numeric_limits<int>::max()) {
+        return std::nullopt;
     }
+    return static_cast<int>(*value);
+}
+
+[[nodiscard]] std::optional<bool> bool_field(const ahfl::json::JsonValue &object,
+                                             std::string_view key) {
+    const auto *field = object.get(key);
+    if (field == nullptr) {
+        return std::nullopt;
+    }
+    return field->as_bool();
 }
 
 } // namespace
@@ -110,26 +92,36 @@ LLMProviderConfig load_config(const std::string &json_content) {
 
     // 先展开环境变量
     std::string expanded = expand_env_vars(json_content);
+    auto parsed = ahfl::json::parse_json(expanded);
+    if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
+        return config;
+    }
+    const auto &root = **parsed;
 
-    // 解析各字段
-    config.endpoint = extract_string_field(expanded, "endpoint");
-    config.model = extract_string_field(expanded, "model");
-    config.api_key = extract_string_field(expanded, "api_key");
-
-    auto temp_str = extract_string_field(expanded, "temperature");
-    config.temperature = parse_double(temp_str, 0.1);
-
-    auto max_tok_str = extract_string_field(expanded, "max_tokens");
-    config.max_tokens = parse_int(max_tok_str, 1024);
-
-    auto json_mode_str = extract_string_field(expanded, "json_mode");
-    config.json_mode = (json_mode_str != "false");
-
-    auto timeout_str = extract_string_field(expanded, "timeout_seconds");
-    config.timeout_seconds = parse_int(timeout_str, 30);
-
-    auto retries_str = extract_string_field(expanded, "max_retries");
-    config.max_retries = parse_int(retries_str, 2);
+    if (auto value = string_field(root, "endpoint"); value.has_value()) {
+        config.endpoint = std::move(*value);
+    }
+    if (auto value = string_field(root, "model"); value.has_value()) {
+        config.model = std::move(*value);
+    }
+    if (auto value = string_field(root, "api_key"); value.has_value()) {
+        config.api_key = std::move(*value);
+    }
+    if (auto value = number_field(root, "temperature"); value.has_value()) {
+        config.temperature = *value;
+    }
+    if (auto value = int_field(root, "max_tokens"); value.has_value()) {
+        config.max_tokens = *value;
+    }
+    if (auto value = bool_field(root, "json_mode"); value.has_value()) {
+        config.json_mode = *value;
+    }
+    if (auto value = int_field(root, "timeout_seconds"); value.has_value()) {
+        config.timeout_seconds = *value;
+    }
+    if (auto value = int_field(root, "max_retries"); value.has_value()) {
+        config.max_retries = *value;
+    }
 
     return config;
 }
