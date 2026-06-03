@@ -5,8 +5,8 @@
 关联文档：
 
 - [native-persistence-prototype-bootstrap-v0.12.zh.md](./native-persistence-prototype-bootstrap-v0.12.zh.md)
-- [roadmap-v0.13.zh.md](../plan/roadmap-v0.13.zh.md)
-- [issue-backlog-v0.13.zh.md](../plan/issue-backlog-v0.13.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

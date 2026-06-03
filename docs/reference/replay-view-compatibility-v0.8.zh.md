@@ -8,7 +8,7 @@
 - [runtime-session-compatibility-v0.7.zh.md](./runtime-session-compatibility-v0.7.zh.md)
 - [execution-journal-compatibility-v0.7.zh.md](./execution-journal-compatibility-v0.7.zh.md)
 - [native-replay-audit-bootstrap-v0.8.zh.md](../design/native-replay-audit-bootstrap-v0.8.zh.md)
-- [issue-backlog-v0.8.zh.md](../plan/issue-backlog-v0.8.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

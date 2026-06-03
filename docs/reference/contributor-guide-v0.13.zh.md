@@ -87,8 +87,8 @@ ctest --preset test-dev --output-on-failure -L v0.13-export-golden
 - `docs/reference/export-package-prototype-compatibility-v0.13.zh.md`
 - `docs/reference/native-consumer-matrix-v0.13.zh.md`
 - `docs/reference/contributor-guide-v0.13.zh.md`
-- `docs/plan/roadmap-v0.13.zh.md`
-- `docs/plan/issue-backlog-v0.13.zh.md`
+- `docs/plan/project-status.zh.md`
+- `docs/plan/issue-backlog-global-gaps.zh.md`
 - `README.md`
 - `docs/README.md`
 

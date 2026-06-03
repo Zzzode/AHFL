@@ -6,7 +6,7 @@
 
 - [native-execution-plan-architecture-v0.6.zh.md](./native-execution-plan-architecture-v0.6.zh.md)
 - [native-dry-run-bootstrap-v0.6.zh.md](./native-dry-run-bootstrap-v0.6.zh.md)
-- [roadmap-v0.7.zh.md](../plan/roadmap-v0.7.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
 
 ## 目标
 

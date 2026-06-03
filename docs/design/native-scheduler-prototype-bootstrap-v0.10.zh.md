@@ -5,8 +5,8 @@
 关联文档：
 
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](./native-partial-session-failure-bootstrap-v0.9.zh.md)
-- [roadmap-v0.10.zh.md](../plan/roadmap-v0.10.zh.md)
-- [issue-backlog-v0.10.zh.md](../plan/issue-backlog-v0.10.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

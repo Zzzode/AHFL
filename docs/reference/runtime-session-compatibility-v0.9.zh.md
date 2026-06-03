@@ -8,7 +8,7 @@
 - [execution-plan-compatibility-v0.6.zh.md](./execution-plan-compatibility-v0.6.zh.md)
 - [failure-path-compatibility-v0.9.zh.md](./failure-path-compatibility-v0.9.zh.md)
 - [native-partial-session-failure-bootstrap-v0.9.zh.md](../design/native-partial-session-failure-bootstrap-v0.9.zh.md)
-- [issue-backlog-v0.9.zh.md](../plan/issue-backlog-v0.9.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

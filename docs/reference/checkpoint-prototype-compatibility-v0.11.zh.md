@@ -8,7 +8,7 @@
 - [native-checkpoint-prototype-bootstrap-v0.11.zh.md](../design/native-checkpoint-prototype-bootstrap-v0.11.zh.md)
 - [native-consumer-matrix-v0.11.zh.md](./native-consumer-matrix-v0.11.zh.md)
 - [contributor-guide-v0.11.zh.md](./contributor-guide-v0.11.zh.md)
-- [issue-backlog-v0.11.zh.md](../plan/issue-backlog-v0.11.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 
