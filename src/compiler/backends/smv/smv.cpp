@@ -1,6 +1,7 @@
 #include "compiler/backends/smv/smv_printer.hpp"
 
 #include "ahfl/compiler/backends/smv.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 
 namespace ahfl {
 

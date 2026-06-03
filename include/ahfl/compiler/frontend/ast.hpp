@@ -562,11 +562,7 @@ struct Node {
 
 /// 声明基类（所有顶层声明的公共基类）
 struct Decl : Node {
-    // 过渡性调试载荷。Resolver/Checker 不得依赖 reparsing raw_text；
-    // 语义 pass 必须消费结构化 AST 数据。
-    std::string raw_text;
-
-    Decl(NodeKind kind, std::string raw_text, ahfl::SourceRange range = {});
+    Decl(NodeKind kind, ahfl::SourceRange range = {});
     ~Decl() override = default;
 
     /// 返回声明的单行摘要（用于诊断输出）
@@ -596,7 +592,7 @@ validate_program_invariants(const Program &program);
 struct ModuleDecl final : Decl {
     Owned<QualifiedName> name;
 
-    ModuleDecl(Owned<QualifiedName> name, std::string raw_text, ahfl::SourceRange range = {});
+    ModuleDecl(Owned<QualifiedName> name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -606,10 +602,7 @@ struct ImportDecl final : Decl {
     Owned<QualifiedName> path; // 导入路径
     std::string alias;         // 可选别名
 
-    ImportDecl(Owned<QualifiedName> path,
-               std::string alias,
-               std::string raw_text,
-               ahfl::SourceRange range = {});
+    ImportDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -620,7 +613,7 @@ struct ConstDecl final : Decl {
     Owned<TypeSyntax> type;
     Owned<ExprSyntax> value;
 
-    ConstDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    ConstDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -630,7 +623,7 @@ struct TypeAliasDecl final : Decl {
     std::string name;
     Owned<TypeSyntax> aliased_type;
 
-    TypeAliasDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    TypeAliasDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -640,7 +633,7 @@ struct StructDecl final : Decl {
     std::string name;
     std::vector<Owned<StructFieldDeclSyntax>> fields;
 
-    StructDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    StructDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -650,7 +643,7 @@ struct EnumDecl final : Decl {
     std::string name;
     std::vector<Owned<EnumVariantDeclSyntax>> variants;
 
-    EnumDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    EnumDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -663,7 +656,7 @@ struct CapabilityDecl final : Decl {
     Owned<TypeSyntax> return_type;
     Owned<CapabilityEffectSyntax> effect;
 
-    CapabilityDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    CapabilityDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -674,7 +667,7 @@ struct PredicateDecl final : Decl {
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
 
-    PredicateDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    PredicateDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -705,7 +698,7 @@ struct AgentDecl final : Decl {
     Owned<AgentQuotaSyntax> quota;                    // 资源配额
     std::vector<Owned<TransitionSyntax>> transitions; // 合法状态转换
 
-    AgentDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    AgentDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -716,7 +709,7 @@ struct ContractDecl final : Decl {
     Owned<QualifiedName> target;                      // 目标 Agent
     std::vector<Owned<ContractClauseSyntax>> clauses; // 契约子句列表
 
-    ContractDecl(Owned<QualifiedName> target, std::string raw_text, ahfl::SourceRange range = {});
+    ContractDecl(Owned<QualifiedName> target, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -727,7 +720,7 @@ struct FlowDecl final : Decl {
     Owned<QualifiedName> target;                           // 目标 Agent
     std::vector<Owned<StateHandlerSyntax>> state_handlers; // 各状态的处理器
 
-    FlowDecl(Owned<QualifiedName> target, std::string raw_text, ahfl::SourceRange range = {});
+    FlowDecl(Owned<QualifiedName> target, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
@@ -752,7 +745,7 @@ struct WorkflowDecl final : Decl {
     std::vector<Owned<TemporalExprSyntax>> liveness;  // 活性属性（◇ eventually）
     Owned<ExprSyntax> return_value;                   // 最终返回值表达式
 
-    WorkflowDecl(std::string name, std::string raw_text, ahfl::SourceRange range = {});
+    WorkflowDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
