@@ -77,11 +77,12 @@ AST 必须满足：
 允许保留：
 
 - declaration headline 所需的调试字段
-- `raw_text` 这一类仅用于 dump/debug 的过渡字段
+- `SourceRange` 这类稳定定位信息
 
 限制：
 
-- `raw_text` 不能成为后续 resolver、typecheck、validator 的常规输入
+- AST 声明节点不保存 `raw_text`
+- 后续 resolver、typecheck、validator 不能重新读取源码切片作为语义输入
 - 后续语义阶段必须基于结构化 AST 工作，不能重新解析字符串
 
 ## 3. `resolve`
@@ -96,7 +97,7 @@ AST 必须满足：
 禁止：
 
 - 重新读取 ANTLR parse tree
-- 通过 `raw_text` 重做语法分析
+- 通过原始源码切片重做语法分析
 - 混入类型等价、状态机可达性、workflow DAG 校验这类后续阶段职责
 
 ## 4. `typecheck`
@@ -143,7 +144,7 @@ AST 必须满足：
 IR 必须满足：
 
 - 不包含 ANTLR 类型
-- 不依赖 `raw_text`
+- 不依赖原始源码切片
 - 不要求消费方理解源语法细节
 
 ## 当前仓库中的映射

@@ -30,7 +30,7 @@ struct OptionSpec {
 // Parse command-line arguments using the option table.
 // Returns: nullopt if parsing succeeded (continue), ParseResult if terminal (help/error).
 // Populates options.positional for non-option arguments.
-// Recognizes command tokens via command_token_to_kind.
+// Recognizes action groups plus artifact ids, e.g. `emit provider/write-attempt`.
 struct ParseResult {
     bool should_exit;
     int exit_code; // 0 = help shown, 2 = usage error

@@ -20,8 +20,15 @@ const ReleaseGateArtifacts *ProviderPipelineCache::get_release_gate_artifacts() 
     return release_gate_artifacts_.has_value() ? &*release_gate_artifacts_ : nullptr;
 }
 
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
+                                                        artifact_type,                             \
+                                                        builder,                                   \
+                                                        printer,                                   \
+                                                        artifact_id,                               \
+                                                        visibility,                                \
+                                                        order,                                     \
+                                                        dep_count,                                 \
+                                                        dependencies)                              \
     const ahfl::durable_store_import::artifact_type *ProviderPipelineCache::get_##kind() {         \
         if (!kind##_loaded_) {                                                                     \
             kind##_loaded_ = true;                                                                 \

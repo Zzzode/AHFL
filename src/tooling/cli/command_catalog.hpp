@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ahfl/compiler/backends/driver.hpp"
+#include "tooling/cli/provider/provider_artifact_catalog.hpp"
 
 #include <optional>
 #include <ostream>
@@ -13,6 +14,7 @@ namespace ahfl::cli {
 
 enum class CommandKind {
     Check,
+    RunWorkflow,
     DumpAst,
     DumpTypes,
     DumpProject,
@@ -44,11 +46,6 @@ enum class CommandKind {
     EmitDurableStoreImportReceiptPersistenceResponseReview,
     EmitDurableStoreImportAdapterExecution,
     EmitDurableStoreImportRecoveryPreview,
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
-    command_kind,
-#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
     EmitSchedulerReview,
     EmitRuntimeSession,
     EmitDryRunTrace,
@@ -67,6 +64,7 @@ enum class CommandKind {
 
 struct CommandLineOptions {
     std::optional<CommandKind> selected_command;
+    std::optional<ProviderArtifactKind> selected_provider_artifact;
     bool dump_ast_requested{false};
     bool dump_types_requested{false};
     std::optional<std::string_view> package_descriptor;
@@ -75,6 +73,8 @@ struct CommandLineOptions {
     std::optional<std::string_view> workspace_descriptor;
     std::optional<std::string_view> project_name;
     std::optional<std::string_view> workflow_name;
+    std::optional<std::string_view> runtime_input_json;
+    std::optional<std::string_view> llm_config_descriptor;
     std::optional<std::string_view> input_fixture;
     std::optional<std::string_view> run_id;
     std::optional<std::string_view> model_checker;
@@ -84,6 +84,11 @@ struct CommandLineOptions {
     bool show_internal_artifacts{false};
     std::vector<std::string_view> search_roots;
     std::vector<std::string_view> positional;
+};
+
+struct SelectedAction {
+    std::optional<CommandKind> command;
+    std::optional<ProviderArtifactKind> provider_artifact;
 };
 
 enum class CommandListKind {
@@ -125,14 +130,19 @@ resolve_subcommand(ActionGroup group, std::string_view artifact_id, bool include
 [[nodiscard]] bool is_capability_input_supported_command(CommandKind command);
 [[nodiscard]] bool supports_capability_inputs(std::optional<CommandKind> command);
 [[nodiscard]] bool is_command_requiring_package(CommandKind command);
+[[nodiscard]] SelectedAction
+selected_action_from_options(const CommandLineOptions &options,
+                             std::optional<CommandKind> effective_command);
+[[nodiscard]] std::string selected_action_name(const SelectedAction &action);
+[[nodiscard]] bool selected_action_supports_package(const SelectedAction &action);
+[[nodiscard]] bool selected_action_supports_capability_inputs(const SelectedAction &action);
+[[nodiscard]] bool selected_action_requires_package(const SelectedAction &action);
 [[nodiscard]] std::optional<ahfl::BackendKind>
 core_backend_for_command(std::optional<CommandKind> command);
 [[nodiscard]] bool is_core_backend_command(CommandKind command);
 
 void set_command_option(CommandLineOptions &options, CommandKind command);
+void set_provider_artifact_option(CommandLineOptions &options, ProviderArtifactKind artifact);
 void print_usage(std::ostream &out, bool show_internal = false);
-
-// Returns true if the command maps to an internal (non-public) provider artifact.
-[[nodiscard]] bool is_internal_provider_command(CommandKind command);
 
 } // namespace ahfl::cli

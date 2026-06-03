@@ -35,6 +35,14 @@ void set_workflow(CommandLineOptions &opts, std::optional<std::string_view> val)
     opts.workflow_name = val;
 }
 
+void set_runtime_input(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.runtime_input_json = val;
+}
+
+void set_llm_config(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.llm_config_descriptor = val;
+}
+
 void set_input_fixture(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.input_fixture = val;
 }
@@ -116,6 +124,18 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_workflow,
      "Canonical workflow name",
      "a canonical workflow name"},
+    {"--input",
+     "",
+     OptionArgKind::RequiredValue,
+     set_runtime_input,
+     "Runtime input JSON for run",
+     "a JSON string"},
+    {"--llm-config",
+     "",
+     OptionArgKind::RequiredValue,
+     set_llm_config,
+     "LLM provider config for run",
+     "a config path"},
     {"--input-fixture",
      "",
      OptionArgKind::RequiredValue,
@@ -231,12 +251,14 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         if (auto group = action_group_from_token(argument); group.has_value()) {
             // Zero-target actions: verify and validate have a single implicit target.
             if (*group == ActionGroup::Verify) {
-                if (!options.selected_command.has_value() && options.positional.empty()) {
+                if (!options.selected_command.has_value() &&
+                    !options.selected_provider_artifact.has_value() && options.positional.empty()) {
                     set_command_option(options, CommandKind::VerifyFormal);
                     continue;
                 }
             } else if (*group == ActionGroup::Validate) {
-                if (!options.selected_command.has_value() && options.positional.empty()) {
+                if (!options.selected_command.has_value() &&
+                    !options.selected_provider_artifact.has_value() && options.positional.empty()) {
                     set_command_option(options, CommandKind::ValidateAssurance);
                     continue;
                 }
@@ -245,10 +267,24 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
                 if (index + 1 < arguments.size() && !arguments[index + 1].empty() &&
                     arguments[index + 1].front() != '-') {
                     auto artifact_id = arguments[++index];
+                    const auto can_select_action =
+                        !options.selected_command.has_value() &&
+                        !options.selected_provider_artifact.has_value() &&
+                        options.positional.empty();
+                    if (*group == ActionGroup::Emit) {
+                        if (auto artifact = resolve_provider_artifact(
+                                artifact_id, options.show_internal_artifacts);
+                            artifact.has_value()) {
+                            if (can_select_action) {
+                                set_provider_artifact_option(options, *artifact);
+                                continue;
+                            }
+                        }
+                    }
                     if (auto cmd = resolve_subcommand(
                             *group, artifact_id, options.show_internal_artifacts);
                         cmd.has_value()) {
-                        if (!options.selected_command.has_value() && options.positional.empty()) {
+                        if (can_select_action) {
                             set_command_option(options, *cmd);
                             continue;
                         }
@@ -264,10 +300,11 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
             }
         }
 
-        // Recognize "check" as a standalone command.
-        if (argument == "check" && !options.selected_command.has_value() &&
-            options.positional.empty()) {
-            set_command_option(options, CommandKind::Check);
+        // Recognize standalone commands.
+        if ((argument == "check" || argument == "run") && !options.selected_command.has_value() &&
+            !options.selected_provider_artifact.has_value() && options.positional.empty()) {
+            set_command_option(options,
+                               argument == "run" ? CommandKind::RunWorkflow : CommandKind::Check);
             continue;
         }
 

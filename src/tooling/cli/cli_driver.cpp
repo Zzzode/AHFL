@@ -1,14 +1,17 @@
 #include "tooling/cli/cli_driver.hpp"
 
-#include "tooling/cli/cli_analysis_helpers.hpp"
-#include "tooling/cli/option_table.hpp"
-#include "tooling/cli/pipeline_runner.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
-#include "compiler/passes/pass_manager.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/passes/pass_manager.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
+#include "tooling/cli/cli_analysis_helpers.hpp"
+#include "tooling/cli/option_table.hpp"
+#include "tooling/cli/pipeline_runner.hpp"
+#include "tooling/cli/provider/pipeline_durable_store_import_provider.hpp"
+#include "tooling/cli/workflow_run.hpp"
 
 #include <iostream>
 #include <optional>
@@ -47,8 +50,7 @@ ExitCode CliDriver::run(std::span<const std::string_view> arguments) {
 // CliDriver private methods
 // ---------------------------------------------------------------------------
 
-std::optional<ExitCode>
-CliDriver::parse_command_line(std::span<const std::string_view> arguments) {
+std::optional<ExitCode> CliDriver::parse_command_line(std::span<const std::string_view> arguments) {
     auto result = parse_options_from_table(arguments, options_);
     if (result.has_value()) {
         return result->exit_code == 0 ? ExitCode::Success : ExitCode::UsageError;
@@ -58,6 +60,7 @@ CliDriver::parse_command_line(std::span<const std::string_view> arguments) {
 
 std::optional<ExitCode> CliDriver::validate_options() {
     const auto action_count = count_enabled_actions(options_);
+    const auto selected_action = selected_action_from_options(options_, effective_command_);
     if (action_count > 1) {
         std::cerr << "error: choose at most one of "
                   << format_comma_or_commands(command_list(CommandListKind::Action)) << "\n";
@@ -103,38 +106,57 @@ std::optional<ExitCode> CliDriver::validate_options() {
     }
 
     if (options_.package_descriptor.has_value() &&
-        (!effective_command_.has_value() || !is_package_supported_command(*effective_command_))) {
+        !selected_action_supports_package(selected_action)) {
         std::cerr << "error: --package is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::PackageSupported))
+                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
     if (options_.capability_mocks_descriptor.has_value() &&
-        !supports_capability_inputs(effective_command_)) {
+        !selected_action_supports_capability_inputs(selected_action)) {
         std::cerr << "error: --capability-mocks is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
+                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.input_fixture.has_value() && !supports_capability_inputs(effective_command_)) {
+    if (options_.input_fixture.has_value() &&
+        !selected_action_supports_capability_inputs(selected_action)) {
         std::cerr << "error: --input-fixture is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
+                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
 
-    if (options_.run_id.has_value() && !supports_capability_inputs(effective_command_)) {
+    if (options_.run_id.has_value() &&
+        !selected_action_supports_capability_inputs(selected_action)) {
         std::cerr << "error: --run-id is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
+                  << ", or emit provider/<artifact>"
                   << "\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.runtime_input_json.has_value() && effective_command_ != CommandKind::RunWorkflow) {
+        std::cerr << "error: --input is only supported with run\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (options_.llm_config_descriptor.has_value() &&
+        effective_command_ != CommandKind::RunWorkflow) {
+        std::cerr << "error: --llm-config is only supported with run\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -157,11 +179,26 @@ std::optional<ExitCode> CliDriver::validate_options() {
         return ExitCode::UsageError;
     }
 
-    if (options_.workflow_name.has_value() && !supports_capability_inputs(effective_command_)) {
+    if (options_.workflow_name.has_value() && effective_command_ != CommandKind::RunWorkflow &&
+        !selected_action_supports_capability_inputs(selected_action)) {
         std::cerr << "error: --workflow is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
+                  << ", or emit provider/<artifact>"
                   << "\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (effective_command_ == CommandKind::RunWorkflow && !options_.workflow_name.has_value()) {
+        std::cerr << "error: run requires --workflow\n";
+        print_usage(std::cerr);
+        return ExitCode::UsageError;
+    }
+
+    if (effective_command_ == CommandKind::RunWorkflow &&
+        !options_.runtime_input_json.has_value()) {
+        std::cerr << "error: run requires --input\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
     }
@@ -170,20 +207,21 @@ std::optional<ExitCode> CliDriver::validate_options() {
 }
 
 std::optional<ExitCode> CliDriver::load_package_and_mocks() {
-    if (effective_command_.has_value() && is_command_requiring_package(*effective_command_)) {
-        const auto selected_command_name = command_name(*effective_command_);
+    const auto selected_action = selected_action_from_options(options_, effective_command_);
+    if (selected_action_requires_package(selected_action)) {
+        const auto action_name = selected_action_name(selected_action);
         if (!options_.package_descriptor.has_value()) {
-            std::cerr << "error: " << selected_command_name << " requires --package\n";
+            std::cerr << "error: " << action_name << " requires --package\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
         if (!options_.capability_mocks_descriptor.has_value()) {
-            std::cerr << "error: " << selected_command_name << " requires --capability-mocks\n";
+            std::cerr << "error: " << action_name << " requires --capability-mocks\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
         if (!options_.input_fixture.has_value()) {
-            std::cerr << "error: " << selected_command_name << " requires --input-fixture\n";
+            std::cerr << "error: " << action_name << " requires --input-fixture\n";
             print_usage(std::cerr);
             return ExitCode::UsageError;
         }
@@ -226,7 +264,8 @@ ExitCode CliDriver::execute() {
 
     if (project_mode || is_action_enabled(options_, CommandKind::DumpProject)) {
         ahfl::ProjectInput input;
-        if (const auto load_status = load_project_input(options_, frontend_, input, *diag_consumer_);
+        if (const auto load_status =
+                load_project_input(options_, frontend_, input, *diag_consumer_);
             load_status >= 0) {
             return load_status == 0 ? ExitCode::Success : ExitCode::CompileError;
         }
@@ -298,6 +337,16 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
         return ExitCode::CompileError;
     }
 
+    if (effective_command_ == CommandKind::RunWorkflow) {
+        auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+        if (options_.optimize_requested) {
+            auto pm = ahfl::passes::create_default_pipeline();
+            static_cast<void>(pm->run(ir_program));
+        }
+        const auto status = run_workflow_with_llm(ir_program, options_, std::cout, std::cerr);
+        return status == 0 ? ExitCode::Success : ExitCode::CompileError;
+    }
+
     if (package_metadata_ptr != nullptr) {
         auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
         if (options_.optimize_requested) {
@@ -319,6 +368,20 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
         if (effective_command_ == CommandKind::VerifyFormal) {
             return verify_formal_program(ir_program, options_) == 0 ? ExitCode::Success
                                                                     : ExitCode::CompileError;
+        }
+
+        if (options_.selected_provider_artifact.has_value()) {
+            if (capability_mock_set_ptr == nullptr) {
+                std::cerr << "internal error: provider artifact command missing capability mocks\n";
+                return ExitCode::CompileError;
+            }
+            const auto status =
+                emit_provider_artifact_with_diagnostics(*options_.selected_provider_artifact,
+                                                        ir_program,
+                                                        metadata_validation.metadata,
+                                                        *capability_mock_set_ptr,
+                                                        options_);
+            return status == 0 ? ExitCode::Success : ExitCode::CompileError;
         }
 
         if (effective_command_.has_value() && handles_package_command(*effective_command_)) {
@@ -379,8 +442,8 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
 
 // Explicit template instantiations for the two input types used.
 template ExitCode CliDriver::run_analysis<ahfl::ast::Program>(const ahfl::ast::Program &,
-                                                               MaybeSourceFile);
-template ExitCode CliDriver::run_analysis<ahfl::SourceGraph>(const ahfl::SourceGraph &,
                                                               MaybeSourceFile);
+template ExitCode CliDriver::run_analysis<ahfl::SourceGraph>(const ahfl::SourceGraph &,
+                                                             MaybeSourceFile);
 
 } // namespace ahfl::cli
