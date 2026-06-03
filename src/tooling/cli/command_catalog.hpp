@@ -44,11 +44,11 @@ enum class CommandKind {
     EmitDurableStoreImportReceiptPersistenceResponseReview,
     EmitDurableStoreImportAdapterExecution,
     EmitDurableStoreImportRecoveryPreview,
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(kind, token, position, inference_order,       \
-                                                       artifact_kind)                              \
-    kind,
-#include "tooling/cli/provider/durable_store_import_provider_commands.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
+    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+    command_kind,
+#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
     EmitSchedulerReview,
     EmitRuntimeSession,
     EmitDryRunTrace,
@@ -98,11 +98,18 @@ enum class CommandListKind {
 // Subcommand dispatch (ahflc emit <artifact-id>, ahflc dump <target>, etc.)
 // ---------------------------------------------------------------------------
 
-enum class ActionGroup { Emit, Dump, Verify, Validate };
+enum class ActionGroup {
+    Emit,
+    Dump,
+    Verify,
+    Validate
+};
 
 [[nodiscard]] std::optional<ActionGroup> action_group_from_token(std::string_view token);
 [[nodiscard]] std::optional<CommandKind> resolve_subcommand(ActionGroup group,
                                                             std::string_view artifact_id);
+[[nodiscard]] std::optional<CommandKind>
+resolve_subcommand(ActionGroup group, std::string_view artifact_id, bool include_hidden);
 [[nodiscard]] std::string command_short_name(CommandKind command);
 
 [[nodiscard]] std::string_view command_name(CommandKind command);

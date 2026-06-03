@@ -12,9 +12,9 @@
 | Receipt persistence transition rules | `src/pipeline/persistence/durable_store_import/receipt_persistence_stage.hpp` |
 | Provider model domains | `src/pipeline/persistence/durable_store_import/provider/**/*.hpp` |
 | Provider artifact descriptors | `src/pipeline/persistence/durable_store_import/provider_artifacts.def` |
-| Provider CLI artifact registry | `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def` |
-| Provider CLI command registry | `src/tooling/cli/durable_store_import_provider_commands.def` |
-| Provider command routing tests | `tests/cli/command_routing.cpp` |
+| Provider CLI artifact/catalog registry | `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` |
+| Provider CLI catalog mapping | `src/tooling/cli/provider/provider_artifact_catalog.*` |
+| Provider command routing tests | `tests/unit/tooling/cli/command_routing.cpp` |
 | Golden command registration | `tests/cmake/TestTargets.cmake` |
 
 ## 命令族
@@ -41,7 +41,9 @@ emit-durable-store-import-decision-review
 
 内部 C++ API 不提供 `build_durable_store_import_*` 兼容 shim；新增模型和 review action 应使用短语义名，并由 artifact printer 映射到稳定 JSON 字符串。
 
-Provider 命令由 `src/tooling/cli/durable_store_import_provider_commands.def` 注册生成。不要复制 command handler 来新增 provider 命令；新增时应在 `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def` 添加一条 artifact 记录，在 `src/tooling/cli/durable_store_import_provider_commands.def` 添加一条 command 记录，再交给 `ProviderPipeline` 统一 dispatch。
+Provider 命令元数据由 `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` 单表注册生成。不要复制 command handler 或新增第二张 command registry；新增时应在该 artifact 记录中同时声明 command enum、command token、visibility 和 provider-local order，再交给 `ProviderPipeline` 统一 dispatch。
+
+默认 CLI 只解析 `visibility = Public` 的 provider artifact。`visibility = Internal` 的中间节点必须显式传入 `--show-hidden` 才可 emit，主要用于 golden 覆盖、诊断和回归定位。
 
 ## Provider 领域映射
 
@@ -87,8 +89,8 @@ When adding or changing a durable-store/provider artifact:
 
 1. Update the model header and implementation in the relevant domain folder.
 2. Update `src/pipeline/persistence/durable_store_import/provider_artifacts.def` if the artifact is provider-owned.
-3. Update `src/tooling/cli/pipeline_durable_store_import_provider_artifacts.def` and `src/tooling/cli/durable_store_import_provider_commands.def` for provider CLI emission.
+3. Update `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` for provider CLI emission; command enum/token/visibility/order must live in the same record.
 4. Add or update model validation tests.
 5. Add or update golden CLI output when the command surface changes.
-6. Run `tests/cli/command_routing.cpp` coverage through `ahfl.cli.command_routing_all`.
+6. Run `tests/unit/tooling/cli/command_routing.cpp` coverage through `ahfl.cli.command_routing_all`.
 7. Keep artifact outputs secret-free unless the artifact explicitly models a secret handle. Never persist raw provider payload or credential material by default.

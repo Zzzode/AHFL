@@ -23,8 +23,12 @@ template <ProviderArtifactKind Artifact>
         return 1;
     }
 
-    return emit_provider_artifact_with_diagnostics(
-        Artifact, context.program, context.metadata, *context.mock_set, context.options, context.io);
+    return emit_provider_artifact_with_diagnostics(Artifact,
+                                                   context.program,
+                                                   context.metadata,
+                                                   *context.mock_set,
+                                                   context.options,
+                                                   context.io);
 }
 
 // O(1) dispatch table indexed by CommandKind enum value.
@@ -75,8 +79,7 @@ constexpr auto kPackageCommandHandlers = [] {
     table[static_cast<std::size_t>(CommandKind::EmitDurableStoreImportReceiptPersistenceReview)] =
         invoke_package_command<
             emit_durable_store_import_receipt_persistence_review_with_diagnostics>;
-    table[static_cast<std::size_t>(
-        CommandKind::EmitDurableStoreImportReceiptPersistenceResponse)] =
+    table[static_cast<std::size_t>(CommandKind::EmitDurableStoreImportReceiptPersistenceResponse)] =
         invoke_package_command<
             emit_durable_store_import_receipt_persistence_response_with_diagnostics>;
     table[static_cast<std::size_t>(
@@ -88,19 +91,18 @@ constexpr auto kPackageCommandHandlers = [] {
     table[static_cast<std::size_t>(CommandKind::EmitDurableStoreImportRecoveryPreview)] =
         invoke_package_command<emit_durable_store_import_recovery_preview_with_diagnostics>;
 
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND(kind, token, position, inference_order,    \
-                                                       artifact_kind)                             \
-    table[static_cast<std::size_t>(CommandKind::kind)] =                                         \
-        invoke_provider_artifact_command<ProviderArtifactKind::artifact_kind>;
-#include "tooling/cli/provider/durable_store_import_provider_commands.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_COMMAND
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
+    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+    table[static_cast<std::size_t>(CommandKind::command_kind)] =                                   \
+        invoke_provider_artifact_command<ProviderArtifactKind::kind>;
+#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
+#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
 
     table[static_cast<std::size_t>(CommandKind::EmitSchedulerReview)] =
         invoke_package_command<emit_scheduler_review_with_diagnostics>;
     table[static_cast<std::size_t>(CommandKind::EmitRuntimeSession)] =
         invoke_package_command<emit_runtime_session_with_diagnostics>;
-    table[static_cast<std::size_t>(CommandKind::EmitExecutionPlan)] =
-        invoke_execution_plan_command;
+    table[static_cast<std::size_t>(CommandKind::EmitExecutionPlan)] = invoke_execution_plan_command;
 
     return table;
 }();

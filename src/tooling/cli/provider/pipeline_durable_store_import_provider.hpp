@@ -1,13 +1,14 @@
 #pragma once
 
-#include "tooling/cli/command_catalog.hpp"
-#include "tooling/cli/output_context.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
+#include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/output_context.hpp"
 
 #include "pipeline/persistence/durable_store_import/provider.hpp"
 
+#include "provider_artifact_catalog.hpp"
 #include "provider_pipeline_cache.hpp"
 
 #include <iosfwd>
@@ -17,30 +18,13 @@
 
 namespace ahfl::cli {
 
-enum class ProviderArtifactKind {
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                     \
-                                                        artifact_type,                            \
-                                                        builder,                                  \
-                                                        printer,                                  \
-                                                        command_token,                            \
-                                                        visibility)                               \
-    kind,
-#include "pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-};
-
-using ProviderArtifact = std::variant<
-    std::monostate
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                     \
-                                                        artifact_type,                            \
-                                                        builder,                                  \
-                                                        printer,                                  \
-                                                        command_token,                            \
-                                                        visibility)                               \
+using ProviderArtifact = std::variant<std::monostate
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
+    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
     , ahfl::durable_store_import::artifact_type
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-    >;
+                                      >;
 
 class ProviderPipeline {
   public:
@@ -56,24 +40,16 @@ class ProviderPipeline {
     mutable ProviderPipelineCache cache_;
 };
 
-enum class ProviderArtifactVisibility { Public, Internal };
-
-[[nodiscard]] constexpr ProviderArtifactVisibility
-provider_artifact_visibility(ProviderArtifactKind kind);
-
-[[nodiscard]] std::optional<ProviderArtifactKind>
-provider_artifact_for_command(CommandKind command);
-[[nodiscard]] std::string_view provider_artifact_command_token(ProviderArtifactKind kind);
 [[nodiscard]] bool print_provider_artifact(ProviderArtifactKind kind,
                                            const ProviderArtifact &artifact,
                                            std::ostream &out);
 
-[[nodiscard]] int emit_provider_artifact_with_diagnostics(
-    ProviderArtifactKind kind,
-    const ahfl::ir::Program &program,
-    const ahfl::handoff::PackageMetadata &metadata,
-    const ahfl::dry_run::CapabilityMockSet &mock_set,
-    const CommandLineOptions &options,
-    const OutputContext &io = {});
+[[nodiscard]] int
+emit_provider_artifact_with_diagnostics(ProviderArtifactKind kind,
+                                        const ahfl::ir::Program &program,
+                                        const ahfl::handoff::PackageMetadata &metadata,
+                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
+                                        const CommandLineOptions &options,
+                                        const OutputContext &io = {});
 
 } // namespace ahfl::cli

@@ -80,38 +80,77 @@ void set_show_internal(CommandLineOptions &opts, std::optional<std::string_view>
 // ---------------------------------------------------------------------------
 
 constexpr OptionSpec kOptionSpecs[] = {
-    {"--project", "", OptionArgKind::RequiredValue, set_project,
-     "Path to project descriptor", "a descriptor path"},
-    {"--package", "", OptionArgKind::RequiredValue, set_package,
-     "Path to package descriptor", "a descriptor path"},
-    {"--capability-mocks", "", OptionArgKind::RequiredValue, set_capability_mocks,
-     "Path to capability mocks descriptor", "a descriptor path"},
-    {"--workspace", "", OptionArgKind::RequiredValue, set_workspace,
-     "Path to workspace descriptor", "a descriptor path"},
-    {"--project-name", "", OptionArgKind::RequiredValue, set_project_name,
-     "Project name within workspace", "a project name"},
-    {"--workflow", "", OptionArgKind::RequiredValue, set_workflow,
-     "Canonical workflow name", "a canonical workflow name"},
-    {"--input-fixture", "", OptionArgKind::RequiredValue, set_input_fixture,
-     "Input fixture string", "a fixture string"},
-    {"--run-id", "", OptionArgKind::RequiredValue, set_run_id,
-     "Run identifier", "an id string"},
-    {"--model-checker", "", OptionArgKind::RequiredValue, set_model_checker,
-     "Path to model checker executable", "an executable path"},
-    {"--formal-model-out", "", OptionArgKind::RequiredValue, set_formal_model_out,
-     "Output path for formal model", "an output path"},
-    {"--search-root", "", OptionArgKind::RepeatableValue, set_search_root,
-     "Additional search root directory", "a directory path"},
-    {"--dump-ast", "", OptionArgKind::Flag, set_dump_ast,
-     "Dump AST outline", ""},
-    {"--dump-types", "", OptionArgKind::Flag, set_dump_types,
-     "Dump type environment", ""},
-    {"--explain", "", OptionArgKind::Flag, set_explain,
-     "Enable structured explanations", ""},
-    {"--optimize", "-O", OptionArgKind::Flag, set_optimize,
-     "Enable optimization passes", ""},
-    {"--show-hidden", "", OptionArgKind::Flag, set_show_internal,
-     "Show hidden internal artifacts in help and allow their emission", ""},
+    {"--project",
+     "",
+     OptionArgKind::RequiredValue,
+     set_project,
+     "Path to project descriptor",
+     "a descriptor path"},
+    {"--package",
+     "",
+     OptionArgKind::RequiredValue,
+     set_package,
+     "Path to package descriptor",
+     "a descriptor path"},
+    {"--capability-mocks",
+     "",
+     OptionArgKind::RequiredValue,
+     set_capability_mocks,
+     "Path to capability mocks descriptor",
+     "a descriptor path"},
+    {"--workspace",
+     "",
+     OptionArgKind::RequiredValue,
+     set_workspace,
+     "Path to workspace descriptor",
+     "a descriptor path"},
+    {"--project-name",
+     "",
+     OptionArgKind::RequiredValue,
+     set_project_name,
+     "Project name within workspace",
+     "a project name"},
+    {"--workflow",
+     "",
+     OptionArgKind::RequiredValue,
+     set_workflow,
+     "Canonical workflow name",
+     "a canonical workflow name"},
+    {"--input-fixture",
+     "",
+     OptionArgKind::RequiredValue,
+     set_input_fixture,
+     "Input fixture string",
+     "a fixture string"},
+    {"--run-id", "", OptionArgKind::RequiredValue, set_run_id, "Run identifier", "an id string"},
+    {"--model-checker",
+     "",
+     OptionArgKind::RequiredValue,
+     set_model_checker,
+     "Path to model checker executable",
+     "an executable path"},
+    {"--formal-model-out",
+     "",
+     OptionArgKind::RequiredValue,
+     set_formal_model_out,
+     "Output path for formal model",
+     "an output path"},
+    {"--search-root",
+     "",
+     OptionArgKind::RepeatableValue,
+     set_search_root,
+     "Additional search root directory",
+     "a directory path"},
+    {"--dump-ast", "", OptionArgKind::Flag, set_dump_ast, "Dump AST outline", ""},
+    {"--dump-types", "", OptionArgKind::Flag, set_dump_types, "Dump type environment", ""},
+    {"--explain", "", OptionArgKind::Flag, set_explain, "Enable structured explanations", ""},
+    {"--optimize", "-O", OptionArgKind::Flag, set_optimize, "Enable optimization passes", ""},
+    {"--show-hidden",
+     "",
+     OptionArgKind::Flag,
+     set_show_internal,
+     "Show hidden internal artifacts in help and allow their emission",
+     ""},
 };
 
 // ---------------------------------------------------------------------------
@@ -129,8 +168,7 @@ constexpr OptionSpec kOptionSpecs[] = {
     return true;
 }
 
-static_assert(option_table_has_unique_long_names(),
-              "duplicate long_name in option table");
+static_assert(option_table_has_unique_long_names(), "duplicate long_name in option table");
 
 // ---------------------------------------------------------------------------
 // Table lookup helper
@@ -155,8 +193,14 @@ static_assert(option_table_has_unique_long_names(),
 // ---------------------------------------------------------------------------
 
 [[nodiscard]] std::optional<ParseResult>
-parse_options_from_table(std::span<const std::string_view> arguments,
-                         CommandLineOptions &options) {
+parse_options_from_table(std::span<const std::string_view> arguments, CommandLineOptions &options) {
+    for (const auto argument : arguments) {
+        if (argument == "--show-hidden") {
+            options.show_internal_artifacts = true;
+            break;
+        }
+    }
+
     for (std::size_t index = 0; index < arguments.size(); ++index) {
         const auto argument = arguments[index];
 
@@ -173,8 +217,8 @@ parse_options_from_table(std::span<const std::string_view> arguments,
             } else {
                 // RequiredValue or RepeatableValue — consume next argument.
                 if (index + 1 >= arguments.size()) {
-                    std::cerr << "error: " << spec->long_name << " requires "
-                              << spec->metavar << "\n";
+                    std::cerr << "error: " << spec->long_name << " requires " << spec->metavar
+                              << "\n";
                     print_usage(std::cerr);
                     return ParseResult{true, 2};
                 }
@@ -201,15 +245,16 @@ parse_options_from_table(std::span<const std::string_view> arguments,
                 if (index + 1 < arguments.size() && !arguments[index + 1].empty() &&
                     arguments[index + 1].front() != '-') {
                     auto artifact_id = arguments[++index];
-                    if (auto cmd = resolve_subcommand(*group, artifact_id); cmd.has_value()) {
-                        if (!options.selected_command.has_value() &&
-                            options.positional.empty()) {
+                    if (auto cmd = resolve_subcommand(
+                            *group, artifact_id, options.show_internal_artifacts);
+                        cmd.has_value()) {
+                        if (!options.selected_command.has_value() && options.positional.empty()) {
                             set_command_option(options, *cmd);
                             continue;
                         }
                     }
-                    std::cerr << "error: unknown artifact '" << artifact_id
-                              << "' for action '" << argument << "'\n";
+                    std::cerr << "error: unknown artifact '" << artifact_id << "' for action '"
+                              << argument << "'\n";
                     print_usage(std::cerr);
                     return ParseResult{true, 2};
                 }

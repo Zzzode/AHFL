@@ -556,6 +556,8 @@ add_executable(ahfl_cli_command_routing_tests
     unit/tooling/cli/command_routing.cpp
     ${PROJECT_SOURCE_DIR}/src/tooling/cli/command_registry.cpp
     ${PROJECT_SOURCE_DIR}/src/tooling/cli/command_help.cpp
+    ${PROJECT_SOURCE_DIR}/src/tooling/cli/provider/provider_artifact_catalog.cpp
+    ${PROJECT_SOURCE_DIR}/src/tooling/cli/provider/provider_artifact_graph.cpp
 )
 target_link_libraries(ahfl_cli_command_routing_tests
     PRIVATE
