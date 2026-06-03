@@ -3,10 +3,19 @@
 #include <optional>
 #include <string>
 
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "runtime/evaluator/value.hpp"
 
 namespace ahfl::llm_provider {
+
+struct ResponseParseResult {
+    std::optional<evaluator::Value> value;
+    std::string error_message;
+
+    [[nodiscard]] bool success() const noexcept {
+        return value.has_value();
+    }
+};
 
 // 将 LLM 的 JSON 响应解析为 AHFL Value
 class ResponseParser {
@@ -16,6 +25,8 @@ class ResponseParser {
     // 解析 JSON 字符串为指定类型的 Value
     [[nodiscard]] std::optional<evaluator::Value> parse(const std::string &json_str,
                                                         const std::string &expected_type) const;
+    [[nodiscard]] ResponseParseResult
+    parse_with_diagnostics(const std::string &json_str, const std::string &expected_type) const;
 
   private:
     const ir::Program &program_;
@@ -24,16 +35,16 @@ class ResponseParser {
     [[nodiscard]] const ir::EnumDecl *find_enum(const std::string &name) const;
 
     // 解析 JSON object 为 struct Value
-    [[nodiscard]] std::optional<evaluator::Value> parse_struct(const std::string &json_obj,
-                                                               const ir::StructDecl &decl) const;
+    [[nodiscard]] ResponseParseResult parse_struct(const std::string &json_obj,
+                                                   const ir::StructDecl &decl) const;
 
-    // 从 JSON 字符串中提取指定 key 的 value（简单手写解析器）
+    // 从 JSON object 中提取指定 key 的 value
     [[nodiscard]] std::string extract_json_value(const std::string &json_str,
                                                  const std::string &key) const;
 
     // 解析基本类型值
-    [[nodiscard]] std::optional<evaluator::Value>
-    parse_primitive(const std::string &value_str, const std::string &type_name) const;
+    [[nodiscard]] ResponseParseResult parse_primitive(const std::string &value_str,
+                                                      const std::string &type_name) const;
 };
 
 } // namespace ahfl::llm_provider

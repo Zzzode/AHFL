@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -95,6 +96,29 @@ FlowDecl make_struct_return_flow(const std::string &target,
         StructFieldInit{field_name, make_expr_ptr(IntegerLiteralExpr{int_val})});
     done_handler.body.statements.push_back(
         make_stmt_ptr(ReturnStatement{make_expr_ptr(std::move(struct_expr))}));
+    flow.state_handlers.push_back(std::move(done_handler));
+
+    return flow;
+}
+
+// 构造一个 Flow：Init goto Done; Done return input.<field_name>
+FlowDecl make_input_field_return_flow(const std::string &target, const std::string &field_name) {
+    FlowDecl flow;
+    flow.target = target;
+
+    StateHandler init_handler;
+    init_handler.state_name = "Init";
+    init_handler.body.statements.push_back(make_stmt_ptr(GotoStatement{"Done"}));
+    flow.state_handlers.push_back(std::move(init_handler));
+
+    StateHandler done_handler;
+    done_handler.state_name = "Done";
+    PathExpr input_path;
+    input_path.path.root_kind = PathRootKind::Input;
+    input_path.path.root_name = "input";
+    input_path.path.members = {field_name};
+    done_handler.body.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(std::move(input_path))}));
     flow.state_handlers.push_back(std::move(done_handler));
 
     return flow;
@@ -329,6 +353,152 @@ void test_return_value_from_node() {
 }
 
 // ============================================================================
+// Test: workflow return eval errors are surfaced
+// ============================================================================
+
+void test_return_value_eval_error_is_reported() {
+    Program program;
+
+    WorkflowDecl workflow;
+    workflow.name = "BrokenReturnWorkflow";
+    workflow.input_type = "Input";
+    workflow.output_type = "Output";
+
+    PathExpr missing_path;
+    missing_path.path.root_kind = PathRootKind::Identifier;
+    missing_path.path.root_name = "missing_node";
+    missing_path.path.members = {"value"};
+    workflow.return_value = make_expr_ptr(std::move(missing_path));
+
+    program.declarations.push_back(std::move(workflow));
+
+    WorkflowRuntime runtime(program);
+    auto result = runtime.run("BrokenReturnWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::EvalError, "return_eval_error.status_eval_error");
+    check(result.has_errors(), "return_eval_error.has_errors");
+    check(!result.output.has_value(), "return_eval_error.no_output");
+}
+
+// ============================================================================
+// Test: workflow return 复合表达式支持 capability call
+// ============================================================================
+
+void test_return_value_can_call_capability_inside_composite_expression() {
+    Program program;
+
+    WorkflowDecl workflow;
+    workflow.name = "CapabilityReturnWorkflow";
+    workflow.input_type = "Input";
+    workflow.output_type = "Output";
+
+    CallExpr ready_call;
+    ready_call.callee = "is_ready";
+
+    BinaryExpr condition;
+    condition.op = ExprBinaryOp::Equal;
+    condition.lhs = make_expr_ptr(std::move(ready_call));
+    condition.rhs = make_expr_ptr(BoolLiteralExpr{true});
+    workflow.return_value = make_expr_ptr(std::move(condition));
+
+    program.declarations.push_back(std::move(workflow));
+
+    WorkflowRuntimeConfig config;
+    config.capability_invoker = [](const std::string &name,
+                                   const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        if (name == "is_ready") {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Success,
+                .value = make_bool(true),
+                .error_message = {},
+                .attempts = 1,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = {},
+            .error_message = "unexpected capability",
+            .attempts = 1,
+        };
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("CapabilityReturnWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::Completed, "return_capability.status_completed");
+    check(!result.has_errors(), "return_capability.no_errors");
+    auto *output =
+        result.output.has_value() ? std::get_if<BoolValue>(&result.output->node) : nullptr;
+    check(output != nullptr && output->value, "return_capability.output_true");
+}
+
+// ============================================================================
+// Test: workflow node input 复合表达式支持 capability call
+// ============================================================================
+
+void test_node_input_can_call_capability_inside_struct_literal() {
+    Program program;
+
+    program.declarations.push_back(make_echo_agent("InputEchoAgent"));
+    program.declarations.push_back(make_input_field_return_flow("InputEchoAgent", "value"));
+
+    WorkflowDecl workflow;
+    workflow.name = "CapabilityNodeInputWorkflow";
+    workflow.input_type = "Input";
+    workflow.output_type = "Output";
+
+    WorkflowNode node;
+    node.name = "cap_node";
+    node.target = "InputEchoAgent";
+
+    StructLiteralExpr node_input;
+    node_input.type_name = "NodeInput";
+    CallExpr value_call;
+    value_call.callee = "make_node_value";
+    node_input.fields.push_back(StructFieldInit{
+        .name = "value",
+        .value = make_expr_ptr(std::move(value_call)),
+    });
+    node.input = make_expr_ptr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+
+    PathExpr return_path;
+    return_path.path.root_kind = PathRootKind::Identifier;
+    return_path.path.root_name = "cap_node";
+    workflow.return_value = make_expr_ptr(std::move(return_path));
+
+    program.declarations.push_back(std::move(workflow));
+
+    WorkflowRuntimeConfig config;
+    config.capability_invoker = [](const std::string &name,
+                                   const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        if (name == "make_node_value") {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Success,
+                .value = make_int(123),
+                .error_message = {},
+                .attempts = 1,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = {},
+            .error_message = "unexpected capability",
+            .attempts = 1,
+        };
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("CapabilityNodeInputWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::Completed, "node_input_capability.status_completed");
+    check(!result.has_errors(), "node_input_capability.no_errors");
+    auto *output =
+        result.output.has_value() ? std::get_if<IntValue>(&result.output->node) : nullptr;
+    check(output != nullptr && output->value == 123, "node_input_capability.output_123");
+}
+
+// ============================================================================
 // Test: 空 workflow（无 nodes）
 // ============================================================================
 
@@ -431,6 +601,9 @@ int main() {
     test_diamond_workflow();
     test_node_failure_propagation();
     test_return_value_from_node();
+    test_return_value_eval_error_is_reported();
+    test_return_value_can_call_capability_inside_composite_expression();
+    test_node_input_can_call_capability_inside_struct_literal();
     test_empty_workflow();
     test_missing_agent_declaration();
     test_missing_workflow();

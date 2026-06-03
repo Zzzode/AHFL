@@ -1,146 +1,134 @@
 #include "runtime/providers/llm/tool_calling.hpp"
 
+#include "base/json/json_value.hpp"
+
+#include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ahfl::llm_provider {
 
-std::string build_tool_request_json(std::string_view system_prompt, std::string_view user_prompt,
-                                    std::string_view model,
-                                    const std::vector<ToolDefinition> &tools) {
-    std::string json = R"({"model":")";
-    json += model;
-    json += R"(","messages":[{"role":"system","content":")";
-    // Escape system prompt
-    for (char c : system_prompt) {
-        if (c == '"') {
-            json += "\\\"";
-        } else if (c == '\\') {
-            json += "\\\\";
-        } else if (c == '\n') {
-            json += "\\n";
-        } else {
-            json += c;
-        }
-    }
-    json += R"("},{"role":"user","content":")";
-    for (char c : user_prompt) {
-        if (c == '"') {
-            json += "\\\"";
-        } else if (c == '\\') {
-            json += "\\\\";
-        } else if (c == '\n') {
-            json += "\\n";
-        } else {
-            json += c;
-        }
-    }
-    json += R"("}],"tools":[)";
+namespace {
 
-    for (std::size_t i = 0; i < tools.size(); ++i) {
-        if (i > 0) {
-            json += ',';
+using ahfl::json::JsonValue;
+
+[[nodiscard]] std::unique_ptr<JsonValue> make_message(std::string role, std::string content) {
+    auto message = JsonValue::make_object();
+    message->set("role", JsonValue::make_string(std::move(role)));
+    message->set("content", JsonValue::make_string(std::move(content)));
+    return message;
+}
+
+[[nodiscard]] std::unique_ptr<JsonValue> parse_parameters_schema(std::string_view schema_json) {
+    auto parsed = ahfl::json::parse_json(schema_json);
+    if (parsed.has_value() && *parsed) {
+        return std::move(*parsed);
+    }
+    return JsonValue::make_string(std::string(schema_json));
+}
+
+[[nodiscard]] const JsonValue *find_tool_calls_array(const JsonValue &value) {
+    if (value.is_object()) {
+        if (const auto *tool_calls = value.get("tool_calls");
+            tool_calls != nullptr && tool_calls->is_array()) {
+            return tool_calls;
         }
-        json += R"({"type":"function","function":{"name":")";
-        json += tools[i].name;
-        json += R"(","description":")";
-        for (char c : tools[i].description) {
-            if (c == '"') {
-                json += "\\\"";
-            } else if (c == '\n') {
-                json += "\\n";
-            } else {
-                json += c;
+        for (const auto &[_, child] : value.object_fields) {
+            if (child != nullptr) {
+                if (const auto *found = find_tool_calls_array(*child); found != nullptr) {
+                    return found;
+                }
             }
         }
-        json += R"(","parameters":)";
-        json += tools[i].params_schema_json;
-        json += "}}";
     }
+    if (value.is_array()) {
+        for (const auto &child : value.array_items) {
+            if (child != nullptr) {
+                if (const auto *found = find_tool_calls_array(*child); found != nullptr) {
+                    return found;
+                }
+            }
+        }
+    }
+    return nullptr;
+}
 
-    json += "]}";
-    return json;
+[[nodiscard]] std::string json_string_or_serialized(const JsonValue *value) {
+    if (value == nullptr) {
+        return {};
+    }
+    if (auto string_value = value->as_string(); string_value.has_value()) {
+        return std::string(*string_value);
+    }
+    if (!value->is_null()) {
+        return ahfl::json::serialize_json(*value);
+    }
+    return {};
+}
+
+} // namespace
+
+std::string build_tool_request_json(std::string_view system_prompt,
+                                    std::string_view user_prompt,
+                                    std::string_view model,
+                                    const std::vector<ToolDefinition> &tools) {
+    auto root = JsonValue::make_object();
+    root->set("model", JsonValue::make_string(std::string(model)));
+
+    auto messages = JsonValue::make_array();
+    messages->push(make_message("system", std::string(system_prompt)));
+    messages->push(make_message("user", std::string(user_prompt)));
+    root->set("messages", std::move(messages));
+
+    auto tool_array = JsonValue::make_array();
+    for (const auto &tool : tools) {
+        auto function = JsonValue::make_object();
+        function->set("name", JsonValue::make_string(tool.name));
+        function->set("description", JsonValue::make_string(tool.description));
+        function->set("parameters", parse_parameters_schema(tool.params_schema_json));
+
+        auto tool_object = JsonValue::make_object();
+        tool_object->set("type", JsonValue::make_string("function"));
+        tool_object->set("function", std::move(function));
+        tool_array->push(std::move(tool_object));
+    }
+    root->set("tools", std::move(tool_array));
+
+    return ahfl::json::serialize_json(*root);
 }
 
 std::vector<ToolCall> parse_tool_calls(std::string_view response_body) {
     std::vector<ToolCall> calls;
-
-    // Parse tool_calls array from response.
-    // Look for "tool_calls":[{...},...] pattern
-    constexpr std::string_view marker = "\"tool_calls\":[";
-    auto pos = response_body.find(marker);
-    if (pos == std::string_view::npos) {
+    auto parsed = ahfl::json::parse_json(response_body);
+    if (!parsed.has_value() || !*parsed) {
         return calls;
     }
-    pos += marker.size();
 
-    // Parse each tool call object
-    while (pos < response_body.size() && response_body[pos] != ']') {
-        if (response_body[pos] == ',') {
-            ++pos;
+    const auto *tool_calls = find_tool_calls_array(**parsed);
+    if (tool_calls == nullptr) {
+        return calls;
+    }
+    for (const auto &item : tool_calls->array_items) {
+        if (item == nullptr || !item->is_object()) {
+            continue;
         }
-        if (response_body[pos] != '{') {
-            break;
-        }
-
         ToolCall call;
+        call.id = json_string_or_serialized(item->get("id"));
 
-        // Find "id":"..."
-        auto id_pos = response_body.find("\"id\":\"", pos);
-        if (id_pos != std::string_view::npos && id_pos < response_body.find('}', pos)) {
-            id_pos += 6;
-            auto end = response_body.find('"', id_pos);
-            if (end != std::string_view::npos) {
-                call.id = std::string(response_body.substr(id_pos, end - id_pos));
-            }
-        }
-
-        // Find "name":"..."
-        auto name_pos = response_body.find("\"name\":\"", pos);
-        if (name_pos != std::string_view::npos) {
-            name_pos += 8;
-            auto end = response_body.find('"', name_pos);
-            if (end != std::string_view::npos) {
-                call.name = std::string(response_body.substr(name_pos, end - name_pos));
-            }
-        }
-
-        // Find "arguments":"..." (may contain escaped quotes)
-        auto args_pos = response_body.find("\"arguments\":\"", pos);
-        if (args_pos != std::string_view::npos) {
-            args_pos += 13;
-            std::string args;
-            while (args_pos < response_body.size() && response_body[args_pos] != '"') {
-                if (response_body[args_pos] == '\\' && args_pos + 1 < response_body.size()) {
-                    ++args_pos;
-                    if (response_body[args_pos] == '"') {
-                        args += '"';
-                    } else if (response_body[args_pos] == '\\') {
-                        args += '\\';
-                    } else if (response_body[args_pos] == 'n') {
-                        args += '\n';
-                    } else {
-                        args += response_body[args_pos];
-                    }
-                } else {
-                    args += response_body[args_pos];
-                }
-                ++args_pos;
-            }
-            call.arguments_json = std::move(args);
+        const auto *function = item->get("function");
+        if (function != nullptr && function->is_object()) {
+            call.name = json_string_or_serialized(function->get("name"));
+            call.arguments_json = json_string_or_serialized(function->get("arguments"));
+        } else {
+            call.name = json_string_or_serialized(item->get("name"));
+            call.arguments_json = json_string_or_serialized(item->get("arguments"));
         }
 
         if (!call.name.empty()) {
             calls.push_back(std::move(call));
         }
-
-        // Skip to next object or end of array
-        auto next_brace = response_body.find('}', pos);
-        if (next_brace == std::string_view::npos) {
-            break;
-        }
-        pos = next_brace + 1;
     }
 
     return calls;

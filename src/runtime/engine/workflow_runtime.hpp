@@ -6,11 +6,13 @@
 #include <unordered_map>
 #include <vector>
 
-#include "runtime/evaluator/eval_context.hpp"
-#include "runtime/evaluator/value.hpp"
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/engine/agent_runtime.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
+#include "runtime/engine/capability_bridge.hpp"
+#include "runtime/evaluator/eval_context.hpp"
+#include "runtime/evaluator/evaluator.hpp"
+#include "runtime/evaluator/value.hpp"
 
 namespace ahfl::runtime {
 
@@ -41,14 +43,10 @@ struct WorkflowResult {
     [[nodiscard]] bool has_errors() const;
 };
 
-// Capability 调用回调 (用于 CallExpr 在 agent 中的执行)
-using CapabilityInvoker = std::function<evaluator::Value(
-    const std::string &name, const std::vector<evaluator::Value> &args)>;
-
 // Workflow Runtime 配置
 struct WorkflowRuntimeConfig {
     QuotaConfig default_agent_quota;
-    std::optional<CapabilityInvoker> capability_invoker; // v0.55 会提供真实实现
+    std::optional<CapabilityInvoker> capability_invoker;
 };
 
 // Workflow Runtime
@@ -72,11 +70,11 @@ class WorkflowRuntime {
     [[nodiscard]] std::vector<const ir::WorkflowNode *>
     topological_sort(const ir::WorkflowDecl &workflow) const;
 
-    // 求值 node input 表达式
-    [[nodiscard]] evaluator::Value
-    eval_node_input(const ir::Expr &input_expr,
-                    const Value &workflow_input,
-                    const std::unordered_map<std::string, Value> &node_outputs) const;
+    // 求值 workflow 表达式（node input 与 workflow return 共用同一个 runtime seam）
+    [[nodiscard]] evaluator::EvalResult
+    eval_workflow_expression(const ir::Expr &expr,
+                             const Value &workflow_input,
+                             const std::unordered_map<std::string, Value> &node_outputs) const;
 };
 
 } // namespace ahfl::runtime

@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include <variant>
 
+#include "runtime/engine/capability_eval.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 
 namespace ahfl::runtime {
@@ -125,17 +126,17 @@ WorkflowRuntime::topological_sort(const ir::WorkflowDecl &workflow) const {
 }
 
 // ============================================================================
-// eval_node_input
+// eval_workflow_expression
 // 构建 EvalContext：
 //   - workflow input（StructValue）的各字段注入 input scope
 //   - 已完成 node 的输出（StructValue）的各字段注入 node_output scope
-// 然后调用 eval_expr 求值
+// 然后通过统一 runtime seam 求值；配置了 capability invoker 时支持 CallExpr
 // ============================================================================
 
-evaluator::Value
-WorkflowRuntime::eval_node_input(const ir::Expr &input_expr,
-                                 const Value &workflow_input,
-                                 const std::unordered_map<std::string, Value> &node_outputs) const {
+evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
+    const ir::Expr &expr,
+    const Value &workflow_input,
+    const std::unordered_map<std::string, Value> &node_outputs) const {
     evaluator::EvalContext ctx;
 
     // 将整体 workflow input 绑定为 local "input"，支持 `input` 作为简单路径解析
@@ -164,11 +165,10 @@ WorkflowRuntime::eval_node_input(const ir::Expr &input_expr,
         }
     }
 
-    auto eval_result = evaluator::eval_expr(input_expr, ctx);
-    if (eval_result.has_errors()) {
-        return evaluator::make_none();
+    if (config_.capability_invoker.has_value()) {
+        return eval_expr_with_capabilities(expr, ctx, *config_.capability_invoker);
     }
-    return std::move(eval_result.value);
+    return evaluator::eval_expr(expr, ctx);
 }
 
 // ============================================================================
@@ -193,7 +193,14 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     if (workflow->nodes.empty()) {
         if (workflow->return_value) {
             std::unordered_map<std::string, Value> empty_outputs;
-            result.output = eval_node_input(*workflow->return_value, input, empty_outputs);
+            auto return_result =
+                eval_workflow_expression(*workflow->return_value, input, empty_outputs);
+            if (return_result.has_errors()) {
+                result.status = WorkflowStatus::EvalError;
+                result.diagnostics.append(return_result.diagnostics);
+            } else {
+                result.output = std::move(return_result.value);
+            }
         }
         return result;
     }
@@ -246,32 +253,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         // 步骤 4a：求值 node 的 input 表达式
         evaluator::Value node_input = evaluator::make_none();
         if (node->input) {
-            evaluator::EvalContext eval_ctx;
-            // 将整体 workflow input 绑定为 local "input"，
-            // 以便 node 表达式中直接引用 `input` 路径时能解析
-            eval_ctx.bind_local("input", evaluator::clone_value(input));
-            // 注入 workflow input 的各字段到 input scope
-            if (const auto *sv = std::get_if<evaluator::StructValue>(&input.node)) {
-                for (const auto &[field_name, field_val] : sv->fields) {
-                    if (field_val) {
-                        eval_ctx.set_input(field_name, evaluator::clone_value(*field_val));
-                    }
-                }
-            }
-            // 注入已完成 node 的输出（同时绑定为 local 和 node_output scope）
-            for (const auto &[prev_node_name, prev_val] : node_outputs) {
-                eval_ctx.bind_local(prev_node_name, evaluator::clone_value(prev_val));
-                if (const auto *sv = std::get_if<evaluator::StructValue>(&prev_val.node)) {
-                    for (const auto &[field_name, field_val] : sv->fields) {
-                        if (field_val) {
-                            eval_ctx.set_node_output(
-                                prev_node_name, field_name, evaluator::clone_value(*field_val));
-                        }
-                    }
-                }
-            }
-
-            auto eval_result = evaluator::eval_expr(*node->input, eval_ctx);
+            auto eval_result = eval_workflow_expression(*node->input, input, node_outputs);
             if (eval_result.has_errors()) {
                 result.status = WorkflowStatus::EvalError;
                 result.diagnostics.append(eval_result.diagnostics);
@@ -350,7 +332,13 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
 
     // 步骤 5：求值 workflow 返回值（仅在无错误时）
     if (result.status == WorkflowStatus::Completed && workflow->return_value) {
-        result.output = eval_node_input(*workflow->return_value, input, node_outputs);
+        auto return_result = eval_workflow_expression(*workflow->return_value, input, node_outputs);
+        if (return_result.has_errors()) {
+            result.status = WorkflowStatus::EvalError;
+            result.diagnostics.append(return_result.diagnostics);
+        } else {
+            result.output = std::move(return_result.value);
+        }
     }
 
     return result;

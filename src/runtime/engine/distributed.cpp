@@ -1,7 +1,7 @@
 #include "runtime/engine/distributed.hpp"
 
 #include "base/json/json_value.hpp"
-#include "base/support/curl.hpp"
+#include "runtime/engine/http_transport.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -40,16 +40,17 @@ HttpResult http_request(const std::string &method,
                         const std::string &url,
                         const std::string &body = "",
                         int timeout_seconds = 10) {
-    ahfl::support::CurlRequest request;
+    HttpRequest request;
     request.method = method;
     request.url = url;
     request.timeout_seconds = timeout_seconds;
     if (method == "PUT" || method == "POST") {
-        request.headers.emplace_back("Content-Type", "application/octet-stream");
+        request.headers.emplace("Content-Type", "application/octet-stream");
         request.body = body;
     }
 
-    const auto response = ahfl::support::execute_curl(request);
+    HttpTransport transport;
+    const auto response = transport.execute(request);
     return HttpResult{
         .status_code = response.status_code,
         .body = response.body,
@@ -127,8 +128,8 @@ DistributedScheduler::deserialize_snapshot(const std::string &data) const {
     if (data.empty())
         return std::nullopt;
 
-    if (auto parsed = ahfl::json::parse_json(data); parsed.has_value() && *parsed &&
-                                                (*parsed)->is_object()) {
+    if (auto parsed = ahfl::json::parse_json(data);
+        parsed.has_value() && *parsed && (*parsed)->is_object()) {
         const auto *format = (*parsed)->get("format");
         if (format != nullptr) {
             auto format_value = format->as_string();

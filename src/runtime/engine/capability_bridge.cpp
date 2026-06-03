@@ -3,10 +3,9 @@
 #include "runtime/engine/connection_pool.hpp"
 #include "runtime/engine/grpc_transport.hpp"
 #include "runtime/engine/http_transport.hpp"
-#include "runtime/evaluator/value_json.hpp"
+#include "runtime/engine/wire_value.hpp"
 
 #include <memory>
-#include <sstream>
 #include <thread>
 #include <utility>
 
@@ -111,15 +110,10 @@ std::vector<std::string> CapabilityRegistry::registered_names() const {
     return names;
 }
 
-std::function<Value(const std::string &, const std::vector<Value> &)>
-CapabilityRegistry::as_invoker() {
+CapabilityInvoker CapabilityRegistry::as_invoker() {
     auto *self = this;
-    return [self](const std::string &name, const std::vector<Value> &args) -> Value {
-        auto result = self->invoke(name, args);
-        if (result.status == CapabilityCallStatus::Success && result.value.has_value()) {
-            return std::move(*result.value);
-        }
-        return evaluator::make_none();
+    return [self](const std::string &name, const std::vector<Value> &args) -> CapabilityCallResult {
+        return self->invoke(name, args);
     };
 }
 
@@ -200,32 +194,6 @@ ConnectionPool &global_connection_pool() {
     return url.substr(host_start, host_end - host_start);
 }
 
-/// Serialize arguments to JSON body for HTTP capability call.
-[[nodiscard]] std::string serialize_args_to_json(const std::vector<Value> &args) {
-    if (args.empty()) {
-        return "{}";
-    }
-    if (args.size() == 1) {
-        // Single struct arg → serialize directly as object
-        if (std::holds_alternative<evaluator::StructValue>(args[0].node)) {
-            return evaluator::value_to_json(args[0]);
-        }
-        // Single non-struct arg → wrap in {"value": ...}
-        return "{\"value\":" + evaluator::value_to_json(args[0]) + "}";
-    }
-    // Multiple args → wrap in {"args": [...]}
-    std::ostringstream oss;
-    oss << "{\"args\":[";
-    for (std::size_t i = 0; i < args.size(); ++i) {
-        if (i > 0) {
-            oss << ',';
-        }
-        oss << evaluator::value_to_json(args[i]);
-    }
-    oss << "]}";
-    return oss.str();
-}
-
 } // namespace
 
 CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityConfig config) {
@@ -262,7 +230,7 @@ CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityCo
         request.url = shared_config->url;
         request.method = shared_config->method;
         request.headers = shared_config->headers;
-        request.body = serialize_args_to_json(args);
+        request.body = serialize_args_for_wire_json(args);
         request.timeout_seconds = static_cast<int>(shared_config->timeout.deadline.count() / 1000);
 
         // Ensure Content-Type is set
@@ -304,7 +272,7 @@ CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityCo
         }
 
         // Parse response body as Value
-        auto parsed = evaluator::value_from_json(response.body);
+        auto parsed = parse_value_from_wire_json(response.body);
         if (!parsed.has_value()) {
             // If body is empty or not valid JSON, return None
             if (response.body.empty()) {
@@ -453,7 +421,7 @@ CapabilityBinding make_grpc_capability(const std::string &name, GRPCCapabilityCo
         }
 
         // Parse response body as Value
-        auto parsed_value = evaluator::value_from_json(response.body);
+        auto parsed_value = parse_value_from_wire_json(response.body);
         if (!parsed_value.has_value()) {
             if (response.body.empty()) {
                 return CapabilityCallResult{

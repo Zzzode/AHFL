@@ -3,13 +3,13 @@
 #include <string>
 #include <vector>
 
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "runtime/engine/capability_bridge.hpp"
+#include "runtime/evaluator/value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
 #include "runtime/providers/llm/llm_provider_config.hpp"
 #include "runtime/providers/llm/prompt_builder.hpp"
 #include "runtime/providers/llm/response_parser.hpp"
-#include "runtime/engine/capability_bridge.hpp"
 
 namespace ahfl::llm_provider {
 
@@ -19,8 +19,8 @@ class LLMCapabilityProvider {
     LLMCapabilityProvider(const ir::Program &program, LLMProviderConfig config);
 
     // 调用 capability，通过 LLM 获取结果
-    [[nodiscard]] evaluator::Value invoke(const std::string &capability_name,
-                                          const std::vector<evaluator::Value> &args);
+    [[nodiscard]] runtime::CapabilityCallResult invoke(const std::string &capability_name,
+                                                       const std::vector<evaluator::Value> &args);
 
     // 注册所有 capability 到 registry
     void register_all(runtime::CapabilityRegistry &registry);

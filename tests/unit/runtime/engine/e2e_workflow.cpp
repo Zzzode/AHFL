@@ -3,14 +3,15 @@
 // 本测试编译 tests/runtime/e2e_multi_agent.ahfl 并使用 WorkflowRuntime 执行，
 // 验证完整的 runtime 执行流程。
 
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
-#include "runtime/engine/capability_bridge.hpp"
-#include "runtime/engine/workflow_runtime.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "runtime/engine/capability_bridge.hpp"
+#include "runtime/engine/workflow_runtime.hpp"
+#include "runtime/evaluator/value.hpp"
 
 #include <cstdlib>
 #include <filesystem>
@@ -89,8 +90,7 @@ std::unordered_map<std::string, Value> build_fields() {
 }
 
 template <typename... Rest>
-std::unordered_map<std::string, Value>
-build_fields(std::string key, Value val, Rest &&...rest) {
+std::unordered_map<std::string, Value> build_fields(std::string key, Value val, Rest &&...rest) {
     auto map = build_fields(std::forward<Rest>(rest)...);
     map.emplace(std::move(key), std::move(val));
     return map;
@@ -102,30 +102,33 @@ build_fields(std::string key, Value val, Rest &&...rest) {
 
 // 模拟 ClassifyMessage: 返回 ClassifyResult { category: Technical, confidence: "high" }
 Value mock_classify_message(const std::vector<Value> & /*args*/) {
-    return make_struct("ClassifyResult",
-                       build_fields("category", make_enum("Category", "Technical"),
-                                    "confidence", make_string("high")));
+    return make_struct(
+        "ClassifyResult",
+        build_fields(
+            "category", make_enum("Category", "Technical"), "confidence", make_string("high")));
 }
 
 // 模拟 HandleGeneral: 返回 SupportResult { response: "...", resolved: true }
 Value mock_handle_general(const std::vector<Value> & /*args*/) {
-    return make_struct("SupportResult",
-                       build_fields("response", make_string("Your issue has been resolved"),
-                                    "resolved", make_bool(true)));
+    return make_struct(
+        "SupportResult",
+        build_fields(
+            "response", make_string("Your issue has been resolved"), "resolved", make_bool(true)));
 }
 
 // 模拟 HandleTechnical: 返回 SupportResult { response: "...", resolved: true }
 Value mock_handle_technical(const std::vector<Value> & /*args*/) {
-    return make_struct("SupportResult",
-                       build_fields("response", make_string("Escalated to senior engineer"),
-                                    "resolved", make_bool(true)));
+    return make_struct(
+        "SupportResult",
+        build_fields(
+            "response", make_string("Escalated to senior engineer"), "resolved", make_bool(true)));
 }
 
 // 模拟 HandleBilling: 返回 SupportResult { response: "...", resolved: true }
 Value mock_handle_billing(const std::vector<Value> & /*args*/) {
-    return make_struct("SupportResult",
-                       build_fields("response", make_string("Billing adjusted"),
-                                    "resolved", make_bool(true)));
+    return make_struct(
+        "SupportResult",
+        build_fields("response", make_string("Billing adjusted"), "resolved", make_bool(true)));
 }
 
 // 模拟 GenerateSummary: 返回 SummaryResult
@@ -140,9 +143,12 @@ Value mock_generate_summary(const std::vector<Value> &args) {
     }
 
     return make_struct("SummaryResult",
-                       build_fields("summary", make_string("Case resolved successfully"),
-                                    "category", std::move(category),
-                                    "resolved", make_bool(resolved)));
+                       build_fields("summary",
+                                    make_string("Case resolved successfully"),
+                                    "category",
+                                    std::move(category),
+                                    "resolved",
+                                    make_bool(resolved)));
 }
 
 // ============================================================================
@@ -266,14 +272,17 @@ int test_priority_low_handling_path(const ir::Program &program) {
     WorkflowRuntime runtime(program, config);
 
     // 准备输入: SupportRequest { user_id, message, priority }
-    Value input = make_struct(
-        "SupportRequest",
-        build_fields("user_id", make_string("user_123"),
-                     "message", make_string("My server is crashing"),
-                     "priority", make_enum("runtime::e2e_multi_agent::Priority", "Low")));
+    Value input = make_struct("SupportRequest",
+                              build_fields("user_id",
+                                           make_string("user_123"),
+                                           "message",
+                                           make_string("My server is crashing"),
+                                           "priority",
+                                           make_enum("runtime::e2e_multi_agent::Priority", "Low")));
 
     // 执行 workflow
-    auto result = runtime.run("runtime::e2e_multi_agent::CustomerSupportWorkflow", std::move(input));
+    auto result =
+        runtime.run("runtime::e2e_multi_agent::CustomerSupportWorkflow", std::move(input));
 
     // 打印执行轨迹
     print_execution_trace(result);
@@ -317,8 +326,7 @@ int test_priority_low_handling_path(const ir::Program &program) {
 
     // 验证所有 node 都完成
     for (const auto &nr : result.node_results) {
-        check(nr.status == AgentStatus::Completed,
-              "low.node_completed_" + nr.node_name);
+        check(nr.status == AgentStatus::Completed, "low.node_completed_" + nr.node_name);
     }
 
     return (pass_count == test_count) ? 0 : 1;
@@ -342,14 +350,18 @@ int test_priority_high_escalated_path(const ir::Program &program) {
     WorkflowRuntime runtime(program, config);
 
     // 准备输入: SupportRequest { priority: High }
-    Value input = make_struct(
-        "SupportRequest",
-        build_fields("user_id", make_string("user_456"),
-                     "message", make_string("My server is crashing"),
-                     "priority", make_enum("runtime::e2e_multi_agent::Priority", "High")));
+    Value input =
+        make_struct("SupportRequest",
+                    build_fields("user_id",
+                                 make_string("user_456"),
+                                 "message",
+                                 make_string("My server is crashing"),
+                                 "priority",
+                                 make_enum("runtime::e2e_multi_agent::Priority", "High")));
 
     // 执行 workflow
-    auto result = runtime.run("runtime::e2e_multi_agent::CustomerSupportWorkflow", std::move(input));
+    auto result =
+        runtime.run("runtime::e2e_multi_agent::CustomerSupportWorkflow", std::move(input));
 
     // 打印执行轨迹
     print_execution_trace(result);
