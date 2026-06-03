@@ -59,6 +59,7 @@ set(AHFL_INSTALL_TARGETS
     ahfl_runtime_provider_secret
     ahfl_verification_formal
     ahfl_runtime_bundle
+    ahfl_runtime
     ahfl_tooling_lsp
     ahfl_tooling_formatter
     ahfl_tooling_repl
@@ -70,6 +71,7 @@ set(AHFL_INSTALL_TARGETS
     ahfl_tooling_testing
     ahfl_tooling_package
     ahfl_tooling_bundle
+    ahfl_tooling
     ahfl_compiler
 )
 

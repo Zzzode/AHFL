@@ -85,7 +85,17 @@ add_library(ahfl_compiler INTERFACE)
 target_link_libraries(ahfl_compiler
     INTERFACE
         ahfl_compiler_core
+)
+
+add_library(ahfl_runtime INTERFACE)
+target_link_libraries(ahfl_runtime
+    INTERFACE
         ahfl_runtime_bundle
+)
+
+add_library(ahfl_tooling INTERFACE)
+target_link_libraries(ahfl_tooling
+    INTERFACE
         ahfl_tooling_bundle
 )
 
