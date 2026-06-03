@@ -67,7 +67,7 @@
 ## CLI 集成
 
 ```
-ahflc emit-durable-store-import-provider-release-evidence-archive-manifest \
+ahflc emit provider/release-evidence-archive-manifest \
   --package <ahfl.package.json> \
   --capability-mocks <mocks.json> \
   --input-fixture <fixture> \

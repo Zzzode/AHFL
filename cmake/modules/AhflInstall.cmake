@@ -18,9 +18,16 @@ install(DIRECTORY ${PROJECT_SOURCE_DIR}/src/compiler/syntax/parser/generated/
 )
 
 # Libraries
+option(AHFL_INSTALL_INTERNAL_TARGETS
+    "Install the full internal AHFL target graph for local development packaging"
+    OFF)
+
 set(AHFL_INSTALL_TARGETS
-    antlr4_runtime
     ahfl_base_public
+)
+
+set(AHFL_INTERNAL_INSTALL_TARGETS
+    antlr4_runtime
     ahfl_base_support
     ahfl_base_json
     ahfl_compiler_syntax_parser
@@ -74,6 +81,10 @@ set(AHFL_INSTALL_TARGETS
     ahfl_tooling
     ahfl_compiler
 )
+
+if(AHFL_INSTALL_INTERNAL_TARGETS)
+    list(APPEND AHFL_INSTALL_TARGETS ${AHFL_INTERNAL_INSTALL_TARGETS})
+endif()
 
 foreach(_target IN LISTS AHFL_INSTALL_TARGETS)
     if(TARGET ${_target})

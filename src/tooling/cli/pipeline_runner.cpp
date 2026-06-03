@@ -3,7 +3,6 @@
 #include "pipeline_context.hpp"
 #include "pipeline_core_commands.hpp"
 #include "provider/pipeline_durable_store_import.hpp"
-#include "provider/pipeline_durable_store_import_provider.hpp"
 
 #include <array>
 #include <iostream>
@@ -14,21 +13,6 @@ namespace {
 
 [[nodiscard]] int invoke_execution_plan_command(const PackagePipelineContext &context) {
     return emit_execution_plan_with_diagnostics(context.program, context.metadata);
-}
-
-template <ProviderArtifactKind Artifact>
-[[nodiscard]] int invoke_provider_artifact_command(const PackagePipelineContext &context) {
-    if (context.mock_set == nullptr) {
-        context.io.err << "error: internal command dispatch failed: missing capability mocks\n";
-        return 1;
-    }
-
-    return emit_provider_artifact_with_diagnostics(Artifact,
-                                                   context.program,
-                                                   context.metadata,
-                                                   *context.mock_set,
-                                                   context.options,
-                                                   context.io);
 }
 
 // O(1) dispatch table indexed by CommandKind enum value.
@@ -90,13 +74,6 @@ constexpr auto kPackageCommandHandlers = [] {
         invoke_package_command<emit_durable_store_import_adapter_execution_with_diagnostics>;
     table[static_cast<std::size_t>(CommandKind::EmitDurableStoreImportRecoveryPreview)] =
         invoke_package_command<emit_durable_store_import_recovery_preview_with_diagnostics>;
-
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
-    table[static_cast<std::size_t>(CommandKind::command_kind)] =                                   \
-        invoke_provider_artifact_command<ProviderArtifactKind::kind>;
-#include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
 
     table[static_cast<std::size_t>(CommandKind::EmitSchedulerReview)] =
         invoke_package_command<emit_scheduler_review_with_diagnostics>;

@@ -37,8 +37,15 @@ class ProviderPipelineCache {
     [[nodiscard]] const ReleaseGateArtifacts *get_release_gate_artifacts();
 
     // One memoized getter per provider artifact kind.
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
+                                                        artifact_type,                             \
+                                                        builder,                                   \
+                                                        printer,                                   \
+                                                        artifact_id,                               \
+                                                        visibility,                                \
+                                                        order,                                     \
+                                                        dep_count,                                 \
+                                                        dependencies)                              \
     [[nodiscard]] const ahfl::durable_store_import::artifact_type *get_##kind();
 #include "pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
@@ -53,8 +60,15 @@ class ProviderPipelineCache {
     std::optional<ReleaseGateArtifacts> release_gate_artifacts_;
 
     // Memoization storage — one loaded flag + optional per artifact.
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
+                                                        artifact_type,                             \
+                                                        builder,                                   \
+                                                        printer,                                   \
+                                                        artifact_id,                               \
+                                                        visibility,                                \
+                                                        order,                                     \
+                                                        dep_count,                                 \
+                                                        dependencies)                              \
     bool kind##_loaded_{false};                                                                    \
     std::optional<ahfl::durable_store_import::artifact_type> kind##_;
 #include "pipeline_durable_store_import_provider_artifacts.def"

@@ -1,10 +1,10 @@
 #pragma once
 
-#include "tooling/cli/command_catalog.hpp"
-#include "tooling/cli/diagnostic_consumer.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
+#include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/diagnostic_consumer.hpp"
 
 #include <filesystem>
 #include <iosfwd>
@@ -14,13 +14,13 @@
 namespace ahfl::cli {
 
 // ---------------------------------------------------------------------------
-// Compile pipeline (shared between ahflc and ahfl-run)
+// Compile pipeline helpers used by ahflc commands.
 // ---------------------------------------------------------------------------
 
 /// Full compile pipeline: parse → resolve → typecheck → validate → lower to IR.
 /// Diagnostics are rendered to \p diagnostics on failure.
-[[nodiscard]] std::optional<ir::Program>
-compile_to_ir(const std::filesystem::path &file_path, std::ostream &diagnostics);
+[[nodiscard]] std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
+                                                       std::ostream &diagnostics);
 
 // ---------------------------------------------------------------------------
 // Package metadata lowering
@@ -97,7 +97,8 @@ void print_success_summary(const ahfl::SourceGraph &graph,
 using MaybeSourceFile = std::optional<std::reference_wrapper<const ahfl::SourceFile>>;
 
 template <typename ResultT>
-void render_diagnostics(DiagnosticConsumer &consumer, const ResultT &result,
+void render_diagnostics(DiagnosticConsumer &consumer,
+                        const ResultT &result,
                         MaybeSourceFile source_file) {
     consumer.consume(result.diagnostics, source_file);
 }

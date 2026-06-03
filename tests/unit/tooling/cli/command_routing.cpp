@@ -1,10 +1,10 @@
 #include "pipeline/persistence/durable_store_import/artifacts.hpp"
 #include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/option_table.hpp"
 #include "tooling/cli/provider/provider_artifact_catalog.hpp"
-#include "tooling/cli/provider/provider_artifact_graph.hpp"
 
+#include <cstddef>
 #include <cstdio>
-#include <optional>
 #include <string>
 #include <string_view>
 
@@ -16,19 +16,28 @@ int pass_count = 0;
 struct ProviderArtifactSpec {
     std::string_view kind;
     ahfl::cli::ProviderArtifactKind artifact_kind;
-    ahfl::cli::CommandKind command_kind;
-    std::string_view command_token;
+    std::string_view artifact_id;
     ahfl::cli::ProviderArtifactVisibility visibility;
+    int order;
+    std::size_t dependency_count;
 };
 
 constexpr ProviderArtifactSpec kProviderArtifacts[] = {
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
+                                                        artifact_type,                             \
+                                                        builder,                                   \
+                                                        printer,                                   \
+                                                        artifact_id,                               \
+                                                        visibility,                                \
+                                                        order,                                     \
+                                                        dep_count,                                 \
+                                                        dependencies)                              \
     {#kind,                                                                                        \
      ahfl::cli::ProviderArtifactKind::kind,                                                        \
-     ahfl::cli::CommandKind::command_kind,                                                         \
-     command_token,                                                                                \
-     ahfl::cli::ProviderArtifactVisibility::visibility},
+     artifact_id,                                                                                  \
+     ahfl::cli::ProviderArtifactVisibility::visibility,                                            \
+     order,                                                                                        \
+     dep_count},
 #include "tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def"
 #undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
 };
@@ -52,15 +61,6 @@ bool starts_with(std::string_view value, std::string_view prefix) {
     return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
 }
 
-std::optional<std::string_view> emitted_id_from_token(std::string_view token) {
-    constexpr std::string_view prefix = "emit-";
-    if (!starts_with(token, prefix)) {
-        return std::nullopt;
-    }
-    token.remove_prefix(prefix.size());
-    return token;
-}
-
 bool durable_store_emit_commands_have_artifact_printers() {
     for (const auto command : ahfl::cli::command_list(ahfl::cli::CommandListKind::Action)) {
         const auto artifact_id = ahfl::cli::emitted_artifact_id(command);
@@ -77,6 +77,9 @@ bool durable_store_emit_commands_have_artifact_printers() {
 
 bool durable_store_artifact_printers_have_emit_commands() {
     for (const auto &printer : ahfl::durable_store_import_artifact_printers()) {
+        if (starts_with(printer.artifact_id, "durable-store-import-provider-")) {
+            continue;
+        }
         bool found = false;
         for (const auto command : ahfl::cli::command_list(ahfl::cli::CommandListKind::Action)) {
             const auto artifact_id = ahfl::cli::emitted_artifact_id(command);
@@ -93,24 +96,32 @@ bool durable_store_artifact_printers_have_emit_commands() {
     return true;
 }
 
-bool provider_artifact_nodes_have_command_metadata() {
+bool provider_artifact_nodes_have_descriptor_metadata() {
     for (const auto &artifact : kProviderArtifacts) {
-        const auto mapped_artifact =
-            ahfl::cli::provider_artifact_for_command(artifact.command_kind);
-        if (!mapped_artifact.has_value() || *mapped_artifact != artifact.artifact_kind) {
+        const auto *descriptor = ahfl::cli::provider_artifact_descriptor(artifact.artifact_kind);
+        if (descriptor == nullptr) {
             return false;
         }
-        if (ahfl::cli::command_name(artifact.command_kind) != artifact.command_token) {
+        if (descriptor->artifact_id != artifact.artifact_id ||
+            descriptor->visibility != artifact.visibility || descriptor->order != artifact.order) {
             return false;
         }
-        const auto mapped_visibility =
-            ahfl::cli::provider_artifact_visibility_for_command(artifact.command_kind);
-        if (!mapped_visibility.has_value() || *mapped_visibility != artifact.visibility) {
+        if (ahfl::cli::provider_artifact_id(artifact.artifact_kind) != artifact.artifact_id) {
             return false;
         }
-        const auto expected_internal =
-            artifact.visibility == ahfl::cli::ProviderArtifactVisibility::Internal;
-        if (ahfl::cli::is_internal_provider_command(artifact.command_kind) != expected_internal) {
+        if (ahfl::cli::provider_artifact_visibility(artifact.artifact_kind) !=
+            artifact.visibility) {
+            return false;
+        }
+        std::string expected_cli_id = "provider/";
+        expected_cli_id += artifact.artifact_id;
+        if (ahfl::cli::provider_artifact_cli_id(artifact.artifact_kind) != expected_cli_id) {
+            return false;
+        }
+        std::string expected_command_name = "emit ";
+        expected_command_name += expected_cli_id;
+        if (ahfl::cli::provider_artifact_command_name(artifact.artifact_kind) !=
+            expected_command_name) {
             return false;
         }
     }
@@ -119,29 +130,39 @@ bool provider_artifact_nodes_have_command_metadata() {
 
 bool provider_artifact_nodes_have_printers() {
     for (const auto &artifact : kProviderArtifacts) {
-        const auto emitted_id = emitted_id_from_token(artifact.command_token);
-        if (!emitted_id.has_value() ||
-            ahfl::find_durable_store_import_artifact_printer(*emitted_id) == nullptr) {
+        std::string durable_artifact_id = "durable-store-import-provider-";
+        durable_artifact_id += artifact.artifact_id;
+        if (ahfl::find_durable_store_import_artifact_printer(durable_artifact_id) == nullptr) {
             return false;
         }
     }
     return true;
 }
 
-bool provider_artifact_nodes_have_graph_entries() {
+bool provider_artifact_nodes_are_complete() {
     for (const auto &artifact : kProviderArtifacts) {
-        if (!ahfl::cli::provider_artifact_graph_has_entry(artifact.artifact_kind)) {
+        const auto node = ahfl::cli::provider_artifact_node(artifact.artifact_kind);
+        if (!node.has_value()) {
+            return false;
+        }
+        if (node->descriptor.kind != artifact.artifact_kind ||
+            node->descriptor.artifact_id != artifact.artifact_id ||
+            node->descriptor.visibility != artifact.visibility ||
+            node->descriptor.order != artifact.order) {
+            return false;
+        }
+        if (node->dependencies.size() != artifact.dependency_count) {
             return false;
         }
     }
     return true;
 }
 
-bool provider_artifact_dependencies_have_graph_entries() {
+bool provider_artifact_dependencies_are_catalog_nodes() {
     for (const auto &artifact : kProviderArtifacts) {
         for (const auto dependency :
              ahfl::cli::provider_artifact_dependencies(artifact.artifact_kind)) {
-            if (!ahfl::cli::provider_artifact_graph_has_entry(dependency)) {
+            if (!ahfl::cli::provider_artifact_has_node(dependency)) {
                 return false;
             }
         }
@@ -151,20 +172,20 @@ bool provider_artifact_dependencies_have_graph_entries() {
 
 bool provider_artifact_resolution_respects_visibility() {
     for (const auto &artifact : kProviderArtifacts) {
-        const std::string short_name = ahfl::cli::command_short_name(artifact.command_kind);
+        std::string cli_artifact_id = "provider/";
+        cli_artifact_id += artifact.artifact_id;
         const auto default_resolution =
-            ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, short_name);
-        const auto hidden_resolution =
-            ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, short_name, true);
+            ahfl::cli::resolve_provider_artifact(cli_artifact_id, false);
+        const auto hidden_resolution = ahfl::cli::resolve_provider_artifact(cli_artifact_id, true);
 
         if (artifact.visibility == ahfl::cli::ProviderArtifactVisibility::Public) {
-            if (default_resolution != artifact.command_kind ||
-                hidden_resolution != artifact.command_kind) {
+            if (default_resolution != artifact.artifact_kind ||
+                hidden_resolution != artifact.artifact_kind) {
                 return false;
             }
             continue;
         }
-        if (default_resolution.has_value() || hidden_resolution != artifact.command_kind) {
+        if (default_resolution.has_value() || hidden_resolution != artifact.artifact_kind) {
             return false;
         }
     }
@@ -189,6 +210,8 @@ int main() {
           "emit-runtime-session is not a core backend command");
     check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::EmitDurableStoreImportReview),
           "durable-store review is not a core backend command");
+    check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::RunWorkflow),
+          "run is not a core backend command");
 
     check(ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitExecutionPlan),
           "emit-execution-plan remains package-aware");
@@ -196,18 +219,19 @@ int main() {
           "runtime session remains package-aware");
     check(!ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::EmitSmv),
           "emit-smv is not package-aware");
+    check(!ahfl::cli::is_package_supported_command(ahfl::cli::CommandKind::RunWorkflow),
+          "run does not require package metadata");
     check(durable_store_emit_commands_have_artifact_printers(),
           "durable-store emit commands map to artifact printers");
     check(durable_store_artifact_printers_have_emit_commands(),
           "durable-store artifact printers map back to emit commands");
-    check(provider_artifact_nodes_have_command_metadata(),
-          "provider artifact nodes carry command metadata");
+    check(provider_artifact_nodes_have_descriptor_metadata(),
+          "provider artifact nodes carry descriptor metadata");
     check(provider_artifact_nodes_have_printers(),
           "provider artifact nodes map to artifact printers");
-    check(provider_artifact_nodes_have_graph_entries(),
-          "provider artifact nodes map to dependency graph entries");
-    check(provider_artifact_dependencies_have_graph_entries(),
-          "provider artifact dependencies map to graph entries");
+    check(provider_artifact_nodes_are_complete(), "provider artifact nodes are complete");
+    check(provider_artifact_dependencies_are_catalog_nodes(),
+          "provider artifact dependencies resolve to catalog nodes");
     check(provider_artifact_resolution_respects_visibility(),
           "provider artifact resolution respects visibility");
 
@@ -226,8 +250,39 @@ int main() {
           "action_group_from_token: validate");
     check(!ahfl::cli::action_group_from_token("check").has_value(),
           "action_group_from_token: check returns nullopt");
+    check(!ahfl::cli::action_group_from_token("run").has_value(),
+          "action_group_from_token: run returns nullopt");
     check(!ahfl::cli::action_group_from_token("emit-ir").has_value(),
           "action_group_from_token: flat token returns nullopt");
+
+    // Standalone command parse
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "run",
+            "--workflow",
+            "MainWorkflow",
+            "--input",
+            "{\"message\":\"hello\"}",
+            "--llm-config",
+            "llm.json",
+            "app.ahfl",
+        };
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(), "parse_options: run has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::RunWorkflow,
+              "parse_options: run command selected");
+        check(options.workflow_name.has_value() && *options.workflow_name == "MainWorkflow",
+              "parse_options: run workflow captured");
+        check(options.runtime_input_json.has_value() &&
+                  *options.runtime_input_json == "{\"message\":\"hello\"}",
+              "parse_options: run input captured");
+        check(options.llm_config_descriptor.has_value() &&
+                  *options.llm_config_descriptor == "llm.json",
+              "parse_options: run llm config captured");
+        check(options.positional.size() == 1 && options.positional.front() == "app.ahfl",
+              "parse_options: run input file captured");
+    }
 
     // resolve_subcommand — core emit artifacts
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "ir") ==
@@ -261,24 +316,24 @@ int main() {
               ahfl::cli::CommandKind::EmitStoreImportReview,
           "resolve: emit store-import-review");
 
-    // resolve_subcommand — provider domain
-    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/write-attempt") ==
-              ahfl::cli::CommandKind::EmitDurableStoreImportProviderWriteAttempt,
-          "resolve: emit provider/write-attempt");
-    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/driver-binding") ==
-              ahfl::cli::CommandKind::EmitDurableStoreImportProviderDriverBinding,
-          "resolve: emit provider/driver-binding");
-    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit,
-                                        "provider/production-readiness-report") ==
-              ahfl::cli::CommandKind::EmitDurableStoreImportProviderProductionReadinessReport,
-          "resolve: emit provider/production-readiness-report");
-    check(!ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/driver-readiness")
+    // provider artifact resolution — provider artifacts are not CommandKind values.
+    check(ahfl::cli::resolve_provider_artifact("provider/write-attempt", false) ==
+              ahfl::cli::ProviderArtifactKind::WriteAttempt,
+          "resolve_provider_artifact: provider/write-attempt");
+    check(ahfl::cli::resolve_provider_artifact("provider/driver-binding", false) ==
+              ahfl::cli::ProviderArtifactKind::DriverBinding,
+          "resolve_provider_artifact: provider/driver-binding");
+    check(ahfl::cli::resolve_provider_artifact("provider/production-readiness-report", false) ==
+              ahfl::cli::ProviderArtifactKind::ProductionReadinessReport,
+          "resolve_provider_artifact: provider/production-readiness-report");
+    check(!ahfl::cli::resolve_provider_artifact("provider/driver-readiness", false).has_value(),
+          "resolve_provider_artifact: internal blocked by default");
+    check(ahfl::cli::resolve_provider_artifact("provider/driver-readiness", true) ==
+              ahfl::cli::ProviderArtifactKind::DriverReadiness,
+          "resolve_provider_artifact: internal allowed when hidden is included");
+    check(!ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/write-attempt")
                .has_value(),
-          "resolve: provider/internal blocked by default");
-    check(ahfl::cli::resolve_subcommand(
-              ahfl::cli::ActionGroup::Emit, "provider/driver-readiness", true) ==
-              ahfl::cli::CommandKind::EmitDurableStoreImportProviderDriverReadiness,
-          "resolve: provider/internal allowed when hidden is included");
+          "resolve_subcommand: provider artifact is not a command");
 
     // resolve_subcommand — dump, verify, validate
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "ast") ==
@@ -312,10 +367,6 @@ int main() {
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitStoreImportDescriptor) ==
               "store-import-descriptor",
           "short_name: EmitStoreImportDescriptor -> store-import-descriptor");
-    check(ahfl::cli::command_short_name(
-              ahfl::cli::CommandKind::EmitDurableStoreImportProviderWriteAttempt) ==
-              "provider/write-attempt",
-          "short_name: provider write-attempt");
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::DumpAst) == "ast",
           "short_name: DumpAst -> ast");
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::VerifyFormal) == "formal",

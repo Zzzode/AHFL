@@ -18,12 +18,19 @@ build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache);
 
 // Internal provider pipeline node builders. The public CLI seam is
 // ProviderPipeline::build(ProviderArtifactKind); these declarations are
-// generated from the node registry to avoid a second hand-maintained list.
+// generated from the artifact registry to avoid a second hand-maintained list.
 //
 // Each builder accepts a ProviderPipelineCache& so that dependency artifacts
 // can be fetched from the cache rather than rebuilt from scratch.
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(                                           \
-    kind, command_kind, artifact_type, builder, printer, command_token, visibility, order)         \
+#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
+                                                        artifact_type,                             \
+                                                        builder,                                   \
+                                                        printer,                                   \
+                                                        artifact_id,                               \
+                                                        visibility,                                \
+                                                        order,                                     \
+                                                        dep_count,                                 \
+                                                        dependencies)                              \
     [[nodiscard]] std::optional<ahfl::durable_store_import::artifact_type> builder(                \
         const ahfl::ir::Program &program,                                                          \
         const ahfl::handoff::PackageMetadata &metadata,                                            \
