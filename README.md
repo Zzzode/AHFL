@@ -24,7 +24,7 @@ AHFL (Agent Handoff Flow Language) is a strongly-typed DSL for describing Agent 
 - **Workflow Orchestration** — DAG topological scheduling + safety/liveness temporal formulas
 - **End-to-End Execution** — Local interpreter + LLM Provider adapter for real multi-Agent collaboration
 - **Formal Backend** — Restricted SMV output for model checking
-- **Zero Runtime Dependencies** — Pure C++23 compiler with no external library dependencies
+- **Vendored Parser Runtime** — ANTLR4 is vendored; HTTP provider paths use the system `curl` tool
 
 ## Language Preview
 
@@ -172,7 +172,7 @@ See [`docs/reference/durable-store-import-reference-v0.1.zh.md`](docs/reference/
 
 ## Status
 
-AHFL is currently at **v0.56**, with the following implemented:
+AHFL is currently at **v0.59**, with the following implemented:
 
 - Complete compiler frontend (parsing → semantic analysis → IR generation)
 - 100+ CLI commands covering the full artifact chain from execution plans to Provider production readiness

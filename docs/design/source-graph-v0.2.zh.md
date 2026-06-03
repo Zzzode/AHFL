@@ -6,7 +6,7 @@
 
 - `docs/design/module-loading-v0.2.zh.md`
 - `docs/design/compiler-phase-boundaries-v0.2.zh.md`
-- `docs/plan/roadmap-v0.2.zh.md`
+- `docs/plan/project-status.zh.md`
 - `include/ahfl/base/support/source.hpp`
 - `include/ahfl/compiler/frontend/frontend.hpp`
 - `src/compiler/syntax/frontend/frontend.cpp`

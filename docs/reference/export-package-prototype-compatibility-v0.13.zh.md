@@ -6,7 +6,7 @@
 
 - [persistence-prototype-compatibility-v0.12.zh.md](./persistence-prototype-compatibility-v0.12.zh.md)
 - [native-export-package-prototype-bootstrap-v0.13.zh.md](../design/native-export-package-prototype-bootstrap-v0.13.zh.md)
-- [issue-backlog-v0.13.zh.md](../plan/issue-backlog-v0.13.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

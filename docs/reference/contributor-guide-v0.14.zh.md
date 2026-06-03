@@ -89,8 +89,8 @@ ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-.*'
 - `docs/reference/store-import-prototype-compatibility-v0.14.zh.md`
 - `docs/reference/native-consumer-matrix-v0.14.zh.md`
 - `docs/reference/contributor-guide-v0.14.zh.md`
-- `docs/plan/roadmap-v0.14.zh.md`
-- `docs/plan/issue-backlog-v0.14.zh.md`
+- `docs/plan/project-status.zh.md`
+- `docs/plan/issue-backlog-global-gaps.zh.md`
 - `README.md`
 - `docs/README.md`
 

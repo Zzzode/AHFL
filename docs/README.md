@@ -19,7 +19,9 @@ This directory uses a typed document taxonomy. The goal is to make document inte
 
 ## Naming Convention
 
-Except for this file, every documentation file must follow this path pattern:
+Except for this file and the two consolidated plan files
+`docs/plan/project-status.zh.md` and `docs/plan/issue-backlog-global-gaps.zh.md`,
+every documentation file must follow this path pattern:
 
 ```text
 docs/<class>/<topic>-v<version>.<lang>.md
@@ -40,7 +42,7 @@ Examples:
 
 - `docs/spec/core-language-v0.1.zh.md`
 - `docs/design/compiler-phase-boundaries-v0.2.zh.md`
-- `docs/plan/roadmap-v0.1.zh.md`
+- `docs/plan/project-status.zh.md`
 
 Avoid:
 
@@ -97,117 +99,8 @@ Avoid:
 
 ### Plan
 
-- [provider-production-roadmap-v0.27.zh.md](./plan/provider-production-roadmap-v0.27.zh.md) - provider production roadmap
-- [roadmap-v0.55.zh.md](./plan/roadmap-v0.55.zh.md) - planned capability bridge
-- [issue-backlog-v0.55.zh.md](./plan/issue-backlog-v0.55.zh.md) - planned capability bridge
-- [roadmap-v0.54.zh.md](./plan/roadmap-v0.54.zh.md) - planned workflow integration
-- [issue-backlog-v0.54.zh.md](./plan/issue-backlog-v0.54.zh.md) - planned workflow integration
-- [roadmap-v0.53.zh.md](./plan/roadmap-v0.53.zh.md) - planned agent state machine runtime
-- [issue-backlog-v0.53.zh.md](./plan/issue-backlog-v0.53.zh.md) - planned agent state machine runtime
-- [roadmap-v0.52.zh.md](./plan/roadmap-v0.52.zh.md) - planned statement executor
-- [issue-backlog-v0.52.zh.md](./plan/issue-backlog-v0.52.zh.md) - planned statement executor
-- [roadmap-v0.51.zh.md](./plan/roadmap-v0.51.zh.md) - planned expression evaluator
-- [issue-backlog-v0.51.zh.md](./plan/issue-backlog-v0.51.zh.md) - planned expression evaluator
-- [roadmap-v0.50.zh.md](./plan/roadmap-v0.50.zh.md) - completed baseline
-- [issue-backlog-v0.50.zh.md](./plan/issue-backlog-v0.50.zh.md) - completed baseline
-- [roadmap-v0.49.zh.md](./plan/roadmap-v0.49.zh.md) - completed baseline
-- [issue-backlog-v0.49.zh.md](./plan/issue-backlog-v0.49.zh.md) - completed baseline
-- [roadmap-v0.48.zh.md](./plan/roadmap-v0.48.zh.md) - completed baseline
-- [issue-backlog-v0.48.zh.md](./plan/issue-backlog-v0.48.zh.md) - completed baseline
-- [roadmap-v0.47.zh.md](./plan/roadmap-v0.47.zh.md) - completed baseline
-- [issue-backlog-v0.47.zh.md](./plan/issue-backlog-v0.47.zh.md) - completed baseline
-- [roadmap-v0.46.zh.md](./plan/roadmap-v0.46.zh.md) - completed baseline
-- [issue-backlog-v0.46.zh.md](./plan/issue-backlog-v0.46.zh.md) - completed baseline
-- [roadmap-v0.45.zh.md](./plan/roadmap-v0.45.zh.md) - completed baseline
-- [issue-backlog-v0.45.zh.md](./plan/issue-backlog-v0.45.zh.md) - completed baseline
-- [roadmap-v0.44.zh.md](./plan/roadmap-v0.44.zh.md) - completed baseline
-- [issue-backlog-v0.44.zh.md](./plan/issue-backlog-v0.44.zh.md) - completed baseline
-- [roadmap-v0.43.zh.md](./plan/roadmap-v0.43.zh.md) - completed baseline
-- [issue-backlog-v0.43.zh.md](./plan/issue-backlog-v0.43.zh.md) - completed baseline
-- [roadmap-v0.42.zh.md](./plan/roadmap-v0.42.zh.md) - completed baseline
-- [issue-backlog-v0.42.zh.md](./plan/issue-backlog-v0.42.zh.md) - completed baseline
-- [roadmap-v0.41.zh.md](./plan/roadmap-v0.41.zh.md) - completed baseline
-- [issue-backlog-v0.41.zh.md](./plan/issue-backlog-v0.41.zh.md) - completed baseline
-- [roadmap-v0.40.zh.md](./plan/roadmap-v0.40.zh.md) - completed baseline
-- [issue-backlog-v0.40.zh.md](./plan/issue-backlog-v0.40.zh.md) - completed baseline
-- [roadmap-v0.39.zh.md](./plan/roadmap-v0.39.zh.md) - completed baseline
-- [issue-backlog-v0.39.zh.md](./plan/issue-backlog-v0.39.zh.md) - completed baseline
-- [roadmap-v0.38.zh.md](./plan/roadmap-v0.38.zh.md) - completed baseline
-- [issue-backlog-v0.38.zh.md](./plan/issue-backlog-v0.38.zh.md) - completed baseline
-- [roadmap-v0.37.zh.md](./plan/roadmap-v0.37.zh.md) - completed baseline
-- [issue-backlog-v0.37.zh.md](./plan/issue-backlog-v0.37.zh.md) - completed baseline
-- [roadmap-v0.36.zh.md](./plan/roadmap-v0.36.zh.md) - completed baseline
-- [issue-backlog-v0.36.zh.md](./plan/issue-backlog-v0.36.zh.md) - completed baseline
-- [roadmap-v0.35.zh.md](./plan/roadmap-v0.35.zh.md) - completed baseline
-- [issue-backlog-v0.35.zh.md](./plan/issue-backlog-v0.35.zh.md) - completed baseline
-- [roadmap-v0.34.zh.md](./plan/roadmap-v0.34.zh.md) - completed baseline
-- [issue-backlog-v0.34.zh.md](./plan/issue-backlog-v0.34.zh.md) - completed baseline
-- [roadmap-v0.33.zh.md](./plan/roadmap-v0.33.zh.md) - completed baseline
-- [issue-backlog-v0.33.zh.md](./plan/issue-backlog-v0.33.zh.md) - completed baseline
-- [roadmap-v0.32.zh.md](./plan/roadmap-v0.32.zh.md) - completed baseline
-- [issue-backlog-v0.32.zh.md](./plan/issue-backlog-v0.32.zh.md) - completed baseline
-- [roadmap-v0.31.zh.md](./plan/roadmap-v0.31.zh.md) - completed baseline
-- [issue-backlog-v0.31.zh.md](./plan/issue-backlog-v0.31.zh.md) - completed baseline
-- [roadmap-v0.30.zh.md](./plan/roadmap-v0.30.zh.md) - completed baseline
-- [issue-backlog-v0.30.zh.md](./plan/issue-backlog-v0.30.zh.md) - completed baseline
-- [roadmap-v0.29.zh.md](./plan/roadmap-v0.29.zh.md) - completed baseline
-- [issue-backlog-v0.29.zh.md](./plan/issue-backlog-v0.29.zh.md) - completed baseline
-- [roadmap-v0.28.zh.md](./plan/roadmap-v0.28.zh.md) - completed baseline
-- [issue-backlog-v0.28.zh.md](./plan/issue-backlog-v0.28.zh.md) - completed baseline
-- [roadmap-v0.27.zh.md](./plan/roadmap-v0.27.zh.md) - completed baseline
-- [issue-backlog-v0.27.zh.md](./plan/issue-backlog-v0.27.zh.md) - completed baseline
-- [roadmap-v0.26.zh.md](./plan/roadmap-v0.26.zh.md) - completed baseline
-- [issue-backlog-v0.26.zh.md](./plan/issue-backlog-v0.26.zh.md) - completed baseline
-- [roadmap-v0.25.zh.md](./plan/roadmap-v0.25.zh.md) - completed baseline
-- [issue-backlog-v0.25.zh.md](./plan/issue-backlog-v0.25.zh.md) - completed baseline
-- [roadmap-v0.24.zh.md](./plan/roadmap-v0.24.zh.md) - completed baseline
-- [issue-backlog-v0.24.zh.md](./plan/issue-backlog-v0.24.zh.md) - completed baseline
-- [roadmap-v0.23.zh.md](./plan/roadmap-v0.23.zh.md) - completed baseline
-- [issue-backlog-v0.23.zh.md](./plan/issue-backlog-v0.23.zh.md) - completed baseline
-- [roadmap-v0.22.zh.md](./plan/roadmap-v0.22.zh.md) - completed baseline
-- [issue-backlog-v0.22.zh.md](./plan/issue-backlog-v0.22.zh.md) - completed baseline
-- [roadmap-v0.21.zh.md](./plan/roadmap-v0.21.zh.md) - completed baseline
-- [issue-backlog-v0.21.zh.md](./plan/issue-backlog-v0.21.zh.md) - completed baseline
-- [roadmap-v0.20.zh.md](./plan/roadmap-v0.20.zh.md) - completed baseline
-- [issue-backlog-v0.20.zh.md](./plan/issue-backlog-v0.20.zh.md) - completed baseline
-- [roadmap-v0.19.zh.md](./plan/roadmap-v0.19.zh.md) - completed baseline
-- [issue-backlog-v0.19.zh.md](./plan/issue-backlog-v0.19.zh.md) - completed baseline
-- [roadmap-v0.18.zh.md](./plan/roadmap-v0.18.zh.md) - completed baseline
-- [issue-backlog-v0.18.zh.md](./plan/issue-backlog-v0.18.zh.md) - completed baseline
-- [roadmap-v0.17.zh.md](./plan/roadmap-v0.17.zh.md) - completed baseline
-- [issue-backlog-v0.17.zh.md](./plan/issue-backlog-v0.17.zh.md) - completed baseline
-- [roadmap-v0.16.zh.md](./plan/roadmap-v0.16.zh.md) - completed baseline
-- [issue-backlog-v0.16.zh.md](./plan/issue-backlog-v0.16.zh.md) - completed baseline
-- [roadmap-v0.15.zh.md](./plan/roadmap-v0.15.zh.md) - completed baseline
-- [issue-backlog-v0.15.zh.md](./plan/issue-backlog-v0.15.zh.md) - completed baseline
-- [roadmap-v0.14.zh.md](./plan/roadmap-v0.14.zh.md) - completed baseline
-- [issue-backlog-v0.14.zh.md](./plan/issue-backlog-v0.14.zh.md) - completed baseline
-- [roadmap-v0.13.zh.md](./plan/roadmap-v0.13.zh.md) - completed baseline
-- [issue-backlog-v0.13.zh.md](./plan/issue-backlog-v0.13.zh.md) - completed baseline
-- [roadmap-v0.12.zh.md](./plan/roadmap-v0.12.zh.md) - completed baseline
-- [issue-backlog-v0.12.zh.md](./plan/issue-backlog-v0.12.zh.md) - completed baseline
-- [roadmap-v0.11.zh.md](./plan/roadmap-v0.11.zh.md) - completed baseline
-- [issue-backlog-v0.11.zh.md](./plan/issue-backlog-v0.11.zh.md) - completed baseline
-- [roadmap-v0.10.zh.md](./plan/roadmap-v0.10.zh.md) - completed baseline
-- [issue-backlog-v0.10.zh.md](./plan/issue-backlog-v0.10.zh.md) - completed baseline
-- [roadmap-v0.9.zh.md](./plan/roadmap-v0.9.zh.md) - completed baseline
-- [issue-backlog-v0.9.zh.md](./plan/issue-backlog-v0.9.zh.md) - completed baseline
-- [roadmap-v0.8.zh.md](./plan/roadmap-v0.8.zh.md) - completed baseline
-- [issue-backlog-v0.8.zh.md](./plan/issue-backlog-v0.8.zh.md) - completed baseline
-- [roadmap-v0.7.zh.md](./plan/roadmap-v0.7.zh.md) - completed baseline
-- [issue-backlog-v0.7.zh.md](./plan/issue-backlog-v0.7.zh.md) - completed baseline
-- [roadmap-v0.6.zh.md](./plan/roadmap-v0.6.zh.md) - completed baseline
-- [issue-backlog-v0.6.zh.md](./plan/issue-backlog-v0.6.zh.md) - completed baseline
-- [roadmap-v0.5.zh.md](./plan/roadmap-v0.5.zh.md) - completed baseline
-- [issue-backlog-v0.5.zh.md](./plan/issue-backlog-v0.5.zh.md) - completed baseline
-- [roadmap-v0.4.zh.md](./plan/roadmap-v0.4.zh.md) - completed baseline
-- [issue-backlog-v0.4.zh.md](./plan/issue-backlog-v0.4.zh.md) - completed baseline
-- [roadmap-v0.3.zh.md](./plan/roadmap-v0.3.zh.md) - completed baseline
-- [issue-backlog-v0.3.zh.md](./plan/issue-backlog-v0.3.zh.md) - completed baseline
-- [roadmap-v0.2.zh.md](./plan/roadmap-v0.2.zh.md) - completed baseline
-- [issue-backlog-v0.2.zh.md](./plan/issue-backlog-v0.2.zh.md) - completed baseline
-- [roadmap-v0.1.zh.md](./plan/roadmap-v0.1.zh.md) - historical baseline
-- [issue-backlog-v0.1.zh.md](./plan/issue-backlog-v0.1.zh.md) - historical baseline
+- [project-status.zh.md](./plan/project-status.zh.md) - consolidated project status and version history
+- [issue-backlog-global-gaps.zh.md](./plan/issue-backlog-global-gaps.zh.md) - consolidated unresolved work backlog
 
 ### Reference
 

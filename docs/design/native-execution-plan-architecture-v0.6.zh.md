@@ -8,7 +8,7 @@
 - [native-package-authoring-architecture-v0.5.zh.md](./native-package-authoring-architecture-v0.5.zh.md)
 - [native-handoff-usage-v0.5.zh.md](../reference/native-handoff-usage-v0.5.zh.md)
 - [native-consumer-matrix-v0.5.zh.md](../reference/native-consumer-matrix-v0.5.zh.md)
-- [roadmap-v0.6.zh.md](../plan/roadmap-v0.6.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
 
 ## 目标
 

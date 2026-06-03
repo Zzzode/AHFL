@@ -12,8 +12,8 @@
 - `src/compiler/backends/smv/smv.cpp`
 - `src/tooling/cli/ahflc.cpp`
 - `tests/formal/*`
-- `docs/plan/roadmap-v0.1.zh.md`
-- `docs/plan/roadmap-v0.2.zh.md`
+- `docs/plan/project-status.zh.md`
+- `docs/plan/project-status.zh.md`
 - `docs/design/compiler-phase-boundaries-v0.2.zh.md`
 
 ## 目标

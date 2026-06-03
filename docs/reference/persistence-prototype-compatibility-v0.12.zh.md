@@ -6,7 +6,7 @@
 
 - [checkpoint-prototype-compatibility-v0.11.zh.md](./checkpoint-prototype-compatibility-v0.11.zh.md)
 - [native-persistence-prototype-bootstrap-v0.12.zh.md](../design/native-persistence-prototype-bootstrap-v0.12.zh.md)
-- [issue-backlog-v0.12.zh.md](../plan/issue-backlog-v0.12.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

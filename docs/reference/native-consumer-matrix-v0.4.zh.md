@@ -9,7 +9,7 @@
 - [cli-commands-v0.3.zh.md](./cli-commands-v0.3.zh.md)
 - [native-handoff-architecture-v0.4.zh.md](../design/native-handoff-architecture-v0.4.zh.md)
 - [backend-extension-guide-v0.2.zh.md](../design/backend-extension-guide-v0.2.zh.md)
-- [issue-backlog-v0.4.zh.md](../plan/issue-backlog-v0.4.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

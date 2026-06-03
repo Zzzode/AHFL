@@ -7,7 +7,7 @@
 - [ir-format-v0.3.zh.md](./ir-format-v0.3.zh.md)
 - [ir-backend-architecture-v0.2.zh.md](../design/ir-backend-architecture-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](../design/formal-backend-v0.2.zh.md)
-- [issue-backlog-v0.3.zh.md](../plan/issue-backlog-v0.3.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 

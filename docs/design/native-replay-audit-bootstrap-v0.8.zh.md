@@ -6,7 +6,7 @@
 
 - [native-runtime-session-bootstrap-v0.7.zh.md](./native-runtime-session-bootstrap-v0.7.zh.md)
 - [native-execution-journal-v0.7.zh.md](./native-execution-journal-v0.7.zh.md)
-- [roadmap-v0.8.zh.md](../plan/roadmap-v0.8.zh.md)
+- [project-status.zh.md](../plan/project-status.zh.md)
 
 ## 目标
 

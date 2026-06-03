@@ -7,7 +7,7 @@
 - [runtime-session-compatibility-v0.7.zh.md](./runtime-session-compatibility-v0.7.zh.md)
 - [dry-run-trace-compatibility-v0.6.zh.md](./dry-run-trace-compatibility-v0.6.zh.md)
 - [native-execution-journal-v0.7.zh.md](../design/native-execution-journal-v0.7.zh.md)
-- [issue-backlog-v0.7.zh.md](../plan/issue-backlog-v0.7.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 
