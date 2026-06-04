@@ -1,8 +1,10 @@
+#include "verification/formal/checker.hpp"
 #include "verification/formal/counterexample.hpp"
 #include "verification/formal/counterexample_json.hpp"
 
 #include <cstdlib>
 #include <iostream>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -69,8 +71,7 @@ void test_parse_mappings_no_source_location() {
 }
 
 void test_parse_mappings_unknown_path() {
-    constexpr auto model =
-        "-- AHFL_MAP agent__X__state => agent X state @ <unknown>:50-100\n";
+    constexpr auto model = "-- AHFL_MAP agent__X__state => agent X state @ <unknown>:50-100\n";
 
     auto mappings = parse_structured_symbol_mappings(model);
     check(mappings.size() == 1, "mappings_unknown.count_1");
@@ -89,7 +90,8 @@ void test_parse_mappings_unknown_path() {
 // ============================================================================
 
 void test_parse_trace_basic() {
-    constexpr auto output = R"(-- specification  G (agent__MyAgent__state = Working -> X (agent__MyAgent__state = Done))  is false
+    constexpr auto output =
+        R"(-- specification  G (agent__MyAgent__state = Working -> X (agent__MyAgent__state = Done))  is false
 -- as demonstrated by the following execution sequence
 Trace Description: LTL Counterexample
 Trace Type: Counterexample
@@ -275,7 +277,8 @@ LTLSPEC G (agent__TaskBot__state = AHFL_AGENT_RUNNING -> X (agent__TaskBot__stat
 )";
 
     // Simulate NuSMV checker output with a counterexample
-    constexpr auto checker_output = R"(-- specification  G (agent__TaskBot__state = AHFL_AGENT_RUNNING -> X (agent__TaskBot__state = AHFL_AGENT_DONE))  is false
+    constexpr auto checker_output =
+        R"(-- specification  G (agent__TaskBot__state = AHFL_AGENT_RUNNING -> X (agent__TaskBot__state = AHFL_AGENT_DONE))  is false
 -- as demonstrated by the following execution sequence
 Trace Description: LTL Counterexample
 Trace Type: Counterexample
@@ -358,6 +361,25 @@ Trace Type: Counterexample
           "integration.json_has_agent_desc");
 }
 
+void test_report_includes_structured_explanation() {
+    FormalVerificationResult result;
+    result.status = FormalVerificationStatus::Failed;
+    result.checker_path = "/tmp/fake-smv";
+    result.failing_specifications.push_back("-- specification LTLSPEC G FALSE is false");
+    result.counterexample_excerpt.push_back("Trace Description: LTL Counterexample");
+    result.structured_explanation_json = R"({"status":"failed","explanation":{"summary":"x"}})";
+
+    std::ostringstream output;
+    print_formal_verification_report(result, output);
+
+    const auto text = output.str();
+    check(text.find("error: formal verification failed") != std::string::npos,
+          "report_explain.has_failure_header");
+    check(text.find("counterexample explanation:") != std::string::npos,
+          "report_explain.has_explanation_section");
+    check(text.find("\"status\":\"failed\"") != std::string::npos, "report_explain.includes_json");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -373,6 +395,7 @@ int main() {
     test_explain_with_loop();
 
     test_integration_parse_explain_json();
+    test_report_includes_structured_explanation();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

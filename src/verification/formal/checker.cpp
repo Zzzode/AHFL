@@ -347,6 +347,14 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
                 out << mapping << '\n';
             }
         }
+        if (result.structured_explanation_json.has_value()) {
+            out << "counterexample explanation:\n";
+            const auto &json = *result.structured_explanation_json;
+            out << json;
+            if (json.empty() || json.back() != '\n') {
+                out << '\n';
+            }
+        }
         return;
     case FormalVerificationStatus::CheckerError:
         out << "error: formal checker failed";
