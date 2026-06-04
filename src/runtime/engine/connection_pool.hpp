@@ -12,7 +12,30 @@ namespace ahfl::runtime {
 /// Since the transport uses popen+curl, this acts as a concurrency limiter
 /// rather than a true TCP connection pool.
 class ConnectionPool {
-public:
+  public:
+    class Lease {
+      public:
+        Lease() = default;
+        ~Lease();
+
+        Lease(const Lease &) = delete;
+        Lease &operator=(const Lease &) = delete;
+
+        Lease(Lease &&other) noexcept;
+        Lease &operator=(Lease &&other) noexcept;
+
+        [[nodiscard]] bool acquired() const noexcept;
+        void release() noexcept;
+
+      private:
+        friend class ConnectionPool;
+
+        Lease(ConnectionPool &pool, std::string host);
+
+        ConnectionPool *pool_{nullptr};
+        std::string host_;
+    };
+
     struct Config {
         std::size_t max_connections{8};
         std::size_t max_per_host{4};
@@ -24,6 +47,9 @@ public:
 
     /// Check if a new connection to the given host is allowed.
     [[nodiscard]] bool can_connect(std::string_view host) const;
+
+    /// Atomically acquire a connection slot for the given host.
+    [[nodiscard]] Lease try_acquire(std::string_view host);
 
     /// Record that a connection to the given host has started.
     void record_start(std::string_view host);
@@ -40,7 +66,7 @@ public:
     /// Number of active connections to a specific host.
     [[nodiscard]] std::size_t active_for_host(std::string_view host) const;
 
-private:
+  private:
     struct HostEntry {
         std::size_t active_count{0};
         std::chrono::steady_clock::time_point last_activity;
