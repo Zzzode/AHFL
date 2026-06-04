@@ -1,104 +1,15 @@
 #pragma once
 
 #include "tooling/cli/command_catalog.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
+#include "tooling/cli/pipeline_context.hpp"
+
+#include <optional>
 
 namespace ahfl::cli {
 
-[[nodiscard]] int
-emit_execution_plan_with_diagnostics(const ahfl::ir::Program &program,
-                                     const ahfl::handoff::PackageMetadata &metadata);
+[[nodiscard]] bool handles_core_pipeline_command(CommandKind command);
 
-[[nodiscard]] int
-emit_dry_run_trace_with_diagnostics(const ahfl::ir::Program &program,
-                                    const ahfl::handoff::PackageMetadata &metadata,
-                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                    const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_runtime_session_with_diagnostics(const ahfl::ir::Program &program,
-                                      const ahfl::handoff::PackageMetadata &metadata,
-                                      const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                      const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_execution_journal_with_diagnostics(const ahfl::ir::Program &program,
-                                        const ahfl::handoff::PackageMetadata &metadata,
-                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                        const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_replay_view_with_diagnostics(const ahfl::ir::Program &program,
-                                  const ahfl::handoff::PackageMetadata &metadata,
-                                  const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                  const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_audit_report_with_diagnostics(const ahfl::ir::Program &program,
-                                   const ahfl::handoff::PackageMetadata &metadata,
-                                   const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                   const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_scheduler_snapshot_with_diagnostics(const ahfl::ir::Program &program,
-                                         const ahfl::handoff::PackageMetadata &metadata,
-                                         const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                         const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_scheduler_review_with_diagnostics(const ahfl::ir::Program &program,
-                                       const ahfl::handoff::PackageMetadata &metadata,
-                                       const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                       const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_checkpoint_record_with_diagnostics(const ahfl::ir::Program &program,
-                                        const ahfl::handoff::PackageMetadata &metadata,
-                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                        const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_checkpoint_review_with_diagnostics(const ahfl::ir::Program &program,
-                                        const ahfl::handoff::PackageMetadata &metadata,
-                                        const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                        const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_persistence_descriptor_with_diagnostics(const ahfl::ir::Program &program,
-                                             const ahfl::handoff::PackageMetadata &metadata,
-                                             const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                             const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_persistence_review_with_diagnostics(const ahfl::ir::Program &program,
-                                         const ahfl::handoff::PackageMetadata &metadata,
-                                         const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                         const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_export_manifest_with_diagnostics(const ahfl::ir::Program &program,
-                                      const ahfl::handoff::PackageMetadata &metadata,
-                                      const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                      const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_export_review_with_diagnostics(const ahfl::ir::Program &program,
-                                    const ahfl::handoff::PackageMetadata &metadata,
-                                    const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                    const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_store_import_descriptor_with_diagnostics(const ahfl::ir::Program &program,
-                                              const ahfl::handoff::PackageMetadata &metadata,
-                                              const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                              const CommandLineOptions &options);
-
-[[nodiscard]] int
-emit_store_import_review_with_diagnostics(const ahfl::ir::Program &program,
-                                          const ahfl::handoff::PackageMetadata &metadata,
-                                          const ahfl::dry_run::CapabilityMockSet &mock_set,
-                                          const CommandLineOptions &options);
+[[nodiscard]] std::optional<int>
+dispatch_core_pipeline_command(CommandKind command, const PackagePipelineContext &context);
 
 } // namespace ahfl::cli
