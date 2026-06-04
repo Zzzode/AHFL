@@ -1,9 +1,12 @@
 #pragma once
 
-#include "pipeline_durable_store_import.hpp"
 #include "pipeline_durable_store_import_provider.hpp"
 
+#include "ahfl/compiler/handoff/package.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
 #include "pipeline/persistence/durable_store_import/provider.hpp"
+#include "tooling/cli/command_catalog.hpp"
 
 #include <optional>
 #include <string_view>
