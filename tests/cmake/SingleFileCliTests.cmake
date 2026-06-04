@@ -169,6 +169,15 @@ add_test(NAME ahflc.verify_formal.fake_fail
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
+add_test(NAME ahflc.verify_formal.fake_fail_explain
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=verify;--explain;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_fail.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=counterexample explanation"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
 if(AHFL_SMV_CHECKER)
     add_test(NAME ahflc.verify_formal.real_smv
         COMMAND $<TARGET_FILE:ahflc> verify

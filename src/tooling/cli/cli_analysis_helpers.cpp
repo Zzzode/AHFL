@@ -1,12 +1,12 @@
 #include "tooling/cli/cli_analysis_helpers.hpp"
 
-#include "compiler/assurance/assurance.hpp"
 #include "ahfl/compiler/backends/driver.hpp"
-#include "verification/formal/checker.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/assurance/assurance.hpp"
+#include "verification/formal/checker.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -20,8 +20,8 @@ namespace ahfl::cli {
 // compile_to_ir — shared compile pipeline
 // ---------------------------------------------------------------------------
 
-std::optional<ir::Program>
-compile_to_ir(const std::filesystem::path &file_path, std::ostream &diagnostics) {
+std::optional<ir::Program> compile_to_ir(const std::filesystem::path &file_path,
+                                         std::ostream &diagnostics) {
     const Frontend frontend;
     const auto parse_result = frontend.parse_file(file_path);
     if (parse_result.has_errors() || !parse_result.program) {
@@ -102,13 +102,12 @@ lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
 // emit_core_backend (non-template overload)
 // ---------------------------------------------------------------------------
 
-std::optional<int>
-emit_core_backend(std::optional<CommandKind> effective_command,
-                  const ahfl::ir::Program &program,
-                  const ahfl::ResolveResult &resolve_result,
-                  const ahfl::TypeCheckResult &type_check_result,
-                  const ahfl::handoff::PackageMetadata *package_metadata,
-                  std::ostream &out) {
+std::optional<int> emit_core_backend(std::optional<CommandKind> effective_command,
+                                     const ahfl::ir::Program &program,
+                                     const ahfl::ResolveResult &resolve_result,
+                                     const ahfl::TypeCheckResult &type_check_result,
+                                     const ahfl::handoff::PackageMetadata *package_metadata,
+                                     std::ostream &out) {
     static_cast<void>(resolve_result);
     static_cast<void>(type_check_result);
 
@@ -146,8 +145,7 @@ int validate_assurance_program(const ahfl::ir::Program &program) {
 // verify_formal_program
 // ---------------------------------------------------------------------------
 
-int verify_formal_program(const ahfl::ir::Program &program,
-                          const CommandLineOptions &options) {
+int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOptions &options) {
     ahfl::formal::FormalCheckerOptions formal_options;
     if (options.model_checker.has_value()) {
         formal_options.checker_path = std::string(*options.model_checker);
@@ -159,16 +157,6 @@ int verify_formal_program(const ahfl::ir::Program &program,
 
     const auto result = ahfl::formal::verify_program_with_smv_checker(program, formal_options);
 
-    if (options.explain_requested &&
-        result.status == ahfl::formal::FormalVerificationStatus::Failed) {
-        if (result.structured_explanation_json.has_value()) {
-            std::cout << *result.structured_explanation_json << '\n';
-        } else {
-            ahfl::formal::print_formal_verification_report(result, std::cerr);
-        }
-        return 1;
-    }
-
     ahfl::formal::print_formal_verification_report(
         result, ahfl::formal::is_formal_verification_success(result) ? std::cout : std::cerr);
     return ahfl::formal::is_formal_verification_success(result) ? 0 : 1;
@@ -178,7 +166,8 @@ int verify_formal_program(const ahfl::ir::Program &program,
 // read_text_file
 // ---------------------------------------------------------------------------
 
-bool read_text_file(const std::filesystem::path &path, std::string &content,
+bool read_text_file(const std::filesystem::path &path,
+                    std::string &content,
                     std::ostream &diagnostics) {
     std::ifstream input(path, std::ios::binary);
     if (!input) {

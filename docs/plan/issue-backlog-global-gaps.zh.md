@@ -37,11 +37,11 @@
 
 ### 2.1 反例诊断（P0，v0.57）
 
-- [ ] 解析 NuSMV counterexample trace 为结构化数据（状态序列 + 变量赋值）。
-- [ ] 实现 SMV 符号 → AHFL 源码位置的反向映射（利用已有 AHFL_MAP 注释）。
-- [ ] 生成人类可读的违规路径描述（"在状态 X 调用 capability Y 后违反 invariant Z"）。
-- [ ] 支持 counterexample 的 JSON 输出格式（供 IDE/工具消费）。
-- [ ] 添加 `ahflc verify-formal --explain` 子命令。
+- [x] 解析 NuSMV counterexample trace 为结构化数据（状态序列 + 变量赋值）。
+- [x] 实现 SMV 符号 → AHFL 源码位置的反向映射（利用已有 AHFL_MAP 注释）。
+- [x] 生成人类可读的违规路径描述（"在状态 X 调用 capability Y 后违反 invariant Z"）。
+- [x] 支持 counterexample 的 JSON 输出格式（供 IDE/工具消费）。
+- [x] 添加 `ahflc verify-formal --explain` 解释输出。
 
 ### 2.2 有界模型检测 BMC（P2，v0.59+）
 
