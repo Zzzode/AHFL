@@ -24,6 +24,7 @@ add_executable(ahflc
     provider/provider_pipeline_cache.cpp
     provider/pipeline_durable_store_import.cpp
     provider/pipeline_durable_store_import_provider.cpp
+    provider/steps/binding.cpp
     provider/steps/runtime.cpp
     provider/steps/sdk.cpp
     provider/steps/execution.cpp
