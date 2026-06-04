@@ -1,7 +1,7 @@
 #include "runtime/providers/llm/streaming.hpp"
 
 #include "base/json/json_value.hpp"
-#include "base/support/curl.hpp"
+#include "base/support/http.hpp"
 
 #include <sstream>
 #include <string>
@@ -49,14 +49,15 @@ std::optional<std::string> SSEParser::feed_line(std::string_view line) {
     return std::nullopt;
 }
 
-StreamingClient::StreamingClient(std::string_view endpoint, std::string_view api_key,
+StreamingClient::StreamingClient(std::string_view endpoint,
+                                 std::string_view api_key,
                                  std::string_view model)
     : endpoint_(endpoint), api_key_(api_key), model_(model) {}
 
 StreamResult StreamingClient::stream(const std::string &request_json, StreamChunkCallback cb) {
     StreamResult result;
 
-    ahfl::support::CurlRequest request;
+    ahfl::support::HttpRequest request;
     request.method = "POST";
     request.url = endpoint_;
     request.headers = {
@@ -65,7 +66,7 @@ StreamResult StreamingClient::stream(const std::string &request_json, StreamChun
     };
     request.body = request_json;
 
-    const auto response = ahfl::support::execute_curl(request);
+    const auto response = ahfl::support::execute_http(request);
     if (response.status_code == 0 && !response.error.empty()) {
         result.error = response.error;
         return result;
@@ -100,8 +101,8 @@ StreamResult StreamingClient::stream(const std::string &request_json, StreamChun
     result.success = response.is_success();
     if (!result.success) {
         result.error = response.error.empty() ? "stream request failed with status " +
-                                                   std::to_string(response.status_code)
-                                             : response.error;
+                                                    std::to_string(response.status_code)
+                                              : response.error;
     }
     return result;
 }

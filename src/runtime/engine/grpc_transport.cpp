@@ -1,6 +1,6 @@
 #include "runtime/engine/grpc_transport.hpp"
 
-#include "runtime/engine/curl_transport_adapter.hpp"
+#include "runtime/engine/wire_transport_adapter.hpp"
 #include "runtime/engine/wire_value.hpp"
 
 #include <sstream>
@@ -124,7 +124,7 @@ std::string serialize_args_for_grpc(const std::vector<evaluator::Value> &args) {
 // ============================================================================
 
 std::string build_grpc_curl_command(const GrpcRequest &request) {
-    return describe_curl_transport(request);
+    return describe_wire_transport(request);
 }
 
 // ============================================================================
@@ -132,7 +132,7 @@ std::string build_grpc_curl_command(const GrpcRequest &request) {
 // ============================================================================
 
 GrpcResponse execute_grpc(const GrpcRequest &request) {
-    const auto response = execute_curl_transport(request);
+    const auto response = execute_wire_transport(request);
     if (response.timed_out) {
         return GrpcResponse{
             .status_code = GrpcStatusCode::DeadlineExceeded,
