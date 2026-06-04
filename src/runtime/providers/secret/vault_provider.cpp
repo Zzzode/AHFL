@@ -1,7 +1,7 @@
 #include "runtime/providers/secret/vault_provider.hpp"
 
 #include "base/json/json_value.hpp"
-#include "base/support/curl.hpp"
+#include "base/support/http.hpp"
 
 #include <fstream>
 #include <optional>
@@ -14,19 +14,18 @@ namespace ahfl::secret {
 
 namespace {
 
-/// Execute a curl command and return the response body + HTTP status.
-struct CurlResult {
+struct HttpResult {
     int status_code = 0;
     std::string body;
     std::string error;
 };
 
-CurlResult curl_request(const std::string &method,
+HttpResult http_request(const std::string &method,
                         const std::string &url,
                         const std::string &token,
                         const std::string &body_data = "",
                         int timeout_seconds = 5) {
-    ahfl::support::CurlRequest request;
+    ahfl::support::HttpRequest request;
     request.method = method;
     request.url = url;
     request.timeout_seconds = timeout_seconds;
@@ -38,8 +37,8 @@ CurlResult curl_request(const std::string &method,
         request.body = body_data;
     }
 
-    const auto response = ahfl::support::execute_curl(request);
-    return CurlResult{
+    const auto response = ahfl::support::execute_http(request);
+    return HttpResult{
         .status_code = response.status_code,
         .body = response.body,
         .error = response.error,
@@ -146,7 +145,7 @@ std::optional<std::string> VaultSecretProvider::resolve(std::string_view key) {
     }
 
     auto result =
-        curl_request("GET", url, config_.token, "", static_cast<int>(config_.timeout.count()));
+        http_request("GET", url, config_.token, "", static_cast<int>(config_.timeout.count()));
 
     if (result.status_code == 200) {
         if (auto value = vault_secret_value(result.body, key_str); value.has_value()) {
@@ -187,9 +186,9 @@ void VaultSecretProvider::authenticate() {
 
     case VaultAuthMethod::AppRole: {
         // AppRole auth: POST /v1/auth/approle/login with role_id + secret_id
-        std::string body = build_object_json({{"role_id", auth_config_.role_id},
-                                              {"secret_id", auth_config_.secret_id}});
-        auto result = curl_request("POST",
+        std::string body = build_object_json(
+            {{"role_id", auth_config_.role_id}, {"secret_id", auth_config_.secret_id}});
+        auto result = http_request("POST",
                                    config_.address + "/v1/auth/approle/login",
                                    "",
                                    body,
@@ -213,7 +212,7 @@ void VaultSecretProvider::authenticate() {
         }
         if (!jwt.empty()) {
             std::string body = build_object_json({{"role", auth_config_.k8s_role}, {"jwt", jwt}});
-            auto result = curl_request("POST",
+            auto result = http_request("POST",
                                        config_.address + "/v1/auth/kubernetes/login",
                                        "",
                                        body,
@@ -240,7 +239,7 @@ void VaultSecretProvider::authenticate() {
 void VaultSecretProvider::revoke_token() {
     if (authenticated_ && !config_.token.empty()) {
         // POST /v1/auth/token/revoke-self
-        curl_request("POST",
+        http_request("POST",
                      config_.address + "/v1/auth/token/revoke-self",
                      config_.token,
                      "",
@@ -264,7 +263,7 @@ std::vector<std::string> VaultSecretProvider::list_secrets(std::string_view path
     }
 
     auto result =
-        curl_request("LIST", url, config_.token, "", static_cast<int>(config_.timeout.count()));
+        http_request("LIST", url, config_.token, "", static_cast<int>(config_.timeout.count()));
 
     if (result.status_code == 200) {
         return vault_secret_keys(result.body);

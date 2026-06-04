@@ -2,7 +2,7 @@
 
 #include "runtime/providers/llm/http_client.hpp"
 
-#include "base/support/curl.hpp"
+#include "base/support/http.hpp"
 
 namespace ahfl::llm_provider {
 
@@ -11,7 +11,7 @@ HttpClient::HttpClient(std::string base_url, std::string api_key, int timeout_se
       timeout_seconds_(timeout_seconds) {}
 
 HttpResponse HttpClient::chat_completions(const std::string &request_json) {
-    ahfl::support::CurlRequest request;
+    ahfl::support::HttpRequest request;
     request.method = "POST";
     request.url = base_url_ + "/chat/completions";
     request.headers = {
@@ -21,7 +21,7 @@ HttpResponse HttpClient::chat_completions(const std::string &request_json) {
     request.body = request_json;
     request.timeout_seconds = timeout_seconds_;
 
-    const auto response = ahfl::support::execute_curl(request);
+    const auto response = ahfl::support::execute_http(request);
     if (response.status_code == 0 && !response.error.empty()) {
         return HttpResponse{0, response.error};
     }
