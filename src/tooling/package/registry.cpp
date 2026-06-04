@@ -1,7 +1,7 @@
 #include "tooling/package/registry.hpp"
 
 #include "base/json/json_value.hpp"
-#include "base/support/curl.hpp"
+#include "base/support/http.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -36,12 +36,12 @@ struct HttpResult {
 };
 
 HttpResult http_get(const std::string &url, int timeout_seconds = 10) {
-    ahfl::support::CurlRequest request;
+    ahfl::support::HttpRequest request;
     request.method = "GET";
     request.url = url;
     request.timeout_seconds = timeout_seconds;
 
-    const auto response = ahfl::support::execute_curl(request);
+    const auto response = ahfl::support::execute_http(request);
     return HttpResult{
         .status_code = response.status_code,
         .body = response.body,
