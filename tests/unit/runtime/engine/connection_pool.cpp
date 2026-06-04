@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -53,6 +54,41 @@ void test_record_end_frees_slot() {
     check(pool.active_count() == 0, "free_slot.zero_active");
 }
 
+void test_try_acquire_releases_on_scope_exit() {
+    ConnectionPool pool(ConnectionPool::Config{.max_connections = 1, .max_per_host = 1});
+    {
+        auto lease = pool.try_acquire("host_a");
+        check(lease.acquired(), "lease_scope.acquired");
+        check(pool.active_count() == 1, "lease_scope.active_1");
+        check(!pool.can_connect("host_a"), "lease_scope.host_full");
+    }
+    check(pool.active_count() == 0, "lease_scope.released");
+    check(pool.can_connect("host_a"), "lease_scope.host_available");
+}
+
+void test_try_acquire_rejected_without_counting() {
+    ConnectionPool pool(ConnectionPool::Config{.max_connections = 1, .max_per_host = 1});
+    auto first = pool.try_acquire("host_a");
+    auto second = pool.try_acquire("host_b");
+
+    check(first.acquired(), "lease_reject.first_acquired");
+    check(!second.acquired(), "lease_reject.second_rejected");
+    check(pool.active_count() == 1, "lease_reject.active_still_1");
+}
+
+void test_lease_move_releases_once() {
+    ConnectionPool pool(ConnectionPool::Config{.max_connections = 1, .max_per_host = 1});
+    {
+        auto first = pool.try_acquire("host_a");
+        check(first.acquired(), "lease_move.first_acquired");
+        auto second = std::move(first);
+        check(!first.acquired(), "lease_move.source_empty");
+        check(second.acquired(), "lease_move.target_acquired");
+        check(pool.active_count() == 1, "lease_move.active_1");
+    }
+    check(pool.active_count() == 0, "lease_move.released_once");
+}
+
 void test_evict_idle_cleans() {
     ConnectionPool pool(ConnectionPool::Config{
         .max_connections = 8,
@@ -73,6 +109,9 @@ int main() {
     test_over_global_limit_rejected();
     test_over_host_limit_rejected();
     test_record_end_frees_slot();
+    test_try_acquire_releases_on_scope_exit();
+    test_try_acquire_rejected_without_counting();
+    test_lease_move_releases_once();
     test_evict_idle_cleans();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
