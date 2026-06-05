@@ -10,5 +10,5 @@
   "local_filesystem_alpha_compatible": true,
   "capability_matrix_complete": true,
   "external_service_required": false,
-  "compatibility_summary": "provider compatibility suite status is blocked"
+  "compatibility_summary": "provider release gate suite status is blocked"
 }

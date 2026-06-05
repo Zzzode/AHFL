@@ -34,7 +34,7 @@ using namespace ahfl::durable_store_import;
     report.incompatible_count = 0;
     report.unknown_count = 0;
     report.has_schema_drift = false;
-    report.compatibility_summary = "all versions compatible";
+    report.compatibility_summary = "schema drift gate inputs aligned";
     return report;
 }
 
@@ -117,10 +117,14 @@ using namespace ahfl::durable_store_import;
 
 // 测试：所有 evidence 通过时，ReadyForControlledRollout
 int test_build_all_evidence_pass() {
-    const auto result = build_provider_production_integration_dry_run_report(
-        make_passing_conformance(), make_compatible_schema(), make_valid_config(),
-        make_release_ready_archive(), make_approved_receipt(), make_allow_opt_in(),
-        make_permitted_policy());
+    const auto result =
+        build_provider_production_integration_dry_run_report(make_passing_conformance(),
+                                                             make_compatible_schema(),
+                                                             make_valid_config(),
+                                                             make_release_ready_archive(),
+                                                             make_approved_receipt(),
+                                                             make_allow_opt_in(),
+                                                             make_permitted_policy());
 
     if (!result.report.has_value()) {
         std::cerr << "FAIL: build should produce a report\n";
@@ -146,10 +150,14 @@ int test_build_blocked_conformance_fails() {
     auto conformance = make_passing_conformance();
     conformance.fail_count = 2;
 
-    const auto result = build_provider_production_integration_dry_run_report(
-        conformance, make_compatible_schema(), make_valid_config(),
-        make_release_ready_archive(), make_approved_receipt(), make_allow_opt_in(),
-        make_permitted_policy());
+    const auto result =
+        build_provider_production_integration_dry_run_report(conformance,
+                                                             make_compatible_schema(),
+                                                             make_valid_config(),
+                                                             make_release_ready_archive(),
+                                                             make_approved_receipt(),
+                                                             make_allow_opt_in(),
+                                                             make_permitted_policy());
     assert(result.report.has_value());
 
     const auto &report = *result.report;
@@ -168,10 +176,14 @@ int test_build_blocked_schema_incompatible() {
     auto schema = make_compatible_schema();
     schema.incompatible_count = 1;
 
-    const auto result = build_provider_production_integration_dry_run_report(
-        make_passing_conformance(), schema, make_valid_config(),
-        make_release_ready_archive(), make_approved_receipt(), make_allow_opt_in(),
-        make_permitted_policy());
+    const auto result =
+        build_provider_production_integration_dry_run_report(make_passing_conformance(),
+                                                             schema,
+                                                             make_valid_config(),
+                                                             make_release_ready_archive(),
+                                                             make_approved_receipt(),
+                                                             make_allow_opt_in(),
+                                                             make_permitted_policy());
     assert(result.report.has_value());
 
     const auto &report = *result.report;
@@ -189,9 +201,14 @@ int test_build_blocked_approval_rejected() {
     receipt.is_approved = false;
     receipt.final_decision = ApprovalDecision::Rejected;
 
-    const auto result = build_provider_production_integration_dry_run_report(
-        make_passing_conformance(), make_compatible_schema(), make_valid_config(),
-        make_release_ready_archive(), receipt, make_allow_opt_in(), make_permitted_policy());
+    const auto result =
+        build_provider_production_integration_dry_run_report(make_passing_conformance(),
+                                                             make_compatible_schema(),
+                                                             make_valid_config(),
+                                                             make_release_ready_archive(),
+                                                             receipt,
+                                                             make_allow_opt_in(),
+                                                             make_permitted_policy());
     assert(result.report.has_value());
 
     const auto &report = *result.report;
@@ -209,9 +226,14 @@ int test_build_blocked_runtime_policy_deny() {
     policy.decision = PolicyDecision::Deny;
     policy.is_execution_permitted = false;
 
-    const auto result = build_provider_production_integration_dry_run_report(
-        make_passing_conformance(), make_compatible_schema(), make_valid_config(),
-        make_release_ready_archive(), make_approved_receipt(), make_allow_opt_in(), policy);
+    const auto result =
+        build_provider_production_integration_dry_run_report(make_passing_conformance(),
+                                                             make_compatible_schema(),
+                                                             make_valid_config(),
+                                                             make_release_ready_archive(),
+                                                             make_approved_receipt(),
+                                                             make_allow_opt_in(),
+                                                             policy);
     assert(result.report.has_value());
 
     const auto &report = *result.report;
@@ -244,12 +266,11 @@ int test_validate_format_version() {
 // 测试：验证 readiness/is_ready 一致性
 int test_validate_readiness_consistency() {
     ProviderProductionIntegrationDryRunReport report;
-    report.format_version =
-        std::string(kProviderProductionIntegrationDryRunReportFormatVersion);
+    report.format_version = std::string(kProviderProductionIntegrationDryRunReportFormatVersion);
     report.workflow_canonical_name = "test";
     report.session_id = "session-001";
     report.readiness_state = ProductionReadinessState::Blocked;
-    report.is_ready_for_controlled_rollout = true;  // 不一致
+    report.is_ready_for_controlled_rollout = true; // 不一致
 
     const auto result = validate_provider_production_integration_dry_run_report(report);
 
@@ -277,11 +298,10 @@ int test_default_safe_values() {
 // 测试：is_non_mutating_mode 校验
 int test_validate_non_mutating_mode() {
     ProviderProductionIntegrationDryRunReport report;
-    report.format_version =
-        std::string(kProviderProductionIntegrationDryRunReportFormatVersion);
+    report.format_version = std::string(kProviderProductionIntegrationDryRunReportFormatVersion);
     report.workflow_canonical_name = "test";
     report.session_id = "session-001";
-    report.is_non_mutating_mode = false;  // 当前版本不允许
+    report.is_non_mutating_mode = false; // 当前版本不允许
 
     const auto result = validate_provider_production_integration_dry_run_report(report);
 
@@ -299,7 +319,8 @@ int test_validate_non_mutating_mode() {
 int main(int argc, char *argv[]) {
     if (argc == 2) {
         std::string cmd = argv[1];
-        if (cmd == "test-build-all-evidence-pass") return test_build_all_evidence_pass();
+        if (cmd == "test-build-all-evidence-pass")
+            return test_build_all_evidence_pass();
         if (cmd == "test-build-blocked-conformance-fails")
             return test_build_blocked_conformance_fails();
         if (cmd == "test-build-blocked-schema-incompatible")
@@ -308,11 +329,14 @@ int main(int argc, char *argv[]) {
             return test_build_blocked_approval_rejected();
         if (cmd == "test-build-blocked-runtime-policy-deny")
             return test_build_blocked_runtime_policy_deny();
-        if (cmd == "test-validate-format-version") return test_validate_format_version();
+        if (cmd == "test-validate-format-version")
+            return test_validate_format_version();
         if (cmd == "test-validate-readiness-consistency")
             return test_validate_readiness_consistency();
-        if (cmd == "test-default-safe-values") return test_default_safe_values();
-        if (cmd == "test-validate-non-mutating-mode") return test_validate_non_mutating_mode();
+        if (cmd == "test-default-safe-values")
+            return test_default_safe_values();
+        if (cmd == "test-validate-non-mutating-mode")
+            return test_validate_non_mutating_mode();
         std::cerr << "unknown test: " << cmd << "\n";
         return 1;
     }

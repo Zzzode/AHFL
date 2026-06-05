@@ -138,7 +138,7 @@ V0.10 当前 scheduler-facing consumer 共享入口是：
 1. future persistence explorer 不应直接从 `ReplayView` / `AuditReport` 倒推 checkpoint state
 2. future persistence explorer 不应直接从 `DryRunTrace` 推导 runtime terminal failure
 3. `SchedulerDecisionSummary` 是 projection，不是 checkpoint ABI
-4. 若以后需要 durable checkpoint id / resume token，应先扩 `SchedulerSnapshot` compatibility contract，而不是把字段塞进 review 输出
+4. 若以后需要 durable checkpoint id / resume token，应先新增 `SchedulerSnapshot` migration record 与 schema-drift evidence，而不是把字段塞进 review 输出
 
 ## 当前反模式
 

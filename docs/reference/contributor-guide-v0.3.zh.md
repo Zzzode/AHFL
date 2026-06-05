@@ -75,7 +75,7 @@ cmake --build --preset build-dev --target ahflc
 - `src/tooling/cli/ahflc.cpp`
 - `tests/project/project_*.cpp`
 
-### 3. 改 IR / compatibility contract
+### 3. 改 IR / migration evidence
 
 先读：
 

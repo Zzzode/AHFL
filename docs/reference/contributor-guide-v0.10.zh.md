@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.10
 
-本文给出面向新贡献者的 V0.10 上手路径，重点覆盖 scheduler snapshot、scheduler review、compatibility contract、golden regression，以及它们与 V0.9 runtime-adjacent artifact 的协作边界。
+本文给出面向新贡献者的 V0.10 上手路径，重点覆盖 scheduler snapshot、scheduler review、migration / schema-drift evidence、golden regression，以及它们与 V0.9 runtime-adjacent artifact 的协作边界。
 
 关联文档：
 

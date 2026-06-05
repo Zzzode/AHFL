@@ -212,7 +212,7 @@ V0.12 当前冻结的升级关系是：
 
 1. future durable store / recovery protocol 可以复用 `CheckpointPersistenceDescriptor` 的 exportable prefix、planned durable identity、basis / blocker
 2. future durable store / recovery protocol 不应要求 V0.12 当前就携带 durable checkpoint id、resume token、store metadata
-3. 若未来需要把这些 durable 字段提升为稳定输入，应通过新的 compatibility contract 明确演进，而不是静默塞回 `CheckpointPersistenceDescriptor` / `PersistenceReviewSummary`
+3. 若未来需要把这些 durable 字段提升为稳定输入，应通过新的 migration record 与 schema-drift evidence 明确影响面，而不是静默塞回 `CheckpointPersistenceDescriptor` / `PersistenceReviewSummary`
 
 ## Persistence-Facing State 对 Review / Recovery 的影响
 

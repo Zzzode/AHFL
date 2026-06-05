@@ -3,6 +3,9 @@
 本文合并原先 durable-store-import / durable-store-provider 的逐版本 compatibility、consumer matrix 与 contributor guide 文档。日常开发只维护本文与当前设计文档：
 
 - [durable-store-import-architecture-v0.1.zh.md](../design/durable-store-import-architecture-v0.1.zh.md)
+- [migration-policy-v0.1.zh.md](./migration-policy-v0.1.zh.md)
+
+这里提到的 compatibility 历史资料只用于回溯旧版本行为；当前项目不维护前向兼容，provider compatibility / schema compatibility artifact 的含义是 release gate 或 schema drift evidence。
 
 ## 事实来源
 
@@ -12,8 +15,9 @@
 | Receipt persistence transition rules | `src/pipeline/persistence/durable_store_import/receipt_persistence_stage.hpp` |
 | Provider model domains | `src/pipeline/persistence/durable_store_import/provider/**/*.hpp` |
 | Provider artifact descriptors | `src/pipeline/persistence/durable_store_import/provider_artifacts.def` |
-| Provider CLI artifact/catalog registry | `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` |
-| Provider CLI catalog mapping | `src/tooling/cli/provider/provider_artifact_catalog.*` |
+| Provider internal artifact/catalog registry | `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` |
+| Provider internal catalog API | `src/tooling/cli/provider/provider_artifact_catalog.*` |
+| Provider internal graph mapping | `src/tooling/cli/provider/provider_artifact_graph.*` |
 | Provider command routing tests | `tests/unit/tooling/cli/command_routing.cpp` |
 | Golden command registration | `tests/cmake/TestTargets.cmake` |
 
@@ -41,9 +45,9 @@ emit-durable-store-import-decision-review
 
 内部 C++ API 不提供 `build_durable_store_import_*` 兼容 shim；新增模型和 review action 应使用短语义名，并由 artifact printer 映射到稳定 JSON 字符串。
 
-Provider artifact 元数据由 `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` 单表注册生成。不要复制 command handler 或新增第二张 command registry；新增时应在该 artifact 记录中同时声明 provider-local `artifact_id`、visibility 和 provider-local order，再交给 `ProviderPipeline` 统一 dispatch。
+Provider artifact 元数据、依赖、builder 和 printer 由 `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` 单表注册。`provider_artifact_catalog` 服务 CLI 查询；`provider_artifact_graph` 服务 build-time dependency、builder 和 printer 调度。不要复制 command handler 或新增第二张手写 command/dependency registry；新增时应在该 artifact 记录中同时声明 provider-local `artifact_id`、visibility、provider-local order、dependency、builder 和 printer，再交给 `ProviderPipeline` 统一 dispatch。
 
-默认 CLI 只解析 `visibility = Public` 的 provider artifact。`visibility = Internal` 的中间节点必须显式传入 `--show-hidden` 才可 emit，主要用于 golden 覆盖、诊断和回归定位。
+用户命令面不解析 `ahflc emit provider/...`。Provider artifact 只能通过内部诊断入口 `ahflc emit-provider-artifact provider/<artifact>` 触达，主要用于 golden 覆盖、诊断和回归定位。`visibility = Internal` 的中间节点仍必须显式传入 `--show-hidden`。
 
 ## Provider 领域映射
 
@@ -89,7 +93,7 @@ When adding or changing a durable-store/provider artifact:
 
 1. Update the model header and implementation in the relevant domain folder.
 2. Update `src/pipeline/persistence/durable_store_import/provider_artifacts.def` if the artifact is provider-owned.
-3. Update `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` for provider CLI emission; provider-local `artifact_id`/visibility/order/dependencies must live in the same record.
+3. Update `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def` for internal provider artifact emission; provider-local `artifact_id`/visibility/order/dependencies/builder/printer must live in the same graph record.
 4. Add or update model validation tests.
 5. Add or update golden CLI output when the command surface changes.
 6. Run `tests/unit/tooling/cli/command_routing.cpp` coverage through `ahfl.cli.command_routing_all`.

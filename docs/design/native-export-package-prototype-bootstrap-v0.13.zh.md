@@ -202,7 +202,7 @@ V0.13 当前冻结的升级关系是：
 
 1. future durable store adapter / recovery protocol 可以复用 `PersistenceExportManifest` 的 export package identity、artifact bundle、manifest boundary 与 blocker
 2. future durable store adapter / recovery protocol 不应要求 V0.13 当前就携带 durable checkpoint id、resume token、store URI、object path 或 store metadata
-3. 若未来需要把这些 durable 字段提升为稳定输入，应通过新的 compatibility contract 明确演进，而不是静默塞回 `PersistenceExportManifest` / `PersistenceExportReviewSummary`
+3. 若未来需要把这些 durable 字段提升为稳定输入，应通过新的 migration record 与 schema-drift evidence 明确影响面，而不是静默塞回 `PersistenceExportManifest` / `PersistenceExportReviewSummary`
 
 ## Future Durable Store Prototype 当前应怎么消费
 

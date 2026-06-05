@@ -86,7 +86,7 @@
 | V0.9 | `AuditReport` | 审计报告 |
 | V0.10 | `SchedulerSnapshot` | 调度器状态快照 |
 
-每个工件都具备：model → validation → bootstrap → CLI/backend emission → golden regression → compatibility contract → CI 标签。
+每个工件都具备：model → validation → bootstrap → CLI/backend emission → golden regression → release-gate / migration evidence → CI 标签。
 
 ### 3.3 持久化与导出工件（V0.11–V0.13）✅
 
@@ -120,7 +120,7 @@
 | V0.26 | Local host execution receipt | side-effect-free receipt simulation |
 | V0.27 | SDK adapter request/response artifact | request plan、response placeholder、readiness review |
 | V0.28 | SDK adapter interface contract | adapter descriptor、registry model、capability descriptor、error normalization |
-| V0.29 | Config loader boundary | config profile、snapshot placeholder、schema compatibility |
+| V0.29 | Config loader boundary | config profile、snapshot placeholder、schema drift evidence |
 | V0.30 | Secret handle resolver | secret handle reference、resolver request/response placeholder、credential lifecycle |
 
 **核心设计原则**（贯穿 V0.20–V0.30）：
@@ -142,7 +142,7 @@
 | V0.37 | Recovery / resume contract | recovery checkpoint、resume token、partial write recovery plan |
 | V0.38 | Provider failure taxonomy | failure kind/category/retryability、response normalization |
 | V0.39 | Observability / audit event | execution audit event、telemetry summary、redaction policy |
-| V0.40 | Provider compatibility suite | test manifest、fixture matrix、compatibility report |
+| V0.40 | Provider release-gate suite | test manifest、fixture matrix、release-gate report |
 | V0.41 | Multi-provider registry | provider selection plan、fallback/degradation policy |
 | V0.42 | Production readiness review | readiness evidence model、release gate |
 
@@ -151,7 +151,7 @@
 | 版本 | 聚焦 | 关键产物 |
 |------|------|----------|
 | V0.43 | Contract conformance runner | conformance input/output、cross-check report |
-| V0.44 | Artifact schema/version compatibility | schema drift report、source chain validation |
+| V0.44 | Artifact schema drift gate | schema drift report、source chain validation |
 | V0.45 | Production config bundle validation | config bundle validation、secret handle/endpoint binding 校验 |
 | V0.46 | Release evidence archive | archive manifest、artifact digest、missing evidence summary |
 | V0.47 | Operator approval workflow | approval request/decision/receipt、rejection reason |
@@ -169,7 +169,7 @@
 | V0.52 | Statement Executor | `ExecContext`、Let/Assign/If/Goto/Return/Assert/ExprStmt | `src/runtime/evaluator/executor.cpp` |
 | V0.53 | Agent State Machine Runtime | `AgentRuntime`、状态转换循环、quota enforcement | `src/runtime/engine/agent_runtime.cpp` |
 | V0.54 | Workflow Integration | `WorkflowRuntime`、DAG 拓扑调度、跨节点依赖 | `src/runtime/engine/workflow_runtime.cpp` |
-| V0.55 | Capability Bridge | `CapabilityRegistry`、`FunctionCapability`、HTTP/gRPC stub、retry 策略 | `src/runtime/engine/capability_bridge.cpp` |
+| V0.55 | Capability Bridge | `CapabilityRegistry`、`FunctionCapability`、HTTP transport、gRPC JSON transcoding transport、retry 策略 | `src/runtime/engine/capability_bridge.cpp` |
 
 **V0.55 Deferred 项**（仍未实现）：
 - Secret 管理集成
@@ -270,7 +270,7 @@ SMV 后端的 formal subset：
 
 详见 [issue-backlog-global-gaps.zh.md](./issue-backlog-global-gaps.zh.md)，主要涵盖：
 
-- **P0**：反例诊断、HTTP/gRPC Capability 真实实现
+- **P0**：反例诊断、Capability 认证/secret 与原生 gRPC 扩展
 - **P1**：LSP、LLM Streaming/Function Calling、优化 Pass 层、Secret 管理
 - **P2**：并行执行、格式化器、nuXmv/BMC、OpenTelemetry、Fuzzing、IDE 扩展
 - **P3**：WASM 后端、增量编译、REPL、调试器、分布式执行、包管理

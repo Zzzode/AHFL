@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.13
 
-本文给出面向新贡献者的 V0.13 上手路径，重点覆盖 export manifest、export review、compatibility contract、consumer matrix、golden regression，以及它们与 V0.12 persistence-facing artifact 的协作边界。
+本文给出面向新贡献者的 V0.13 上手路径，重点覆盖 export manifest、export review、migration / schema-drift evidence、consumer matrix、golden regression，以及它们与 V0.12 persistence-facing artifact 的协作边界。
 
 关联文档：
 
