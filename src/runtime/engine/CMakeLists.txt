@@ -3,6 +3,7 @@ add_library(ahfl_runtime_engine STATIC
     workflow_runtime.cpp
     capability_bridge.cpp
     capability_eval.cpp
+    capability_transport_adapter.cpp
     connection_pool.cpp
     http_transport.cpp
     grpc_transport.cpp

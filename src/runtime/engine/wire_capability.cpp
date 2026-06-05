@@ -1,8 +1,6 @@
 #include "runtime/engine/capability_bridge.hpp"
 
 #include "runtime/engine/connection_pool.hpp"
-#include "runtime/engine/grpc_transport.hpp"
-#include "runtime/engine/http_transport.hpp"
 #include "runtime/engine/wire_value.hpp"
 
 #include <memory>
@@ -54,8 +52,10 @@ ConnectionPool &global_connection_pool() {
     };
 }
 
-[[nodiscard]] CapabilityCallResult execute_http_capability_call(const HTTPCapabilityConfig &config,
-                                                                const std::vector<Value> &args) {
+[[nodiscard]] CapabilityCallResult
+execute_http_capability_call(const HTTPCapabilityConfig &config,
+                             const CapabilityTransportAdapter &transport,
+                             const std::vector<Value> &args) {
     const auto host = extract_host(config.url);
     auto lease = global_connection_pool().try_acquire(host);
     if (!lease.acquired()) {
@@ -78,8 +78,7 @@ ConnectionPool &global_connection_pool() {
         request.headers["Content-Type"] = "application/json";
     }
 
-    HttpTransport transport;
-    const auto response = transport.execute(request);
+    const auto response = transport.execute_http(request);
 
     if (response.is_timeout()) {
         return CapabilityCallResult{
@@ -111,14 +110,15 @@ ConnectionPool &global_connection_pool() {
     return value_from_wire_response_body(response.body);
 }
 
-struct ParsedGrpcEndpoint {
+struct ParsedGrpcJsonTranscodingEndpoint {
     std::string host;
     uint16_t port{50051};
     bool use_tls{false};
 };
 
-[[nodiscard]] ParsedGrpcEndpoint parse_grpc_endpoint(const std::string &endpoint) {
-    ParsedGrpcEndpoint result;
+[[nodiscard]] ParsedGrpcJsonTranscodingEndpoint
+parse_grpc_json_transcoding_endpoint(const std::string &endpoint) {
+    ParsedGrpcJsonTranscodingEndpoint result;
     std::string working = endpoint;
 
     if (working.rfind("https://", 0) == 0) {
@@ -146,9 +146,11 @@ struct ParsedGrpcEndpoint {
     return result;
 }
 
-[[nodiscard]] CapabilityCallResult execute_grpc_capability_call(const GRPCCapabilityConfig &config,
-                                                                const std::vector<Value> &args) {
-    const auto parsed = parse_grpc_endpoint(config.endpoint);
+[[nodiscard]] CapabilityCallResult
+execute_grpc_json_transcoding_capability_call(const GrpcJsonTranscodingCapabilityConfig &config,
+                                              const CapabilityTransportAdapter &transport,
+                                              const std::vector<Value> &args) {
+    const auto parsed = parse_grpc_json_transcoding_endpoint(config.endpoint);
     const auto host_key = parsed.host + ":" + std::to_string(parsed.port);
     auto lease = global_connection_pool().try_acquire(host_key);
     if (!lease.acquired()) {
@@ -160,19 +162,19 @@ struct ParsedGrpcEndpoint {
         };
     }
 
-    GrpcEndpoint endpoint;
+    GrpcJsonTranscodingEndpoint endpoint;
     endpoint.host = parsed.host;
     endpoint.port = parsed.port;
     endpoint.service_name = config.service;
     endpoint.method_name = config.method;
     endpoint.use_tls = parsed.use_tls;
 
-    GrpcRequest request;
+    GrpcJsonTranscodingRequest request;
     request.endpoint = std::move(endpoint);
-    request.serialized_body = serialize_args_for_grpc(args);
+    request.serialized_body = serialize_args_for_grpc_json_transcoding(args);
     request.timeout = std::chrono::duration_cast<std::chrono::seconds>(config.timeout.deadline);
 
-    const auto response = execute_grpc(request);
+    const auto response = transport.execute_grpc_json_transcoding(request);
 
     if (response.status_code == GrpcStatusCode::DeadlineExceeded) {
         return CapabilityCallResult{
@@ -198,6 +200,12 @@ struct ParsedGrpcEndpoint {
 } // namespace
 
 CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityConfig config) {
+    return make_http_capability(name, std::move(config), default_capability_transport_adapter());
+}
+
+CapabilityBinding make_http_capability(const std::string &name,
+                                       HTTPCapabilityConfig config,
+                                       CapabilityTransportAdapterPtr transport) {
     CapabilityBinding binding;
     binding.name = name;
     binding.retry = config.retry;
@@ -209,13 +217,25 @@ CapabilityBinding make_http_capability(const std::string &name, HTTPCapabilityCo
     }
 
     auto shared_config = std::make_shared<HTTPCapabilityConfig>(std::move(config));
-    binding.handler = [shared_config](const std::vector<Value> &args) -> CapabilityCallResult {
-        return execute_http_capability_call(*shared_config, args);
+    auto shared_transport =
+        transport != nullptr ? std::move(transport) : default_capability_transport_adapter();
+    binding.handler = [shared_config,
+                       shared_transport](const std::vector<Value> &args) -> CapabilityCallResult {
+        return execute_http_capability_call(*shared_config, *shared_transport, args);
     };
     return binding;
 }
 
-CapabilityBinding make_grpc_capability(const std::string &name, GRPCCapabilityConfig config) {
+CapabilityBinding
+make_grpc_json_transcoding_capability(const std::string &name,
+                                      GrpcJsonTranscodingCapabilityConfig config) {
+    return make_grpc_json_transcoding_capability(
+        name, std::move(config), default_capability_transport_adapter());
+}
+
+CapabilityBinding make_grpc_json_transcoding_capability(const std::string &name,
+                                                        GrpcJsonTranscodingCapabilityConfig config,
+                                                        CapabilityTransportAdapterPtr transport) {
     CapabilityBinding binding;
     binding.name = name;
     binding.retry = config.retry;
@@ -226,9 +246,13 @@ CapabilityBinding make_grpc_capability(const std::string &name, GRPCCapabilityCo
         binding.circuit_state = std::make_shared<CircuitBreakerState>(config.circuit_breaker);
     }
 
-    auto shared_config = std::make_shared<GRPCCapabilityConfig>(std::move(config));
-    binding.handler = [shared_config](const std::vector<Value> &args) -> CapabilityCallResult {
-        return execute_grpc_capability_call(*shared_config, args);
+    auto shared_config = std::make_shared<GrpcJsonTranscodingCapabilityConfig>(std::move(config));
+    auto shared_transport =
+        transport != nullptr ? std::move(transport) : default_capability_transport_adapter();
+    binding.handler = [shared_config,
+                       shared_transport](const std::vector<Value> &args) -> CapabilityCallResult {
+        return execute_grpc_json_transcoding_capability_call(
+            *shared_config, *shared_transport, args);
     };
     return binding;
 }

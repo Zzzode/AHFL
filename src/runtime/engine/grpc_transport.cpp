@@ -52,17 +52,17 @@ const char *grpc_status_name(GrpcStatusCode code) {
 }
 
 // ============================================================================
-// GrpcEndpoint
+// GrpcJsonTranscodingEndpoint
 // ============================================================================
 
-std::string GrpcEndpoint::to_url() const {
+std::string GrpcJsonTranscodingEndpoint::to_url() const {
     std::ostringstream oss;
     oss << (use_tls ? "https" : "http") << "://" << host << ":" << port;
     oss << to_path();
     return oss.str();
 }
 
-std::string GrpcEndpoint::to_path() const {
+std::string GrpcJsonTranscodingEndpoint::to_path() const {
     return "/" + service_name + "/" + method_name;
 }
 
@@ -111,48 +111,41 @@ namespace {
 // serialize helpers
 // ============================================================================
 
-std::string serialize_value_for_grpc(const evaluator::Value &value) {
+std::string serialize_value_for_grpc_json_transcoding(const evaluator::Value &value) {
     return serialize_value_for_wire_json(value);
 }
 
-std::string serialize_args_for_grpc(const std::vector<evaluator::Value> &args) {
+std::string serialize_args_for_grpc_json_transcoding(const std::vector<evaluator::Value> &args) {
     return serialize_args_for_wire_json(args);
 }
 
-// ============================================================================
-// build_grpc_curl_command
-// ============================================================================
-
-std::string build_grpc_curl_command(const GrpcRequest &request) {
+std::string build_grpc_json_transcoding_curl_command(const GrpcJsonTranscodingRequest &request) {
     return describe_wire_transport(request);
 }
 
-// ============================================================================
-// execute_grpc
-// ============================================================================
-
-GrpcResponse execute_grpc(const GrpcRequest &request) {
+GrpcJsonTranscodingResponse
+execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) {
     const auto response = execute_wire_transport(request);
     if (response.timed_out) {
-        return GrpcResponse{
+        return GrpcJsonTranscodingResponse{
             .status_code = GrpcStatusCode::DeadlineExceeded,
             .body = {},
-            .error_message = "gRPC deadline exceeded",
+            .error_message = "gRPC JSON transcoding deadline exceeded",
         };
     }
     if (response.status_code == 0 && !response.error.empty()) {
-        return GrpcResponse{
+        return GrpcJsonTranscodingResponse{
             .status_code = GrpcStatusCode::Unavailable,
             .body = response.body,
             .error_message = response.error,
         };
     }
 
-    // Map HTTP status to gRPC status
+    // Map HTTP status to gRPC status for the JSON-transcoding bridge.
     const auto grpc_status = http_to_grpc_status(response.status_code);
 
     if (grpc_status != GrpcStatusCode::Ok) {
-        return GrpcResponse{
+        return GrpcJsonTranscodingResponse{
             .status_code = grpc_status,
             .body = response.body,
             .error_message = std::string("gRPC ") + grpc_status_name(grpc_status) + " (HTTP " +
@@ -160,7 +153,7 @@ GrpcResponse execute_grpc(const GrpcRequest &request) {
         };
     }
 
-    return GrpcResponse{
+    return GrpcJsonTranscodingResponse{
         .status_code = GrpcStatusCode::Ok,
         .body = response.body,
         .error_message = {},

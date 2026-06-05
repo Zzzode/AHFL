@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
+#include "runtime/engine/capability_transport_adapter.hpp"
 #include "runtime/evaluator/value.hpp"
 
 namespace ahfl::runtime {
@@ -121,9 +122,12 @@ struct HTTPCapabilityConfig {
 };
 [[nodiscard]] CapabilityBinding make_http_capability(const std::string &name,
                                                      HTTPCapabilityConfig config);
+[[nodiscard]] CapabilityBinding make_http_capability(const std::string &name,
+                                                     HTTPCapabilityConfig config,
+                                                     CapabilityTransportAdapterPtr transport);
 
-// gRPC Capability 工厂 (JSON Transcoding mode)
-struct GRPCCapabilityConfig {
+// gRPC-shaped Capability factory backed by HTTP/2 JSON transcoding.
+struct GrpcJsonTranscodingCapabilityConfig {
     std::string endpoint;
     std::string service;
     std::string method;
@@ -131,7 +135,12 @@ struct GRPCCapabilityConfig {
     TimeoutConfig timeout;
     CircuitBreakerConfig circuit_breaker;
 };
-[[nodiscard]] CapabilityBinding make_grpc_capability(const std::string &name,
-                                                     GRPCCapabilityConfig config);
+[[nodiscard]] CapabilityBinding
+make_grpc_json_transcoding_capability(const std::string &name,
+                                      GrpcJsonTranscodingCapabilityConfig config);
+[[nodiscard]] CapabilityBinding
+make_grpc_json_transcoding_capability(const std::string &name,
+                                      GrpcJsonTranscodingCapabilityConfig config,
+                                      CapabilityTransportAdapterPtr transport);
 
 } // namespace ahfl::runtime
