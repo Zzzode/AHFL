@@ -1,0 +1,35 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent ReadonlyInputAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for ReadonlyInputAgent {
+    state Init {
+        input.value = "mutated";
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}

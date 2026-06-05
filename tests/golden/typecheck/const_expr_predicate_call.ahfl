@@ -1,0 +1,3 @@
+predicate IsReady() -> Bool;
+
+const BAD: Bool = IsReady();

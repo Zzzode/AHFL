@@ -156,14 +156,20 @@ inline constexpr ErrorCode<DiagnosticCategory::Resolve> MultipleModuleDeclaratio
 
 namespace typecheck {
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TypeMismatch{"TYPE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> SemanticError{"SEMANTIC_ERROR"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ExactSchemaMismatch{
+    "EXACT_SCHEMA_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownType{"UNKNOWN_TYPE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidOperation{"INVALID_OPERATION"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NonPureExpression{"NON_PURE_EXPRESSION"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ConstExprRequired{
+    "CONST_EXPR_REQUIRED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidMemberAccess{
     "INVALID_MEMBER_ACCESS"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownField{"UNKNOWN_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingField{"MISSING_FIELD"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateField{"DUPLICATE_FIELD"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateVariant{"DUPLICATE_VARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidIndexAccess{
     "INVALID_INDEX_ACCESS"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoneWithoutContext{
@@ -178,6 +184,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARIT
 } // namespace typecheck
 
 namespace validation {
+inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{
+    "SEMANTIC_INVARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> RequiredFieldEmpty{
     "REQUIRED_FIELD_EMPTY"};
@@ -222,6 +230,8 @@ inline constexpr MessageTemplate MultipleModuleDeclarations{
 
 namespace typecheck {
 inline constexpr MessageTemplate TypeMismatch{"type mismatch in {}: expected {}, got {}"};
+inline constexpr MessageTemplate ExactSchemaMismatch{
+    "exact schema mismatch in {}: expected {}, got {}"};
 inline constexpr MessageTemplate InvalidMemberAccess{
     "member access requires a struct value, got {}"};
 inline constexpr MessageTemplate UnknownField{"unknown field '{}' on struct '{}'"};
@@ -244,6 +254,8 @@ inline constexpr MessageTemplate WrongArity{"{} '{}' expects {} argument(s), got
 inline constexpr MessageTemplate PredicateArgsNotPure{
     "predicate arguments must be pure expressions"};
 inline constexpr MessageTemplate NonPureContext{"{} must be a pure expression"};
+inline constexpr MessageTemplate ConstExprRequired{
+    "const expression required in {}: {}"};
 } // namespace typecheck
 
 namespace validation {

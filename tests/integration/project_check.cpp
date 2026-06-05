@@ -114,7 +114,7 @@ int run_fail_node_input(const std::filesystem::path &entry, const std::filesyste
     }
 
     const auto rendered = render_diagnostics(type_check_result.diagnostics);
-    if (!contains_text(rendered, "type mismatch in workflow node input") ||
+    if (!contains_text(rendered, "exact schema mismatch in workflow node input") ||
         !contains_text(rendered, "check_fail_input/app/main.ahfl")) {
         print_diagnostics(type_check_result.diagnostics);
         return 1;

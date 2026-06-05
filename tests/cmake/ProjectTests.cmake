@@ -3564,7 +3564,7 @@ add_test(NAME ahflc.check.project.fail_node_input
             "-DAHFLC=$<TARGET_FILE:ahflc>"
             "-DINPUT_FILE=${AHFL_TESTS_DIR}/integration/check_fail_input/app/main.ahfl"
             "-DAHFLC_ARGS=check\;--search-root\;${AHFL_TESTS_DIR}/integration/check_fail_input\;${AHFL_TESTS_DIR}/integration/check_fail_input/app/main.ahfl"
-            "-DEXPECTED_REGEX=type mismatch in workflow node input"
+            "-DEXPECTED_REGEX=exact schema mismatch in workflow node input"
             -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
@@ -3930,6 +3930,14 @@ add_test(NAME ahfl.secret.vault_rotation_all
 
 add_test(NAME ahfl.passes.pass_manager_all
     COMMAND $<TARGET_FILE:ahfl_pass_manager_tests>
+)
+
+add_test(NAME ahfl.semantics.type_relations_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_type_relations_tests>
+)
+
+add_test(NAME ahfl.semantics.effects_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_effects_tests>
 )
 
 add_test(NAME ahfl.llm_provider.streaming_all

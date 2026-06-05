@@ -325,6 +325,42 @@ ahfl_add_check_fail_test(
 )
 
 ahfl_add_check_fail_test(
+    ahflc.fail.duplicate_struct_field
+    "${AHFL_TESTS_DIR}/golden/typecheck/duplicate_struct_field.ahfl"
+    "duplicate struct field 'value'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.duplicate_enum_variant
+    "${AHFL_TESTS_DIR}/golden/typecheck/duplicate_enum_variant.ahfl"
+    "duplicate enum variant 'Pending'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.context_default_missing
+    "${AHFL_TESTS_DIR}/golden/typecheck/context_default_missing.ahfl"
+    "agent context field 'value' must declare a default value"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.readonly_input_assignment
+    "${AHFL_TESTS_DIR}/golden/typecheck/readonly_input_assignment.ahfl"
+    "assignment target must be rooted at writable 'ctx'"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.const_expr_predicate_call
+    "${AHFL_TESTS_DIR}/golden/typecheck/const_expr_predicate_call.ahfl"
+    "const expression required in const initializer"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.const_expr_path_reference
+    "${AHFL_TESTS_DIR}/golden/typecheck/const_expr_path_reference.ahfl"
+    "runtime path references are not compile-time constants"
+)
+
+ahfl_add_check_fail_test(
     ahflc.fail.if_condition_not_bool
     "${AHFL_TESTS_DIR}/golden/typecheck/if_condition_not_bool.ahfl"
     "if condition must have type Bool"
@@ -411,5 +447,17 @@ ahfl_add_check_fail_test(
 ahfl_add_check_fail_test(
     ahflc.fail.workflow_node_input_mismatch
     "${AHFL_TESTS_DIR}/golden/typecheck/workflow_node_input_mismatch.ahfl"
-    "type mismatch in workflow node input"
+    "exact schema mismatch in workflow node input"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.workflow_return_schema_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_return_schema_mismatch.ahfl"
+    "exact schema mismatch in workflow output"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_output_schema_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_output_schema_mismatch.ahfl"
+    "exact schema mismatch in agent output"
 )

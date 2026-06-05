@@ -173,12 +173,17 @@ class ValidationPass final {
     void error_here(std::string message, SourceRange range) {
         if (current_source_ != nullptr) {
             result_.diagnostics.error()
+                .code(error_codes::validation::SemanticInvariant)
                 .message(std::move(message))
                 .range(range)
                 .source(current_source_->source)
                 .emit();
         } else {
-            result_.diagnostics.error().message(std::move(message)).range(range).emit();
+            result_.diagnostics.error()
+                .code(error_codes::validation::SemanticInvariant)
+                .message(std::move(message))
+                .range(range)
+                .emit();
         }
     }
 
