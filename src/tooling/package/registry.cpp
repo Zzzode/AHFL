@@ -92,6 +92,30 @@ std::optional<std::string> object_string(const ahfl::json::JsonValue &object,
     return std::string(*value);
 }
 
+[[nodiscard]] bool should_try_cache_after_registry_response(const RegistryHttpResponse &response) {
+    return !response.success && response.status_code != 404;
+}
+
+[[nodiscard]] std::string percent_encode_query_value(std::string_view value) {
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string encoded;
+    encoded.reserve(value.size());
+    for (const unsigned char character : value) {
+        const bool unreserved = (character >= 'A' && character <= 'Z') ||
+                                (character >= 'a' && character <= 'z') ||
+                                (character >= '0' && character <= '9') || character == '-' ||
+                                character == '.' || character == '_' || character == '~';
+        if (unreserved) {
+            encoded.push_back(static_cast<char>(character));
+            continue;
+        }
+        encoded.push_back('%');
+        encoded.push_back(kHex[(character >> 4U) & 0x0FU]);
+        encoded.push_back(kHex[character & 0x0FU]);
+    }
+    return encoded;
+}
+
 std::optional<PackageVersion> parse_version_object(const ahfl::json::JsonValue &version_object,
                                                    const std::string &package_name,
                                                    const std::string *forced_version = nullptr) {
@@ -172,7 +196,11 @@ std::optional<PackageVersion> parse_single_version_json(const std::string &json,
     if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {
         return std::nullopt;
     }
-    return parse_version_object(**parsed, package_name, &version);
+    auto package_version = parse_version_object(**parsed, package_name);
+    if (!package_version.has_value() || package_version->version != version) {
+        return std::nullopt;
+    }
+    return package_version;
 }
 
 std::vector<std::string> parse_search_json(const std::string &json) {
@@ -242,23 +270,24 @@ RegistryResult Registry::fetch_metadata(const std::string &package_name) const {
         invalid_registry_response = true;
     }
 
-    auto cached_json = cache_->load(package_name);
-    if (cached_json.has_value() && !cached_json->empty()) {
-        auto metadata = parse_metadata_json(*cached_json, package_name);
-        if (metadata.has_value()) {
-            return RegistryResult{true, std::move(*metadata), std::nullopt, ""};
-        }
-    }
-
-    if (http_result.status_code == 404) {
-        return RegistryResult{
-            false, std::nullopt, RegistryError::NotFound, "package not found: " + package_name};
-    }
     if (invalid_registry_response) {
         return RegistryResult{false,
                               std::nullopt,
                               RegistryError::InvalidResponse,
                               "invalid registry response for package: " + package_name};
+    }
+
+    if (should_try_cache_after_registry_response(http_result)) {
+        auto cached_json = cache_->load(package_name);
+        if (cached_json.has_value() && !cached_json->empty()) {
+            auto metadata = parse_metadata_json(*cached_json, package_name);
+            if (metadata.has_value()) {
+                return RegistryResult{true, std::move(*metadata), std::nullopt, ""};
+            }
+        }
+    } else if (http_result.status_code == 404) {
+        return RegistryResult{
+            false, std::nullopt, RegistryError::NotFound, "package not found: " + package_name};
     }
     return RegistryResult{false,
                           std::nullopt,
@@ -288,6 +317,14 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
         invalid_registry_response = true;
     }
 
+    if (invalid_registry_response) {
+        return RegistryResult{false,
+                              std::nullopt,
+                              RegistryError::InvalidResponse,
+                              "invalid registry response for package version: " + package_name +
+                                  "@" + version};
+    }
+
     auto full = fetch_metadata(package_name);
     if (full.success && full.metadata.has_value()) {
         for (auto &v : full.metadata->versions) {
@@ -307,13 +344,6 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
                               full.error,
                               "package version unavailable: " + package_name + "@" + version};
     }
-    if (invalid_registry_response) {
-        return RegistryResult{false,
-                              std::nullopt,
-                              RegistryError::InvalidResponse,
-                              "invalid registry response for package version: " + package_name +
-                                  "@" + version};
-    }
     return RegistryResult{false,
                           std::nullopt,
                           RegistryError::NotFound,
@@ -321,7 +351,7 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
 }
 
 std::vector<std::string> Registry::search(const std::string &query) const {
-    auto url = base_url_ + "/search?q=" + query;
+    auto url = base_url_ + "/search?q=" + percent_encode_query_value(query);
     auto http_result = transport_->get(url, 10);
 
     if (http_result.success && !http_result.body.empty()) {

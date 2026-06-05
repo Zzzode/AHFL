@@ -202,6 +202,25 @@ void test_registry_fetch_metadata_from_cache_after_network_failure() {
     }
 }
 
+void test_registry_invalid_live_metadata_does_not_use_cache() {
+    auto transport = std::make_shared<FakeRegistryTransport>();
+    auto cache = std::make_shared<FakeRegistryCache>();
+    transport->responses["https://registry.test/packages/ahfl-cache"] =
+        RegistryHttpResponse{.status_code = 200, .body = R"({"versions": "bad"})", .success = true};
+    cache->entries["ahfl-cache"] = R"({
+        "latest_version":"1.1.0",
+        "versions":[{"version":"1.1.0"}]
+    })";
+
+    Registry registry("https://registry.test", transport, cache);
+    auto result = registry.fetch_metadata("ahfl-cache");
+
+    check(!result.success, "registry invalid live metadata fails");
+    check(!result.metadata.has_value(), "registry invalid live metadata no fallback metadata");
+    check(result.error == RegistryError::InvalidResponse,
+          "registry invalid live metadata error type");
+}
+
 void test_registry_does_not_fallback_to_stub_packages() {
     auto transport = std::make_shared<FakeRegistryTransport>();
     auto cache = std::make_shared<FakeRegistryCache>();
@@ -218,6 +237,25 @@ void test_registry_does_not_fallback_to_stub_packages() {
 
     auto results = registry.search("ahfl");
     check(results.empty(), "registry search has no stub fallback");
+}
+
+void test_registry_fetch_version_invalid_live_response_does_not_use_metadata_cache() {
+    auto transport = std::make_shared<FakeRegistryTransport>();
+    auto cache = std::make_shared<FakeRegistryCache>();
+    transport->responses["https://registry.test/packages/ahfl-cache/versions/1.2.0"] =
+        RegistryHttpResponse{.status_code = 200, .body = R"({"version": 12})", .success = true};
+    cache->entries["ahfl-cache"] = R"({
+        "latest_version":"1.2.0",
+        "versions":[{"version":"1.2.0","description":"cached"}]
+    })";
+
+    Registry registry("https://registry.test", transport, cache);
+    auto result = registry.fetch_version("ahfl-cache", "1.2.0");
+
+    check(!result.success, "registry invalid live version fails");
+    check(!result.metadata.has_value(), "registry invalid live version no fallback metadata");
+    check(result.error == RegistryError::InvalidResponse,
+          "registry invalid live version error type");
 }
 
 void test_registry_fetch_version_from_cached_metadata() {
@@ -243,6 +281,24 @@ void test_registry_fetch_version_from_cached_metadata() {
     }
 }
 
+void test_registry_search_percent_encodes_query() {
+    auto transport = std::make_shared<FakeRegistryTransport>();
+    auto cache = std::make_shared<FakeRegistryCache>();
+    transport->default_response =
+        RegistryHttpResponse{.status_code = 200, .body = R"(["ahfl-http"])", .success = true};
+
+    Registry registry("https://registry.test", transport, cache);
+    auto result = registry.search("name:ahfl http+grpc");
+
+    check(result.size() == 1 && result[0] == "ahfl-http", "registry search result parsed");
+    check(!transport->requested_urls.empty(), "registry search records request");
+    if (!transport->requested_urls.empty()) {
+        check(transport->requested_urls.front() ==
+                  "https://registry.test/search?q=name%3Aahfl%20http%2Bgrpc",
+              "registry search query encoded");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -252,8 +308,11 @@ int main() {
     test_resolve_detects_conflict();
     test_registry_fetch_metadata_from_transport();
     test_registry_fetch_metadata_from_cache_after_network_failure();
+    test_registry_invalid_live_metadata_does_not_use_cache();
     test_registry_does_not_fallback_to_stub_packages();
+    test_registry_fetch_version_invalid_live_response_does_not_use_metadata_cache();
     test_registry_fetch_version_from_cached_metadata();
+    test_registry_search_percent_encodes_query();
 
     std::cerr << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? 0 : 1;
