@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/program_view.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/evaluator/value.hpp"
 #include "runtime/providers/llm/http_client.hpp"
@@ -27,6 +28,7 @@ class LLMCapabilityProvider {
 
   private:
     const ir::Program &program_;
+    ir::ProgramIndex index_;
     LLMProviderConfig config_;
     HttpClient client_;
     PromptBuilder prompt_builder_;

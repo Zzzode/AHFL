@@ -1,5 +1,7 @@
 #include "runtime/engine/agent_runtime.hpp"
 
+#include "ahfl/compiler/ir/program_view.hpp"
+
 #include <algorithm>
 #include <charconv>
 #include <string_view>
@@ -292,21 +294,9 @@ QuotaConfig AgentRuntime::parse_quota(const std::vector<ir::QuotaItem> &items) {
 
 std::optional<AgentRuntime>
 build_agent_runtime(const ir::Program &program, const std::string &agent_name, QuotaConfig quota) {
-    const ir::AgentDecl *agent_decl = nullptr;
-    const ir::FlowDecl *flow_decl = nullptr;
-
-    for (const auto &decl : program.declarations) {
-        if (auto *ad = std::get_if<ir::AgentDecl>(&decl)) {
-            if (ad->name == agent_name) {
-                agent_decl = ad;
-            }
-        }
-        if (auto *fd = std::get_if<ir::FlowDecl>(&decl)) {
-            if (fd->target == agent_name) {
-                flow_decl = fd;
-            }
-        }
-    }
+    const ir::ProgramIndex index(program);
+    const auto *agent_decl = index.find_agent(agent_name);
+    const auto *flow_decl = index.find_flow_for_agent(agent_name);
 
     if (agent_decl == nullptr || flow_decl == nullptr) {
         return std::nullopt;

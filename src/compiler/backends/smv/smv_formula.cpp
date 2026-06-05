@@ -28,8 +28,7 @@ SmvPrinter::wrap_formula_with_workflow_no_failure_assumption(const ir::WorkflowD
     no_failure_guards.reserve(workflow.nodes.size());
 
     for (const auto &node : workflow.nodes) {
-        no_failure_guards.push_back("!" +
-                                    workflow_node_failure_requested_var(workflow, node.name));
+        no_failure_guards.push_back("!" + workflow_node_failure_requested_var(workflow, node.name));
     }
 
     if (no_failure_guards.empty()) {
@@ -45,69 +44,61 @@ SmvPrinter::render_agent_formula(const ir::TemporalExpr &expr,
                                  std::size_t clause_index,
                                  std::size_t &atom_index,
                                  std::vector<std::string> &observation_assumptions) const {
-    return std::visit(Overloaded{
-                          [&](const ir::EmbeddedTemporalExpr &value) {
-                              if (const auto lowered = render_bounded_expr(*value.expr);
-                                  lowered.has_value()) {
-                                  return *lowered;
-                              }
+    return std::visit(
+        Overloaded{
+            [&](const ir::EmbeddedTemporalExpr &value) {
+                if (const auto lowered = render_bounded_expr(*value.expr); lowered.has_value()) {
+                    return *lowered;
+                }
 
-                              const auto observation = lookup_embedded_observation_symbol(
-                                  ir::FormalObservationScopeKind::ContractClause,
-                                  agent.name,
-                                  clause_index,
-                                  atom_index++);
-                              observation_assumptions.push_back(observation);
-                              return observation;
-                          },
-                          [&](const ir::CalledTemporalExpr &value) {
-                              return lookup_called_observation_symbol(agent.name,
-                                                                      value.capability);
-                          },
-                          [&](const ir::InStateTemporalExpr &value) {
-                              return "(" + agent_state_var(agent) + " = " + value.state + ")";
-                          },
-                          [&](const ir::TemporalUnaryExpr &value) {
-                              return smv_unary_op(value.op) + " (" +
-                                     render_agent_formula(*value.operand,
-                                                          agent,
-                                                          clause_index,
-                                                          atom_index,
-                                                          observation_assumptions) +
-                                     ")";
-                          },
-                          [&](const ir::TemporalBinaryExpr &value) {
-                              return "(" +
-                                     render_agent_formula(*value.lhs,
-                                                          agent,
-                                                          clause_index,
-                                                          atom_index,
-                                                          observation_assumptions) +
-                                     " " + smv_binary_op(value.op) + " " +
-                                     render_agent_formula(*value.rhs,
-                                                          agent,
-                                                          clause_index,
-                                                          atom_index,
-                                                          observation_assumptions) +
-                                     ")";
-                          },
-                          [&](const auto &) { return std::string("FALSE"); },
-                      },
-                      expr.node);
+                const auto observation = lookup_embedded_observation_symbol(
+                    ir::FormalObservationScopeKind::ContractClause,
+                    agent.name,
+                    clause_index,
+                    atom_index++);
+                observation_assumptions.push_back(observation);
+                return observation;
+            },
+            [&](const ir::CalledTemporalExpr &value) {
+                return lookup_called_observation_symbol(agent.name, value.capability);
+            },
+            [&](const ir::InStateTemporalExpr &value) {
+                return "(" + agent_state_var(agent) + " = " + value.state + ")";
+            },
+            [&](const ir::TemporalUnaryExpr &value) {
+                return smv_unary_op(value.op) + " (" +
+                       render_agent_formula(*value.operand,
+                                            agent,
+                                            clause_index,
+                                            atom_index,
+                                            observation_assumptions) +
+                       ")";
+            },
+            [&](const ir::TemporalBinaryExpr &value) {
+                return "(" +
+                       render_agent_formula(
+                           *value.lhs, agent, clause_index, atom_index, observation_assumptions) +
+                       " " + smv_binary_op(value.op) + " " +
+                       render_agent_formula(
+                           *value.rhs, agent, clause_index, atom_index, observation_assumptions) +
+                       ")";
+            },
+            [&](const auto &) { return std::string("FALSE"); },
+        },
+        expr.node);
 }
 
-std::optional<std::string>
-SmvPrinter::render_contract_expr_clause(const ir::ContractDecl &contract,
-                                        const ir::AgentDecl &agent,
-                                        ir::ContractClauseKind kind,
-                                        const ir::Expr &expr,
-                                        std::size_t clause_index) {
+std::optional<std::string> SmvPrinter::render_contract_expr_clause(const ir::ContractDecl &contract,
+                                                                   const ir::AgentDecl &agent,
+                                                                   ir::ContractClauseKind kind,
+                                                                   const ir::Expr &expr,
+                                                                   std::size_t clause_index) {
+    const auto target = std::string(ir::symbol_canonical_name(contract.target_ref));
     const auto bounded_expr = render_bounded_expr(expr);
     if (bounded_expr.has_value()) {
         switch (kind) {
         case ir::ContractClauseKind::Requires:
-            specs_.push_back("-- contract " + contract.target + " requires[" +
-                             std::to_string(clause_index) +
+            specs_.push_back("-- contract " + target + " requires[" + std::to_string(clause_index) +
                              "] bounded_precondition_assumption: " + *bounded_expr);
             return std::nullopt;
         case ir::ContractClauseKind::Ensures: {
@@ -123,24 +114,21 @@ SmvPrinter::render_contract_expr_clause(const ir::ContractDecl &contract,
     }
 
     const auto observation = lookup_embedded_observation_symbol(
-        ir::FormalObservationScopeKind::ContractClause, contract.target, clause_index, 0);
+        ir::FormalObservationScopeKind::ContractClause, target, clause_index, 0);
 
     switch (kind) {
     case ir::ContractClauseKind::Requires:
-        specs_.push_back("-- contract " + contract.target + " requires[" +
-                         std::to_string(clause_index) +
+        specs_.push_back("-- contract " + target + " requires[" + std::to_string(clause_index) +
                          "] observation_assumption: " + observation);
         return std::nullopt;
     case ir::ContractClauseKind::Ensures:
-        specs_.push_back("-- contract " + contract.target + " ensures[" +
-                         std::to_string(clause_index) +
+        specs_.push_back("-- contract " + target + " ensures[" + std::to_string(clause_index) +
                          "] data_guarantee_abstracted: " + observation);
         return std::nullopt;
     case ir::ContractClauseKind::Invariant:
     case ir::ContractClauseKind::Forbid:
-        specs_.push_back("-- contract " + contract.target + " " +
-                         contract_clause_kind_name(kind) + "[" + std::to_string(clause_index) +
-                         "] observation_assumption: " + observation);
+        specs_.push_back("-- contract " + target + " " + contract_clause_kind_name(kind) + "[" +
+                         std::to_string(clause_index) + "] observation_assumption: " + observation);
         return std::nullopt;
     }
 

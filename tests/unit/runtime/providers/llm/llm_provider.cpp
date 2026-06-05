@@ -39,6 +39,27 @@ void check(bool condition, const std::string &test_name) {
     }
 }
 
+ir::TypeRef make_type_ref(const std::string &name) {
+    ir::TypeRefKind kind = ir::TypeRefKind::Struct;
+    if (name == "String") {
+        kind = ir::TypeRefKind::String;
+    } else if (name == "Bool") {
+        kind = ir::TypeRefKind::Bool;
+    } else if (name == "Int") {
+        kind = ir::TypeRefKind::Int;
+    } else if (name == "Float") {
+        kind = ir::TypeRefKind::Float;
+    } else if (name == "Category") {
+        kind = ir::TypeRefKind::Enum;
+    }
+
+    return ir::TypeRef{
+        .kind = kind,
+        .display_name = name,
+        .canonical_name = name,
+    };
+}
+
 // ============================================================================
 // 构建测试用 IR Program（模拟 ClassifyMessage capability）
 // ============================================================================
@@ -56,29 +77,57 @@ ir::Program build_test_program() {
     // 结构体: ClassifyResult { category: Category, confidence: String }
     ir::StructDecl classify_result;
     classify_result.name = "ClassifyResult";
-    classify_result.fields.push_back(ir::FieldDecl{"category", "Category", nullptr, {}, {}});
-    classify_result.fields.push_back(ir::FieldDecl{"confidence", "String", nullptr, {}, {}});
+    classify_result.fields.push_back(ir::FieldDecl{
+        .name = "category",
+        .default_value = nullptr,
+        .type_ref = make_type_ref("Category"),
+        .source_range = {},
+    });
+    classify_result.fields.push_back(ir::FieldDecl{
+        .name = "confidence",
+        .default_value = nullptr,
+        .type_ref = make_type_ref("String"),
+        .source_range = {},
+    });
     program.declarations.push_back(std::move(classify_result));
 
     // Capability: ClassifyMessage(message: String) -> ClassifyResult
     ir::CapabilityDecl classify_cap;
     classify_cap.name = "ClassifyMessage";
-    classify_cap.params.push_back(ir::ParamDecl{"message", "String", {}, {}});
-    classify_cap.return_type = "ClassifyResult";
+    classify_cap.params.push_back(ir::ParamDecl{
+        .name = "message",
+        .type_ref = make_type_ref("String"),
+        .source_range = {},
+    });
+    classify_cap.return_type_ref = make_type_ref("ClassifyResult");
     program.declarations.push_back(std::move(classify_cap));
 
     // 结构体: SupportResult { response: String, resolved: Bool }
     ir::StructDecl support_result;
     support_result.name = "SupportResult";
-    support_result.fields.push_back(ir::FieldDecl{"response", "String", nullptr, {}, {}});
-    support_result.fields.push_back(ir::FieldDecl{"resolved", "Bool", nullptr, {}, {}});
+    support_result.fields.push_back(ir::FieldDecl{
+        .name = "response",
+        .default_value = nullptr,
+        .type_ref = make_type_ref("String"),
+        .source_range = {},
+    });
+    support_result.fields.push_back(ir::FieldDecl{
+        .name = "resolved",
+        .default_value = nullptr,
+        .type_ref = make_type_ref("Bool"),
+        .source_range = {},
+    });
     program.declarations.push_back(std::move(support_result));
 
     // Capability: HandleTechnical(issue: String) -> SupportResult
     ir::CapabilityDecl handle_tech;
     handle_tech.name = "HandleTechnical";
-    handle_tech.params.push_back(ir::ParamDecl{"issue", "String", {}, {}});
-    handle_tech.return_type = "SupportResult";
+    handle_tech.params.push_back(ir::ParamDecl{
+        .name = "issue",
+        .type_ref = make_type_ref("String"),
+        .source_range = {},
+    });
+    handle_tech.return_type_ref = make_type_ref("SupportResult");
     program.declarations.push_back(std::move(handle_tech));
 
     return program;

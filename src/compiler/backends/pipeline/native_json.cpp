@@ -8,13 +8,12 @@
 #include <variant>
 #include <vector>
 
-#include "compiler/backends/pipeline/json_helpers.hpp"
 #include "base/support/overloaded.hpp"
+#include "compiler/backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {
 
 namespace {
-
 
 [[nodiscard]] std::string_view executable_kind_name(handoff::ExecutableKind kind) {
     switch (kind) {
@@ -27,7 +26,7 @@ namespace {
     return "invalid";
 }
 
-[[nodiscard]] bool has_provenance(const ir::DeclarationProvenance &provenance) {
+[[nodiscard]] bool has_provenance(const handoff::DeclarationProvenance &provenance) {
     return !provenance.module_name.empty() || !provenance.source_path.empty();
 }
 
@@ -51,13 +50,13 @@ namespace {
 }
 
 [[nodiscard]] std::string_view
-formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
+formal_observation_scope_kind_name(handoff::FormalObservationScopeKind kind) {
     switch (kind) {
-    case ir::FormalObservationScopeKind::ContractClause:
+    case handoff::FormalObservationScopeKind::ContractClause:
         return "contract_clause";
-    case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+    case handoff::FormalObservationScopeKind::WorkflowSafetyClause:
         return "workflow_safety_clause";
-    case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+    case handoff::FormalObservationScopeKind::WorkflowLivenessClause:
         return "workflow_liveness_clause";
     }
 
@@ -105,7 +104,7 @@ class NativeJsonPrinter final : private PipelineJsonHelpers {
     }
 
   private:
-    void print_provenance(const ir::DeclarationProvenance &provenance, int indent_level) {
+    void print_provenance(const handoff::DeclarationProvenance &provenance, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("module_name", [&]() { write_string(provenance.module_name); });
             field("source_path", [&]() { write_string(provenance.source_path); });
@@ -325,17 +324,17 @@ class NativeJsonPrinter final : private PipelineJsonHelpers {
         });
     }
 
-    void print_formal_observation(const ir::FormalObservation &observation, int indent_level) {
+    void print_formal_observation(const handoff::FormalObservation &observation, int indent_level) {
         print_object(indent_level, [&](const auto &field) {
             field("symbol", [&]() { write_string(observation.symbol); });
             std::visit(
                 Overloaded{
-                    [&](const ir::CalledCapabilityObservation &value) {
+                    [&](const handoff::CalledCapabilityObservation &value) {
                         field("kind", [&]() { write_string("called_capability"); });
                         field("agent", [&]() { write_string(value.agent); });
                         field("capability", [&]() { write_string(value.capability); });
                     },
-                    [&](const ir::EmbeddedBoolObservation &value) {
+                    [&](const handoff::EmbeddedBoolObservation &value) {
                         field("kind", [&]() { write_string("embedded_bool_expr"); });
                         field("scope", [&]() {
                             print_object(indent_level + 1, [&](const auto &scope_field) {

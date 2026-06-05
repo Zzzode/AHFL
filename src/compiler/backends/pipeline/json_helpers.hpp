@@ -3,18 +3,19 @@
 #include <string>
 #include <vector>
 
+#include "base/support/json.hpp"
+#include "pipeline/execution/runtime_session/session.hpp"
 #include "pipeline/observation/checkpoint_record/record.hpp"
+#include "pipeline/observation/scheduler_snapshot/snapshot.hpp"
 #include "pipeline/persistence/descriptor/descriptor.hpp"
 #include "pipeline/persistence/export/manifest.hpp"
-#include "pipeline/execution/runtime_session/session.hpp"
-#include "pipeline/observation/scheduler_snapshot/snapshot.hpp"
-#include "base/support/json.hpp"
 
 namespace ahfl {
 
 namespace handoff {
 struct CapabilityBindingReference;
 struct PackageIdentity;
+struct WorkflowValueSummary;
 struct WorkflowNodeLifecycleSummary;
 } // namespace handoff
 
@@ -46,6 +47,8 @@ class PipelineJsonHelpers : protected PrettyJsonWriter {
     // -- WorkflowExprSummary -----------------------------------------------
 
     void print_workflow_value_summary(const ir::WorkflowExprSummary &summary, int indent_level);
+    void print_workflow_value_summary(const handoff::WorkflowValueSummary &summary,
+                                      int indent_level);
 
     // -- Status enums (string serialization) --------------------------------
 

@@ -2,6 +2,7 @@
 
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 
+#include "ahfl/compiler/ir/identity.hpp"
 #include "base/json/json_value.hpp"
 
 #include <cstddef>
@@ -12,7 +13,7 @@
 namespace ahfl::llm_provider {
 
 LLMCapabilityProvider::LLMCapabilityProvider(const ir::Program &program, LLMProviderConfig config)
-    : program_(program), config_(std::move(config)),
+    : program_(program), index_(program_), config_(std::move(config)),
       client_(config_.endpoint, config_.api_key, config_.timeout_seconds),
       prompt_builder_(program_), response_parser_(program_) {}
 
@@ -73,13 +74,8 @@ LLMCapabilityProvider::invoke(const std::string &capability_name,
                               const std::vector<evaluator::Value> &args) {
     // 查找 capability 的返回类型
     std::string return_type;
-    for (const auto &decl : program_.declarations) {
-        if (auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
-            if (cap->name == capability_name) {
-                return_type = cap->return_type;
-                break;
-            }
-        }
+    if (const auto *capability = index_.find_capability(capability_name); capability != nullptr) {
+        return_type = std::string(ir::type_canonical_name(capability->return_type_ref, "Any"));
     }
 
     if (return_type.empty()) {
@@ -152,16 +148,14 @@ LLMCapabilityProvider::invoke(const std::string &capability_name,
 
 void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) {
     // 遍历所有 CapabilityDecl，注册到 registry
-    for (const auto &decl : program_.declarations) {
-        if (auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
-            std::string cap_name = cap->name;
-            runtime::CapabilityBinding binding;
-            binding.name = cap_name;
-            binding.handler = [this, cap_name](const std::vector<evaluator::Value> &args) {
-                return this->invoke(cap_name, args);
-            };
-            registry.register_capability(std::move(binding));
-        }
+    for (const auto *capability : index_.capabilities()) {
+        std::string cap_name = capability->name;
+        runtime::CapabilityBinding binding;
+        binding.name = cap_name;
+        binding.handler = [this, cap_name](const std::vector<evaluator::Value> &args) {
+            return this->invoke(cap_name, args);
+        };
+        registry.register_capability(std::move(binding));
     }
 }
 

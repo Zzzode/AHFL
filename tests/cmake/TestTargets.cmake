@@ -25,6 +25,17 @@ target_link_libraries(ahfl_project_check_tests
 )
 ahfl_apply_project_warnings(ahfl_project_check_tests)
 
+add_executable(ahfl_compiler_ir_tests
+    unit/compiler/ir/identity_visitor.cpp
+)
+target_link_libraries(ahfl_compiler_ir_tests
+    PRIVATE
+        ahfl_compiler_ir
+        ahfl_compiler_handoff
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_compiler_ir_tests)
+
 add_executable(ahfl_compiler_handoff_package_tests
     unit/compiler/handoff/package_model.cpp
 )

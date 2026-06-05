@@ -6,11 +6,11 @@
 #include <string_view>
 #include <vector>
 
-#include "pipeline/execution/execution_journal/journal.hpp"
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
+#include "pipeline/execution/execution_journal/journal.hpp"
 #include "pipeline/execution/replay_view/replay.hpp"
 #include "pipeline/execution/runtime_session/session.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
 
 namespace ahfl::scheduler_snapshot {
 
@@ -36,7 +36,7 @@ struct SchedulerReadyNode {
     std::size_t execution_index{0};
     std::vector<std::string> planned_dependencies;
     std::vector<std::string> satisfied_dependencies;
-    ahfl::ir::WorkflowExprSummary input_summary;
+    handoff::WorkflowValueSummary input_summary;
     std::vector<handoff::CapabilityBindingReference> capability_bindings;
 };
 

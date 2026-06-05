@@ -1,6 +1,8 @@
 #include "ahfl/compiler/ir/lowering.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
 
@@ -909,20 +911,21 @@ class IrLowerer final {
         return make(ir::CalledTemporalExpr{.capability = "<invalid-temporal-expr>"});
     }
 
-    [[nodiscard]] std::string inferred_statement_type(const ast::LetStmtSyntax &statement) const {
+    [[nodiscard]] ir::TypeRef
+    inferred_statement_type_ref(const ast::LetStmtSyntax &statement) const {
         if (statement.type) {
-            return render_type_syntax(*statement.type);
+            return type_ref_from_syntax(*statement.type);
         }
 
         if (statement.initializer) {
             const auto expression_type = type_check_result_.find_expression_type(
                 statement.initializer->range, current_source_id_);
             if (expression_type.has_value() && expression_type->get().type) {
-                return expression_type->get().type->describe();
+                return type_ref_from_type(*expression_type->get().type);
             }
         }
 
-        return "Any";
+        return type_ref_from_maybe(std::nullopt);
     }
 
     [[nodiscard]] ir::Block lower_block(const ast::BlockSyntax &block) const {
@@ -1107,7 +1110,7 @@ class IrLowerer final {
         case ast::StatementSyntaxKind::Let:
             return make(ir::LetStatement{
                 .name = statement.let_stmt->name,
-                .type = inferred_statement_type(*statement.let_stmt),
+                .type_ref = inferred_statement_type_ref(*statement.let_stmt),
                 .initializer = lower_expr(*statement.let_stmt->initializer),
             });
         case ast::StatementSyntaxKind::Assign:
@@ -1321,7 +1324,6 @@ class IrLowerer final {
             ir::ConstDecl{
                 .provenance = {},
                 .name = symbol_name,
-                .type = describe_type(const_type),
                 .value = lower_expr(*node.value),
                 .type_ref = const_type.has_value() ? type_ref_from_type(const_type->get())
                                                    : type_ref_from_syntax(*node.type),
@@ -1339,7 +1341,6 @@ class IrLowerer final {
             ir::TypeAliasDecl{
                 .provenance = {},
                 .name = symbol_name,
-                .aliased_type = render_type_syntax(*node.aliased_type),
                 .aliased_type_ref = type_ref_from_syntax(*node.aliased_type),
                 .symbol_ref = symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Type, symbol_name),
             },
@@ -1364,17 +1365,14 @@ class IrLowerer final {
         for (std::size_t index = 0; index < node.fields.size(); ++index) {
             const auto &field = node.fields[index];
 
-            std::string field_type = render_type_syntax(*field->type);
             auto field_type_ref = type_ref_from_syntax(*field->type);
             if (info.has_value() && index < info->get().fields.size() &&
                 info->get().fields[index].type) {
-                field_type = info->get().fields[index].type->describe();
                 field_type_ref = type_ref_from_type(*info->get().fields[index].type);
             }
 
             declaration.fields.push_back(ir::FieldDecl{
                 .name = field->name,
-                .type = std::move(field_type),
                 .default_value = field->default_value ? lower_expr(*field->default_value) : nullptr,
                 .type_ref = std::move(field_type_ref),
                 .source_range = field->range,
@@ -1416,7 +1414,6 @@ class IrLowerer final {
                 const auto &param = capability_info->get().params[index];
                 result.push_back(ir::ParamDecl{
                     .name = param.name,
-                    .type = describe_type(borrow(param.type.get())),
                     .type_ref = type_ref_from_maybe(borrow(param.type.get())),
                     .source_range = index < params.size() ? ir::SourceRangeOpt{params[index]->range}
                                                           : std::nullopt,
@@ -1431,7 +1428,6 @@ class IrLowerer final {
                 const auto &param = predicate_info->get().params[index];
                 result.push_back(ir::ParamDecl{
                     .name = param.name,
-                    .type = describe_type(borrow(param.type.get())),
                     .type_ref = type_ref_from_maybe(borrow(param.type.get())),
                     .source_range = index < params.size() ? ir::SourceRangeOpt{params[index]->range}
                                                           : std::nullopt,
@@ -1444,7 +1440,6 @@ class IrLowerer final {
         for (const auto &param : params) {
             result.push_back(ir::ParamDecl{
                 .name = param->name,
-                .type = render_type_syntax(*param->type),
                 .type_ref = type_ref_from_syntax(*param->type),
                 .source_range = param->range,
             });
@@ -1498,9 +1493,6 @@ class IrLowerer final {
                 .provenance = {},
                 .name = symbol_name,
                 .params = lower_params(node.params, info, std::nullopt),
-                .return_type = info.has_value()
-                                   ? describe_type(borrow(info->get().return_type.get()))
-                                   : render_type_syntax(*node.return_type),
                 .return_type_ref = info.has_value()
                                        ? type_ref_from_maybe(borrow(info->get().return_type.get()))
                                        : type_ref_from_syntax(*node.return_type),
@@ -1537,18 +1529,9 @@ class IrLowerer final {
             ir::AgentDecl{
                 .provenance = {},
                 .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-                .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
-                                               : render_type_syntax(*node.input_type),
-                .context_type = info.has_value()
-                                    ? describe_type(borrow(info->get().context_type.get()))
-                                    : render_type_syntax(*node.context_type),
-                .output_type = info.has_value()
-                                   ? describe_type(borrow(info->get().output_type.get()))
-                                   : render_type_syntax(*node.output_type),
                 .states = node.states,
                 .initial_state = node.initial_state,
                 .final_states = node.final_states,
-                .capabilities = {},
                 .quota = {},
                 .transitions = {},
                 .input_type_ref = info.has_value()
@@ -1566,13 +1549,9 @@ class IrLowerer final {
             node.range);
 
         if (info.has_value()) {
-            declaration.capabilities.reserve(info->get().capability_symbols.size());
             declaration.capability_refs.reserve(info->get().capability_symbols.size());
             for (const auto capability_symbol : info->get().capability_symbols) {
                 const auto capability = symbols().get(capability_symbol);
-                declaration.capabilities.push_back(capability.has_value()
-                                                       ? capability->get().canonical_name
-                                                       : "<missing-capability>");
                 declaration.capability_refs.push_back(
                     symbol_ref_from_symbol(capability,
                                            ir::SymbolRefKind::Capability,
@@ -1580,14 +1559,12 @@ class IrLowerer final {
                                                                   : "<missing-capability>"));
             }
         } else {
-            declaration.capabilities.reserve(node.capabilities.size());
             declaration.capability_refs.reserve(node.capabilities.size());
             for (const auto &capability : node.capabilities) {
                 const auto symbol =
                     find_local_symbol_here(SymbolNamespace::Capabilities, capability);
                 const auto name =
                     symbol.has_value() ? symbol->get().canonical_name : std::string(capability);
-                declaration.capabilities.push_back(name);
                 declaration.capability_refs.push_back(
                     symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Capability, name));
             }
@@ -1629,7 +1606,6 @@ class IrLowerer final {
         ir::ContractDecl declaration = with_provenance(
             ir::ContractDecl{
                 .provenance = {},
-                .target = target,
                 .clauses = {},
                 .target_ref = symbol_ref_from_reference_here(ReferenceKind::ContractTarget,
                                                              node.target->range,
@@ -1664,7 +1640,6 @@ class IrLowerer final {
         ir::FlowDecl declaration = with_provenance(
             ir::FlowDecl{
                 .provenance = {},
-                .target = target,
                 .state_handlers = {},
                 .target_ref = symbol_ref_from_reference_here(ReferenceKind::FlowTarget,
                                                              node.target->range,
@@ -1679,7 +1654,6 @@ class IrLowerer final {
                 .state_name = handler->state_name,
                 .policy = {},
                 .body = lower_block(*handler->body),
-                .summary = {},
                 .source_range = handler->range,
             };
 
@@ -1708,7 +1682,6 @@ class IrLowerer final {
                 }
             }
 
-            state_handler.summary = summarize_block(state_handler.body);
             declaration.state_handlers.push_back(std::move(state_handler));
         }
 
@@ -1720,26 +1693,14 @@ class IrLowerer final {
         const auto info =
             symbol.has_value() ? environment().get_workflow(symbol->get().id) : std::nullopt;
 
-        std::vector<std::string> workflow_node_names;
-        workflow_node_names.reserve(node.nodes.size());
-        for (const auto &workflow_node : node.nodes) {
-            workflow_node_names.push_back(workflow_node->name);
-        }
-
         ir::WorkflowDecl declaration = with_provenance(
             ir::WorkflowDecl{
                 .provenance = {},
                 .name = symbol.has_value() ? symbol->get().canonical_name : node.name,
-                .input_type = info.has_value() ? describe_type(borrow(info->get().input_type.get()))
-                                               : render_type_syntax(*node.input_type),
-                .output_type = info.has_value()
-                                   ? describe_type(borrow(info->get().output_type.get()))
-                                   : render_type_syntax(*node.output_type),
                 .nodes = {},
                 .safety = {},
                 .liveness = {},
                 .return_value = lower_expr(*node.return_value),
-                .return_summary = {},
                 .input_type_ref = info.has_value()
                                       ? type_ref_from_maybe(borrow(info->get().input_type.get()))
                                       : type_ref_from_syntax(*node.input_type),
@@ -1750,22 +1711,16 @@ class IrLowerer final {
                     symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Workflow, node.name),
             },
             node.range);
-        declaration.return_summary =
-            summarize_workflow_expr(*declaration.return_value, workflow_node_names);
-
         declaration.nodes.reserve(node.nodes.size());
         for (const auto &workflow_node : node.nodes) {
             auto input = lower_expr(*workflow_node->input);
-            auto input_summary = summarize_workflow_expr(*input, workflow_node_names);
             const auto target =
                 canonical_name_from_reference_here(ReferenceKind::WorkflowNodeTarget,
                                                    workflow_node->target->range,
                                                    workflow_node->target->spelling());
             declaration.nodes.push_back(ir::WorkflowNode{
                 .name = workflow_node->name,
-                .target = target,
                 .input = std::move(input),
-                .input_summary = std::move(input_summary),
                 .after = workflow_node->after,
                 .target_ref = symbol_ref_from_reference_here(ReferenceKind::WorkflowNodeTarget,
                                                              workflow_node->target->range,
@@ -1813,18 +1768,22 @@ class FormalObservationCollector final {
     std::unordered_map<std::string, std::size_t> observation_index_by_symbol_;
 
     void collect_agent(const ir::AgentDecl &agent) {
-        for (const auto &capability : agent.capabilities) {
-            add_called_observation(agent.name, capability);
+        for (const auto &capability : agent.capability_refs) {
+            const auto capability_name = ir::symbol_canonical_name(capability);
+            if (!capability_name.empty()) {
+                add_called_observation(agent.name, capability_name);
+            }
         }
     }
 
     void collect_contract(const ir::ContractDecl &contract) {
+        const auto target = std::string(ir::symbol_canonical_name(contract.target_ref));
         for (std::size_t clause_index = 0; clause_index < contract.clauses.size(); ++clause_index) {
             const auto expr = std::get_if<ir::ExprPtr>(&contract.clauses[clause_index].value);
             if (expr != nullptr) {
                 add_embedded_observation(ir::FormalObservationScope{
                     .kind = ir::FormalObservationScopeKind::ContractClause,
-                    .owner = contract.target,
+                    .owner = target,
                     .clause_index = clause_index,
                     .atom_index = 0,
                 });
@@ -1835,7 +1794,7 @@ class FormalObservationCollector final {
                 std::get_if<ir::TemporalExprPtr>(&contract.clauses[clause_index].value);
             if (temporal != nullptr) {
                 std::size_t atom_index = 0;
-                collect_contract_formula(**temporal, contract.target, clause_index, atom_index);
+                collect_contract_formula(**temporal, target, clause_index, atom_index);
             }
         }
     }
@@ -1960,7 +1919,7 @@ ir::Program lower_program_ir(const ast::Program &program,
                              const TypeCheckResult &type_check_result) {
     IrLowerer lowerer(program, resolve_result, type_check_result);
     auto program_ir = lowerer.lower();
-    program_ir.formal_observations = collect_formal_observations(program_ir);
+    ir::recompute_derived_analyses(program_ir, ir::ProgramPhase::Analyzed);
     return program_ir;
 }
 
@@ -1969,7 +1928,7 @@ ir::Program lower_program_ir(const SourceGraph &graph,
                              const TypeCheckResult &type_check_result) {
     IrLowerer lowerer(graph, resolve_result, type_check_result);
     auto program_ir = lowerer.lower();
-    program_ir.formal_observations = collect_formal_observations(program_ir);
+    ir::recompute_derived_analyses(program_ir, ir::ProgramPhase::Analyzed);
     return program_ir;
 }
 

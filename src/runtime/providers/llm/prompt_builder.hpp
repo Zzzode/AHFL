@@ -3,8 +3,9 @@
 #include <string>
 #include <vector>
 
-#include "runtime/evaluator/value.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/program_view.hpp"
+#include "runtime/evaluator/value.hpp"
 
 namespace ahfl::llm_provider {
 
@@ -22,6 +23,7 @@ class PromptBuilder {
 
   private:
     const ir::Program &program_;
+    ir::ProgramIndex index_;
 
     [[nodiscard]] const ir::CapabilityDecl *find_capability(const std::string &name) const;
     [[nodiscard]] const ir::StructDecl *find_struct(const std::string &name) const;

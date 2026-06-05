@@ -8,6 +8,7 @@
 
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/program_view.hpp"
 #include "runtime/engine/agent_runtime.hpp"
 #include "runtime/engine/capability_bridge.hpp"
 #include "runtime/evaluator/eval_context.hpp"
@@ -59,6 +60,7 @@ class WorkflowRuntime {
 
   private:
     const ir::Program &program_;
+    ir::ProgramIndex index_;
     WorkflowRuntimeConfig config_;
 
     // 查找声明
