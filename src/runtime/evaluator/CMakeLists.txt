@@ -9,6 +9,8 @@ add_library(ahfl_runtime_evaluator STATIC
 target_link_libraries(ahfl_runtime_evaluator
     PUBLIC
         ahfl_compiler_ir
+    PRIVATE
+        ahfl_base_json
 )
 
 target_include_directories(ahfl_runtime_evaluator PRIVATE ${PROJECT_SOURCE_DIR}/src)
