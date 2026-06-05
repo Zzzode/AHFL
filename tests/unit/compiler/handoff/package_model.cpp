@@ -773,10 +773,10 @@ int run_file_expr_temporal(const std::filesystem::path &input_file) {
     if (workflow == nullptr || workflow->nodes.size() != 1 ||
         workflow->nodes.front().input_summary.reads.size() != 1 ||
         workflow->nodes.front().input_summary.reads.front().kind !=
-            ahfl::ir::WorkflowValueSourceKind::WorkflowInput ||
+            ahfl::handoff::WorkflowValueSourceKind::WorkflowInput ||
         workflow->return_summary.reads.size() != 1 ||
         workflow->return_summary.reads.front().kind !=
-            ahfl::ir::WorkflowValueSourceKind::WorkflowNodeOutput ||
+            ahfl::handoff::WorkflowValueSourceKind::WorkflowNodeOutput ||
         workflow->return_summary.reads.front().root_name != "run") {
         std::cerr << "unexpected workflow value summary surface\n";
         return 1;

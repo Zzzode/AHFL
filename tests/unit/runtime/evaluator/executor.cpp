@@ -1,8 +1,8 @@
 #include "runtime/evaluator/executor.hpp"
+#include "ahfl/base/support/ownership.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
 #include "runtime/evaluator/eval_context.hpp"
 #include "runtime/evaluator/value.hpp"
-#include "ahfl/compiler/ir/ir.hpp"
-#include "ahfl/base/support/ownership.hpp"
 
 #include <cstdlib>
 #include <iostream>
@@ -41,6 +41,14 @@ StatementPtr make_stmt_ptr(StatementNode node) {
     return std::make_unique<Statement>(Statement{std::move(node), {}});
 }
 
+TypeRef make_int_type_ref() {
+    return TypeRef{
+        .kind = TypeRefKind::Int,
+        .display_name = "Int",
+        .canonical_name = "Int",
+    };
+}
+
 // ============================================================================
 // LetStatement Tests
 // ============================================================================
@@ -48,7 +56,11 @@ StatementPtr make_stmt_ptr(StatementNode node) {
 void test_let_statement_binds_variable() {
     ExecContext ctx;
     // let x = 42
-    auto stmt = make_stmt(LetStatement{"x", "Int", make_expr_ptr(IntegerLiteralExpr{"42"})});
+    auto stmt = make_stmt(LetStatement{
+        .name = "x",
+        .type_ref = make_int_type_ref(),
+        .initializer = make_expr_ptr(IntegerLiteralExpr{"42"}),
+    });
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "let.no_error");
     check(std::holds_alternative<ExecContinue>(result.outcome), "let.continues");
@@ -102,10 +114,9 @@ void test_if_true_branch() {
     // if true { goto Done }
     Block then_block;
     then_block.statements.push_back(make_stmt_ptr(GotoStatement{"Done"}));
-    auto stmt = make_stmt(IfStatement{
-        make_expr_ptr(BoolLiteralExpr{true}),
-        std::make_unique<Block>(std::move(then_block)),
-        nullptr});
+    auto stmt = make_stmt(IfStatement{make_expr_ptr(BoolLiteralExpr{true}),
+                                      std::make_unique<Block>(std::move(then_block)),
+                                      nullptr});
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "if_true.no_error");
     auto *g = std::get_if<ExecGoto>(&result.outcome);
@@ -117,10 +128,9 @@ void test_if_false_branch_no_else() {
     // if false { goto Done }  => Continue
     Block then_block;
     then_block.statements.push_back(make_stmt_ptr(GotoStatement{"Done"}));
-    auto stmt = make_stmt(IfStatement{
-        make_expr_ptr(BoolLiteralExpr{false}),
-        std::make_unique<Block>(std::move(then_block)),
-        nullptr});
+    auto stmt = make_stmt(IfStatement{make_expr_ptr(BoolLiteralExpr{false}),
+                                      std::make_unique<Block>(std::move(then_block)),
+                                      nullptr});
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "if_false_no_else.no_error");
     check(std::holds_alternative<ExecContinue>(result.outcome), "if_false_no_else.continues");
@@ -133,10 +143,9 @@ void test_if_false_with_else_block() {
     then_block.statements.push_back(make_stmt_ptr(GotoStatement{"A"}));
     Block else_block;
     else_block.statements.push_back(make_stmt_ptr(GotoStatement{"B"}));
-    auto stmt = make_stmt(IfStatement{
-        make_expr_ptr(BoolLiteralExpr{false}),
-        std::make_unique<Block>(std::move(then_block)),
-        std::make_unique<Block>(std::move(else_block))});
+    auto stmt = make_stmt(IfStatement{make_expr_ptr(BoolLiteralExpr{false}),
+                                      std::make_unique<Block>(std::move(then_block)),
+                                      std::make_unique<Block>(std::move(else_block))});
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "if_else.no_error");
     auto *g = std::get_if<ExecGoto>(&result.outcome);
@@ -148,10 +157,9 @@ void test_if_condition_not_bool_error() {
     // if 42 { goto Done }
     Block then_block;
     then_block.statements.push_back(make_stmt_ptr(GotoStatement{"Done"}));
-    auto stmt = make_stmt(IfStatement{
-        make_expr_ptr(IntegerLiteralExpr{"42"}),
-        std::make_unique<Block>(std::move(then_block)),
-        nullptr});
+    auto stmt = make_stmt(IfStatement{make_expr_ptr(IntegerLiteralExpr{"42"}),
+                                      std::make_unique<Block>(std::move(then_block)),
+                                      nullptr});
     auto result = exec_statement(stmt, ctx);
     check(result.has_errors(), "if_not_bool.has_error");
 }
@@ -226,11 +234,17 @@ void test_expr_statement_discards_value() {
 void test_block_stops_at_goto() {
     ExecContext ctx;
     Block block;
-    block.statements.push_back(
-        make_stmt_ptr(LetStatement{"x", "Int", make_expr_ptr(IntegerLiteralExpr{"1"})}));
+    block.statements.push_back(make_stmt_ptr(LetStatement{
+        .name = "x",
+        .type_ref = make_int_type_ref(),
+        .initializer = make_expr_ptr(IntegerLiteralExpr{"1"}),
+    }));
     block.statements.push_back(make_stmt_ptr(GotoStatement{"Next"}));
-    block.statements.push_back(
-        make_stmt_ptr(LetStatement{"y", "Int", make_expr_ptr(IntegerLiteralExpr{"2"})}));
+    block.statements.push_back(make_stmt_ptr(LetStatement{
+        .name = "y",
+        .type_ref = make_int_type_ref(),
+        .initializer = make_expr_ptr(IntegerLiteralExpr{"2"}),
+    }));
     auto result = exec_block(block, ctx);
     check(!result.has_errors(), "block_goto.no_error");
     auto *g = std::get_if<ExecGoto>(&result.outcome);
@@ -243,12 +257,18 @@ void test_block_stops_at_goto() {
 void test_block_stops_at_return() {
     ExecContext ctx;
     Block block;
-    block.statements.push_back(
-        make_stmt_ptr(LetStatement{"x", "Int", make_expr_ptr(IntegerLiteralExpr{"5"})}));
+    block.statements.push_back(make_stmt_ptr(LetStatement{
+        .name = "x",
+        .type_ref = make_int_type_ref(),
+        .initializer = make_expr_ptr(IntegerLiteralExpr{"5"}),
+    }));
     block.statements.push_back(
         make_stmt_ptr(ReturnStatement{make_expr_ptr(IntegerLiteralExpr{"99"})}));
-    block.statements.push_back(
-        make_stmt_ptr(LetStatement{"y", "Int", make_expr_ptr(IntegerLiteralExpr{"2"})}));
+    block.statements.push_back(make_stmt_ptr(LetStatement{
+        .name = "y",
+        .type_ref = make_int_type_ref(),
+        .initializer = make_expr_ptr(IntegerLiteralExpr{"2"}),
+    }));
     auto result = exec_block(block, ctx);
     check(!result.has_errors(), "block_return.no_error");
     auto *ret = std::get_if<ExecReturn>(&result.outcome);
@@ -273,10 +293,9 @@ void test_nested_if_with_goto() {
     path_expr.path.root_kind = PathRootKind::Identifier;
     path_expr.path.root_name = "flag";
 
-    auto stmt = make_stmt(IfStatement{
-        make_expr_ptr(std::move(path_expr)),
-        std::make_unique<Block>(std::move(then_block)),
-        nullptr});
+    auto stmt = make_stmt(IfStatement{make_expr_ptr(std::move(path_expr)),
+                                      std::make_unique<Block>(std::move(then_block)),
+                                      nullptr});
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "nested_if_goto.no_error");
     auto *g = std::get_if<ExecGoto>(&result.outcome);

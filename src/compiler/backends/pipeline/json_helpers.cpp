@@ -56,10 +56,39 @@ void PipelineJsonHelpers::print_workflow_value_summary(const ir::WorkflowExprSum
                     item([&]() {
                         print_object(indent_level + 2, [&](const auto &read_field) {
                             read_field("kind", [&]() {
-                                write_string(
-                                    read.kind == ir::WorkflowValueSourceKind::WorkflowInput
-                                        ? "workflow_input"
-                                        : "workflow_node_output");
+                                write_string(read.kind == ir::WorkflowValueSourceKind::WorkflowInput
+                                                 ? "workflow_input"
+                                                 : "workflow_node_output");
+                            });
+                            read_field("root_name", [&]() { write_string(read.root_name); });
+                            read_field("members", [&]() {
+                                print_array(indent_level + 3, [&](const auto &member_item) {
+                                    for (const auto &member : read.members) {
+                                        member_item([&]() { write_string(member); });
+                                    }
+                                });
+                            });
+                        });
+                    });
+                }
+            });
+        });
+    });
+}
+
+void PipelineJsonHelpers::print_workflow_value_summary(const handoff::WorkflowValueSummary &summary,
+                                                       int indent_level) {
+    print_object(indent_level, [&](const auto &field) {
+        field("reads", [&]() {
+            print_array(indent_level + 1, [&](const auto &item) {
+                for (const auto &read : summary.reads) {
+                    item([&]() {
+                        print_object(indent_level + 2, [&](const auto &read_field) {
+                            read_field("kind", [&]() {
+                                write_string(read.kind ==
+                                                     handoff::WorkflowValueSourceKind::WorkflowInput
+                                                 ? "workflow_input"
+                                                 : "workflow_node_output");
                             });
                             read_field("root_name", [&]() { write_string(read.root_name); });
                             read_field("members", [&]() {
@@ -93,7 +122,8 @@ void PipelineJsonHelpers::print_workflow_status(runtime_session::WorkflowSession
     }
 }
 
-void PipelineJsonHelpers::print_checkpoint_status(checkpoint_record::CheckpointRecordStatus status) {
+void PipelineJsonHelpers::print_checkpoint_status(
+    checkpoint_record::CheckpointRecordStatus status) {
     switch (status) {
     case checkpoint_record::CheckpointRecordStatus::ReadyToPersist:
         write_string("ready_to_persist");
@@ -188,8 +218,8 @@ void PipelineJsonHelpers::print_capability_binding_ref(
 
 // -- Lifecycle summary ---------------------------------------------------------
 
-void PipelineJsonHelpers::print_lifecycle(
-    const handoff::WorkflowNodeLifecycleSummary &lifecycle, int indent_level) {
+void PipelineJsonHelpers::print_lifecycle(const handoff::WorkflowNodeLifecycleSummary &lifecycle,
+                                          int indent_level) {
     print_object(indent_level, [&](const auto &field) {
         field("start_condition", [&]() {
             write_string(lifecycle.start_condition ==

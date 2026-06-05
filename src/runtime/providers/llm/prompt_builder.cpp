@@ -2,44 +2,25 @@
 
 #include "runtime/providers/llm/prompt_builder.hpp"
 
+#include "ahfl/compiler/ir/identity.hpp"
+
 #include <sstream>
 #include <variant>
 
 namespace ahfl::llm_provider {
 
-PromptBuilder::PromptBuilder(const ir::Program &program) : program_(program) {}
+PromptBuilder::PromptBuilder(const ir::Program &program) : program_(program), index_(program_) {}
 
 const ir::CapabilityDecl *PromptBuilder::find_capability(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (auto *cap = std::get_if<ir::CapabilityDecl>(&decl)) {
-            if (cap->name == name) {
-                return cap;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_capability(name);
 }
 
 const ir::StructDecl *PromptBuilder::find_struct(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (auto *s = std::get_if<ir::StructDecl>(&decl)) {
-            if (s->name == name) {
-                return s;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_struct(name);
 }
 
 const ir::EnumDecl *PromptBuilder::find_enum(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (auto *e = std::get_if<ir::EnumDecl>(&decl)) {
-            if (e->name == name) {
-                return e;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_enum(name);
 }
 
 std::string PromptBuilder::describe_type_schema(const std::string &type_name) const {
@@ -80,7 +61,9 @@ std::string PromptBuilder::describe_type_schema(const std::string &type_name) co
                 oss << ", ";
             }
             const auto &field = struct_decl->fields[i];
-            oss << "\"" << field.name << "\": " << describe_type_schema(field.type);
+            oss << "\"" << field.name << "\": "
+                << describe_type_schema(
+                       std::string(ir::type_canonical_name(field.type_ref, "Any")));
         }
         oss << " }";
         return oss.str();
@@ -161,14 +144,18 @@ std::string PromptBuilder::build_system_prompt(const std::string &capability_nam
     if (!cap->params.empty()) {
         oss << "Input parameters:\n";
         for (const auto &param : cap->params) {
-            oss << "  - " << param.name << ": " << describe_type_schema(param.type) << "\n";
+            oss << "  - " << param.name << ": "
+                << describe_type_schema(std::string(ir::type_canonical_name(param.type_ref, "Any")))
+                << "\n";
         }
         oss << "\n";
     }
 
     // 返回类型描述
     oss << "Required output format (JSON):\n";
-    oss << "  " << describe_type_schema(cap->return_type) << "\n\n";
+    oss << "  "
+        << describe_type_schema(std::string(ir::type_canonical_name(cap->return_type_ref, "Any")))
+        << "\n\n";
     oss << "Respond ONLY with the JSON object, no extra text.";
 
     return oss.str();

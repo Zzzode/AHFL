@@ -2,6 +2,7 @@
 
 #include "runtime/providers/llm/response_parser.hpp"
 
+#include "ahfl/compiler/ir/identity.hpp"
 #include "base/json/json_value.hpp"
 
 #include <algorithm>
@@ -30,28 +31,14 @@ namespace {
 
 } // namespace
 
-ResponseParser::ResponseParser(const ir::Program &program) : program_(program) {}
+ResponseParser::ResponseParser(const ir::Program &program) : program_(program), index_(program_) {}
 
 const ir::StructDecl *ResponseParser::find_struct(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (auto *s = std::get_if<ir::StructDecl>(&decl)) {
-            if (s->name == name) {
-                return s;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_struct(name);
 }
 
 const ir::EnumDecl *ResponseParser::find_enum(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (auto *e = std::get_if<ir::EnumDecl>(&decl)) {
-            if (e->name == name) {
-                return e;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_enum(name);
 }
 
 std::string ResponseParser::extract_json_value(const std::string &json_str,
@@ -154,8 +141,10 @@ ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
             raw_value = ahfl::json::serialize_json(*field_json);
         }
 
+        const auto field_type = std::string(ir::type_canonical_name(field.type_ref, "Any"));
+
         // 检查是否是结构体类型
-        if (const auto *nested_struct = find_struct(field.type)) {
+        if (const auto *nested_struct = find_struct(field_type)) {
             auto nested_val = parse_struct(raw_value, *nested_struct);
             if (nested_val.success()) {
                 fields.emplace(field.name, std::move(*nested_val.value));
@@ -166,7 +155,7 @@ ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
         }
 
         // 解析基本类型
-        auto field_val = parse_primitive(raw_value, field.type);
+        auto field_val = parse_primitive(raw_value, field_type);
         if (field_val.success()) {
             fields.emplace(field.name, std::move(*field_val.value));
         } else {

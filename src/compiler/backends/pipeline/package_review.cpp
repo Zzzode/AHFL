@@ -68,8 +68,8 @@ workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionCondition
     return "invalid";
 }
 
-[[nodiscard]] std::string workflow_value_read(const ir::WorkflowValueRead &read) {
-    std::string result = read.kind == ir::WorkflowValueSourceKind::WorkflowInput
+[[nodiscard]] std::string workflow_value_read(const handoff::WorkflowValueRead &read) {
+    std::string result = read.kind == handoff::WorkflowValueSourceKind::WorkflowInput
                              ? "workflow_input:"
                              : "workflow_node_output:";
     result += read.root_name;
@@ -80,7 +80,7 @@ workflow_node_completion_condition_name(handoff::WorkflowNodeCompletionCondition
     return result;
 }
 
-void print_workflow_expr_summary(const ir::WorkflowExprSummary &summary,
+void print_workflow_expr_summary(const handoff::WorkflowValueSummary &summary,
                                  std::string_view label,
                                  int indent_level,
                                  std::ostream &out) {

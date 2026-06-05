@@ -1,6 +1,8 @@
 #include "ahfl/compiler/ir/lowering.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
 
@@ -59,6 +61,26 @@ namespace {
     }
 
     return "unsafe";
+}
+
+[[nodiscard]] std::string type_name(const ir::TypeRef &ref) {
+    return std::string(ir::type_display_name(ref, "Any"));
+}
+
+[[nodiscard]] std::string symbol_name(const ir::SymbolRef &ref) {
+    return std::string(ir::symbol_canonical_name(ref, "<unresolved-symbol>"));
+}
+
+[[nodiscard]] std::vector<std::string> symbol_names(const std::vector<ir::SymbolRef> &refs) {
+    std::vector<std::string> names;
+    names.reserve(refs.size());
+    for (const auto &ref : refs) {
+        const auto name = ir::symbol_canonical_name(ref);
+        if (!name.empty()) {
+            names.emplace_back(name);
+        }
+    }
+    return names;
 }
 
 [[nodiscard]] std::string expr_binary_op_name(ir::ExprBinaryOp op) {
@@ -196,11 +218,12 @@ class IrProgramPrinter final {
     explicit IrProgramPrinter(std::ostream &out) : out_(out) {}
 
     void print(const ir::Program &program) {
+        program_ = &program;
         out_ << program.format_version << '\n';
 
         bool emitted_section = false;
-        if (!program.formal_observations.empty()) {
-            print_formal_observations(program.formal_observations);
+        if (!ir::formal_observations(program).empty()) {
+            print_formal_observations(ir::formal_observations(program));
             emitted_section = true;
         }
 
@@ -221,6 +244,7 @@ class IrProgramPrinter final {
 
   private:
     std::ostream &out_;
+    const ir::Program *program_{nullptr};
 
     void line(int indent_level, std::string_view text) {
         out_ << std::string(static_cast<std::size_t>(indent_level) * 2, ' ') << text << '\n';
@@ -477,7 +501,7 @@ class IrProgramPrinter final {
         std::visit(Overloaded{
                        [this, indent_level](const ir::LetStatement &value) {
                            line(indent_level,
-                                "let " + value.name + ": " + value.type + " = " +
+                                "let " + value.name + ": " + type_name(value.type_ref) + " = " +
                                     render_expr(*value.initializer));
                        },
                        [this, indent_level](const ir::AssignStatement &value) {
@@ -533,7 +557,7 @@ class IrProgramPrinter final {
         rendered.reserve(params.size());
 
         for (const auto &param : params) {
-            rendered.push_back(param.name + ": " + param.type);
+            rendered.push_back(param.name + ": " + type_name(param.type_ref));
         }
 
         return join(rendered, ", ");
@@ -554,19 +578,19 @@ class IrProgramPrinter final {
 
     void print_decl(const ir::ConstDecl &declaration) {
         line(0,
-             "const " + declaration.name + ": " + declaration.type + " = " +
+             "const " + declaration.name + ": " + type_name(declaration.type_ref) + " = " +
                  render_expr(*declaration.value));
     }
 
     void print_decl(const ir::TypeAliasDecl &declaration) {
-        line(0, "typealias " + declaration.name + " = " + declaration.aliased_type);
+        line(0, "typealias " + declaration.name + " = " + type_name(declaration.aliased_type_ref));
     }
 
     void print_decl(const ir::StructDecl &declaration) {
         line(0, "struct " + declaration.name + " {");
 
         for (const auto &field : declaration.fields) {
-            std::string text = "field " + field.name + ": " + field.type;
+            std::string text = "field " + field.name + ": " + type_name(field.type_ref);
             if (field.default_value) {
                 text += " = " + render_expr(*field.default_value);
             }
@@ -588,7 +612,7 @@ class IrProgramPrinter final {
     void print_decl(const ir::CapabilityDecl &declaration) {
         line(0,
              "capability " + declaration.name + "(" + print_params(declaration.params) + ") -> " +
-                 declaration.return_type);
+                 type_name(declaration.return_type_ref));
         if (declaration.effect.declared) {
             line(1, "effect: " + std::string(capability_effect_kind_name(declaration.effect.kind)));
             line(1,
@@ -623,13 +647,13 @@ class IrProgramPrinter final {
 
     void print_decl(const ir::AgentDecl &declaration) {
         line(0, "agent " + declaration.name + " {");
-        line(1, "input: " + declaration.input_type);
-        line(1, "context: " + declaration.context_type);
-        line(1, "output: " + declaration.output_type);
+        line(1, "input: " + type_name(declaration.input_type_ref));
+        line(1, "context: " + type_name(declaration.context_type_ref));
+        line(1, "output: " + type_name(declaration.output_type_ref));
         line(1, "states: [" + join(declaration.states, ", ") + "]");
         line(1, "initial: " + declaration.initial_state);
         line(1, "final: [" + join(declaration.final_states, ", ") + "]");
-        line(1, "capabilities: [" + join(declaration.capabilities, ", ") + "]");
+        line(1, "capabilities: [" + join(symbol_names(declaration.capability_refs), ", ") + "]");
 
         if (!declaration.quota.empty()) {
             line(1, "quota {");
@@ -647,7 +671,7 @@ class IrProgramPrinter final {
     }
 
     void print_decl(const ir::ContractDecl &declaration) {
-        line(0, "contract " + declaration.target + " {");
+        line(0, "contract " + symbol_name(declaration.target_ref) + " {");
         for (const auto &clause : declaration.clauses) {
             const auto value = std::visit(
                 Overloaded{
@@ -661,14 +685,19 @@ class IrProgramPrinter final {
     }
 
     void print_decl(const ir::FlowDecl &declaration) {
-        line(0, "flow " + declaration.target + " {");
+        line(0, "flow " + symbol_name(declaration.target_ref) + " {");
 
         for (const auto &handler : declaration.state_handlers) {
             line(1, "state " + handler.state_name + " {");
             for (const auto &policy_item : handler.policy) {
                 print_policy_item(policy_item, 2);
             }
-            print_flow_summary(handler.summary, 2);
+            static const ir::StateHandler::Summary empty_summary{};
+            const auto *summary =
+                program_ == nullptr
+                    ? nullptr
+                    : ir::find_state_handler_summary(*program_, declaration, handler);
+            print_flow_summary(summary == nullptr ? empty_summary : *summary, 2);
             print_block(handler.body, 2);
             line(1, "}");
         }
@@ -678,18 +707,24 @@ class IrProgramPrinter final {
 
     void print_decl(const ir::WorkflowDecl &declaration) {
         line(0, "workflow " + declaration.name + " {");
-        line(1, "input: " + declaration.input_type);
-        line(1, "output: " + declaration.output_type);
+        line(1, "input: " + type_name(declaration.input_type_ref));
+        line(1, "output: " + type_name(declaration.output_type_ref));
 
         for (const auto &node : declaration.nodes) {
-            std::string text =
-                "node " + node.name + ": " + node.target + "(" + render_expr(*node.input) + ")";
+            std::string text = "node " + node.name + ": " + symbol_name(node.target_ref) + "(" +
+                               render_expr(*node.input) + ")";
             if (!node.after.empty()) {
                 text += " after [" + join(node.after, ", ") + "]";
             }
 
             line(1, text);
-            print_workflow_expr_summary("input_summary", node.input_summary, 2);
+            static const ir::WorkflowExprSummary empty_summary{};
+            const auto *summary =
+                program_ == nullptr
+                    ? nullptr
+                    : ir::find_workflow_node_input_summary(*program_, declaration, node);
+            print_workflow_expr_summary(
+                "input_summary", summary == nullptr ? empty_summary : *summary, 2);
         }
 
         for (const auto &formula : declaration.safety) {
@@ -699,7 +734,12 @@ class IrProgramPrinter final {
             line(1, "liveness: " + render_temporal(*formula));
         }
 
-        print_workflow_expr_summary("return_summary", declaration.return_summary, 1);
+        static const ir::WorkflowExprSummary empty_summary{};
+        const auto *summary = program_ == nullptr
+                                  ? nullptr
+                                  : ir::find_workflow_return_summary(*program_, declaration);
+        print_workflow_expr_summary(
+            "return_summary", summary == nullptr ? empty_summary : *summary, 1);
         line(1, "return: " + render_expr(*declaration.return_value));
         line(0, "}");
     }

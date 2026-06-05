@@ -1,4 +1,5 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
@@ -33,7 +34,7 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
                                                              std::string_view flow_target) {
     for (const auto &declaration : program.declarations) {
         const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&declaration);
-        if (flow == nullptr || flow->target != flow_target) {
+        if (flow == nullptr || ahfl::ir::symbol_canonical_name(flow->target_ref) != flow_target) {
             continue;
         }
 
@@ -41,7 +42,8 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
             for (const auto &statement : handler.body.statements) {
                 const auto *let_statement = std::get_if<ahfl::ir::LetStatement>(&statement->node);
                 if (let_statement != nullptr) {
-                    return let_statement->type;
+                    return std::string(
+                        ahfl::ir::type_canonical_name(let_statement->type_ref, "Any"));
                 }
             }
         }

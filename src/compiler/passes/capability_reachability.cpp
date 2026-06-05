@@ -1,5 +1,7 @@
 #include "compiler/passes/capability_reachability.hpp"
 
+#include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 
 #include <string>
@@ -19,7 +21,11 @@ std::unique_ptr<AnalysisResult> CapabilityReachabilityPass::run(const ir::Progra
             continue;
         }
         for (const auto &handler : flow->state_handlers) {
-            for (const auto &target : handler.summary.called_targets) {
+            const auto *summary = ir::find_state_handler_summary(program, *flow, handler);
+            if (summary == nullptr) {
+                continue;
+            }
+            for (const auto &target : summary->called_targets) {
                 called_capabilities.insert(target);
             }
         }
@@ -31,7 +37,11 @@ std::unique_ptr<AnalysisResult> CapabilityReachabilityPass::run(const ir::Progra
         if (agent == nullptr) {
             continue;
         }
-        for (const auto &cap : agent->capabilities) {
+        for (const auto &capability_ref : agent->capability_refs) {
+            const auto cap = std::string(ir::symbol_canonical_name(capability_ref));
+            if (cap.empty()) {
+                continue;
+            }
             if (called_capabilities.find(cap) == called_capabilities.end()) {
                 result->unused.push_back({agent->name, cap});
             }

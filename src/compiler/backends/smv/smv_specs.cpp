@@ -7,7 +7,9 @@ using namespace smv_detail;
 
 void SmvPrinter::collect_specs() {
     for (const auto &contract : contracts_) {
-        const auto agent = find_agent(contract.get().target);
+        const auto contract_target =
+            std::string(ir::symbol_canonical_name(contract.get().target_ref));
+        const auto agent = find_agent(contract_target);
         if (!agent.has_value()) {
             continue;
         }
@@ -34,9 +36,9 @@ void SmvPrinter::collect_specs() {
                 continue;
             }
 
-            specs_.push_back("-- contract " + contract.get().target + " " +
-                             contract_clause_kind_name(clause.kind) + "[" +
-                             std::to_string(index) + "]");
+            specs_.push_back("-- contract " + contract_target + " " +
+                             contract_clause_kind_name(clause.kind) + "[" + std::to_string(index) +
+                             "]");
             specs_.push_back("LTLSPEC " + *formula);
         }
     }
@@ -159,8 +161,8 @@ void SmvPrinter::add_event_lifecycle_specs(const ir::WorkflowDecl &workflow,
 }
 
 void SmvPrinter::add_failed_effect_recovery_spec(const ir::WorkflowDecl &workflow,
-                                                  const ir::WorkflowNode &node,
-                                                  std::string_view failed_symbol) {
+                                                 const ir::WorkflowNode &node,
+                                                 std::string_view failed_symbol) {
     specs_.push_back("-- workflow " + workflow.name + " node " + node.name +
                      " recovery[failed_effect_reaches_recovery]");
     specs_.push_back("LTLSPEC G (" + std::string(failed_symbol) + " -> F (" +
@@ -173,13 +175,21 @@ void SmvPrinter::add_failed_effect_recovery_spec(const ir::WorkflowDecl &workflo
 void SmvPrinter::collect_effect_obligation_specs() {
     for (const auto &workflow : workflows_) {
         for (const auto &node : workflow.get().nodes) {
-            const auto flow = find_flow(node.target);
+            const auto flow = find_flow(ir::symbol_canonical_name(node.target_ref));
             if (!flow.has_value()) {
                 continue;
             }
 
             for (const auto &handler : flow->get().state_handlers) {
-                for (const auto &called_target : handler.summary.called_targets) {
+                const auto *summary =
+                    program_ == nullptr
+                        ? nullptr
+                        : ir::find_state_handler_summary(*program_, flow->get(), handler);
+                if (summary == nullptr) {
+                    continue;
+                }
+
+                for (const auto &called_target : summary->called_targets) {
                     const auto call_event =
                         workflow_node_call_event_var(workflow.get(), node.name, called_target);
                     const auto call_committed = workflow_node_call_committed_event_var(
@@ -221,12 +231,8 @@ void SmvPrinter::collect_effect_obligation_specs() {
                         continue;
                     }
 
-                    add_effect_obligation_spec(workflow.get(),
-                                               node,
-                                               called_target,
-                                               call_event,
-                                               "effect[declared]",
-                                               true);
+                    add_effect_obligation_spec(
+                        workflow.get(), node, called_target, call_event, "effect[declared]", true);
 
                     if (is_external_or_stronger(effect.kind)) {
                         add_effect_obligation_spec(workflow.get(),

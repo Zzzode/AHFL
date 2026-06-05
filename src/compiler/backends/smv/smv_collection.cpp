@@ -6,22 +6,21 @@ using namespace smv;
 using namespace smv_detail;
 
 void SmvPrinter::collect_state_variables() {
-    for (const auto &[name, agent] : agents_) {
-        (void)name;
-        if (agent_has_contract(agent.get())) {
-            const auto state_var = agent_state_var(agent.get());
-            state_variables_.push_back(state_var + " : {" + join(agent.get().states, ", ") +
-                                       "};");
+    for (const auto *agent : index_.agents()) {
+        if (agent_has_contract(*agent)) {
+            const auto state_var = agent_state_var(*agent);
+            state_variables_.push_back(state_var + " : {" + join(agent->states, ", ") + "};");
             add_symbol_mapping(state_var,
-                               with_source("agent " + agent.get().name + " state",
-                                           agent.get().provenance.source_path,
-                                           agent.get().provenance.source_range));
+                               with_source("agent " + agent->name + " state",
+                                           agent->provenance.source_path,
+                                           agent->provenance.source_range));
         }
     }
 
     for (const auto &workflow : workflows_) {
         for (const auto &node : workflow.get().nodes) {
-            const auto agent = find_agent(node.target);
+            const auto target = std::string(ir::symbol_canonical_name(node.target_ref));
+            const auto agent = find_agent(target);
             if (!agent.has_value()) {
                 continue;
             }
@@ -30,8 +29,7 @@ void SmvPrinter::collect_state_variables() {
             const auto phase_var = workflow_node_phase_var(workflow.get(), node.name);
             const auto failure_requested_var =
                 workflow_node_failure_requested_var(workflow.get(), node.name);
-            state_variables_.push_back(state_var + " : {" + join(agent->get().states, ", ") +
-                                       "};");
+            state_variables_.push_back(state_var + " : {" + join(agent->get().states, ", ") + "};");
             state_variables_.push_back(
                 phase_var + " : {" + std::string(kNodeIdle) + ", " + std::string(kNodeRunning) +
                 ", " + std::string(kNodeCompleted) + ", " + std::string(kNodeFailed) + ", " +
@@ -66,8 +64,7 @@ void SmvPrinter::collect_defines() {
             const auto running_name = workflow_node_running_var(workflow.get(), node.name);
             const auto completed_name = workflow_node_completed_var(workflow.get(), node.name);
             const auto failed_name = workflow_node_failed_var(workflow.get(), node.name);
-            const auto recovering_name =
-                workflow_node_recovering_var(workflow.get(), node.name);
+            const auto recovering_name = workflow_node_recovering_var(workflow.get(), node.name);
             const auto recovered_name = workflow_node_recovered_var(workflow.get(), node.name);
             const auto target = node_map.find(node.name);
             if (target == node_map.end()) {
@@ -105,26 +102,26 @@ void SmvPrinter::collect_defines() {
                                                node.name + " is running",
                                            workflow.get().provenance.source_path,
                                            node.source_range));
-            add_symbol_mapping(completed_name,
-                               with_source("workflow " + workflow.get().name + " node " +
-                                               node.name + " completed",
-                                           workflow.get().provenance.source_path,
-                                           node.source_range));
-            add_symbol_mapping(failed_name,
-                               with_source("workflow " + workflow.get().name + " node " +
-                                               node.name + " failed",
-                                           workflow.get().provenance.source_path,
-                                           node.source_range));
+            add_symbol_mapping(
+                completed_name,
+                with_source("workflow " + workflow.get().name + " node " + node.name + " completed",
+                            workflow.get().provenance.source_path,
+                            node.source_range));
+            add_symbol_mapping(
+                failed_name,
+                with_source("workflow " + workflow.get().name + " node " + node.name + " failed",
+                            workflow.get().provenance.source_path,
+                            node.source_range));
             add_symbol_mapping(recovering_name,
                                with_source("workflow " + workflow.get().name + " node " +
                                                node.name + " recovering",
                                            workflow.get().provenance.source_path,
                                            node.source_range));
-            add_symbol_mapping(recovered_name,
-                               with_source("workflow " + workflow.get().name + " node " +
-                                               node.name + " recovered",
-                                           workflow.get().provenance.source_path,
-                                           node.source_range));
+            add_symbol_mapping(
+                recovered_name,
+                with_source("workflow " + workflow.get().name + " node " + node.name + " recovered",
+                            workflow.get().provenance.source_path,
+                            node.source_range));
         }
     }
 
@@ -133,12 +130,10 @@ void SmvPrinter::collect_defines() {
 }
 
 void SmvPrinter::collect_assignments() {
-    for (const auto &[name, agent] : agents_) {
-        (void)name;
-        if (agent_has_contract(agent.get())) {
-            collect_state_machine_assignments(agent.get(),
-                                              agent_state_var(agent.get()),
-                                              build_effective_adjacency(agent.get()));
+    for (const auto *agent : index_.agents()) {
+        if (agent_has_contract(*agent)) {
+            collect_state_machine_assignments(
+                *agent, agent_state_var(*agent), build_effective_adjacency(*agent));
         }
     }
 
@@ -164,19 +159,26 @@ void SmvPrinter::collect_call_and_effect_event_defines() {
 
     for (const auto &workflow : workflows_) {
         for (const auto &node : workflow.get().nodes) {
-            const auto flow = find_flow(node.target);
+            const auto target = std::string(ir::symbol_canonical_name(node.target_ref));
+            const auto flow = find_flow(target);
             if (!flow.has_value()) {
                 continue;
             }
 
             for (const auto &handler : flow->get().state_handlers) {
-                const auto guard =
-                    render_workflow_node_state_guard(workflow.get(), node, handler);
+                const auto *summary =
+                    program_ == nullptr
+                        ? nullptr
+                        : ir::find_state_handler_summary(*program_, flow->get(), handler);
+                if (summary == nullptr) {
+                    continue;
+                }
+                const auto guard = render_workflow_node_state_guard(workflow.get(), node, handler);
                 const auto failure_var =
                     workflow_node_failure_requested_var(workflow.get(), node.name);
                 const auto source =
                     source_suffix(flow->get().provenance.source_path, handler.source_range);
-                for (const auto &called_target : handler.summary.called_targets) {
+                for (const auto &called_target : summary->called_targets) {
                     const auto capability = find_capability(called_target);
                     if (!capability.has_value()) {
                         continue;
@@ -187,8 +189,8 @@ void SmvPrinter::collect_call_and_effect_event_defines() {
                     call_guards[call_symbol].push_back(guard);
                     event_failure_vars.emplace(call_symbol, failure_var);
                     call_mappings.emplace(call_symbol,
-                                          "workflow " + workflow.get().name + " node " +
-                                              node.name + " calls " + called_target + source);
+                                          "workflow " + workflow.get().name + " node " + node.name +
+                                              " calls " + called_target + source);
 
                     const auto effect_kind =
                         capability_effect_kind_name(capability->get().effect.kind);
@@ -211,8 +213,7 @@ void SmvPrinter::collect_call_and_effect_event_defines() {
             failure_var != event_failure_vars.end()) {
             const auto committed = symbol + "__committed";
             const auto failed = symbol + "__failed";
-            defines_.push_back(committed + " := (" + symbol + " & !" + failure_var->second +
-                               ");");
+            defines_.push_back(committed + " := (" + symbol + " & !" + failure_var->second + ");");
             defines_.push_back(failed + " := (" + symbol + " & " + failure_var->second + ");");
             add_symbol_mapping(committed, call_mappings.at(symbol) + " committed");
             add_symbol_mapping(failed, call_mappings.at(symbol) + " failed");
@@ -226,8 +227,7 @@ void SmvPrinter::collect_call_and_effect_event_defines() {
             failure_var != event_failure_vars.end()) {
             const auto committed = symbol + "__committed";
             const auto failed = symbol + "__failed";
-            defines_.push_back(committed + " := (" + symbol + " & !" + failure_var->second +
-                               ");");
+            defines_.push_back(committed + " := (" + symbol + " & !" + failure_var->second + ");");
             defines_.push_back(failed + " := (" + symbol + " & " + failure_var->second + ");");
             add_symbol_mapping(committed, effect_mappings.at(symbol) + " committed");
             add_symbol_mapping(failed, effect_mappings.at(symbol) + " failed");
@@ -248,14 +248,13 @@ void SmvPrinter::collect_called_observation_defines() {
         const auto agent_name = key.substr(0, separator);
         const auto capability_name = key.substr(separator + 1);
         defines_.push_back(
-            symbol + " := " +
-            render_disjunction(collect_called_guards(agent_name, capability_name)) + ";");
+            symbol +
+            " := " + render_disjunction(collect_called_guards(agent_name, capability_name)) + ";");
     }
 }
 
-std::string
-SmvPrinter::lookup_called_observation_symbol(std::string_view agent_name,
-                                             std::string_view capability_name) const {
+std::string SmvPrinter::lookup_called_observation_symbol(std::string_view agent_name,
+                                                         std::string_view capability_name) const {
     const auto key = called_observation_key(agent_name, capability_name);
     if (const auto iter = called_observation_symbols_.find(key);
         iter != called_observation_symbols_.end()) {
@@ -266,11 +265,10 @@ SmvPrinter::lookup_called_observation_symbol(std::string_view agent_name,
            sanitize_identifier(capability_name);
 }
 
-std::string
-SmvPrinter::lookup_embedded_observation_symbol(ir::FormalObservationScopeKind kind,
-                                               std::string_view owner,
-                                               std::size_t clause_index,
-                                               std::size_t atom_index) const {
+std::string SmvPrinter::lookup_embedded_observation_symbol(ir::FormalObservationScopeKind kind,
+                                                           std::string_view owner,
+                                                           std::size_t clause_index,
+                                                           std::size_t atom_index) const {
     const auto key = embedded_observation_key(kind, owner, clause_index, atom_index);
     if (const auto iter = embedded_observation_symbols_.find(key);
         iter != embedded_observation_symbols_.end()) {
@@ -300,8 +298,7 @@ void SmvPrinter::collect_workflow_node_assignments(const ir::WorkflowDecl &workf
     collect_state_machine_assignments(agent,
                                       state_var,
                                       build_effective_adjacency(agent),
-                                      "!(" + phase_var + " = " + std::string(kNodeRunning) +
-                                          ")");
+                                      "!(" + phase_var + " = " + std::string(kNodeRunning) + ")");
 
     assignments_.push_back("init(" + phase_var + ") := " +
                            std::string(node.after.empty() ? kNodeRunning : kNodeIdle) + ";");
@@ -350,8 +347,7 @@ void SmvPrinter::collect_state_machine_assignments(
             iter == adjacency.end() ? std::vector<std::string>{} : iter->second;
         const auto rendered_targets = render_next_targets(next_targets, state);
 
-        assignments_.push_back("  " + state_var + " = " + state + " : " + rendered_targets +
-                               ";");
+        assignments_.push_back("  " + state_var + " = " + state + " : " + rendered_targets + ";");
     }
 
     assignments_.push_back("  TRUE : " + state_var + ";");
@@ -372,8 +368,11 @@ SmvPrinter::build_effective_adjacency(const ir::AgentDecl &agent) const {
     }
 
     for (const auto &handler : flow->get().state_handlers) {
-        if (!handler.summary.goto_targets.empty() || handler.summary.may_return) {
-            adjacency[handler.state_name] = handler.summary.goto_targets;
+        const auto *summary = program_ == nullptr
+                                  ? nullptr
+                                  : ir::find_state_handler_summary(*program_, flow->get(), handler);
+        if (summary != nullptr && (!summary->goto_targets.empty() || summary->may_return)) {
+            adjacency[handler.state_name] = summary->goto_targets;
         }
     }
 

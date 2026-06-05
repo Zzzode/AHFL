@@ -1,8 +1,9 @@
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include <doctest.h>
 
-#include "compiler/passes/pass_manager.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "compiler/passes/pass_manager.hpp"
 
 #include <memory>
 #include <string_view>
@@ -13,14 +14,22 @@ using namespace ahfl::passes;
 
 class NoOpPass final : public Pass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "NoOpPass"; }
-    [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override { return false; }
+    [[nodiscard]] std::string_view name() const override {
+        return "NoOpPass";
+    }
+    [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override {
+        return false;
+    }
 };
 
 class AlwaysModifyPass final : public Pass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "AlwaysModifyPass"; }
-    [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override { return true; }
+    [[nodiscard]] std::string_view name() const override {
+        return "AlwaysModifyPass";
+    }
+    [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override {
+        return true;
+    }
 };
 
 } // namespace
@@ -52,6 +61,53 @@ TEST_CASE("PassManager: modifying pass") {
     CHECK(result.any_modified);
     REQUIRE(result.executed.size() == 1);
     CHECK(result.executed[0] == "AlwaysModifyPass");
+}
+
+TEST_CASE("PassManager: modifying pass recomputes derived IR analyses") {
+    PassManager pm;
+    pm.add_pass(std::make_unique<AlwaysModifyPass>());
+
+    ahfl::ir::Program prog;
+    prog.declarations.push_back(ahfl::ir::AgentDecl{
+        .provenance = {},
+        .name = "pkg::Agent",
+        .states = {"Init", "Done"},
+        .initial_state = "Init",
+        .final_states = {"Done"},
+        .quota = {},
+        .transitions = {},
+        .input_type_ref =
+            ahfl::ir::TypeRef{
+                .kind = ahfl::ir::TypeRefKind::Unit,
+                .display_name = "Unit",
+            },
+        .context_type_ref =
+            ahfl::ir::TypeRef{
+                .kind = ahfl::ir::TypeRefKind::Unit,
+                .display_name = "Unit",
+            },
+        .output_type_ref =
+            ahfl::ir::TypeRef{
+                .kind = ahfl::ir::TypeRefKind::Unit,
+                .display_name = "Unit",
+            },
+        .capability_refs =
+            {
+                ahfl::ir::SymbolRef{
+                    .kind = ahfl::ir::SymbolRefKind::Capability,
+                    .canonical_name = "pkg::Call",
+                    .local_name = "Call",
+                    .module_name = "pkg",
+                },
+            },
+        .symbol_ref = {},
+    });
+
+    auto result = pm.run(prog);
+    CHECK(result.any_modified);
+    CHECK(prog.phase == ahfl::ir::ProgramPhase::Optimized);
+    REQUIRE(ahfl::ir::formal_observations(prog).size() == 1);
+    CHECK(ahfl::ir::formal_observations(prog)[0].symbol == "agent__pkg_Agent__called__pkg_Call");
 }
 
 TEST_CASE("PassManager: default pipeline creation") {

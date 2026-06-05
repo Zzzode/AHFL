@@ -7,13 +7,17 @@
 #include "compiler/passes/temporal_simplification.hpp"
 #include "compiler/passes/workflow_simplification.hpp"
 
+#include "ahfl/compiler/ir/analysis.hpp"
+
 #include <algorithm>
 #include <chrono>
 #include <string>
 
 namespace ahfl::passes {
 
-void PassManager::add_pass(std::unique_ptr<Pass> pass) { passes_.push_back(std::move(pass)); }
+void PassManager::add_pass(std::unique_ptr<Pass> pass) {
+    passes_.push_back(std::move(pass));
+}
 
 void PassManager::add_analysis(std::unique_ptr<AnalysisPass> analysis) {
     analysis_index_[analysis->name()] = analyses_.size();
@@ -91,6 +95,7 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
 
         if (modified) {
             result.any_modified = true;
+            ir::recompute_derived_analyses(program, ir::ProgramPhase::Optimized);
             // Invalidate analyses declared by this pass
             for (auto inv : pass->invalidated_analyses()) {
                 invalidate_analysis(inv);
@@ -111,14 +116,14 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
 }
 
 PassManager::RunResult PassManager::run_to_fixpoint(ir::Program &program,
-                                                     std::size_t max_iterations) {
+                                                    std::size_t max_iterations) {
     RunResult combined{};
     for (std::size_t i = 0; i < max_iterations; ++i) {
         auto result = run(program);
-        combined.executed.insert(combined.executed.end(), result.executed.begin(),
-                                 result.executed.end());
-        combined.timings_ms.insert(combined.timings_ms.end(), result.timings_ms.begin(),
-                                    result.timings_ms.end());
+        combined.executed.insert(
+            combined.executed.end(), result.executed.begin(), result.executed.end());
+        combined.timings_ms.insert(
+            combined.timings_ms.end(), result.timings_ms.begin(), result.timings_ms.end());
         if (!result.any_modified) {
             break;
         }

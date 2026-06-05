@@ -6,12 +6,12 @@
 #include <string_view>
 #include <vector>
 
+#include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "pipeline/execution/execution_journal/journal.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
 #include "pipeline/execution/replay_view/replay.hpp"
 #include "pipeline/execution/runtime_session/session.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
 
 namespace ahfl::audit_report {
 
@@ -34,7 +34,7 @@ struct AuditPlanSummary {
     std::string source_execution_plan_format_version;
     std::vector<std::string> execution_order;
     std::vector<AuditPlanNodeSummary> nodes;
-    ir::WorkflowExprSummary return_summary;
+    handoff::WorkflowValueSummary return_summary;
 };
 
 struct AuditSessionNodeSummary {
@@ -77,7 +77,7 @@ struct AuditTraceSummary {
     dry_run::DryRunStatus status{dry_run::DryRunStatus::Completed};
     std::vector<std::string> execution_order;
     std::vector<AuditTraceNodeSummary> nodes;
-    ir::WorkflowExprSummary return_summary;
+    handoff::WorkflowValueSummary return_summary;
 };
 
 struct AuditConsistencySummary {
