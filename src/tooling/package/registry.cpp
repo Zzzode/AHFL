@@ -7,10 +7,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace ahfl::package {
 
@@ -29,51 +31,53 @@ fs::path cache_directory() {
     return fs::path("/tmp") / ".ahfl" / "packages";
 }
 
-struct HttpResult {
-    int status_code = 0;
-    std::string body;
-    bool success = false;
-};
-
-HttpResult http_get(const std::string &url, int timeout_seconds = 10) {
-    ahfl::support::HttpRequest request;
-    request.method = "GET";
-    request.url = url;
-    request.timeout_seconds = timeout_seconds;
-
-    const auto response = ahfl::support::execute_http(request);
-    return HttpResult{
-        .status_code = response.status_code,
-        .body = response.body,
-        .success = response.is_success(),
-    };
-}
-
 fs::path cache_file_path(const std::string &package_name) {
     auto dir = cache_directory();
     return dir / (package_name + ".json");
 }
 
-void save_to_cache(const std::string &package_name, const std::string &json_data) {
-    auto dir = cache_directory();
-    std::error_code ec;
-    fs::create_directories(dir, ec);
-    if (ec)
-        return;
+class HttpRegistryTransport final : public RegistryTransport {
+  public:
+    [[nodiscard]] RegistryHttpResponse get(std::string_view url, int timeout_seconds) override {
+        ahfl::support::HttpRequest request;
+        request.method = "GET";
+        request.url = std::string(url);
+        request.timeout_seconds = timeout_seconds;
 
-    std::ofstream ofs(cache_file_path(package_name));
-    if (ofs) {
-        ofs << json_data;
+        const auto response = ahfl::support::execute_http(request);
+        return RegistryHttpResponse{
+            .status_code = response.status_code,
+            .body = response.body,
+            .success = response.is_success(),
+        };
     }
-}
+};
 
-std::string load_from_cache(const std::string &package_name) {
-    auto path = cache_file_path(package_name);
-    std::ifstream ifs(path);
-    if (!ifs)
-        return "";
-    return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
-}
+class FilesystemRegistryCache final : public RegistryCache {
+  public:
+    void save(std::string_view package_name, std::string_view json_data) override {
+        auto dir = cache_directory();
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec) {
+            return;
+        }
+
+        std::ofstream ofs(cache_file_path(std::string(package_name)));
+        if (ofs) {
+            ofs << json_data;
+        }
+    }
+
+    [[nodiscard]] std::optional<std::string> load(std::string_view package_name) override {
+        auto path = cache_file_path(std::string(package_name));
+        std::ifstream ifs(path);
+        if (!ifs) {
+            return std::nullopt;
+        }
+        return std::string((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    }
+};
 
 std::optional<std::string> object_string(const ahfl::json::JsonValue &object,
                                          std::string_view key) {
@@ -203,81 +207,72 @@ std::vector<std::string> parse_search_json(const std::string &json) {
     return results;
 }
 
-// Hardcoded fallback packages for offline mode
-struct StubPackage {
-    const char *name;
-    const char *version;
-    const char *description;
-};
-
-constexpr StubPackage stub_packages[] = {
-    {"ahfl-stdlib", "1.0.0", "AHFL standard library"},
-    {"ahfl-stdlib", "1.1.0", "AHFL standard library"},
-    {"ahfl-stdlib", "2.0.0", "AHFL standard library v2"},
-    {"ahfl-http", "0.5.0", "HTTP capabilities for AHFL agents"},
-    {"ahfl-http", "0.6.0", "HTTP capabilities for AHFL agents"},
-    {"ahfl-testing", "1.0.0", "Testing utilities for AHFL workflows"},
-    {"ahfl-llm", "0.1.0", "LLM provider bindings"},
-    {"ahfl-llm", "0.2.0", "LLM provider bindings"},
-};
-
-RegistryResult fallback_fetch(const std::string &package_name) {
-    PackageMetadata metadata;
-    metadata.name = package_name;
-    for (const auto &pkg : stub_packages) {
-        if (pkg.name == package_name) {
-            PackageVersion ver;
-            ver.name = pkg.name;
-            ver.version = pkg.version;
-            ver.description = pkg.description;
-            ver.checksum = "sha256:offline";
-            metadata.versions.push_back(std::move(ver));
-        }
-    }
-    if (metadata.versions.empty()) {
-        return RegistryResult{
-            false, std::nullopt, RegistryError::NotFound, "package not found: " + package_name};
-    }
-    metadata.latest_version = metadata.versions.back().version;
-    return RegistryResult{true, std::move(metadata), std::nullopt, ""};
-}
-
 } // namespace
 
-Registry::Registry(std::string base_url) : base_url_(std::move(base_url)) {}
+Registry::Registry(std::string base_url)
+    : Registry(std::move(base_url),
+               std::make_shared<HttpRegistryTransport>(),
+               std::make_shared<FilesystemRegistryCache>()) {}
+
+Registry::Registry(std::string base_url,
+                   std::shared_ptr<RegistryTransport> transport,
+                   std::shared_ptr<RegistryCache> cache)
+    : base_url_(std::move(base_url)), transport_(std::move(transport)), cache_(std::move(cache)) {
+    if (transport_ == nullptr) {
+        transport_ = std::make_shared<HttpRegistryTransport>();
+    }
+    if (cache_ == nullptr) {
+        cache_ = std::make_shared<FilesystemRegistryCache>();
+    }
+}
 
 RegistryResult Registry::fetch_metadata(const std::string &package_name) const {
-    // 1. Try HTTP fetch from registry
     auto url = base_url_ + "/packages/" + package_name;
-    auto http_result = http_get(url);
+    auto http_result = transport_->get(url, 10);
 
+    bool invalid_registry_response = false;
     if (http_result.success && !http_result.body.empty()) {
         auto metadata = parse_metadata_json(http_result.body, package_name);
         if (metadata.has_value()) {
-            save_to_cache(package_name, http_result.body);
+            cache_->save(package_name, http_result.body);
             return RegistryResult{true, std::move(*metadata), std::nullopt, ""};
         }
+        invalid_registry_response = true;
+    } else if (http_result.success) {
+        invalid_registry_response = true;
     }
 
-    // 2. Fallback to local cache
-    auto cached_json = load_from_cache(package_name);
-    if (!cached_json.empty()) {
-        auto metadata = parse_metadata_json(cached_json, package_name);
+    auto cached_json = cache_->load(package_name);
+    if (cached_json.has_value() && !cached_json->empty()) {
+        auto metadata = parse_metadata_json(*cached_json, package_name);
         if (metadata.has_value()) {
             return RegistryResult{true, std::move(*metadata), std::nullopt, ""};
         }
     }
 
-    // 3. Fallback to hardcoded stub (offline compatibility)
-    return fallback_fetch(package_name);
+    if (http_result.status_code == 404) {
+        return RegistryResult{
+            false, std::nullopt, RegistryError::NotFound, "package not found: " + package_name};
+    }
+    if (invalid_registry_response) {
+        return RegistryResult{false,
+                              std::nullopt,
+                              RegistryError::InvalidResponse,
+                              "invalid registry response for package: " + package_name};
+    }
+    return RegistryResult{false,
+                          std::nullopt,
+                          RegistryError::NetworkError,
+                          "package metadata unavailable: " + package_name};
 }
 
 RegistryResult Registry::fetch_version(const std::string &package_name,
                                        const std::string &version) const {
-    // 1. Try HTTP fetch
     auto url = base_url_ + "/packages/" + package_name + "/versions/" + version;
-    auto http_result = http_get(url);
+    auto http_result = transport_->get(url, 10);
 
+    bool invalid_registry_response = false;
+    const bool direct_version_not_found = http_result.status_code == 404;
     if (http_result.success && !http_result.body.empty()) {
         PackageMetadata metadata;
         metadata.name = package_name;
@@ -288,9 +283,11 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
             metadata.versions.push_back(std::move(*parsed_version));
             return RegistryResult{true, std::move(metadata), std::nullopt, ""};
         }
+        invalid_registry_response = true;
+    } else if (http_result.success) {
+        invalid_registry_response = true;
     }
 
-    // 2. Fallback: try full metadata fetch and filter
     auto full = fetch_metadata(package_name);
     if (full.success && full.metadata.has_value()) {
         for (auto &v : full.metadata->versions) {
@@ -304,6 +301,19 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
         }
     }
 
+    if (!full.success && !direct_version_not_found && full.error.has_value()) {
+        return RegistryResult{false,
+                              std::nullopt,
+                              full.error,
+                              "package version unavailable: " + package_name + "@" + version};
+    }
+    if (invalid_registry_response) {
+        return RegistryResult{false,
+                              std::nullopt,
+                              RegistryError::InvalidResponse,
+                              "invalid registry response for package version: " + package_name +
+                                  "@" + version};
+    }
     return RegistryResult{false,
                           std::nullopt,
                           RegistryError::NotFound,
@@ -311,30 +321,13 @@ RegistryResult Registry::fetch_version(const std::string &package_name,
 }
 
 std::vector<std::string> Registry::search(const std::string &query) const {
-    std::vector<std::string> results;
-
-    // 1. Try HTTP search
     auto url = base_url_ + "/search?q=" + query;
-    auto http_result = http_get(url);
+    auto http_result = transport_->get(url, 10);
 
     if (http_result.success && !http_result.body.empty()) {
-        results = parse_search_json(http_result.body);
-        if (!results.empty()) {
-            return results;
-        }
+        return parse_search_json(http_result.body);
     }
-
-    // 2. Fallback to stub data
-    for (const auto &pkg : stub_packages) {
-        std::string name = pkg.name;
-        if (name.find(query) != std::string::npos ||
-            std::string(pkg.description).find(query) != std::string::npos) {
-            if (std::find(results.begin(), results.end(), name) == results.end()) {
-                results.push_back(std::move(name));
-            }
-        }
-    }
-    return results;
+    return {};
 }
 
 const std::string &Registry::base_url() const {
