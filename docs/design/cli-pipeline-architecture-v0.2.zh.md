@@ -8,7 +8,7 @@
 - [frontend-lowering-architecture-v0.2.zh.md](./frontend-lowering-architecture-v0.2.zh.md)
 - [semantics-architecture-v0.2.zh.md](./semantics-architecture-v0.2.zh.md)
 - [ir-backend-architecture-v0.2.zh.md](./ir-backend-architecture-v0.2.zh.md)
-- [cli-commands-v0.3.zh.md](../reference/cli-commands-v0.3.zh.md)
+- [cli-commands-v0.11.zh.md](../reference/cli-commands-v0.11.zh.md)
 
 ## 目标
 

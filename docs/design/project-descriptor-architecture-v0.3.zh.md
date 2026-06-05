@@ -16,8 +16,8 @@
 - `src/compiler/syntax/frontend/frontend.cpp`
 - `src/compiler/syntax/frontend/project.cpp`
 - `src/tooling/cli/ahflc.cpp`
-- `docs/reference/project-usage-v0.3.zh.md`
-- `docs/reference/cli-commands-v0.3.zh.md`
+- `docs/reference/project-usage-v0.5.zh.md`
+- `docs/reference/cli-commands-v0.11.zh.md`
 
 ## 目标
 

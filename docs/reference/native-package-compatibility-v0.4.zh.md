@@ -5,7 +5,7 @@
 关联文档：
 
 - [native-package-authoring-compatibility-v0.5.zh.md](./native-package-authoring-compatibility-v0.5.zh.md)
-- [cli-commands-v0.3.zh.md](./cli-commands-v0.3.zh.md)
+- [cli-commands-v0.11.zh.md](./cli-commands-v0.11.zh.md)
 - [backend-capability-matrix-v0.3.zh.md](./backend-capability-matrix-v0.3.zh.md)
 - [native-handoff-architecture-v0.4.zh.md](../design/native-handoff-architecture-v0.4.zh.md)
 - [native-package-metadata-v0.4.zh.md](../design/native-package-metadata-v0.4.zh.md)

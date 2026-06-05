@@ -1,15 +1,31 @@
 # AHFL Core V0.5 Project Usage
 
-本文给出 AHFL Core V0.5 的 project-aware 用法参考，重点覆盖 `ahfl.project.json` / `ahfl.workspace.json` 的输入模式、`ahfl.package.json` 的 authoring 输入，以及“author metadata -> emit package -> review / consume”这条完整路径。
+本文是 `docs/reference` 中 project usage 的合并入口，统一覆盖原 `project-usage-v0.2`、`v0.3` 与 `v0.5` 文档。当前维护口径以 V0.5 为准；V0.2/V0.3 的项目装载和 descriptor 规则已合并到本文，不再保留独立入口。
 
 关联文档：
 
 - [project-descriptor-architecture-v0.3.zh.md](../design/project-descriptor-architecture-v0.3.zh.md)
 - [native-package-authoring-architecture-v0.5.zh.md](../design/native-package-authoring-architecture-v0.5.zh.md)
 - [native-consumer-bootstrap-v0.5.zh.md](../design/native-consumer-bootstrap-v0.5.zh.md)
-- [cli-commands-v0.5.zh.md](./cli-commands-v0.5.zh.md)
+- [cli-commands-v0.11.zh.md](./cli-commands-v0.11.zh.md)
 - [native-handoff-usage-v0.5.zh.md](./native-handoff-usage-v0.5.zh.md)
 - [native-package-authoring-compatibility-v0.5.zh.md](./native-package-authoring-compatibility-v0.5.zh.md)
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.2 | search-root 输入、最小目录约定、ownership / search root 失败模式。 |
+| V0.3 | project / workspace descriptor、三种输入模式、project-aware CLI 支持矩阵。 |
+| V0.5 | package authoring descriptor、native package / package review / reference consumer 路径。 |
+
+## 当前口径摘要
+
+1. `ahfl.project.json` / `ahfl.workspace.json` 只描述 source graph 装载，不承载 package authoring 元数据。
+2. `ahfl.package.json` 是独立 authoring 输入，当前只由 package / runtime-adjacent 输出链路消费。
+3. `--search-root`、`--project`、`--workspace --project-name` 最终进入同一条 compiler 主链路。
+4. display name 只能作为 authoring convenience；进入 handoff package 前必须规范化为 canonical name。
+5. review/debug 与 direct consumer helper 必须复用 `handoff::Package`，不能绕回 AST、source 或 raw JSON。
 
 ## 术语
 
@@ -214,13 +230,13 @@ ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
 3. review/debug 与 direct consumer helper 都必须复用 `handoff::Package`，不能回退去扫 raw JSON 或 AST。
 4. 改 project-aware 输入模式时，要同步更新：
    - `docs/design/project-descriptor-architecture-v0.3.zh.md`
-   - `docs/reference/cli-commands-v0.5.zh.md`
+   - `docs/reference/cli-commands-v0.11.zh.md`
    - `tests/cmake/ProjectTests.cmake`
    - `tests/project/`
 5. 改 package authoring 或 handoff usage 时，要同步更新：
    - `docs/reference/native-handoff-usage-v0.5.zh.md`
    - `docs/reference/native-package-authoring-compatibility-v0.5.zh.md`
-   - `docs/reference/contributor-guide-v0.5.zh.md`
+   - `docs/reference/contributor-guide-v0.14.zh.md`
 
 ## 当前状态
 

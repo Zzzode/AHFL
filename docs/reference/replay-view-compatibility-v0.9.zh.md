@@ -1,6 +1,6 @@
 # AHFL Replay View Compatibility And Versioning V0.9
 
-本文冻结 `emit-replay-view` / `replay_view::ReplayView` 在 V0.9 阶段的版本化与兼容性契约，作为 future replay verifier、scheduler prototype、audit consumer、golden 与 regression 的共同约束。
+本文是 `docs/reference` 中 replay view compatibility 的合并入口，统一覆盖原 `replay-view-compatibility-v0.8` 与 `v0.9` 文档。当前维护口径以 V0.9 为准；V0.8 success-path replay baseline 已合并为历史基线说明，不再保留独立入口。
 
 关联文档：
 
@@ -20,6 +20,20 @@
 3. 哪些 replay 字段是当前稳定边界。
 4. 哪些变化可视为兼容扩展，哪些必须 bump 版本。
 5. replay 与 execution plan / runtime session / execution journal / audit report 的兼容层次关系是什么。
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.8 | `ahfl.replay-view.v1` success-path replay projection、progression consistency 与兼容规则。 |
+| V0.9 | `ahfl.replay-view.v2` failure-aware replay projection、runtime failed / partial 状态与当前稳定字段。 |
+
+## 当前口径摘要
+
+1. `ahfl.replay-view.v2` 是当前 replay view consumer 的主校验版本。
+2. `v1` 只代表 historical success baseline；消费 failure-aware status / progression 的工具必须显式接受 `v2`。
+3. Replay view 是 execution plan、runtime session 与 execution journal 的 consistency projection，不是 store import 或 recovery state 的第一事实来源。
+4. 改变 replay status、node progression 或 workflow failure projection 语义必须 bump format version。
 
 ## 当前版本标识
 
