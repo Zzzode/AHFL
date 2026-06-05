@@ -101,6 +101,7 @@ Avoid:
 
 - [project-status.zh.md](./plan/project-status.zh.md) - consolidated project status and version history
 - [issue-backlog-global-gaps.zh.md](./plan/issue-backlog-global-gaps.zh.md) - consolidated unresolved work backlog
+- [semantics-typecheck-hardening-v0.1.zh.md](./plan/semantics-typecheck-hardening-v0.1.zh.md) - TypeCheck / Sema hardening rollout plan
 
 ### Reference
 
