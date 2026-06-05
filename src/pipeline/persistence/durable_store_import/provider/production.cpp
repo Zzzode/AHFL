@@ -12,7 +12,9 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_production_readiness_detail_kValidationDiagnosticCode{"DSI_PROVIDER_PRODUCTION_READINESS"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_production_readiness_detail_kValidationDiagnosticCode{
+        "DSI_PROVIDER_PRODUCTION_READINESS"};
 
 void provider_production_readiness_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                 std::string message) {
@@ -287,7 +289,8 @@ namespace ahfl::durable_store_import {
 namespace {
 
 inline constexpr ErrorCode<DiagnosticCategory::Validation>
-    provider_release_evidence_archive_detail_kValidationDiagnosticCode{"DSI_PROVIDER_RELEASE_EVIDENCE_ARCHIVE"};
+    provider_release_evidence_archive_detail_kValidationDiagnosticCode{
+        "DSI_PROVIDER_RELEASE_EVIDENCE_ARCHIVE"};
 
 void provider_release_evidence_archive_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                     std::string message) {
@@ -551,7 +554,8 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_approval_workflow_detail_kValidationDiagnosticCode{"DSI_PROVIDER_APPROVAL_WORKFLOW"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_approval_workflow_detail_kValidationDiagnosticCode{"DSI_PROVIDER_APPROVAL_WORKFLOW"};
 
 void provider_approval_workflow_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                              std::string message) {
@@ -1252,6 +1256,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
 
 #include "pipeline/persistence/durable_store_import/provider/production/production_integration_dry_run.hpp"
 
+#include <initializer_list>
 #include <string>
 #include <utility>
 
@@ -1270,6 +1275,89 @@ namespace ahfl::durable_store_import {
     }
     return "Blocked";
 }
+
+namespace {
+
+struct ProductionIntegrationEvidenceSpec {
+    std::string evidence_type;
+    std::string evidence_identity;
+    std::string format_version;
+    bool is_valid{false};
+};
+
+[[nodiscard]] EvidenceChainItem provider_production_integration_detail_make_evidence_chain_item(
+    const ProductionIntegrationEvidenceSpec &spec) {
+    const bool is_present = !spec.evidence_identity.empty() && !spec.format_version.empty();
+    return EvidenceChainItem{
+        .evidence_type = spec.evidence_type,
+        .evidence_identity = spec.evidence_identity,
+        .format_version = spec.format_version,
+        .is_present = is_present,
+        .is_valid = is_present && spec.is_valid,
+        .is_fresh = true,
+    };
+}
+
+void provider_production_integration_detail_summarize_evidence_chain(
+    ProviderProductionIntegrationDryRunReport &report) {
+    report.total_evidence_count = static_cast<int>(report.evidence_chain.size());
+    report.valid_evidence_count = 0;
+    report.invalid_evidence_count = 0;
+    report.missing_evidence_count = 0;
+    for (const auto &item : report.evidence_chain) {
+        if (!item.is_present) {
+            ++report.missing_evidence_count;
+        } else if (!item.is_valid) {
+            ++report.invalid_evidence_count;
+        } else {
+            ++report.valid_evidence_count;
+        }
+    }
+}
+
+[[nodiscard]] BlockingItem
+provider_production_integration_detail_make_blocking_item(const EvidenceChainItem &item) {
+    if (!item.is_present) {
+        return BlockingItem{
+            .block_type = "missing_evidence",
+            .block_reason = item.evidence_type + " evidence is missing",
+            .responsible_artifact = item.evidence_identity,
+            .suggested_action = "generate " + item.evidence_type + " report",
+        };
+    }
+    return BlockingItem{
+        .block_type = "invalid_evidence",
+        .block_reason = item.evidence_type + " evidence is invalid",
+        .responsible_artifact = item.evidence_identity,
+        .suggested_action = "resolve " + item.evidence_type + " failures",
+    };
+}
+
+void provider_production_integration_detail_rebuild_blocking_items(
+    ProviderProductionIntegrationDryRunReport &report) {
+    report.blocking_items.clear();
+    for (const auto &item : report.evidence_chain) {
+        if (!item.is_present || !item.is_valid) {
+            report.blocking_items.push_back(
+                provider_production_integration_detail_make_blocking_item(item));
+        }
+    }
+    report.blocking_item_count = static_cast<int>(report.blocking_items.size());
+}
+
+void provider_production_integration_detail_assign_evidence_chain(
+    ProviderProductionIntegrationDryRunReport &report,
+    std::initializer_list<ProductionIntegrationEvidenceSpec> specs) {
+    report.evidence_chain.clear();
+    for (const auto &spec : specs) {
+        report.evidence_chain.push_back(
+            provider_production_integration_detail_make_evidence_chain_item(spec));
+    }
+    provider_production_integration_detail_summarize_evidence_chain(report);
+    provider_production_integration_detail_rebuild_blocking_items(report);
+}
+
+} // namespace
 
 [[nodiscard]] ProviderProductionIntegrationDryRunReportValidationResult
 validate_provider_production_integration_dry_run_report(
@@ -1372,123 +1460,38 @@ build_provider_production_integration_dry_run_report(
     report.runtime_policy_report_identity =
         "runtime-policy-report::" + runtime_policy_report.session_id;
 
-    // ===== 构建 Evidence Chain =====
-
-    // v0.43: Conformance Report
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "conformance";
-        item.evidence_identity = report.conformance_report_identity;
-        item.format_version = conformance_report.format_version;
-        item.is_present = true;
-        item.is_valid = (conformance_report.fail_count == 0);
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // v0.44: Schema Compatibility Report
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "schema_compatibility";
-        item.evidence_identity = report.schema_compatibility_report_identity;
-        item.format_version = schema_report.format_version;
-        item.is_present = true;
-        item.is_valid = (schema_report.incompatible_count == 0 && !schema_report.has_schema_drift);
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // v0.45: Config Bundle Validation Report
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "config_validation";
-        item.evidence_identity = report.config_validation_report_identity;
-        item.format_version = config_report.format_version;
-        item.is_present = true;
-        item.is_valid = (config_report.invalid_count == 0 && config_report.missing_count == 0);
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // v0.46: Release Evidence Archive Manifest
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "release_archive";
-        item.evidence_identity = report.release_evidence_archive_manifest_identity;
-        item.format_version = evidence_archive.format_version;
-        item.is_present = true;
-        item.is_valid = evidence_archive.is_release_ready;
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // v0.47: Approval Receipt
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "approval";
-        item.evidence_identity = report.approval_receipt_identity;
-        item.format_version = approval_receipt.format_version;
-        item.is_present = true;
-        item.is_valid = approval_receipt.is_approved;
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // v0.48: Opt-In Decision Report
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "opt_in";
-        item.evidence_identity = report.opt_in_decision_report_identity;
-        item.format_version = opt_in_report.format_version;
-        item.is_present = true;
-        item.is_valid = opt_in_report.is_real_provider_traffic_allowed;
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // v0.49: Runtime Policy Report
-    {
-        EvidenceChainItem item;
-        item.evidence_type = "runtime_policy";
-        item.evidence_identity = report.runtime_policy_report_identity;
-        item.format_version = runtime_policy_report.format_version;
-        item.is_present = true;
-        item.is_valid = runtime_policy_report.is_execution_permitted;
-        item.is_fresh = true;
-        report.evidence_chain.push_back(std::move(item));
-    }
-
-    // ===== 汇总 evidence chain 计数 =====
-    report.total_evidence_count = static_cast<int>(report.evidence_chain.size());
-    for (const auto &item : report.evidence_chain) {
-        if (!item.is_present) {
-            ++report.missing_evidence_count;
-        } else if (!item.is_valid) {
-            ++report.invalid_evidence_count;
-        } else {
-            ++report.valid_evidence_count;
-        }
-    }
-
-    // ===== 构建 blocking items =====
-    for (const auto &item : report.evidence_chain) {
-        if (!item.is_present) {
-            BlockingItem blocker;
-            blocker.block_type = "missing_evidence";
-            blocker.block_reason = item.evidence_type + " evidence is missing";
-            blocker.responsible_artifact = item.evidence_identity;
-            blocker.suggested_action = "generate " + item.evidence_type + " report";
-            report.blocking_items.push_back(std::move(blocker));
-        } else if (!item.is_valid) {
-            BlockingItem blocker;
-            blocker.block_type = "invalid_evidence";
-            blocker.block_reason = item.evidence_type + " evidence is invalid";
-            blocker.responsible_artifact = item.evidence_identity;
-            blocker.suggested_action = "resolve " + item.evidence_type + " failures";
-            report.blocking_items.push_back(std::move(blocker));
-        }
-    }
-    report.blocking_item_count = static_cast<int>(report.blocking_items.size());
+    provider_production_integration_detail_assign_evidence_chain(
+        report,
+        {
+            {"conformance",
+             report.conformance_report_identity,
+             conformance_report.format_version,
+             conformance_report.fail_count == 0},
+            {"schema_compatibility",
+             report.schema_compatibility_report_identity,
+             schema_report.format_version,
+             schema_report.incompatible_count == 0 && !schema_report.has_schema_drift},
+            {"config_validation",
+             report.config_validation_report_identity,
+             config_report.format_version,
+             config_report.invalid_count == 0 && config_report.missing_count == 0},
+            {"release_archive",
+             report.release_evidence_archive_manifest_identity,
+             evidence_archive.format_version,
+             evidence_archive.is_release_ready},
+            {"approval",
+             report.approval_receipt_identity,
+             approval_receipt.format_version,
+             approval_receipt.is_approved},
+            {"opt_in",
+             report.opt_in_decision_report_identity,
+             opt_in_report.format_version,
+             opt_in_report.is_real_provider_traffic_allowed},
+            {"runtime_policy",
+             report.runtime_policy_report_identity,
+             runtime_policy_report.format_version,
+             runtime_policy_report.is_execution_permitted},
+        });
 
     // ===== 确定 readiness state =====
     if (report.missing_evidence_count > 0) {
