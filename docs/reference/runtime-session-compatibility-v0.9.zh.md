@@ -1,6 +1,6 @@
 # AHFL Runtime Session Compatibility And Versioning V0.9
 
-本文冻结 `emit-runtime-session` / `runtime_session::RuntimeSession` 在 V0.9 阶段的版本化与兼容性契约，作为 future scheduler prototype、execution journal、replay、audit、golden 与 regression 的共同约束。
+本文是 `docs/reference` 中 runtime session compatibility 的合并入口，统一覆盖原 `runtime-session-compatibility-v0.7` 与 `v0.9` 文档。当前维护口径以 V0.9 为准；V0.7 success-path session baseline 已合并为历史基线说明，不再保留独立入口。
 
 关联文档：
 
@@ -19,6 +19,20 @@
 3. 哪些 session 字段是当前稳定边界。
 4. 哪些变化可视为兼容扩展，哪些必须 bump 版本。
 5. session 与 execution plan / execution journal / replay / audit 的兼容层次关系是什么。
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.7 | `ahfl.runtime-session.v1` success-path-only session 语义、node progression 与兼容规则。 |
+| V0.9 | `ahfl.runtime-session.v2` partial / failed session 语义、failure summary 与当前稳定字段。 |
+
+## 当前口径摘要
+
+1. `ahfl.runtime-session.v2` 是当前 runtime session consumer 的主校验版本。
+2. `v1` 只代表 historical success baseline；消费 `Failed` / `Partial` workflow 或 `Failed` / `Skipped` node 的工具必须显式接受 `v2`。
+3. Runtime session 是 workflow / node 当前状态快照的第一事实来源，journal / replay / audit 不应替代它定义当前状态。
+4. 改变 workflow status、node status、failure summary 或 execution order 语义必须 bump format version。
 
 ## 当前版本标识
 

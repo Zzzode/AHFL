@@ -7,7 +7,7 @@
 - [core-scope-v0.1.en.md](./core-scope-v0.1.en.md)
 - [native-package-metadata-v0.4.zh.md](./native-package-metadata-v0.4.zh.md)
 - [native-package-compatibility-v0.4.zh.md](../reference/native-package-compatibility-v0.4.zh.md)
-- [native-handoff-usage-v0.4.zh.md](../reference/native-handoff-usage-v0.4.zh.md)
+- [native-handoff-usage-v0.5.zh.md](../reference/native-handoff-usage-v0.5.zh.md)
 - [project-descriptor-architecture-v0.3.zh.md](./project-descriptor-architecture-v0.3.zh.md)
 - [ir-backend-architecture-v0.2.zh.md](./ir-backend-architecture-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.md)

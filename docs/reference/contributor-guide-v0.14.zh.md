@@ -1,13 +1,36 @@
 # AHFL Contributor Guide V0.14
 
-本文给出面向新贡献者的 V0.14 上手路径，重点覆盖 `StoreImportDescriptor`、`StoreImportReviewSummary`、migration / schema-drift evidence、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.13 export-package-facing artifact 的协作边界。
+本文是 `docs/reference` 中 contributor guide 的合并入口，统一覆盖原 `contributor-guide-v0.3`、`v0.5` 到 `v0.14` 文档。当前维护口径以 V0.14 为准；旧版本的贡献路径、验证标签与扩展顺序已合并为摘要，不再保留独立入口。
 
 关联文档：
 
-- [contributor-guide-v0.13.zh.md](./contributor-guide-v0.13.zh.md)
 - [native-consumer-matrix-v0.14.zh.md](./native-consumer-matrix-v0.14.zh.md)
 - [store-import-prototype-compatibility-v0.14.zh.md](./store-import-prototype-compatibility-v0.14.zh.md)
 - [native-store-import-prototype-bootstrap-v0.14.zh.md](../design/native-store-import-prototype-bootstrap-v0.14.zh.md)
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.3 | project model、diagnostics、IR、backend extension 的基础贡献入口。 |
+| V0.5 | package authoring、native package、review / reference consumer helper。 |
+| V0.6 | execution plan、dry-run runner、trace 输出。 |
+| V0.7 | runtime session、execution journal。 |
+| V0.8 | replay view、audit report。 |
+| V0.9 | partial / failed session 与 failure-aware journal / replay / audit。 |
+| V0.10 | scheduler snapshot。 |
+| V0.11 | checkpoint record。 |
+| V0.12 | persistence descriptor。 |
+| V0.13 | export manifest / export review。 |
+| V0.14 | store import descriptor / review。 |
+
+## 当前口径摘要
+
+1. 新贡献者应先跑通当前 V0.14 store-import-facing 路径，再回溯上游 consumer。
+2. 改稳定 artifact 字段时，必须同步模型、validator、emitter、golden、compatibility 文档、consumer matrix、贡献指南和 CI 标签。
+3. 扩展顺序应沿 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence -> export-manifest -> store-import-descriptor -> store-import-review` 前进。
+4. Review / projection artifact 不能私造状态机；machine-facing artifact 是下游稳定依赖的第一事实来源。
+5. 仓库当前不维护 immature 语义的向前兼容；breaking change 要通过文档、测试和 commit footer 显式标出。
 
 ## 先跑通的八条路径
 

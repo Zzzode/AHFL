@@ -1,6 +1,6 @@
 # AHFL Audit Report Compatibility And Versioning V0.9
 
-本文冻结 `emit-audit-report` / `audit_report::AuditReport` 在 V0.9 阶段的版本化与兼容性契约，作为 future audit tooling、CI review、artifact archival、golden 与 regression 的共同约束。
+本文是 `docs/reference` 中 audit report compatibility 的合并入口，统一覆盖原 `audit-report-compatibility-v0.8` 与 `v0.9` 文档。当前维护口径以 V0.9 为准；V0.8 success-path baseline 已合并为历史基线说明，不再保留独立入口。
 
 关联文档：
 
@@ -21,6 +21,20 @@
 3. 哪些 audit 字段是当前稳定边界。
 4. 哪些变化可视为兼容扩展，哪些必须 bump 版本。
 5. audit report 与 plan / session / journal / trace / replay 的兼容层次关系是什么。
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.8 | `ahfl.audit-report.v1` success-path aggregate 审查语义、兼容扩展和 breaking-change 规则。 |
+| V0.9 | `ahfl.audit-report.v2` failure-aware aggregate 审查语义、failure-path baseline 与当前稳定字段。 |
+
+## 当前口径摘要
+
+1. `ahfl.audit-report.v2` 是当前 audit report consumer 的主校验版本。
+2. `v1` 只代表 historical success baseline；消费 failure-aware conclusion 的工具必须显式接受 `v2`。
+3. Audit report 是 reviewer / CI / archive 的 aggregate projection，不是 runtime session、journal 或 replay 的第一事实来源。
+4. 新增字段可兼容扩展；改变 conclusion、summary 或 replay consistency 的既有语义必须 bump format version。
 
 ## 当前版本标识
 

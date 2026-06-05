@@ -1,12 +1,35 @@
 # AHFL Native Consumer Matrix V0.14
 
-本文冻结 AHFL V0.14 中 store-import-facing consumer 的当前矩阵，重点覆盖 `ExecutionPlan`、`RuntimeSession`、`ExecutionJournal`、`ReplayView`、`SchedulerSnapshot`、`CheckpointRecord`、`CheckpointPersistenceDescriptor`、`PersistenceExportManifest`、`StoreImportDescriptor`、`StoreImportReviewSummary`、`AuditReport` 与 `DryRunTrace` 各自稳定依赖什么，以及 future durable store adapter 当前应落在哪一层。
+本文是 `docs/reference` 中 native consumer matrix 的合并入口，统一覆盖原 `native-consumer-matrix-v0.4` 到 `v0.14` 文档。当前维护口径以 V0.14 为准；旧版本的 consumer 扩展顺序和边界演进已合并为摘要，不再保留独立入口。
 
 关联文档：
 
-- [native-consumer-matrix-v0.13.zh.md](./native-consumer-matrix-v0.13.zh.md)
 - [store-import-prototype-compatibility-v0.14.zh.md](./store-import-prototype-compatibility-v0.14.zh.md)
 - [native-store-import-prototype-bootstrap-v0.14.zh.md](../design/native-store-import-prototype-bootstrap-v0.14.zh.md)
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.4 | Package Reader、Execution Planner、Policy / Audit consumer 基础边界。 |
+| V0.5 | package authoring / handoff helper 共享入口。 |
+| V0.6 | execution plan、dry-run trace 与 future scheduler / audit consumer 位置。 |
+| V0.7 | runtime session、execution journal、failure bootstrap 边界。 |
+| V0.8 | replay / audit projection 与推荐消费顺序。 |
+| V0.9 | partial / failed session、failure-aware replay / audit 边界。 |
+| V0.10 | scheduler snapshot 边界。 |
+| V0.11 | checkpoint record 边界。 |
+| V0.12 | persistence descriptor 边界。 |
+| V0.13 | export manifest / export review 边界。 |
+| V0.14 | store import descriptor / review 边界。 |
+
+## 当前口径摘要
+
+1. 当前推荐消费顺序冻结为 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence -> export-manifest -> store-import-descriptor -> store-import-review`。
+2. 每一层 consumer 只能依赖其稳定输入和明确承诺的边界，不应从 AST、source、trace 或 CLI 文本私自重建下游状态。
+3. `StoreImportDescriptor` 是 store import machine-facing state 的第一正式事实来源。
+4. `StoreImportReviewSummary` 是 descriptor 的 reviewer-facing projection，不是 durable store / recovery protocol。
+5. Future durable store adapter 需要 durable checkpoint id、resume token、store URI、object path 或 import ABI 时，应先新增正式 store import / durable store 边界，而不是扩张 review 文本。
 
 ## 当前矩阵
 

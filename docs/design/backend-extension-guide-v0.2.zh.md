@@ -5,7 +5,7 @@
 关联文档：
 
 - [backend-capability-matrix-v0.3.zh.md](../reference/backend-capability-matrix-v0.3.zh.md)
-- [native-consumer-matrix-v0.5.zh.md](../reference/native-consumer-matrix-v0.5.zh.md)
+- [native-consumer-matrix-v0.14.zh.md](../reference/native-consumer-matrix-v0.14.zh.md)
 - [native-package-authoring-compatibility-v0.5.zh.md](../reference/native-package-authoring-compatibility-v0.5.zh.md)
 - [ir-backend-architecture-v0.2.zh.md](./ir-backend-architecture-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](./formal-backend-v0.2.zh.md)
@@ -112,7 +112,7 @@ AHFL 当前 backend 相关代码分布在：
 
 具体分类见：
 
-- [native-consumer-matrix-v0.5.zh.md](../reference/native-consumer-matrix-v0.5.zh.md)
+- [native-consumer-matrix-v0.14.zh.md](../reference/native-consumer-matrix-v0.14.zh.md)
 
 ## 第二步：判断是否先扩展 IR
 
