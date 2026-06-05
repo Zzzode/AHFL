@@ -138,7 +138,7 @@ V0.11 当前 checkpoint-facing consumer 共享入口是：
 1. future persistence prototype 不应直接从 `ReplayView` / `AuditReport` 倒推 checkpoint state
 2. future persistence prototype 不应直接从 `DryRunTrace` 推导 resume blocker
 3. `CheckpointReviewSummary` 是 projection，不是 recovery protocol
-4. 若以后需要 durable checkpoint id / resume token，应先扩 `CheckpointRecord` compatibility contract，而不是把字段塞进 review 输出
+4. 若以后需要 durable checkpoint id / resume token，应先新增 `CheckpointRecord` migration record 与 schema-drift evidence，而不是把字段塞进 review 输出
 
 ## 当前反模式
 

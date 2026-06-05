@@ -66,13 +66,13 @@
 
 ## 三、运行时与执行层
 
-### 3.1 HTTP/gRPC Capability 真实实现（P0，v0.57）
+### 3.1 Capability Transport Hardening（P0，v0.57）
 
-- [ ] 实现 `make_http_capability()` 真实 HTTP 调用（替换当前 stub）。
-- [ ] 实现 `make_grpc_capability()` 真实 gRPC 调用（替换当前 stub）。
-- [ ] 实现请求/响应的 Value ↔ JSON/Protobuf 序列化。
-- [ ] 实现连接池管理。
-- [ ] 实现超时、重试、断路器策略。
+- [ ] 为 `make_http_capability()` 增加认证、secret handle 解析与响应 schema 校验。
+- [ ] 明确 `make_grpc_json_transcoding_capability()` 的 HTTP/2 JSON transcoding contract，并补齐错误 trailer / metadata 处理。
+- [ ] 原生 gRPC / Protobuf transport 作为独立 capability transport 引入，不复用 JSON transcoding seam。
+- [ ] 扩展请求/响应的 Value ↔ JSON / Protobuf 映射测试。
+- [ ] 强化连接池、超时、重试、断路器在真实失败路径上的回归覆盖。
 
 ### 3.2 并行工作流执行（P2，v0.58+）
 
@@ -264,7 +264,7 @@
 | 优先级 | 工作项 | 建议版本 |
 |--------|--------|----------|
 | **P0** | 反例诊断（counterexample → 源码映射） | v0.57 |
-| **P0** | HTTP/gRPC Capability 真实实现 | v0.57 |
+| **P0** | Capability Transport Hardening | v0.57 |
 | **P1** | LLM Provider 增强（Streaming + Function Calling） | v0.57–v0.58 |
 | **P1** | LSP 语言服务器 | v0.58 |
 | **P1** | Secret 管理 | v0.57+ |

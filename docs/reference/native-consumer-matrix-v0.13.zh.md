@@ -164,7 +164,7 @@ V0.13 当前 export-package-facing consumer 共享入口是：
 1. future durable store prototype 不应直接从 `ReplayView` / `AuditReport` 倒推 export package state
 2. future durable store prototype 不应直接从 `DryRunTrace` 推导 artifact bundle 或 store-import blocker
 3. `PersistenceExportReviewSummary` 是 projection，不是 durable store / recovery protocol
-4. 若以后需要 durable checkpoint id / resume token / store location / import ABI，应先扩 export package compatibility contract，而不是把字段塞进 manifest / review 输出
+4. 若以后需要 durable checkpoint id / resume token / store location / import ABI，应先新增 export package migration record 与 schema-drift evidence，而不是把字段塞进 manifest / review 输出
 
 ## 当前反模式
 

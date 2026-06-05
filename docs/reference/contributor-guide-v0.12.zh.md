@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.12
 
-本文给出面向新贡献者的 V0.12 上手路径，重点覆盖 persistence descriptor、persistence review、compatibility contract、golden regression，以及它们与 V0.11 checkpoint-facing artifact 的协作边界。
+本文给出面向新贡献者的 V0.12 上手路径，重点覆盖 persistence descriptor、persistence review、migration / schema-drift evidence、golden regression，以及它们与 V0.11 checkpoint-facing artifact 的协作边界。
 
 关联文档：
 

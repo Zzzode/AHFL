@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.11
 
-本文给出面向新贡献者的 V0.11 上手路径，重点覆盖 checkpoint record、checkpoint review、compatibility contract、golden regression，以及它们与 V0.10 scheduler-facing artifact 的协作边界。
+本文给出面向新贡献者的 V0.11 上手路径，重点覆盖 checkpoint record、checkpoint review、migration / schema-drift evidence、golden regression，以及它们与 V0.10 scheduler-facing artifact 的协作边界。
 
 关联文档：
 

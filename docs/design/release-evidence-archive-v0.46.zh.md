@@ -1,6 +1,6 @@
 # AHFL Release Evidence Archive V0.46
 
-本文冻结 AHFL V0.46 中 release evidence archive manifest 的最小边界。它消费 V0.42–V0.45 的 readiness、conformance、schema compatibility 与 config bundle validation evidence，目标是生成可复现的 release evidence 汇总视图，明确证据缺失、过期或不兼容状态。
+本文冻结 AHFL V0.46 中 release evidence archive manifest 的最小边界。它消费 V0.42–V0.45 的 readiness、conformance、schema drift evidence 与 config bundle validation evidence，目标是生成可复现的 release evidence 汇总视图，明确证据缺失、过期或不兼容状态。
 
 关联文档：
 
@@ -67,7 +67,7 @@
 ## CLI 集成
 
 ```
-ahflc emit provider/release-evidence-archive-manifest \
+ahflc emit-provider-artifact provider/release-evidence-archive-manifest \
   --package <ahfl.package.json> \
   --capability-mocks <mocks.json> \
   --input-fixture <fixture> \
