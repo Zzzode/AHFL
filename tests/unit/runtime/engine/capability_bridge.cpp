@@ -269,6 +269,51 @@ void test_http_capability_injected_transport_success() {
     }
 }
 
+void test_http_capability_rejects_malformed_json_response() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = "not json",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/capability";
+    auto binding = make_http_capability("http_malformed", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_malformed", {});
+
+    check(result.status == CapabilityCallStatus::Error, "http_malformed.status_error");
+    check(!result.value.has_value(), "http_malformed.no_value");
+    check(result.error_message == "invalid wire JSON response body",
+          "http_malformed.error_message");
+}
+
+void test_http_capability_text_plain_response() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = "plain response",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/capability";
+    config.response_format = CapabilityResponseFormat::TextPlain;
+    auto binding = make_http_capability("http_text", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_text", {});
+
+    check(result.status == CapabilityCallStatus::Success, "http_text.status");
+    auto *value =
+        result.value.has_value() ? std::get_if<StringValue>(&result.value->node) : nullptr;
+    check(value != nullptr && value->value == "plain response", "http_text.value");
+}
+
 // ============================================================================
 // Test 8: grpc_capability_json_transcoding
 // ============================================================================
@@ -345,6 +390,31 @@ void test_grpc_capability_injected_transport_success() {
               "grpc_success.body");
         check(request.timeout == std::chrono::seconds{3}, "grpc_success.timeout");
     }
+}
+
+void test_grpc_capability_rejects_malformed_json_response() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = "not json",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    auto binding =
+        make_grpc_json_transcoding_capability("grpc_malformed", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_malformed", {});
+
+    check(result.status == CapabilityCallStatus::Error, "grpc_malformed.status_error");
+    check(!result.value.has_value(), "grpc_malformed.no_value");
+    check(result.error_message == "invalid wire JSON response body",
+          "grpc_malformed.error_message");
 }
 
 // ============================================================================
@@ -584,8 +654,11 @@ int main() {
     test_as_invoker_preserves_structured_result();
     test_http_capability_binding();
     test_http_capability_injected_transport_success();
+    test_http_capability_rejects_malformed_json_response();
+    test_http_capability_text_plain_response();
     test_grpc_capability_json_transcoding();
     test_grpc_capability_injected_transport_success();
+    test_grpc_capability_rejects_malformed_json_response();
     test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
     test_eval_with_capability_call();

@@ -66,10 +66,7 @@ std::string GrpcJsonTranscodingEndpoint::to_path() const {
     return "/" + service_name + "/" + method_name;
 }
 
-namespace {
-
-/// Map HTTP status codes to gRPC status codes for transcoding.
-[[nodiscard]] GrpcStatusCode http_to_grpc_status(int http_code) {
+GrpcStatusCode grpc_status_from_http_status(int http_code) {
     if (http_code >= 200 && http_code < 300) {
         return GrpcStatusCode::Ok;
     }
@@ -104,8 +101,6 @@ namespace {
     }
     return GrpcStatusCode::Internal;
 }
-
-} // namespace
 
 // ============================================================================
 // serialize helpers
@@ -142,7 +137,7 @@ execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) {
     }
 
     // Map HTTP status to gRPC status for the JSON-transcoding bridge.
-    const auto grpc_status = http_to_grpc_status(response.status_code);
+    const auto grpc_status = grpc_status_from_http_status(response.status_code);
 
     if (grpc_status != GrpcStatusCode::Ok) {
         return GrpcJsonTranscodingResponse{
