@@ -134,8 +134,9 @@ flowchart LR
 
 | Category | Entry Point |
 |----------|-------------|
+| User Guide | [`docs/reference/user-guide-overview-v0.1.zh.md`](docs/reference/user-guide-overview-v0.1.zh.md) |
 | Language Spec | [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) |
-| CLI Reference | [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md) |
+| CLI Reference | [`docs/reference/cli-commands-v0.11.zh.md`](docs/reference/cli-commands-v0.11.zh.md) |
 | IR Format | [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md) |
 | Project System | [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) |
 | Full Doc Index | [`docs/README.md`](docs/README.md) |

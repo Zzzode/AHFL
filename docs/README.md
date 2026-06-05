@@ -104,6 +104,12 @@ Avoid:
 
 ### Reference
 
+- User guide series:
+  - [user-guide-overview-v0.1.zh.md](./reference/user-guide-overview-v0.1.zh.md)
+  - [user-guide-authoring-v0.1.zh.md](./reference/user-guide-authoring-v0.1.zh.md)
+  - [user-guide-cli-v0.1.zh.md](./reference/user-guide-cli-v0.1.zh.md)
+  - [user-guide-execution-v0.1.zh.md](./reference/user-guide-execution-v0.1.zh.md)
+  - [user-guide-assurance-v0.1.zh.md](./reference/user-guide-assurance-v0.1.zh.md)
 - [migration-policy-v0.1.zh.md](./reference/migration-policy-v0.1.zh.md)
 - [durable-store-import-reference-v0.1.zh.md](./reference/durable-store-import-reference-v0.1.zh.md)
 - [cli-commands-v0.11.zh.md](./reference/cli-commands-v0.11.zh.md)

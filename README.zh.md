@@ -134,8 +134,9 @@ flowchart LR
 
 | 分类 | 入口 |
 |------|------|
+| 用户指南 | [`docs/reference/user-guide-overview-v0.1.zh.md`](docs/reference/user-guide-overview-v0.1.zh.md) |
 | 语言规范 | [`docs/spec/core-language-v0.1.zh.md`](docs/spec/core-language-v0.1.zh.md) |
-| CLI 参考 | [`docs/reference/cli-commands-v0.10.zh.md`](docs/reference/cli-commands-v0.10.zh.md) |
+| CLI 参考 | [`docs/reference/cli-commands-v0.11.zh.md`](docs/reference/cli-commands-v0.11.zh.md) |
 | IR 格式 | [`docs/reference/ir-format-v0.3.zh.md`](docs/reference/ir-format-v0.3.zh.md) |
 | 项目系统 | [`docs/reference/project-usage-v0.5.zh.md`](docs/reference/project-usage-v0.5.zh.md) |
 | 完整索引 | [`docs/README.md`](docs/README.md) |
@@ -168,11 +169,11 @@ ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --ch
 4. 确保 `cmake --build --preset build-format-check` 无违规
 5. 提交 Pull Request
 
-详细指南请参阅 [`docs/reference/contributor-guide-v0.42.zh.md`](docs/reference/contributor-guide-v0.42.zh.md)
+详细指南请参阅 [`docs/reference/contributor-guide-v0.14.zh.md`](docs/reference/contributor-guide-v0.14.zh.md)
 
 ## 当前状态
 
-AHFL 当前处于 **v0.56** 阶段，已实现：
+AHFL 当前处于 **v0.59** 阶段，已实现：
 
 - 完整的编译器前端（解析 → 语义分析 → IR 生成）
 - 100+ CLI 命令覆盖从执行计划到 Provider 生产就绪的完整 artifact 链
