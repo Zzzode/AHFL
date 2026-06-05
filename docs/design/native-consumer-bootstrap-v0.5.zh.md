@@ -7,7 +7,7 @@
 - [native-handoff-architecture-v0.4.zh.md](./native-handoff-architecture-v0.4.zh.md)
 - [native-package-authoring-architecture-v0.5.zh.md](./native-package-authoring-architecture-v0.5.zh.md)
 - [native-package-metadata-v0.4.zh.md](./native-package-metadata-v0.4.zh.md)
-- [native-consumer-matrix-v0.4.zh.md](../reference/native-consumer-matrix-v0.4.zh.md)
+- [native-consumer-matrix-v0.14.zh.md](../reference/native-consumer-matrix-v0.14.zh.md)
 - [native-package-compatibility-v0.4.zh.md](../reference/native-package-compatibility-v0.4.zh.md)
 - [project-status.zh.md](../plan/project-status.zh.md)
 

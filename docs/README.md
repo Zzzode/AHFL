@@ -111,39 +111,19 @@ Avoid:
   - [user-guide-cli-v0.1.zh.md](./reference/user-guide-cli-v0.1.zh.md)
   - [user-guide-execution-v0.1.zh.md](./reference/user-guide-execution-v0.1.zh.md)
   - [user-guide-assurance-v0.1.zh.md](./reference/user-guide-assurance-v0.1.zh.md)
-- [migration-policy-v0.1.zh.md](./reference/migration-policy-v0.1.zh.md)
-- [durable-store-import-reference-v0.1.zh.md](./reference/durable-store-import-reference-v0.1.zh.md)
-- [cli-commands-v0.11.zh.md](./reference/cli-commands-v0.11.zh.md)
-- [native-consumer-matrix-v0.14.zh.md](./reference/native-consumer-matrix-v0.14.zh.md)
-- [contributor-guide-v0.14.zh.md](./reference/contributor-guide-v0.14.zh.md)
-- [project-usage-v0.5.zh.md](./reference/project-usage-v0.5.zh.md)
-- [cli-commands-v0.10.zh.md](./reference/cli-commands-v0.10.zh.md)
-- [project-usage-v0.3.zh.md](./reference/project-usage-v0.3.zh.md)
-- [cli-commands-v0.5.zh.md](./reference/cli-commands-v0.5.zh.md)
-- [ir-format-v0.3.zh.md](./reference/ir-format-v0.3.zh.md)
-- [backend-capability-matrix-v0.3.zh.md](./reference/backend-capability-matrix-v0.3.zh.md)
-- [native-consumer-matrix-v0.10.zh.md](./reference/native-consumer-matrix-v0.10.zh.md)
-- [native-consumer-matrix-v0.12.zh.md](./reference/native-consumer-matrix-v0.12.zh.md)
-- [native-consumer-matrix-v0.13.zh.md](./reference/native-consumer-matrix-v0.13.zh.md)
-- [native-consumer-matrix-v0.11.zh.md](./reference/native-consumer-matrix-v0.11.zh.md)
-- [contributor-guide-v0.13.zh.md](./reference/contributor-guide-v0.13.zh.md)
-- [contributor-guide-v0.12.zh.md](./reference/contributor-guide-v0.12.zh.md)
-- [contributor-guide-v0.11.zh.md](./reference/contributor-guide-v0.11.zh.md)
-- [contributor-guide-v0.10.zh.md](./reference/contributor-guide-v0.10.zh.md)
-- [native-consumer-matrix-v0.9.zh.md](./reference/native-consumer-matrix-v0.9.zh.md)
-- [contributor-guide-v0.9.zh.md](./reference/contributor-guide-v0.9.zh.md)
-- [native-consumer-matrix-v0.8.zh.md](./reference/native-consumer-matrix-v0.8.zh.md)
-- [native-consumer-matrix-v0.7.zh.md](./reference/native-consumer-matrix-v0.7.zh.md)
-- [native-consumer-matrix-v0.6.zh.md](./reference/native-consumer-matrix-v0.6.zh.md)
-- [native-consumer-matrix-v0.5.zh.md](./reference/native-consumer-matrix-v0.5.zh.md)
-- [native-handoff-usage-v0.5.zh.md](./reference/native-handoff-usage-v0.5.zh.md)
-- [contributor-guide-v0.8.zh.md](./reference/contributor-guide-v0.8.zh.md)
-- [contributor-guide-v0.7.zh.md](./reference/contributor-guide-v0.7.zh.md)
-- [contributor-guide-v0.6.zh.md](./reference/contributor-guide-v0.6.zh.md)
-- [contributor-guide-v0.5.zh.md](./reference/contributor-guide-v0.5.zh.md)
-- [contributor-guide-v0.3.zh.md](./reference/contributor-guide-v0.3.zh.md)
+- Consolidated reference entries:
+  - [cli-commands-v0.11.zh.md](./reference/cli-commands-v0.11.zh.md) - consolidated CLI command reference
+  - [project-usage-v0.5.zh.md](./reference/project-usage-v0.5.zh.md) - consolidated project/workspace/package usage reference
+  - [ir-format-v0.3.zh.md](./reference/ir-format-v0.3.zh.md) - consolidated IR / JSON IR format reference
+  - [native-handoff-usage-v0.5.zh.md](./reference/native-handoff-usage-v0.5.zh.md) - consolidated native handoff usage reference
+  - [native-consumer-matrix-v0.14.zh.md](./reference/native-consumer-matrix-v0.14.zh.md) - consolidated native consumer matrix
+  - [contributor-guide-v0.14.zh.md](./reference/contributor-guide-v0.14.zh.md) - consolidated contributor guide
+- Single-topic references:
+  - [migration-policy-v0.1.zh.md](./reference/migration-policy-v0.1.zh.md)
+  - [durable-store-import-reference-v0.1.zh.md](./reference/durable-store-import-reference-v0.1.zh.md)
+  - [backend-capability-matrix-v0.3.zh.md](./reference/backend-capability-matrix-v0.3.zh.md)
 
-Historical compatibility snapshots below are retained for archaeology only. They are not current maintenance entry points and do not imply forward compatibility.
+Compatibility references below are retained as explicit compatibility contracts or historical archaeology. Consolidated multi-version compatibility entries are the current maintenance entry points for their type.
 
 - [store-import-prototype-compatibility-v0.14.zh.md](./reference/store-import-prototype-compatibility-v0.14.zh.md)
 - [ir-compatibility-v0.3.zh.md](./reference/ir-compatibility-v0.3.zh.md)
@@ -159,10 +139,6 @@ Historical compatibility snapshots below are retained for archaeology only. They
 - [persistence-prototype-compatibility-v0.12.zh.md](./reference/persistence-prototype-compatibility-v0.12.zh.md)
 - [checkpoint-prototype-compatibility-v0.11.zh.md](./reference/checkpoint-prototype-compatibility-v0.11.zh.md)
 - [scheduler-prototype-compatibility-v0.10.zh.md](./reference/scheduler-prototype-compatibility-v0.10.zh.md)
-- [runtime-session-compatibility-v0.7.zh.md](./reference/runtime-session-compatibility-v0.7.zh.md)
-- [execution-journal-compatibility-v0.7.zh.md](./reference/execution-journal-compatibility-v0.7.zh.md)
-- [replay-view-compatibility-v0.8.zh.md](./reference/replay-view-compatibility-v0.8.zh.md)
-- [audit-report-compatibility-v0.8.zh.md](./reference/audit-report-compatibility-v0.8.zh.md)
 - [dry-run-trace-compatibility-v0.6.zh.md](./reference/dry-run-trace-compatibility-v0.6.zh.md)
 
 ## Governance

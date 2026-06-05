@@ -1,24 +1,32 @@
 # AHFL CLI Commands V0.11
 
-本文给出 `ahflc` 在 V0.11 阶段的命令参考，在 V0.10 基础上新增 Provider Artifact 可见性分层 (`--show-hidden`) 与声明式选项表。
+本文是 `docs/reference` 中 CLI 命令参考的合并入口，统一覆盖原 `cli-commands-v0.2`、`v0.3`、`v0.5`、`v0.10` 与 `v0.11` 文档。当前维护口径以 V0.11 为准；旧版本仅作为演进背景纳入摘要，不再保留独立入口。
 
 关联文档：
 
-- [cli-commands-v0.10.zh.md](./cli-commands-v0.10.zh.md)
 - [project-usage-v0.5.zh.md](./project-usage-v0.5.zh.md)
 - [durable-store-import-reference-v0.1.zh.md](./durable-store-import-reference-v0.1.zh.md)
 - [migration-policy-v0.1.zh.md](./migration-policy-v0.1.zh.md)
 - [contributor-guide-v0.14.zh.md](./contributor-guide-v0.14.zh.md)
 
-## V0.11 变更摘要
+## 合并范围
 
-1. **Provider Artifact 可见性分层** — 62 个 provider artifact 分为 17 个 Public 和 45 个 Internal。默认 `--help` 仅显示 Public artifact。
-2. **`--show-hidden` 选项** — 在 help 中显示所有 Internal provider artifact，并允许解析 Internal artifact。
-3. **声明式选项表** — 所有 CLI 选项统一通过 `OptionSpec` 表驱动解析，替代手写 if/else。
-4. **`CliDriver` 封装** — `ahflc.cpp` 瘦身为 ~10 行，所有逻辑移入 `CliDriver` 类。
-5. **`ExitCode` 枚举** — 退出码语义不变 (0/1/2)，新增 `InternalError = 3`。
-6. **`DiagnosticConsumer` 抽象** — 支持 `--diagnostics-format=text|json` (默认 text，行为不变)。
-7. **Runtime 执行入口收敛** — `ahfl-run` 独立命令被移除，真实 workflow 执行统一进入 `ahflc run`。
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.2 | core check / dump / emit / formal 命令族、基础输入模式、退出码。 |
+| V0.3 | project-aware 输入、`emit-native-json`、project/workspace 命令形态。 |
+| V0.5 | package authoring、`emit-package-review`、native package 路径。 |
+| V0.10 | runtime session / journal / replay / scheduler / persistence / store import 输出链路。 |
+| V0.11 | Provider artifact 可见性、声明式选项表、`CliDriver`、结构化 diagnostics 与 `run` 入口。 |
+
+## 当前口径摘要
+
+1. `ahflc` 是唯一用户态 CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
+2. project 输入统一支持 `<input.ahfl>`、`--search-root`、`--project`、`--workspace --project-name`。
+3. package authoring 仍通过独立 `--package <ahfl.package.json>` 输入进入 native package / review / runtime-adjacent artifact。
+4. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
+5. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
+6. 新增 CLI 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
 
 ## 总览
 

@@ -1,16 +1,30 @@
 # AHFL Native Handoff Usage V0.5
 
-本文给出 AHFL V0.5 handoff package 的实际使用方式，重点覆盖 package authoring 输入、`emit-package-review` 调试面，以及 reference consumer helper 的最小接入路径。
+本文是 `docs/reference` 中 native handoff usage 的合并入口，统一覆盖原 `native-handoff-usage-v0.4` 与 `v0.5` 文档。当前维护口径以 V0.5 为准；V0.4 的 handoff package 目标、输出边界和 consumer 角色已合并为背景，不再保留独立入口。
 
 关联文档：
 
 - [project-usage-v0.5.zh.md](./project-usage-v0.5.zh.md)
-- [native-handoff-usage-v0.4.zh.md](./native-handoff-usage-v0.4.zh.md)
-- [native-consumer-matrix-v0.5.zh.md](./native-consumer-matrix-v0.5.zh.md)
-- [cli-commands-v0.5.zh.md](./cli-commands-v0.5.zh.md)
+- [native-consumer-matrix-v0.14.zh.md](./native-consumer-matrix-v0.14.zh.md)
+- [cli-commands-v0.11.zh.md](./cli-commands-v0.11.zh.md)
 - [native-package-compatibility-v0.4.zh.md](./native-package-compatibility-v0.4.zh.md)
 - [native-package-authoring-architecture-v0.5.zh.md](../design/native-package-authoring-architecture-v0.5.zh.md)
 - [native-consumer-bootstrap-v0.5.zh.md](../design/native-consumer-bootstrap-v0.5.zh.md)
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.4 | handoff package 的目标、metadata 边界、consumer 类型、本地验证建议。 |
+| V0.5 | package authoring 输入、`emit-package-review` 调试面、reference consumer helper 接入路径。 |
+
+## 当前口径摘要
+
+1. native handoff 的稳定入口是 `handoff::Package`，不是 AST、raw source 或 raw descriptor。
+2. package authoring 通过 `ahfl.package.json` 输入，再 lower 到 `handoff::PackageMetadata` / `handoff::Package`。
+3. `emit-native-json --package` 用于发射 package；`emit-package-review --package` 用于 authoring review。
+4. reference consumer helper 只消费 handoff package，并做 entry/export target、binding key、workflow dependency 的最小一致性检查。
+5. scheduler、retry、timeout、deployment、connector 语义不属于 V0.5 handoff usage 承诺。
 
 ## 当前路径
 

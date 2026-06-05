@@ -4,11 +4,11 @@
 
 关联文档：
 
-- [cli-commands-v0.3.zh.md](./cli-commands-v0.3.zh.md)
+- [cli-commands-v0.11.zh.md](./cli-commands-v0.11.zh.md)
 - [ir-format-v0.3.zh.md](./ir-format-v0.3.zh.md)
 - [ir-compatibility-v0.3.zh.md](./ir-compatibility-v0.3.zh.md)
 - [native-package-compatibility-v0.4.zh.md](./native-package-compatibility-v0.4.zh.md)
-- [native-consumer-matrix-v0.4.zh.md](./native-consumer-matrix-v0.4.zh.md)
+- [native-consumer-matrix-v0.14.zh.md](./native-consumer-matrix-v0.14.zh.md)
 - [backend-extension-guide-v0.2.zh.md](../design/backend-extension-guide-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](../design/formal-backend-v0.2.zh.md)
 

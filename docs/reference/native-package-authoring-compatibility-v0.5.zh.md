@@ -6,7 +6,7 @@
 
 - [project-usage-v0.5.zh.md](./project-usage-v0.5.zh.md)
 - [native-package-compatibility-v0.4.zh.md](./native-package-compatibility-v0.4.zh.md)
-- [cli-commands-v0.5.zh.md](./cli-commands-v0.5.zh.md)
+- [cli-commands-v0.11.zh.md](./cli-commands-v0.11.zh.md)
 - [native-handoff-usage-v0.5.zh.md](./native-handoff-usage-v0.5.zh.md)
 - [native-package-authoring-architecture-v0.5.zh.md](../design/native-package-authoring-architecture-v0.5.zh.md)
 - [native-consumer-bootstrap-v0.5.zh.md](../design/native-consumer-bootstrap-v0.5.zh.md)

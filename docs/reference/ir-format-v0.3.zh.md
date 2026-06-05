@@ -1,14 +1,29 @@
 # AHFL Core V0.3 IR Format
 
-本文给出 AHFL 稳定 IR / JSON IR 的消费边界参考，重点覆盖 V0.3 的 project-aware provenance、结构化类型/符号引用、flow handler summary 与 workflow value summary。
+本文是 `docs/reference` 中 IR 格式参考的合并入口，统一覆盖原 `ir-format-v0.2` 与 `ir-format-v0.3` 文档。当前维护口径以 V0.3 为准；V0.2 的文本 / JSON IR 基础结构已合并到本文，不再保留独立入口。
 
 关联文档：
 
 - [compiler-phase-boundaries-v0.2.zh.md](../design/compiler-phase-boundaries-v0.2.zh.md)
 - [ir-compatibility-v0.3.zh.md](./ir-compatibility-v0.3.zh.md)
-- [project-usage-v0.3.zh.md](./project-usage-v0.3.zh.md)
-- [cli-commands-v0.3.zh.md](./cli-commands-v0.3.zh.md)
+- [project-usage-v0.5.zh.md](./project-usage-v0.5.zh.md)
+- [cli-commands-v0.11.zh.md](./cli-commands-v0.11.zh.md)
 - [backend-capability-matrix-v0.3.zh.md](./backend-capability-matrix-v0.3.zh.md)
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.2 | 文本 IR / JSON IR 双输出形态、顶层 program 结构、declaration provenance 与 declaration serialization。 |
+| V0.3 | project-aware provenance、`TypeRef` / `SymbolRef`、flow handler summary、workflow value summary、`formal_observations`。 |
+
+## 当前口径摘要
+
+1. 机器消费应优先使用 JSON IR，而不是解析文本 IR 展示字符串。
+2. `format_version = "ahfl.ir.v1"` 是当前 IR 格式标识。
+3. 旧字符串字段保留为展示/兼容入口；稳定身份应优先读 `*_ref.canonical_name`。
+4. flow / workflow summary 是下游 consumer 的受限摘要，不替代完整 expression / statement tree。
+5. `formal_observations` 是 IR 与 formal backend 的共享 observation registry，不属于某个 backend 私有格式。
 
 ## 定位
 

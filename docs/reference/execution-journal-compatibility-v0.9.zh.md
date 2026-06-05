@@ -1,6 +1,6 @@
 # AHFL Execution Journal Compatibility And Versioning V0.9
 
-本文冻结 `emit-execution-journal` / `execution_journal::ExecutionJournal` 在 V0.9 阶段的版本化与兼容性契约，作为 future replay、audit、scheduler prototype、golden 与 regression 的共同约束。
+本文是 `docs/reference` 中 execution journal compatibility 的合并入口，统一覆盖原 `execution-journal-compatibility-v0.7` 与 `v0.9` 文档。当前维护口径以 V0.9 为准；V0.7 success-path event baseline 已合并为历史基线说明，不再保留独立入口。
 
 关联文档：
 
@@ -19,6 +19,20 @@
 3. 哪些 journal 字段是当前稳定边界。
 4. 哪些变化可视为兼容扩展，哪些必须 bump 版本。
 5. journal 与 runtime session / replay / audit / dry-run trace 的兼容层次关系是什么。
+
+## 合并范围
+
+| 历史版本 | 合并后保留的信息 |
+|----------|------------------|
+| V0.7 | `ahfl.execution-journal.v1` success-path event family、event ordering 与兼容规则。 |
+| V0.9 | `ahfl.execution-journal.v2` failure-aware event family、failure summary 与当前稳定字段。 |
+
+## 当前口径摘要
+
+1. `ahfl.execution-journal.v2` 是当前 execution journal consumer 的主校验版本。
+2. `v1` 只代表 historical success baseline；消费 `mock_missing`、`node_failed`、`workflow_failed` 的工具必须显式接受 `v2`。
+3. Journal 是 deterministic event sequence 的第一事实来源，不应从 runtime session 或 replay projection 反推事件语义。
+4. 新 event kind 或 event 字段语义变化必须通过 format version / compatibility 文档显式说明。
 
 ## 当前版本标识
 
