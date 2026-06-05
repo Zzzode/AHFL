@@ -1,0 +1,22 @@
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String;
+}
+
+struct Response {
+    value: String;
+}
+
+agent MissingContextDefaultAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}

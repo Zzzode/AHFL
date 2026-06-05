@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "ahfl/compiler/frontend/ast.hpp"
+#include "ahfl/compiler/semantics/effects.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
@@ -124,7 +125,9 @@ class TypeEnvironment {
 
     [[nodiscard]] MaybeCRef<Type> get_const_type(SymbolId id) const;
     [[nodiscard]] MaybeCRef<StructTypeInfo> get_struct(SymbolId id) const;
+    [[nodiscard]] MaybeCRef<StructTypeInfo> get_struct(const Type &type) const;
     [[nodiscard]] MaybeCRef<EnumTypeInfo> get_enum(SymbolId id) const;
+    [[nodiscard]] MaybeCRef<EnumTypeInfo> get_enum(const Type &type) const;
     [[nodiscard]] MaybeCRef<StructTypeInfo> find_struct(std::string_view canonical_name) const;
     [[nodiscard]] MaybeCRef<EnumTypeInfo> find_enum(std::string_view canonical_name) const;
     [[nodiscard]] MaybeCRef<CapabilityTypeInfo> get_capability(SymbolId id) const;
@@ -149,6 +152,7 @@ struct ExpressionTypeInfo {
     SourceRange range;
     std::optional<SourceId> source_id;
     TypePtr type;
+    ExprEffect effect{ExprEffect::Pure};
     bool is_pure{true};
 };
 
