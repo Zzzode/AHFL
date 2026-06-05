@@ -164,7 +164,9 @@ class Parser {
     std::string_view input_;
     std::size_t pos_;
 
-    [[nodiscard]] bool at_end() const { return pos_ >= input_.size(); }
+    [[nodiscard]] bool at_end() const {
+        return pos_ >= input_.size();
+    }
 
     [[nodiscard]] char peek() const {
         if (at_end()) {
@@ -225,21 +227,32 @@ class Parser {
     }
 
     std::optional<std::unique_ptr<JsonValue>> parse_null() {
+        const auto start = pos_;
         if (input_.substr(pos_, 4) == "null") {
             pos_ += 4;
-            return JsonValue::make_null();
+            auto value = JsonValue::make_null();
+            value->begin_offset = start;
+            value->end_offset = pos_;
+            return value;
         }
         return std::nullopt;
     }
 
     std::optional<std::unique_ptr<JsonValue>> parse_bool() {
+        const auto start = pos_;
         if (input_.substr(pos_, 4) == "true") {
             pos_ += 4;
-            return JsonValue::make_bool(true);
+            auto value = JsonValue::make_bool(true);
+            value->begin_offset = start;
+            value->end_offset = pos_;
+            return value;
         }
         if (input_.substr(pos_, 5) == "false") {
             pos_ += 5;
-            return JsonValue::make_bool(false);
+            auto value = JsonValue::make_bool(false);
+            value->begin_offset = start;
+            value->end_offset = pos_;
+            return value;
         }
         return std::nullopt;
     }
@@ -301,7 +314,10 @@ class Parser {
                 pos_ = start;
                 return std::nullopt;
             }
-            return JsonValue::make_float(val);
+            auto value = JsonValue::make_float(val);
+            value->begin_offset = start;
+            value->end_offset = pos_;
+            return value;
         }
 
         int64_t val{};
@@ -315,9 +331,15 @@ class Parser {
                 pos_ = start;
                 return std::nullopt;
             }
-            return JsonValue::make_float(fval);
+            auto value = JsonValue::make_float(fval);
+            value->begin_offset = start;
+            value->end_offset = pos_;
+            return value;
         }
-        return JsonValue::make_int(val);
+        auto value = JsonValue::make_int(val);
+        value->begin_offset = start;
+        value->end_offset = pos_;
+        return value;
     }
 
     std::optional<std::string> parse_string() {
@@ -372,6 +394,9 @@ class Parser {
                     return std::nullopt;
                 }
             } else {
+                if (static_cast<unsigned char>(c) < 0x20U) {
+                    return std::nullopt;
+                }
                 result += c;
             }
         }
@@ -430,20 +455,27 @@ class Parser {
     }
 
     std::optional<std::unique_ptr<JsonValue>> parse_string_value() {
+        const auto start = pos_;
         auto s = parse_string();
         if (!s) {
             return std::nullopt;
         }
-        return JsonValue::make_string(std::move(*s));
+        auto value = JsonValue::make_string(std::move(*s));
+        value->begin_offset = start;
+        value->end_offset = pos_;
+        return value;
     }
 
     std::optional<std::unique_ptr<JsonValue>> parse_array() {
+        const auto start = pos_;
         if (!consume('[')) {
             return std::nullopt;
         }
         auto arr = JsonValue::make_array();
         skip_whitespace();
         if (consume(']')) {
+            arr->begin_offset = start;
+            arr->end_offset = pos_;
             return arr;
         }
         while (true) {
@@ -454,6 +486,8 @@ class Parser {
             arr->push(std::move(*item));
             skip_whitespace();
             if (consume(']')) {
+                arr->begin_offset = start;
+                arr->end_offset = pos_;
                 return arr;
             }
             if (!consume(',')) {
@@ -463,12 +497,15 @@ class Parser {
     }
 
     std::optional<std::unique_ptr<JsonValue>> parse_object() {
+        const auto start = pos_;
         if (!consume('{')) {
             return std::nullopt;
         }
         auto obj = JsonValue::make_object();
         skip_whitespace();
         if (consume('}')) {
+            obj->begin_offset = start;
+            obj->end_offset = pos_;
             return obj;
         }
         while (true) {
@@ -491,6 +528,8 @@ class Parser {
             obj->set(std::move(*key), std::move(*val));
             skip_whitespace();
             if (consume('}')) {
+                obj->begin_offset = start;
+                obj->end_offset = pos_;
                 return obj;
             }
             if (!consume(',')) {
@@ -513,7 +552,9 @@ void serialize_impl(const JsonValue &v, std::ostringstream &out) {
         break;
     case Kind::Float: {
         char buf[64];
-        auto [ptr, ec] = std::to_chars(buf, buf + sizeof(buf), v.float_val,
+        auto [ptr, ec] = std::to_chars(buf,
+                                       buf + sizeof(buf),
+                                       v.float_val,
                                        std::chars_format::general,
                                        std::numeric_limits<double>::max_digits10);
         out << std::string_view(buf, static_cast<std::size_t>(ptr - buf));

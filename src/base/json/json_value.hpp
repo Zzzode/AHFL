@@ -11,11 +11,22 @@
 namespace ahfl::json {
 
 /// JSON value kinds
-enum class Kind { Null, Bool, Int, Float, String, Array, Object };
+enum class Kind {
+    Null,
+    Bool,
+    Int,
+    Float,
+    String,
+    Array,
+    Object
+};
 
 /// A generic JSON DOM node (zero external dependency).
 struct JsonValue {
     Kind kind{Kind::Null};
+
+    std::size_t begin_offset{0};
+    std::size_t end_offset{0};
 
     bool bool_val{};
     int64_t int_val{};
@@ -37,9 +48,15 @@ struct JsonValue {
     [[nodiscard]] std::optional<double> as_float() const;
     [[nodiscard]] std::optional<bool> as_bool() const;
 
-    [[nodiscard]] bool is_null() const { return kind == Kind::Null; }
-    [[nodiscard]] bool is_object() const { return kind == Kind::Object; }
-    [[nodiscard]] bool is_array() const { return kind == Kind::Array; }
+    [[nodiscard]] bool is_null() const {
+        return kind == Kind::Null;
+    }
+    [[nodiscard]] bool is_object() const {
+        return kind == Kind::Object;
+    }
+    [[nodiscard]] bool is_array() const {
+        return kind == Kind::Array;
+    }
 
     // ---------- Factory helpers ----------
 

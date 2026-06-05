@@ -1,5 +1,5 @@
-#include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
 
 #include <filesystem>
 #include <iostream>
@@ -19,7 +19,8 @@ void print_diagnostics(const ahfl::DiagnosticBag &diagnostics) {
     return out.str();
 }
 
-[[nodiscard]] bool contains_message(const ahfl::DiagnosticBag &diagnostics, std::string_view needle) {
+[[nodiscard]] bool contains_message(const ahfl::DiagnosticBag &diagnostics,
+                                    std::string_view needle) {
     for (const auto &entry : diagnostics.entries()) {
         if (entry.message.find(needle) != std::string::npos) {
             return true;
@@ -126,7 +127,8 @@ int run_fail_missing(const std::filesystem::path &entry, const std::filesystem::
 
     const auto rendered = render_diagnostics(result.diagnostics);
 
-    if (!contains_message(result.diagnostics, "failed to resolve imported module 'missing::types'") ||
+    if (!contains_message(result.diagnostics,
+                          "failed to resolve imported module 'missing::types'") ||
         !contains_text(rendered, "missing/app/main.ahfl:2:1")) {
         print_diagnostics(result.diagnostics);
         return 1;
@@ -149,8 +151,9 @@ int run_fail_mismatch(const std::filesystem::path &entry, const std::filesystem:
 
     const auto rendered = render_diagnostics(result.diagnostics);
 
-    if (!contains_message(result.diagnostics,
-                          "source file declares module 'lib::wrong' but import requested 'lib::types'") ||
+    if (!contains_message(
+            result.diagnostics,
+            "source file declares module 'lib::wrong' but import requested 'lib::types'") ||
         !contains_text(rendered, "mismatch/lib/types.ahfl:1:1") ||
         !contains_text(rendered, "mismatch/app/main.ahfl:2:1")) {
         print_diagnostics(result.diagnostics);
@@ -184,7 +187,8 @@ int run_fail_no_module(const std::filesystem::path &entry, const std::filesystem
     return 0;
 }
 
-int run_fail_duplicate_owner(const std::filesystem::path &entry, const std::filesystem::path &root) {
+int run_fail_duplicate_owner(const std::filesystem::path &entry,
+                             const std::filesystem::path &root) {
     const ahfl::Frontend frontend;
     const auto result = frontend.parse_project(ahfl::ProjectInput{
         .entry_files = {entry, root / "alt" / "types.ahfl"},
@@ -225,10 +229,26 @@ int run_fail_manifest_escape(const std::filesystem::path &descriptor) {
     return 0;
 }
 
+int run_fail_manifest_duplicate_field(const std::filesystem::path &descriptor) {
+    const ahfl::Frontend frontend;
+    const auto result = frontend.load_project_descriptor(descriptor);
+
+    if (!result.has_errors()) {
+        std::cerr << "expected descriptor duplicate field parse failure\n";
+        return 1;
+    }
+
+    if (!contains_message(result.diagnostics, "project descriptor must be valid JSON")) {
+        print_diagnostics(result.diagnostics);
+        return 1;
+    }
+
+    return 0;
+}
+
 int run_fail_workspace_duplicate_project_name(const std::filesystem::path &workspace) {
     const ahfl::Frontend frontend;
-    const auto result =
-        frontend.load_project_descriptor_from_workspace(workspace, "dup-project");
+    const auto result = frontend.load_project_descriptor_from_workspace(workspace, "dup-project");
 
     if (!result.has_errors()) {
         std::cerr << "expected workspace selection failure\n";
@@ -331,7 +351,8 @@ int main(int argc, char **argv) {
 
     const std::string test_case = argv[1];
     const std::filesystem::path entry = argv[2];
-    const std::filesystem::path root = argc >= 4 ? std::filesystem::path(argv[3]) : std::filesystem::path{};
+    const std::filesystem::path root =
+        argc >= 4 ? std::filesystem::path(argv[3]) : std::filesystem::path{};
 
     if (test_case == "ok-basic") {
         return run_ok_basic(entry, root);
@@ -355,6 +376,10 @@ int main(int argc, char **argv) {
 
     if (test_case == "fail-manifest-escape") {
         return run_fail_manifest_escape(entry);
+    }
+
+    if (test_case == "fail-manifest-duplicate-field") {
+        return run_fail_manifest_duplicate_field(entry);
     }
 
     if (test_case == "fail-workspace-duplicate-project-name") {
