@@ -1,5 +1,3 @@
-#include "tooling/cli/provider/pipeline_durable_store_import_provider.hpp"
-
 #include "tooling/cli/pipeline_emit.hpp"
 #include "tooling/cli/provider/pipeline_durable_store_import_provider_steps.hpp"
 #include "tooling/cli/provider/provider_pipeline_cache.hpp"
@@ -26,11 +24,11 @@ build_provider_production_readiness_evidence_for_cli(
     const CommandLineOptions & /*options*/,
     std::string_view /*command_name*/,
     ProviderPipelineCache &cache) {
-    const auto *negotiation = cache.get_CapabilityNegotiationReview();
-    const auto *compatibility = cache.get_CompatibilityReport();
-    const auto *audit = cache.get_ExecutionAuditEvent();
-    const auto *recovery = cache.get_WriteRecoveryPlan();
-    const auto *taxonomy = cache.get_FailureTaxonomyReport();
+    const auto *negotiation = cache.get<ProviderArtifactKind::CapabilityNegotiationReview>();
+    const auto *compatibility = cache.get<ProviderArtifactKind::CompatibilityReport>();
+    const auto *audit = cache.get<ProviderArtifactKind::ExecutionAuditEvent>();
+    const auto *recovery = cache.get<ProviderArtifactKind::WriteRecoveryPlan>();
+    const auto *taxonomy = cache.get<ProviderArtifactKind::FailureTaxonomyReport>();
     if (negotiation == nullptr || compatibility == nullptr || audit == nullptr ||
         recovery == nullptr || taxonomy == nullptr) {
         return std::nullopt;
@@ -53,7 +51,7 @@ build_provider_production_readiness_review_for_cli(
     const CommandLineOptions & /*options*/,
     std::string_view /*command_name*/,
     ProviderPipelineCache &cache) {
-    const auto *evidence = cache.get_ProductionReadinessEvidence();
+    const auto *evidence = cache.get<ProviderArtifactKind::ProductionReadinessEvidence>();
     if (evidence == nullptr) {
         return std::nullopt;
     }
@@ -76,7 +74,7 @@ make_compatible_schema_report(const dsi::ProviderConformanceReport &conformance)
     report.session_id = conformance.session_id;
     report.run_id = conformance.run_id;
     report.has_schema_drift = false;
-    report.compatibility_summary = "all versions compatible";
+    report.compatibility_summary = "schema drift gate inputs aligned";
     return report;
 }
 
@@ -94,11 +92,11 @@ make_default_rejected_approval_decision(const dsi::ApprovalRequest &request) {
 
 [[nodiscard]] std::optional<ReleaseGateArtifacts>
 build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache) {
-    const auto *compatibility = cache.get_CompatibilityReport();
-    const auto *registry = cache.get_Registry();
-    const auto *readiness = cache.get_ProductionReadinessEvidence();
-    const auto *selection_plan = cache.get_SelectionPlan();
-    const auto *snapshot = cache.get_ConfigSnapshot();
+    const auto *compatibility = cache.get<ProviderArtifactKind::CompatibilityReport>();
+    const auto *registry = cache.get<ProviderArtifactKind::Registry>();
+    const auto *readiness = cache.get<ProviderArtifactKind::ProductionReadinessEvidence>();
+    const auto *selection_plan = cache.get<ProviderArtifactKind::SelectionPlan>();
+    const auto *snapshot = cache.get<ProviderArtifactKind::ConfigSnapshot>();
     if (compatibility == nullptr || registry == nullptr || readiness == nullptr ||
         selection_plan == nullptr || snapshot == nullptr) {
         return std::nullopt;
@@ -200,7 +198,7 @@ build_provider_opt_in_decision_report_for_cli(const ahfl::ir::Program & /*progra
     if (gate == nullptr) {
         return std::nullopt;
     }
-    const auto *approval = cache.get_ApprovalReceipt();
+    const auto *approval = cache.get<ProviderArtifactKind::ApprovalReceipt>();
     if (approval == nullptr) {
         return std::nullopt;
     }
@@ -218,11 +216,11 @@ build_provider_runtime_policy_report_for_cli(const ahfl::ir::Program & /*program
     if (gate == nullptr) {
         return std::nullopt;
     }
-    const auto *approval = cache.get_ApprovalReceipt();
+    const auto *approval = cache.get<ProviderArtifactKind::ApprovalReceipt>();
     if (approval == nullptr) {
         return std::nullopt;
     }
-    const auto *opt_in = cache.get_OptInDecisionReport();
+    const auto *opt_in = cache.get<ProviderArtifactKind::OptInDecisionReport>();
     if (opt_in == nullptr) {
         return std::nullopt;
     }
@@ -241,15 +239,15 @@ build_provider_production_integration_dry_run_report_for_cli(
     if (gate == nullptr) {
         return std::nullopt;
     }
-    const auto *approval = cache.get_ApprovalReceipt();
+    const auto *approval = cache.get<ProviderArtifactKind::ApprovalReceipt>();
     if (approval == nullptr) {
         return std::nullopt;
     }
-    const auto *opt_in = cache.get_OptInDecisionReport();
+    const auto *opt_in = cache.get<ProviderArtifactKind::OptInDecisionReport>();
     if (opt_in == nullptr) {
         return std::nullopt;
     }
-    const auto *policy = cache.get_RuntimePolicyReport();
+    const auto *policy = cache.get<ProviderArtifactKind::RuntimePolicyReport>();
     if (policy == nullptr) {
         return std::nullopt;
     }
@@ -273,7 +271,7 @@ build_provider_production_readiness_report_for_cli(
     const CommandLineOptions & /*options*/,
     std::string_view /*command_name*/,
     ProviderPipelineCache &cache) {
-    const auto *review = cache.get_ProductionReadinessReview();
+    const auto *review = cache.get<ProviderArtifactKind::ProductionReadinessReview>();
     if (review == nullptr) {
         return std::nullopt;
     }

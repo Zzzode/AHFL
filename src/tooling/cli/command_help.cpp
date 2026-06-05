@@ -91,19 +91,12 @@ void print_usage(std::ostream &out, bool show_internal) {
         }
     }
 
-    // Provider pipeline
-    out << "\n  Provider Pipeline (provider/...):";
-    if (!show_internal) {
-        out << "  [public only]";
-    }
-    out << '\n';
-    for (const auto &artifact : provider_artifact_descriptors()) {
-        if (!show_internal && artifact.visibility == ProviderArtifactVisibility::Internal)
-            continue;
-        out << "    provider/" << artifact.artifact_id << '\n';
-    }
-    if (!show_internal) {
-        out << "    (use --show-hidden to show all provider artifacts)\n";
+    if (show_internal) {
+        out << "\n  Internal Provider Artifacts "
+               "(ahflc emit-provider-artifact <provider/artifact>):\n";
+        for (const auto &artifact : provider_artifact_descriptors()) {
+            out << "    provider/" << artifact.artifact_id << '\n';
+        }
     }
 
     // Dump targets
@@ -130,7 +123,7 @@ void print_usage(std::ostream &out, bool show_internal) {
         << "  --formal-model-out <path>  Write SMV model to file\n";
 
     out << "\nGeneral Options:\n"
-        << "  --show-hidden              Show hidden internal artifacts\n"
+        << "  --show-hidden              Show hidden internal diagnostic artifacts\n"
         << "  --explain                  Verbose diagnostic output\n"
         << "  -O                         Enable optimization passes\n"
         << "  -h, --help                 Show this help\n";

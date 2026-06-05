@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdio>
+#include <iterator>
 #include <string>
 #include <string_view>
 
@@ -97,6 +98,10 @@ bool durable_store_artifact_printers_have_emit_commands() {
 }
 
 bool provider_artifact_nodes_have_descriptor_metadata() {
+    if (ahfl::cli::provider_artifact_descriptors().size() != std::size(kProviderArtifacts)) {
+        return false;
+    }
+
     for (const auto &artifact : kProviderArtifacts) {
         const auto *descriptor = ahfl::cli::provider_artifact_descriptor(artifact.artifact_kind);
         if (descriptor == nullptr) {
@@ -118,7 +123,7 @@ bool provider_artifact_nodes_have_descriptor_metadata() {
         if (ahfl::cli::provider_artifact_cli_id(artifact.artifact_kind) != expected_cli_id) {
             return false;
         }
-        std::string expected_command_name = "emit ";
+        std::string expected_command_name = "emit-provider-artifact ";
         expected_command_name += expected_cli_id;
         if (ahfl::cli::provider_artifact_command_name(artifact.artifact_kind) !=
             expected_command_name) {
@@ -334,6 +339,48 @@ int main() {
     check(!ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "provider/write-attempt")
                .has_value(),
           "resolve_subcommand: provider artifact is not a command");
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {"emit", "provider/write-attempt", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(parse_result.has_value() && parse_result->exit_code == 2,
+              "parse_options: emit provider artifact is rejected");
+        check(!options.selected_provider_artifact.has_value(),
+              "parse_options: rejected emit provider artifact is not selected");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "emit-provider-artifact", "provider/write-attempt", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(),
+              "parse_options: internal provider artifact has no immediate exit");
+        check(options.selected_provider_artifact == ahfl::cli::ProviderArtifactKind::WriteAttempt,
+              "parse_options: internal provider artifact selected");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "emit-provider-artifact", "provider/driver-readiness", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(parse_result.has_value() && parse_result->exit_code == 2,
+              "parse_options: internal hidden provider artifact requires show-hidden");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "emit-provider-artifact", "provider/driver-readiness", "--show-hidden", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(),
+              "parse_options: hidden provider artifact allowed with show-hidden");
+        check(options.selected_provider_artifact ==
+                  ahfl::cli::ProviderArtifactKind::DriverReadiness,
+              "parse_options: hidden provider artifact selected");
+    }
 
     // resolve_subcommand — dump, verify, validate
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Dump, "ast") ==

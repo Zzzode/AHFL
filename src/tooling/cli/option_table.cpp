@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <iostream>
+#include <string>
 
 namespace ahfl::cli {
 namespace {
@@ -206,6 +207,83 @@ static_assert(option_table_has_unique_long_names(), "duplicate long_name in opti
     return nullptr;
 }
 
+[[nodiscard]] bool can_select_action(const CommandLineOptions &options) {
+    return !options.selected_command.has_value() &&
+           !options.selected_provider_artifact.has_value() && options.positional.empty();
+}
+
+[[nodiscard]] bool has_target_argument(std::span<const std::string_view> arguments,
+                                       std::size_t index) {
+    return index + 1 < arguments.size() && !arguments[index + 1].empty() &&
+           arguments[index + 1].front() != '-';
+}
+
+[[nodiscard]] ParseResult usage_error(std::string_view message) {
+    std::cerr << "error: " << message << "\n";
+    print_usage(std::cerr);
+    return ParseResult{true, 2};
+}
+
+[[nodiscard]] std::optional<ParseResult> select_provider_artifact_from_arguments(
+    std::span<const std::string_view> arguments, std::size_t &index, CommandLineOptions &options) {
+    if (!has_target_argument(arguments, index)) {
+        return usage_error("'emit-provider-artifact' requires a provider artifact name");
+    }
+
+    const auto artifact_id = arguments[++index];
+    const auto artifact = resolve_provider_artifact(artifact_id, options.show_internal_artifacts);
+    if (!artifact.has_value()) {
+        std::cerr << "error: unknown provider artifact '" << artifact_id << "'\n";
+        print_usage(std::cerr);
+        return ParseResult{true, 2};
+    }
+    if (!can_select_action(options)) {
+        return usage_error("provider artifact action cannot be combined with another action");
+    }
+
+    set_provider_artifact_option(options, *artifact);
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ParseResult>
+select_action_group_from_arguments(ActionGroup group,
+                                   std::string_view action_token,
+                                   std::span<const std::string_view> arguments,
+                                   std::size_t &index,
+                                   CommandLineOptions &options) {
+    if (!can_select_action(options)) {
+        return usage_error("action cannot be combined with another action");
+    }
+
+    if (group == ActionGroup::Verify) {
+        set_command_option(options, CommandKind::VerifyFormal);
+        return std::nullopt;
+    }
+    if (group == ActionGroup::Validate) {
+        set_command_option(options, CommandKind::ValidateAssurance);
+        return std::nullopt;
+    }
+
+    if (!has_target_argument(arguments, index)) {
+        std::string message = "'";
+        message += action_token;
+        message += "' requires an artifact name";
+        return usage_error(message);
+    }
+
+    const auto artifact_id = arguments[++index];
+    const auto command = resolve_subcommand(group, artifact_id, options.show_internal_artifacts);
+    if (!command.has_value()) {
+        std::cerr << "error: unknown artifact '" << artifact_id << "' for action '" << action_token
+                  << "'\n";
+        print_usage(std::cerr);
+        return ParseResult{true, 2};
+    }
+
+    set_command_option(options, *command);
+    return std::nullopt;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -247,62 +325,28 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
             continue;
         }
 
+        // Internal provider artifacts are diagnostic fixtures, not user-facing emit artifacts.
+        if (argument == "emit-provider-artifact") {
+            if (const auto result =
+                    select_provider_artifact_from_arguments(arguments, index, options);
+                result.has_value()) {
+                return *result;
+            }
+            continue;
+        }
+
         // Try two-token subcommand dispatch (ahflc emit <artifact-id>).
         if (auto group = action_group_from_token(argument); group.has_value()) {
-            // Zero-target actions: verify and validate have a single implicit target.
-            if (*group == ActionGroup::Verify) {
-                if (!options.selected_command.has_value() &&
-                    !options.selected_provider_artifact.has_value() && options.positional.empty()) {
-                    set_command_option(options, CommandKind::VerifyFormal);
-                    continue;
-                }
-            } else if (*group == ActionGroup::Validate) {
-                if (!options.selected_command.has_value() &&
-                    !options.selected_provider_artifact.has_value() && options.positional.empty()) {
-                    set_command_option(options, CommandKind::ValidateAssurance);
-                    continue;
-                }
-            } else {
-                // emit/dump require a target artifact-id.
-                if (index + 1 < arguments.size() && !arguments[index + 1].empty() &&
-                    arguments[index + 1].front() != '-') {
-                    auto artifact_id = arguments[++index];
-                    const auto can_select_action =
-                        !options.selected_command.has_value() &&
-                        !options.selected_provider_artifact.has_value() &&
-                        options.positional.empty();
-                    if (*group == ActionGroup::Emit) {
-                        if (auto artifact = resolve_provider_artifact(
-                                artifact_id, options.show_internal_artifacts);
-                            artifact.has_value()) {
-                            if (can_select_action) {
-                                set_provider_artifact_option(options, *artifact);
-                                continue;
-                            }
-                        }
-                    }
-                    if (auto cmd = resolve_subcommand(
-                            *group, artifact_id, options.show_internal_artifacts);
-                        cmd.has_value()) {
-                        if (can_select_action) {
-                            set_command_option(options, *cmd);
-                            continue;
-                        }
-                    }
-                    std::cerr << "error: unknown artifact '" << artifact_id << "' for action '"
-                              << argument << "'\n";
-                    print_usage(std::cerr);
-                    return ParseResult{true, 2};
-                }
-                std::cerr << "error: '" << argument << "' requires an artifact name\n";
-                print_usage(std::cerr);
-                return ParseResult{true, 2};
+            if (const auto result =
+                    select_action_group_from_arguments(*group, argument, arguments, index, options);
+                result.has_value()) {
+                return *result;
             }
+            continue;
         }
 
         // Recognize standalone commands.
-        if ((argument == "check" || argument == "run") && !options.selected_command.has_value() &&
-            !options.selected_provider_artifact.has_value() && options.positional.empty()) {
+        if ((argument == "check" || argument == "run") && can_select_action(options)) {
             set_command_option(options,
                                argument == "run" ? CommandKind::RunWorkflow : CommandKind::Check);
             continue;
