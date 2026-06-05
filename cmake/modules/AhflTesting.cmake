@@ -107,7 +107,7 @@ function(ahfl_discover_package_golden_tests)
             string(REGEX REPLACE "\\.json$" "" _base "${artifact_suffix}")
             # Convert long-form artifact base to short-form artifact-id
             if(_base MATCHES "^durable-store-import-provider-(.+)$")
-                set(subcommand "emit provider/${CMAKE_MATCH_1}")
+                set(subcommand "emit-provider-artifact provider/${CMAKE_MATCH_1}")
             elseif(_base MATCHES "^durable-store-import-(.+)$")
                 set(subcommand "emit store/${CMAKE_MATCH_1}")
             else()
@@ -116,7 +116,7 @@ function(ahfl_discover_package_golden_tests)
         else()
             # Non-json suffix: apply same prefix-stripping rules
             if(artifact_suffix MATCHES "^durable-store-import-provider-(.+)$")
-                set(subcommand "emit provider/${CMAKE_MATCH_1}")
+                set(subcommand "emit-provider-artifact provider/${CMAKE_MATCH_1}")
             elseif(artifact_suffix MATCHES "^durable-store-import-(.+)$")
                 set(subcommand "emit store/${CMAKE_MATCH_1}")
             else()
@@ -127,7 +127,7 @@ function(ahfl_discover_package_golden_tests)
         # Auto-discovered provider goldens validate artifact output coverage,
         # including internal pipeline nodes. The user-facing default provider
         # surface is covered by command_routing and explicit public tests.
-        if(subcommand MATCHES "^emit provider/")
+        if(subcommand MATCHES "^emit-provider-artifact provider/")
             set(subcommand "${subcommand} --show-hidden")
         endif()
 

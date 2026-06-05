@@ -6,7 +6,7 @@
 //   artifact_type  durable_store_import model type
 //   builder        internal provider pipeline node builder
 //   printer        stable artifact printer facade
-//   artifact_id    provider-local artifact id used by `ahflc emit provider/...`
+//   artifact_id    provider-local artifact id used by internal diagnostic emission
 //   visibility     Public (top-level meaningful pipeline output) or
 //                  Internal (intermediate pipeline node)
 //   order          provider-local CLI/list order derived from DAG locality

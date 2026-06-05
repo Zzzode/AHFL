@@ -101,7 +101,7 @@ build_provider_recovery_handoff_for_cli(const ahfl::ir::Program & /*program*/,
                                         const CommandLineOptions & /*options*/,
                                         std::string_view /*command_name*/,
                                         ProviderPipelineCache &cache) {
-    const auto *write_attempt = cache.get_WriteAttempt();
+    const auto *write_attempt = cache.get<ProviderArtifactKind::WriteAttempt>();
     if (write_attempt == nullptr) {
         return std::nullopt;
     }
@@ -117,7 +117,7 @@ build_provider_driver_binding_for_cli(const ahfl::ir::Program & /*program*/,
                                       const CommandLineOptions & /*options*/,
                                       std::string_view /*command_name*/,
                                       ProviderPipelineCache &cache) {
-    const auto *write_attempt = cache.get_WriteAttempt();
+    const auto *write_attempt = cache.get<ProviderArtifactKind::WriteAttempt>();
     if (write_attempt == nullptr) {
         return std::nullopt;
     }
@@ -133,7 +133,7 @@ build_provider_driver_readiness_for_cli(const ahfl::ir::Program & /*program*/,
                                         const CommandLineOptions & /*options*/,
                                         std::string_view /*command_name*/,
                                         ProviderPipelineCache &cache) {
-    const auto *plan = cache.get_DriverBinding();
+    const auto *plan = cache.get<ProviderArtifactKind::DriverBinding>();
     if (plan == nullptr) {
         return std::nullopt;
     }

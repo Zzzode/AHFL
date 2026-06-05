@@ -21,6 +21,7 @@ add_executable(ahflc
     option_table.cpp
     cli_pipeline_artifacts.cpp
     pipeline_core_commands.cpp
+    provider/provider_artifact_graph.cpp
     provider/provider_pipeline_cache.cpp
     provider/pipeline_durable_store_import.cpp
     provider/pipeline_durable_store_import_provider.cpp

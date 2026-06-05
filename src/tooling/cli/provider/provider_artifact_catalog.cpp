@@ -118,7 +118,7 @@ std::string provider_artifact_cli_id(ProviderArtifactKind kind) {
 }
 
 std::string provider_artifact_command_name(ProviderArtifactKind kind) {
-    std::string result = "emit ";
+    std::string result = "emit-provider-artifact ";
     result += provider_artifact_cli_id(kind);
     return result;
 }
