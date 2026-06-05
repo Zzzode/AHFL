@@ -23,11 +23,11 @@ void check(bool condition, const std::string &test_name) {
 }
 
 // ============================================================================
-// Test 1: GrpcEndpoint::to_url() plaintext
+// Test 1: GrpcJsonTranscodingEndpoint::to_url() plaintext
 // ============================================================================
 
 void test_endpoint_to_url_plaintext() {
-    GrpcEndpoint ep;
+    GrpcJsonTranscodingEndpoint ep;
     ep.host = "localhost";
     ep.port = 50051;
     ep.service_name = "mypackage.MyService";
@@ -35,16 +35,15 @@ void test_endpoint_to_url_plaintext() {
     ep.use_tls = false;
 
     auto url = ep.to_url();
-    check(url == "http://localhost:50051/mypackage.MyService/DoThing",
-          "endpoint_url.plaintext");
+    check(url == "http://localhost:50051/mypackage.MyService/DoThing", "endpoint_url.plaintext");
 }
 
 // ============================================================================
-// Test 2: GrpcEndpoint::to_url() TLS
+// Test 2: GrpcJsonTranscodingEndpoint::to_url() TLS
 // ============================================================================
 
 void test_endpoint_to_url_tls() {
-    GrpcEndpoint ep;
+    GrpcJsonTranscodingEndpoint ep;
     ep.host = "grpc.example.com";
     ep.port = 443;
     ep.service_name = "api.v1.Users";
@@ -52,16 +51,15 @@ void test_endpoint_to_url_tls() {
     ep.use_tls = true;
 
     auto url = ep.to_url();
-    check(url == "https://grpc.example.com:443/api.v1.Users/GetUser",
-          "endpoint_url.tls");
+    check(url == "https://grpc.example.com:443/api.v1.Users/GetUser", "endpoint_url.tls");
 }
 
 // ============================================================================
-// Test 3: GrpcEndpoint::to_path()
+// Test 3: GrpcJsonTranscodingEndpoint::to_path()
 // ============================================================================
 
 void test_endpoint_to_path() {
-    GrpcEndpoint ep;
+    GrpcJsonTranscodingEndpoint ep;
     ep.service_name = "package.ServiceName";
     ep.method_name = "MethodName";
 
@@ -74,8 +72,7 @@ void test_endpoint_to_path() {
 // ============================================================================
 
 void test_grpc_status_name() {
-    check(std::string(grpc_status_name(GrpcStatusCode::Ok)) == "OK",
-          "status_name.ok");
+    check(std::string(grpc_status_name(GrpcStatusCode::Ok)) == "OK", "status_name.ok");
     check(std::string(grpc_status_name(GrpcStatusCode::Cancelled)) == "CANCELLED",
           "status_name.cancelled");
     check(std::string(grpc_status_name(GrpcStatusCode::InvalidArgument)) == "INVALID_ARGUMENT",
@@ -93,32 +90,44 @@ void test_grpc_status_name() {
 }
 
 // ============================================================================
-// Test 5: GrpcResponse::is_ok()
+// Test 5: GrpcJsonTranscodingResponse::is_ok()
 // ============================================================================
 
 void test_grpc_response_is_ok() {
-    GrpcResponse ok_resp{.status_code = GrpcStatusCode::Ok, .body = "{}", .error_message = {}};
+    GrpcJsonTranscodingResponse ok_resp{
+        .status_code = GrpcStatusCode::Ok,
+        .body = "{}",
+        .error_message = {},
+    };
     check(ok_resp.is_ok(), "response.ok_is_ok");
 
-    GrpcResponse err_resp{.status_code = GrpcStatusCode::Internal, .body = {}, .error_message = "error"};
+    GrpcJsonTranscodingResponse err_resp{
+        .status_code = GrpcStatusCode::Internal,
+        .body = {},
+        .error_message = "error",
+    };
     check(!err_resp.is_ok(), "response.internal_not_ok");
 
-    GrpcResponse not_found{.status_code = GrpcStatusCode::NotFound, .body = {}, .error_message = "not found"};
+    GrpcJsonTranscodingResponse not_found{
+        .status_code = GrpcStatusCode::NotFound,
+        .body = {},
+        .error_message = "not found",
+    };
     check(!not_found.is_ok(), "response.not_found_not_ok");
 }
 
 // ============================================================================
-// Test 6: serialize_args_for_grpc - empty args
+// Test 6: serialize_args_for_grpc_json_transcoding - empty args
 // ============================================================================
 
 void test_serialize_args_empty() {
     std::vector<Value> args;
-    auto result = serialize_args_for_grpc(args);
+    auto result = serialize_args_for_grpc_json_transcoding(args);
     check(result == "{}", "serialize_args.empty");
 }
 
 // ============================================================================
-// Test 7: serialize_args_for_grpc - single struct value
+// Test 7: serialize_args_for_grpc_json_transcoding - single struct value
 // ============================================================================
 
 void test_serialize_args_single_struct() {
@@ -132,15 +141,16 @@ void test_serialize_args_single_struct() {
     std::vector<Value> args;
     args.push_back(std::move(v));
 
-    auto result = serialize_args_for_grpc(args);
+    auto result = serialize_args_for_grpc_json_transcoding(args);
     // Single struct should be serialized directly (not wrapped in {value:...})
     check(result.find("\"name\"") != std::string::npos, "serialize_args.single_struct.has_field");
     check(result.find("\"alice\"") != std::string::npos, "serialize_args.single_struct.has_value");
-    check(result.find("\"value\"") == std::string::npos, "serialize_args.single_struct.not_wrapped");
+    check(result.find("\"value\"") == std::string::npos,
+          "serialize_args.single_struct.not_wrapped");
 }
 
 // ============================================================================
-// Test 8: serialize_args_for_grpc - single non-struct value
+// Test 8: serialize_args_for_grpc_json_transcoding - single non-struct value
 // ============================================================================
 
 void test_serialize_args_single_non_struct() {
@@ -150,14 +160,14 @@ void test_serialize_args_single_non_struct() {
     std::vector<Value> args;
     args.push_back(std::move(v));
 
-    auto result = serialize_args_for_grpc(args);
+    auto result = serialize_args_for_grpc_json_transcoding(args);
     // Non-struct single value is wrapped: {"value": 42}
     check(result.find("\"value\"") != std::string::npos, "serialize_args.single_int.wrapped");
     check(result.find("42") != std::string::npos, "serialize_args.single_int.has_value");
 }
 
 // ============================================================================
-// Test 9: serialize_args_for_grpc - multiple args
+// Test 9: serialize_args_for_grpc_json_transcoding - multiple args
 // ============================================================================
 
 void test_serialize_args_multiple() {
@@ -170,7 +180,7 @@ void test_serialize_args_multiple() {
     args.push_back(std::move(v1));
     args.push_back(std::move(v2));
 
-    auto result = serialize_args_for_grpc(args);
+    auto result = serialize_args_for_grpc_json_transcoding(args);
     // Multiple args are wrapped as {"args": [...]}
     check(result.find("\"args\"") != std::string::npos, "serialize_args.multi.has_args_key");
     check(result.find('[') != std::string::npos, "serialize_args.multi.has_array");
@@ -179,11 +189,11 @@ void test_serialize_args_multiple() {
 }
 
 // ============================================================================
-// Test 10: build_grpc_curl_command - plaintext h2c
+// Test 10: build_grpc_json_transcoding_curl_command - plaintext h2c
 // ============================================================================
 
 void test_build_curl_command_h2c() {
-    GrpcRequest req;
+    GrpcJsonTranscodingRequest req;
     req.endpoint.host = "localhost";
     req.endpoint.port = 50051;
     req.endpoint.service_name = "test.Service";
@@ -192,7 +202,7 @@ void test_build_curl_command_h2c() {
     req.serialized_body = R"({"key":"val"})";
     req.timeout = std::chrono::seconds{10};
 
-    auto cmd = build_grpc_curl_command(req);
+    auto cmd = build_grpc_json_transcoding_curl_command(req);
 
     check(cmd.find("curl --config -") != std::string::npos, "curl_h2c.has_curl_config");
     check(cmd.find("POST") != std::string::npos, "curl_h2c.post_method");
@@ -206,11 +216,11 @@ void test_build_curl_command_h2c() {
 }
 
 // ============================================================================
-// Test 11: build_grpc_curl_command - TLS h2
+// Test 11: build_grpc_json_transcoding_curl_command - TLS h2
 // ============================================================================
 
 void test_build_curl_command_tls() {
-    GrpcRequest req;
+    GrpcJsonTranscodingRequest req;
     req.endpoint.host = "grpc.example.com";
     req.endpoint.port = 443;
     req.endpoint.service_name = "api.v1.Service";
@@ -219,7 +229,7 @@ void test_build_curl_command_tls() {
     req.serialized_body = "{}";
     req.timeout = std::chrono::seconds{30};
 
-    auto cmd = build_grpc_curl_command(req);
+    auto cmd = build_grpc_json_transcoding_curl_command(req);
 
     check(cmd.find("https://grpc.example.com:443/api.v1.Service/Get") != std::string::npos,
           "curl_tls.url");
@@ -227,11 +237,11 @@ void test_build_curl_command_tls() {
 }
 
 // ============================================================================
-// Test 12: build_grpc_curl_command - with metadata
+// Test 12: build_grpc_json_transcoding_curl_command - with metadata
 // ============================================================================
 
 void test_build_curl_command_metadata() {
-    GrpcRequest req;
+    GrpcJsonTranscodingRequest req;
     req.endpoint.host = "localhost";
     req.endpoint.port = 8080;
     req.endpoint.service_name = "svc.Foo";
@@ -241,21 +251,20 @@ void test_build_curl_command_metadata() {
     req.metadata = {{"Authorization", "Bearer token123"}, {"x-request-id", "abc-def"}};
     req.timeout = std::chrono::seconds{5};
 
-    auto cmd = build_grpc_curl_command(req);
+    auto cmd = build_grpc_json_transcoding_curl_command(req);
 
     check(cmd.find("headers=4") != std::string::npos, "curl_meta.header_count");
     check(cmd.find("Authorization: Bearer token123") == std::string::npos,
           "curl_meta.auth_redacted");
-    check(cmd.find("x-request-id: abc-def") == std::string::npos,
-          "curl_meta.request_id_redacted");
+    check(cmd.find("x-request-id: abc-def") == std::string::npos, "curl_meta.request_id_redacted");
 }
 
 // ============================================================================
-// Test 13: build_grpc_curl_command - empty body sends {}
+// Test 13: build_grpc_json_transcoding_curl_command - empty body sends {}
 // ============================================================================
 
 void test_build_curl_command_empty_body() {
-    GrpcRequest req;
+    GrpcJsonTranscodingRequest req;
     req.endpoint.host = "localhost";
     req.endpoint.port = 50051;
     req.endpoint.service_name = "svc.A";
@@ -264,30 +273,30 @@ void test_build_curl_command_empty_body() {
     req.serialized_body = "";
     req.timeout = std::chrono::seconds{30};
 
-    auto cmd = build_grpc_curl_command(req);
+    auto cmd = build_grpc_json_transcoding_curl_command(req);
 
     check(cmd.find("body_bytes=2") != std::string::npos, "curl_empty_body.sends_empty_object");
     check(cmd.find("{}") == std::string::npos, "curl_empty_body.body_redacted");
 }
 
 // ============================================================================
-// Test 14: serialize_value_for_grpc
+// Test 14: serialize_value_for_grpc_json_transcoding
 // ============================================================================
 
-void test_serialize_value_for_grpc() {
+void test_serialize_value_for_grpc_json_transcoding() {
     Value v;
     v.node = StringValue{"hello world"};
-    auto result = serialize_value_for_grpc(v);
+    auto result = serialize_value_for_grpc_json_transcoding(v);
     check(result.find("hello world") != std::string::npos, "serialize_value.string");
 
     Value v_int;
     v_int.node = IntValue{99};
-    auto result_int = serialize_value_for_grpc(v_int);
+    auto result_int = serialize_value_for_grpc_json_transcoding(v_int);
     check(result_int.find("99") != std::string::npos, "serialize_value.int");
 
     Value v_bool;
     v_bool.node = BoolValue{true};
-    auto result_bool = serialize_value_for_grpc(v_bool);
+    auto result_bool = serialize_value_for_grpc_json_transcoding(v_bool);
     check(result_bool.find("true") != std::string::npos, "serialize_value.bool");
 }
 
@@ -307,7 +316,7 @@ int main() {
     test_build_curl_command_tls();
     test_build_curl_command_metadata();
     test_build_curl_command_empty_body();
-    test_serialize_value_for_grpc();
+    test_serialize_value_for_grpc_json_transcoding();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

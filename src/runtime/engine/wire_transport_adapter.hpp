@@ -4,7 +4,7 @@
 
 namespace ahfl::runtime {
 
-struct GrpcRequest;
+struct GrpcJsonTranscodingRequest;
 struct HttpRequest;
 
 struct WireTransportResponse {
@@ -15,9 +15,10 @@ struct WireTransportResponse {
 };
 
 [[nodiscard]] WireTransportResponse execute_wire_transport(const HttpRequest &request);
-[[nodiscard]] WireTransportResponse execute_wire_transport(const GrpcRequest &request);
+[[nodiscard]] WireTransportResponse
+execute_wire_transport(const GrpcJsonTranscodingRequest &request);
 
 [[nodiscard]] std::string describe_wire_transport(const HttpRequest &request);
-[[nodiscard]] std::string describe_wire_transport(const GrpcRequest &request);
+[[nodiscard]] std::string describe_wire_transport(const GrpcJsonTranscodingRequest &request);
 
 } // namespace ahfl::runtime
