@@ -34,6 +34,9 @@ enum class GrpcStatusCode : int {
 /// Convert a gRPC status code to human-readable string.
 [[nodiscard]] const char *grpc_status_name(GrpcStatusCode code);
 
+/// Map an HTTP JSON-transcoding response code onto the corresponding gRPC status.
+[[nodiscard]] GrpcStatusCode grpc_status_from_http_status(int http_code);
+
 /// HTTP/2 JSON-transcoding endpoint for a gRPC-shaped service path.
 struct GrpcJsonTranscodingEndpoint {
     std::string host;

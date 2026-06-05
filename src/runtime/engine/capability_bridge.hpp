@@ -38,6 +38,11 @@ struct CapabilityCallResult {
 using CapabilityInvoker =
     std::function<CapabilityCallResult(const std::string &name, const std::vector<Value> &args)>;
 
+enum class CapabilityResponseFormat {
+    Json,
+    TextPlain,
+};
+
 // Retry 配置
 struct RetryConfig {
     std::size_t max_retries{0};
@@ -116,6 +121,7 @@ struct HTTPCapabilityConfig {
     std::string url;
     std::string method{"POST"};
     std::unordered_map<std::string, std::string> headers;
+    CapabilityResponseFormat response_format{CapabilityResponseFormat::Json};
     RetryConfig retry;
     TimeoutConfig timeout;
     CircuitBreakerConfig circuit_breaker;
@@ -131,6 +137,7 @@ struct GrpcJsonTranscodingCapabilityConfig {
     std::string endpoint;
     std::string service;
     std::string method;
+    CapabilityResponseFormat response_format{CapabilityResponseFormat::Json};
     RetryConfig retry;
     TimeoutConfig timeout;
     CircuitBreakerConfig circuit_breaker;
