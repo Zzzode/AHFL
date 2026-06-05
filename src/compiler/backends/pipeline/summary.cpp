@@ -1,6 +1,7 @@
 #include "compiler/backends/pipeline/summary.hpp"
 #include "printer_helpers.hpp"
 
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 
 #include <cstddef>
@@ -119,13 +120,18 @@ void accumulate_workflow_reads(const ir::WorkflowExprSummary &summary,
                     stats.flows += 1;
                     stats.declarations_with_provenance += has_provenance(value.provenance) ? 1 : 0;
                     for (const auto &handler : value.state_handlers) {
+                        const auto *summary =
+                            ir::find_state_handler_summary(program, value, handler);
+                        if (summary == nullptr) {
+                            continue;
+                        }
                         stats.flow_handlers += 1;
-                        stats.flow_goto_targets += handler.summary.goto_targets.size();
-                        stats.flow_returning_handlers += handler.summary.may_return ? 1 : 0;
-                        stats.flow_fallthrough_handlers += handler.summary.may_fallthrough ? 1 : 0;
-                        stats.flow_assigned_paths += handler.summary.assigned_paths.size();
-                        stats.flow_called_targets += handler.summary.called_targets.size();
-                        stats.flow_asserts += handler.summary.assert_count;
+                        stats.flow_goto_targets += summary->goto_targets.size();
+                        stats.flow_returning_handlers += summary->may_return ? 1 : 0;
+                        stats.flow_fallthrough_handlers += summary->may_fallthrough ? 1 : 0;
+                        stats.flow_assigned_paths += summary->assigned_paths.size();
+                        stats.flow_called_targets += summary->called_targets.size();
+                        stats.flow_asserts += summary->assert_count;
                     }
                 },
                 [&](const ir::WorkflowDecl &value) {
@@ -133,21 +139,28 @@ void accumulate_workflow_reads(const ir::WorkflowExprSummary &summary,
                     stats.declarations_with_provenance += has_provenance(value.provenance) ? 1 : 0;
                     stats.workflow_nodes += value.nodes.size();
                     for (const auto &node : value.nodes) {
-                        accumulate_workflow_reads(node.input_summary,
-                                                  stats.workflow_input_reads,
-                                                  stats.workflow_input_reads_from_input,
-                                                  stats.workflow_input_reads_from_nodes);
+                        const auto *summary =
+                            ir::find_workflow_node_input_summary(program, value, node);
+                        if (summary != nullptr) {
+                            accumulate_workflow_reads(*summary,
+                                                      stats.workflow_input_reads,
+                                                      stats.workflow_input_reads_from_input,
+                                                      stats.workflow_input_reads_from_nodes);
+                        }
                     }
-                    accumulate_workflow_reads(value.return_summary,
-                                              stats.workflow_return_reads,
-                                              stats.workflow_return_reads_from_input,
-                                              stats.workflow_return_reads_from_nodes);
+                    if (const auto *summary = ir::find_workflow_return_summary(program, value);
+                        summary != nullptr) {
+                        accumulate_workflow_reads(*summary,
+                                                  stats.workflow_return_reads,
+                                                  stats.workflow_return_reads_from_input,
+                                                  stats.workflow_return_reads_from_nodes);
+                    }
                 },
             },
             declaration);
     }
 
-    for (const auto &observation : program.formal_observations) {
+    for (const auto &observation : ir::formal_observations(program)) {
         std::visit(
             Overloaded{
                 [&](const ir::CalledCapabilityObservation &) { stats.called_observations += 1; },
@@ -192,7 +205,7 @@ void print_program_summary(const ir::Program &program, std::ostream &out) {
     line(out, 0, "}");
 
     line(out, 0, "formal_observations {");
-    line(out, 1, "total " + std::to_string(program.formal_observations.size()));
+    line(out, 1, "total " + std::to_string(ir::formal_observations(program).size()));
     line(out, 1, "called_capability " + std::to_string(stats.called_observations));
     line(out, 1, "embedded_bool_expr " + std::to_string(stats.embedded_observations));
     line(out, 0, "}");

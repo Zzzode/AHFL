@@ -1,5 +1,10 @@
 #include "ahfl/compiler/handoff/package.hpp"
 
+#include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "base/support/overloaded.hpp"
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -7,12 +12,10 @@
 #include <unordered_set>
 #include <utility>
 #include <variant>
-#include "base/support/overloaded.hpp"
 
 namespace ahfl::handoff {
 
 namespace {
-
 
 [[nodiscard]] std::string display_name(std::string_view canonical_name) {
     const auto separator = canonical_name.rfind("::");
@@ -48,20 +51,125 @@ void add_unique_name(std::unordered_map<std::string, std::vector<std::string>> &
     values.push_back(std::move(canonical));
 }
 
+[[nodiscard]] DeclarationProvenance lower_provenance(const ir::DeclarationProvenance &provenance) {
+    return DeclarationProvenance{
+        .module_name = provenance.module_name,
+        .source_path = provenance.source_path,
+    };
+}
+
+[[nodiscard]] WorkflowValueSourceKind
+lower_workflow_value_source_kind(ir::WorkflowValueSourceKind kind) {
+    switch (kind) {
+    case ir::WorkflowValueSourceKind::WorkflowInput:
+        return WorkflowValueSourceKind::WorkflowInput;
+    case ir::WorkflowValueSourceKind::WorkflowNodeOutput:
+        return WorkflowValueSourceKind::WorkflowNodeOutput;
+    }
+
+    return WorkflowValueSourceKind::WorkflowInput;
+}
+
+[[nodiscard]] WorkflowValueSummary
+lower_workflow_value_summary(const ir::WorkflowExprSummary &summary) {
+    WorkflowValueSummary lowered;
+    lowered.reads.reserve(summary.reads.size());
+    for (const auto &read : summary.reads) {
+        lowered.reads.push_back(WorkflowValueRead{
+            .kind = lower_workflow_value_source_kind(read.kind),
+            .root_name = read.root_name,
+            .members = read.members,
+        });
+    }
+    return lowered;
+}
+
+[[nodiscard]] FormalObservationScopeKind
+lower_formal_observation_scope_kind(ir::FormalObservationScopeKind kind) {
+    switch (kind) {
+    case ir::FormalObservationScopeKind::ContractClause:
+        return FormalObservationScopeKind::ContractClause;
+    case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+        return FormalObservationScopeKind::WorkflowSafetyClause;
+    case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+        return FormalObservationScopeKind::WorkflowLivenessClause;
+    }
+
+    return FormalObservationScopeKind::ContractClause;
+}
+
+[[nodiscard]] FormalObservationScope
+lower_formal_observation_scope(const ir::FormalObservationScope &scope) {
+    return FormalObservationScope{
+        .kind = lower_formal_observation_scope_kind(scope.kind),
+        .owner = scope.owner,
+        .clause_index = scope.clause_index,
+        .atom_index = scope.atom_index,
+    };
+}
+
+[[nodiscard]] FormalObservation lower_formal_observation(const ir::FormalObservation &observation) {
+    return FormalObservation{
+        .symbol = observation.symbol,
+        .node = std::visit(
+            Overloaded{
+                [](const ir::CalledCapabilityObservation &value) -> FormalObservationNode {
+                    return CalledCapabilityObservation{
+                        .agent = value.agent,
+                        .capability = value.capability,
+                    };
+                },
+                [](const ir::EmbeddedBoolObservation &value) -> FormalObservationNode {
+                    return EmbeddedBoolObservation{
+                        .scope = lower_formal_observation_scope(value.scope),
+                    };
+                },
+            },
+            observation.node),
+    };
+}
+
+[[nodiscard]] std::vector<FormalObservation>
+lower_formal_observations(const std::vector<ir::FormalObservation> &observations) {
+    std::vector<FormalObservation> lowered;
+    lowered.reserve(observations.size());
+    for (const auto &observation : observations) {
+        lowered.push_back(lower_formal_observation(observation));
+    }
+    return lowered;
+}
+
+[[nodiscard]] std::vector<std::string> lower_symbol_names(const std::vector<ir::SymbolRef> &refs) {
+    std::vector<std::string> names;
+    names.reserve(refs.size());
+    for (const auto &ref : refs) {
+        const auto name = ir::symbol_canonical_name(ref);
+        if (!name.empty()) {
+            names.emplace_back(name);
+        }
+    }
+    return names;
+}
+
 [[nodiscard]] ExecutableIndex build_executable_index(const ir::Program &program) {
     ExecutableIndex index;
 
     for (const auto &declaration : program.declarations) {
         std::visit(Overloaded{
                        [&](const ir::AgentDecl &agent) {
-                           index.canonical_agents.insert(agent.name);
+                           const auto canonical_name =
+                               std::string(ir::symbol_canonical_name(agent.symbol_ref, agent.name));
+                           index.canonical_agents.insert(canonical_name);
                            add_unique_name(
-                               index.display_agents, display_name(agent.name), agent.name);
+                               index.display_agents, display_name(canonical_name), canonical_name);
                        },
                        [&](const ir::WorkflowDecl &workflow) {
-                           index.canonical_workflows.insert(workflow.name);
-                           add_unique_name(
-                               index.display_workflows, display_name(workflow.name), workflow.name);
+                           const auto canonical_name = std::string(
+                               ir::symbol_canonical_name(workflow.symbol_ref, workflow.name));
+                           index.canonical_workflows.insert(canonical_name);
+                           add_unique_name(index.display_workflows,
+                                           display_name(canonical_name),
+                                           canonical_name);
                        },
                        [&](const auto &) {},
                    },
@@ -77,8 +185,10 @@ void add_unique_name(std::unordered_map<std::string, std::vector<std::string>> &
     for (const auto &declaration : program.declarations) {
         if (const auto *capability = std::get_if<ir::CapabilityDecl>(&declaration);
             capability != nullptr) {
-            index.canonical.insert(capability->name);
-            add_unique_name(index.display, display_name(capability->name), capability->name);
+            const auto canonical_name =
+                std::string(ir::symbol_canonical_name(capability->symbol_ref, capability->name));
+            index.canonical.insert(canonical_name);
+            add_unique_name(index.display, display_name(canonical_name), canonical_name);
         }
     }
 
@@ -170,7 +280,7 @@ void add_unique_name(std::unordered_map<std::string, std::vector<std::string>> &
 }
 
 struct FormalObservationScopeKey {
-    ir::FormalObservationScopeKind kind{ir::FormalObservationScopeKind::ContractClause};
+    FormalObservationScopeKind kind{FormalObservationScopeKind::ContractClause};
     std::string owner;
     std::size_t clause_index{0};
 
@@ -234,15 +344,16 @@ get_or_create_capability_binding_slot(std::vector<CapabilityBindingSlot> &slots,
 
 AgentExecutable lower_agent_executable(const ir::AgentDecl &declaration) {
     return AgentExecutable{
-        .provenance = declaration.provenance,
-        .canonical_name = declaration.name,
-        .input_type = declaration.input_type,
-        .context_type = declaration.context_type,
-        .output_type = declaration.output_type,
+        .provenance = lower_provenance(declaration.provenance),
+        .canonical_name =
+            std::string(ir::symbol_canonical_name(declaration.symbol_ref, declaration.name)),
+        .input_type = std::string(ir::type_canonical_name(declaration.input_type_ref, "Any")),
+        .context_type = std::string(ir::type_canonical_name(declaration.context_type_ref, "Any")),
+        .output_type = std::string(ir::type_canonical_name(declaration.output_type_ref, "Any")),
         .states = declaration.states,
         .initial_state = declaration.initial_state,
         .final_states = declaration.final_states,
-        .capabilities = declaration.capabilities,
+        .capabilities = lower_symbol_names(declaration.capability_refs),
     };
 }
 
@@ -306,14 +417,14 @@ WorkflowExecutionGraph lower_workflow_execution_graph(const ir::WorkflowDecl &de
 [[nodiscard]] std::unordered_map<FormalObservationScopeKey,
                                  std::vector<std::string>,
                                  FormalObservationScopeKeyHash>
-index_formal_observation_symbols(const std::vector<ir::FormalObservation> &observations) {
+index_formal_observation_symbols(const std::vector<FormalObservation> &observations) {
     std::unordered_map<FormalObservationScopeKey,
                        std::vector<std::string>,
                        FormalObservationScopeKeyHash>
         index;
 
     for (const auto &observation : observations) {
-        if (const auto *embedded = std::get_if<ir::EmbeddedBoolObservation>(&observation.node);
+        if (const auto *embedded = std::get_if<EmbeddedBoolObservation>(&observation.node);
             embedded != nullptr) {
             index[FormalObservationScopeKey{
                       .kind = embedded->scope.kind,
@@ -333,10 +444,11 @@ void add_contract_policy_obligations(
     const std::unordered_map<FormalObservationScopeKey,
                              std::vector<std::string>,
                              FormalObservationScopeKeyHash> &observation_index) {
+    const auto target = std::string(ir::symbol_canonical_name(contract.target_ref));
     for (std::size_t clause_index = 0; clause_index < contract.clauses.size(); ++clause_index) {
         const auto scope_key = FormalObservationScopeKey{
-            .kind = ir::FormalObservationScopeKind::ContractClause,
-            .owner = contract.target,
+            .kind = FormalObservationScopeKind::ContractClause,
+            .owner = target,
             .clause_index = clause_index,
         };
 
@@ -349,7 +461,7 @@ void add_contract_policy_obligations(
             .owner_target =
                 ExecutableRef{
                     .kind = ExecutableKind::Agent,
-                    .canonical_name = contract.target,
+                    .canonical_name = target,
                 },
             .kind = policy_obligation_kind(contract.clauses[clause_index].kind),
             .clause_index = clause_index,
@@ -371,7 +483,7 @@ void add_workflow_policy_obligations(
 
     for (std::size_t clause_index = 0; clause_index < workflow.safety.size(); ++clause_index) {
         const auto scope_key = FormalObservationScopeKey{
-            .kind = ir::FormalObservationScopeKind::WorkflowSafetyClause,
+            .kind = FormalObservationScopeKind::WorkflowSafetyClause,
             .owner = workflow.name,
             .clause_index = clause_index,
         };
@@ -391,7 +503,7 @@ void add_workflow_policy_obligations(
 
     for (std::size_t clause_index = 0; clause_index < workflow.liveness.size(); ++clause_index) {
         const auto scope_key = FormalObservationScopeKey{
-            .kind = ir::FormalObservationScopeKind::WorkflowLivenessClause,
+            .kind = FormalObservationScopeKind::WorkflowLivenessClause,
             .owner = workflow.name,
             .clause_index = clause_index,
         };
@@ -411,31 +523,41 @@ void add_workflow_policy_obligations(
 }
 
 WorkflowExecutable lower_workflow_executable(
+    const ir::Program &program,
     const ir::WorkflowDecl &declaration,
     const std::unordered_map<std::string, const ir::AgentDecl *> &agents_by_name) {
+    const auto *return_summary = ir::find_workflow_return_summary(program, declaration);
     WorkflowExecutable workflow{
-        .provenance = declaration.provenance,
-        .canonical_name = declaration.name,
-        .input_type = declaration.input_type,
-        .output_type = declaration.output_type,
+        .provenance = lower_provenance(declaration.provenance),
+        .canonical_name =
+            std::string(ir::symbol_canonical_name(declaration.symbol_ref, declaration.name)),
+        .input_type = std::string(ir::type_canonical_name(declaration.input_type_ref, "Any")),
+        .output_type = std::string(ir::type_canonical_name(declaration.output_type_ref, "Any")),
         .execution_graph = lower_workflow_execution_graph(declaration),
         .nodes = {},
         .safety_clause_count = declaration.safety.size(),
         .liveness_clause_count = declaration.liveness.size(),
-        .return_summary = declaration.return_summary,
+        .return_summary = lower_workflow_value_summary(
+            return_summary == nullptr ? ir::WorkflowExprSummary{} : *return_summary),
     };
 
     workflow.nodes.reserve(declaration.nodes.size());
     for (const auto &node : declaration.nodes) {
+        const auto target = std::string(ir::symbol_canonical_name(node.target_ref));
         const auto target_agent = [&]() -> const ir::AgentDecl * {
-            const auto found = agents_by_name.find(node.target);
+            const auto found = agents_by_name.find(target);
             return found == agents_by_name.end() ? nullptr : found->second;
         }();
 
         workflow.nodes.push_back(WorkflowExecutionNode{
             .name = node.name,
-            .target = node.target,
-            .input_summary = node.input_summary,
+            .target = target,
+            .input_summary = lower_workflow_value_summary([&]() -> const ir::WorkflowExprSummary & {
+                const auto *summary =
+                    ir::find_workflow_node_input_summary(program, declaration, node);
+                static const ir::WorkflowExprSummary empty_summary{};
+                return summary == nullptr ? empty_summary : *summary;
+            }()),
             .after = node.after,
             .lifecycle = lower_workflow_node_lifecycle(node, target_agent),
         });
@@ -560,46 +682,48 @@ Package lower_package(const ir::Program &program, PackageMetadata metadata) {
         .executable_targets = {},
         .capability_binding_slots = {},
         .policy_obligations = {},
-        .formal_observations = program.formal_observations,
+        .formal_observations = lower_formal_observations(ir::formal_observations(program)),
     };
 
     std::unordered_map<std::string, std::vector<std::string>> agent_capabilities;
     std::unordered_map<std::string, const ir::AgentDecl *> agents_by_name;
     const auto formal_observation_index =
-        index_formal_observation_symbols(program.formal_observations);
+        index_formal_observation_symbols(package.formal_observations);
     for (const auto &declaration : program.declarations) {
         if (const auto *agent = std::get_if<ir::AgentDecl>(&declaration)) {
-            agent_capabilities.emplace(agent->name, agent->capabilities);
-            agents_by_name.emplace(agent->name, agent);
+            const auto agent_name =
+                std::string(ir::symbol_canonical_name(agent->symbol_ref, agent->name));
+            agent_capabilities.emplace(agent_name, lower_symbol_names(agent->capability_refs));
+            agents_by_name.emplace(agent_name, agent);
         }
     }
 
     for (const auto &declaration : program.declarations) {
-        std::visit(Overloaded{
-                       [&](const ir::AgentDecl &value) {
-                           auto agent = lower_agent_executable(value);
-                           add_capability_dependencies_for_agent(
-                               package.capability_binding_slots, package.metadata, agent);
-                           package.executable_targets.push_back(std::move(agent));
-                       },
-                       [&](const ir::WorkflowDecl &value) {
-                           auto workflow = lower_workflow_executable(value, agents_by_name);
-                           add_capability_dependencies_for_workflow(
-                               package.capability_binding_slots,
-                               package.metadata,
-                               workflow,
-                               agent_capabilities);
-                           package.executable_targets.push_back(std::move(workflow));
-                           add_workflow_policy_obligations(
-                               package.policy_obligations, value, formal_observation_index);
-                       },
-                       [&](const ir::ContractDecl &value) {
-                           add_contract_policy_obligations(
-                               package.policy_obligations, value, formal_observation_index);
-                       },
-                       [&](const auto &) {},
-                   },
-                   declaration);
+        std::visit(
+            Overloaded{
+                [&](const ir::AgentDecl &value) {
+                    auto agent = lower_agent_executable(value);
+                    add_capability_dependencies_for_agent(
+                        package.capability_binding_slots, package.metadata, agent);
+                    package.executable_targets.push_back(std::move(agent));
+                },
+                [&](const ir::WorkflowDecl &value) {
+                    auto workflow = lower_workflow_executable(program, value, agents_by_name);
+                    add_capability_dependencies_for_workflow(package.capability_binding_slots,
+                                                             package.metadata,
+                                                             workflow,
+                                                             agent_capabilities);
+                    package.executable_targets.push_back(std::move(workflow));
+                    add_workflow_policy_obligations(
+                        package.policy_obligations, value, formal_observation_index);
+                },
+                [&](const ir::ContractDecl &value) {
+                    add_contract_policy_obligations(
+                        package.policy_obligations, value, formal_observation_index);
+                },
+                [&](const auto &) {},
+            },
+            declaration);
     }
 
     return package;
@@ -681,13 +805,13 @@ build_node_capability_binding_refs(const Package &package, std::string_view agen
     return key;
 }
 
-void validate_workflow_value_summary(const ir::WorkflowExprSummary &summary,
+void validate_workflow_value_summary(const WorkflowValueSummary &summary,
                                      const std::unordered_set<std::string> &node_names,
                                      std::string_view owner,
                                      DiagnosticBag &diagnostics) {
     for (const auto &read : summary.reads) {
         switch (read.kind) {
-        case ir::WorkflowValueSourceKind::WorkflowInput:
+        case WorkflowValueSourceKind::WorkflowInput:
             if (read.root_name != "input") {
                 diagnostics.error()
                     .message("execution plan validation " + std::string(owner) +
@@ -696,7 +820,7 @@ void validate_workflow_value_summary(const ir::WorkflowExprSummary &summary,
                     .emit();
             }
             break;
-        case ir::WorkflowValueSourceKind::WorkflowNodeOutput:
+        case WorkflowValueSourceKind::WorkflowNodeOutput:
             if (!node_names.contains(read.root_name)) {
                 diagnostics.error()
                     .message("execution plan validation " + std::string(owner) +
@@ -1040,10 +1164,10 @@ PackageReaderSummaryResult build_package_reader_summary(const Package &package) 
     result.summary.formal_observations.total = package.formal_observations.size();
     for (const auto &observation : package.formal_observations) {
         std::visit(Overloaded{
-                       [&](const ir::CalledCapabilityObservation &) {
+                       [&](const CalledCapabilityObservation &) {
                            result.summary.formal_observations.called_capability += 1;
                        },
-                       [&](const ir::EmbeddedBoolObservation &) {
+                       [&](const EmbeddedBoolObservation &) {
                            result.summary.formal_observations.embedded_bool_expr += 1;
                        },
                    },

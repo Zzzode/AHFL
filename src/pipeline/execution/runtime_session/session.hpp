@@ -6,9 +6,9 @@
 #include <string_view>
 #include <vector>
 
-#include "pipeline/execution/dry_run/runner.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
 
 namespace ahfl::runtime_session {
 
@@ -60,7 +60,7 @@ struct RuntimeSessionNode {
     std::optional<RuntimeFailureSummary> failure_summary;
     std::vector<std::string> satisfied_dependencies;
     handoff::WorkflowNodeLifecycleSummary lifecycle;
-    ahfl::ir::WorkflowExprSummary input_summary;
+    handoff::WorkflowValueSummary input_summary;
     std::vector<handoff::CapabilityBindingReference> capability_bindings;
     std::vector<RuntimeSessionMockUsage> used_mocks;
 };
@@ -78,7 +78,7 @@ struct RuntimeSession {
     RuntimeSessionOptions options;
     std::vector<std::string> execution_order;
     std::vector<RuntimeSessionNode> nodes;
-    ahfl::ir::WorkflowExprSummary return_summary;
+    handoff::WorkflowValueSummary return_summary;
 };
 
 struct RuntimeSessionResult {

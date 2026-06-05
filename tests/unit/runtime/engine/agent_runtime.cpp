@@ -41,6 +41,23 @@ StatementPtr make_stmt_ptr(StatementNode node) {
     return std::make_unique<Statement>(Statement{std::move(node), {}});
 }
 
+TypeRef make_named_type_ref(const std::string &name) {
+    return TypeRef{
+        .kind = TypeRefKind::Struct,
+        .display_name = name,
+        .canonical_name = name,
+    };
+}
+
+SymbolRef make_agent_ref(const std::string &name) {
+    return SymbolRef{
+        .kind = SymbolRefKind::Agent,
+        .canonical_name = name,
+        .local_name = name,
+        .module_name = {},
+    };
+}
+
 // 构造一个简单的 goto handler
 StateHandler make_goto_handler(const std::string &state, const std::string &target) {
     StateHandler handler;
@@ -117,9 +134,10 @@ void test_simple_linear_agent() {
     // Agent 定义
     AgentDecl agent;
     agent.name = "SimpleAgent";
-    agent.input_type = "SimpleInput";
-    agent.context_type = "SimpleCtx";
-    agent.output_type = "SimpleOutput";
+    agent.symbol_ref = make_agent_ref("SimpleAgent");
+    agent.input_type_ref = make_named_type_ref("SimpleInput");
+    agent.context_type_ref = make_named_type_ref("SimpleCtx");
+    agent.output_type_ref = make_named_type_ref("SimpleOutput");
     agent.states = {"Init", "Process", "Final"};
     agent.initial_state = "Init";
     agent.final_states = {"Final"};
@@ -127,7 +145,7 @@ void test_simple_linear_agent() {
 
     // Flow 定义
     FlowDecl flow;
-    flow.target = "SimpleAgent";
+    flow.target_ref = make_agent_ref("SimpleAgent");
     flow.state_handlers.push_back(make_goto_handler("Init", "Process"));
     flow.state_handlers.push_back(make_goto_handler("Process", "Final"));
     flow.state_handlers.push_back(make_return_handler("Final", IntegerLiteralExpr{"42"}));
@@ -156,9 +174,10 @@ void test_simple_linear_agent() {
 void test_conditional_goto_agent() {
     AgentDecl agent;
     agent.name = "ConditionalAgent";
-    agent.input_type = "AuditInput";
-    agent.context_type = "AuditCtx";
-    agent.output_type = "AuditOutput";
+    agent.symbol_ref = make_agent_ref("ConditionalAgent");
+    agent.input_type_ref = make_named_type_ref("AuditInput");
+    agent.context_type_ref = make_named_type_ref("AuditCtx");
+    agent.output_type_ref = make_named_type_ref("AuditOutput");
     agent.states = {"Init", "Approved", "Rejected", "Done"};
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
@@ -170,7 +189,7 @@ void test_conditional_goto_agent() {
     };
 
     FlowDecl flow;
-    flow.target = "ConditionalAgent";
+    flow.target_ref = make_agent_ref("ConditionalAgent");
     // Init: if input.approved { goto Approved } else { goto Rejected }
     flow.state_handlers.push_back(make_conditional_handler("Init", "Approved", "Rejected"));
     flow.state_handlers.push_back(make_goto_handler("Approved", "Done"));
@@ -214,7 +233,7 @@ void test_multiple_transitions() {
     agent.transitions = {{"A", "B"}, {"B", "C"}, {"C", "D"}};
 
     FlowDecl flow;
-    flow.target = "MultiAgent";
+    flow.target_ref = make_agent_ref("MultiAgent");
     flow.state_handlers.push_back(make_goto_handler("A", "B"));
     flow.state_handlers.push_back(make_goto_handler("B", "C"));
     flow.state_handlers.push_back(make_goto_handler("C", "D"));
@@ -241,7 +260,7 @@ void test_non_final_state_fallthrough() {
     agent.transitions = {{"Init", "Final"}};
 
     FlowDecl flow;
-    flow.target = "FallthroughAgent";
+    flow.target_ref = make_agent_ref("FallthroughAgent");
     // Init handler 没有 goto 也没有 return -> fallthrough error
     flow.state_handlers.push_back(make_empty_handler("Init"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
@@ -266,7 +285,7 @@ void test_final_state_fallthrough() {
     agent.transitions = {{"Init", "Final"}};
 
     FlowDecl flow;
-    flow.target = "FinalFallAgent";
+    flow.target_ref = make_agent_ref("FinalFallAgent");
     flow.state_handlers.push_back(make_goto_handler("Init", "Final"));
     // Final handler 没有 return -> fallthrough 但它是终态，所以 Completed
     flow.state_handlers.push_back(make_empty_handler("Final"));
@@ -292,7 +311,7 @@ void test_invalid_transition() {
     agent.transitions = {{"A", "B"}, {"B", "C"}};
 
     FlowDecl flow;
-    flow.target = "InvalidTransAgent";
+    flow.target_ref = make_agent_ref("InvalidTransAgent");
     // A 直接 goto C（违反 transition 规则）
     flow.state_handlers.push_back(make_goto_handler("A", "C"));
     flow.state_handlers.push_back(make_goto_handler("B", "C"));
@@ -318,7 +337,7 @@ void test_quota_exceeded() {
     agent.transitions = {{"A", "B"}, {"B", "A"}};
 
     FlowDecl flow;
-    flow.target = "QuotaAgent";
+    flow.target_ref = make_agent_ref("QuotaAgent");
     // A -> B -> A -> B -> ... (循环) 但 quota=3 transition 就会超
     flow.state_handlers.push_back(make_goto_handler("A", "B"));
     flow.state_handlers.push_back(make_goto_handler("B", "A"));
@@ -347,7 +366,7 @@ void test_infinite_loop_detection() {
     agent.transitions = {{"Loop", "Loop"}};
 
     FlowDecl flow;
-    flow.target = "LoopAgent";
+    flow.target_ref = make_agent_ref("LoopAgent");
     // Loop -> Loop -> Loop -> ... 永不到达 Final
     flow.state_handlers.push_back(make_goto_handler("Loop", "Loop"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
@@ -371,7 +390,7 @@ void test_assert_failure() {
     agent.final_states = {"Final"};
 
     FlowDecl flow;
-    flow.target = "AssertAgent";
+    flow.target_ref = make_agent_ref("AssertAgent");
     flow.state_handlers.push_back(make_assert_fail_handler("Init"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
 
@@ -395,7 +414,7 @@ void test_strict_no_transitions() {
     // 不定义 transitions -> 拒绝所有 goto
 
     FlowDecl flow;
-    flow.target = "StrictAgent";
+    flow.target_ref = make_agent_ref("StrictAgent");
     flow.state_handlers.push_back(make_goto_handler("A", "C")); // 直接跳到 C
     flow.state_handlers.push_back(make_goto_handler("B", "C"));
     flow.state_handlers.push_back(make_return_handler("C", StringLiteralExpr{"done"}));
@@ -423,7 +442,7 @@ void test_build_agent_runtime() {
     program.declarations.push_back(std::move(agent));
 
     FlowDecl flow;
-    flow.target = "TestAgent";
+    flow.target_ref = make_agent_ref("TestAgent");
     flow.state_handlers.push_back(make_goto_handler("Init", "Done"));
     flow.state_handlers.push_back(make_return_handler("Done", IntegerLiteralExpr{"1"}));
     program.declarations.push_back(std::move(flow));
@@ -455,7 +474,7 @@ void test_missing_handler() {
     agent.transitions = {{"Init", "Process"}, {"Process", "Final"}};
 
     FlowDecl flow;
-    flow.target = "MissingHandler";
+    flow.target_ref = make_agent_ref("MissingHandler");
     // 只有 Init handler，Process 缺失
     flow.state_handlers.push_back(make_goto_handler("Init", "Process"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
@@ -479,7 +498,7 @@ void test_capability_failure_becomes_diagnostic() {
     agent.final_states = {"Final"};
 
     FlowDecl flow;
-    flow.target = "CapabilityAgent";
+    flow.target_ref = make_agent_ref("CapabilityAgent");
 
     CallExpr call;
     call.callee = "UnavailableCapability";
@@ -533,7 +552,7 @@ void test_capability_call_inside_composite_condition() {
     }));
 
     FlowDecl flow;
-    flow.target = "CompositeCapabilityAgent";
+    flow.target_ref = make_agent_ref("CompositeCapabilityAgent");
     flow.state_handlers.push_back(std::move(init));
     flow.state_handlers.push_back(make_return_handler("Approved", StringLiteralExpr{"approved"}));
     flow.state_handlers.push_back(make_return_handler("Rejected", StringLiteralExpr{"rejected"}));

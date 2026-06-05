@@ -13,12 +13,15 @@
 #include <variant>
 #include <vector>
 
-#include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/base/support/ownership.hpp"
-#include "compiler/backends/smv/smv_helpers.hpp"
-#include "compiler/backends/smv/smv_naming.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
+#include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/program_view.hpp"
 #include "base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
+#include "compiler/backends/smv/smv_helpers.hpp"
+#include "compiler/backends/smv/smv_naming.hpp"
 
 namespace ahfl {
 
@@ -35,9 +38,8 @@ class SmvPrinter final {
 
   private:
     std::ostream &out_;
-    std::unordered_map<std::string, std::reference_wrapper<const ir::AgentDecl>> agents_;
-    std::unordered_map<std::string, std::reference_wrapper<const ir::FlowDecl>> flows_;
-    std::unordered_map<std::string, std::reference_wrapper<const ir::CapabilityDecl>> capabilities_;
+    const ir::Program *program_{nullptr};
+    ir::ProgramIndex index_;
     std::vector<std::reference_wrapper<const ir::ContractDecl>> contracts_;
     std::vector<std::reference_wrapper<const ir::WorkflowDecl>> workflows_;
     std::vector<std::string> state_variables_;
@@ -77,7 +79,7 @@ class SmvPrinter final {
     find_embedded_observation_expr(const ir::FormalObservationScope &scope) const;
     [[nodiscard]] bool
     embedded_observation_requires_variable(const ir::FormalObservationScope &scope) const;
-    [[nodiscard]] bool handler_calls_capability(const ir::StateHandler &handler,
+    [[nodiscard]] bool handler_calls_capability(const ir::StateHandler::Summary &summary,
                                                 std::string_view capability_name) const;
     [[nodiscard]] std::string
     render_workflow_node_state_guard(const ir::WorkflowDecl &workflow,

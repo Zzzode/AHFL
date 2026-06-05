@@ -1,17 +1,19 @@
 #include "compiler/assurance/assurance.hpp"
 
+#include "ahfl/compiler/ir/analysis.hpp"
+#include "ahfl/compiler/ir/identity.hpp"
 #include "base/support/json.hpp"
 #include "base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <map>
 #include <set>
+#include <string>
 #include <string_view>
 #include <variant>
 
 namespace ahfl::assurance {
 namespace {
-
 
 [[nodiscard]] std::string_view effect_kind_name(ir::CapabilityEffectKind kind) {
     switch (kind) {
@@ -482,18 +484,21 @@ AssuranceBundle build_assurance_bundle(const ir::Program &program) {
             continue;
         }
 
+        const auto flow_target = std::string(ir::symbol_canonical_name(flow->target_ref));
         for (const auto &handler : flow->state_handlers) {
+            const auto *handler_summary = ir::find_state_handler_summary(program, *flow, handler);
             FlowEffectSummary summary{
-                .flow_target = flow->target,
+                .flow_target = flow_target,
                 .state = handler.state_name,
-                .called_targets = handler.summary.called_targets,
+                .called_targets = handler_summary == nullptr ? std::vector<std::string>{}
+                                                             : handler_summary->called_targets,
                 .effect_kinds = {},
                 .requires_checkpoint = false,
                 .requires_recovery = false,
                 .production_blockers = {},
             };
 
-            for (const auto &target : handler.summary.called_targets) {
+            for (const auto &target : summary.called_targets) {
                 const auto *capability = find_capability(capability_index, target);
                 if (capability == nullptr) {
                     push_unique(summary.production_blockers,

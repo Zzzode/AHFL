@@ -39,13 +39,31 @@ StatementPtr make_stmt_ptr(StatementNode node) {
     return std::make_unique<Statement>(Statement{std::move(node), {}});
 }
 
+TypeRef make_named_type_ref(const std::string &name) {
+    return TypeRef{
+        .kind = TypeRefKind::Struct,
+        .display_name = name,
+        .canonical_name = name,
+    };
+}
+
+SymbolRef make_agent_ref(const std::string &name) {
+    return SymbolRef{
+        .kind = SymbolRefKind::Agent,
+        .canonical_name = name,
+        .local_name = name,
+        .module_name = {},
+    };
+}
+
 // 构造一个简单的 EchoAgent（Init -> Done，返回 input 的某个字段的值）
 AgentDecl make_echo_agent(const std::string &name) {
     AgentDecl agent;
     agent.name = name;
-    agent.input_type = name + "Input";
-    agent.context_type = name + "Ctx";
-    agent.output_type = name + "Output";
+    agent.symbol_ref = make_agent_ref(name);
+    agent.input_type_ref = make_named_type_ref(name + "Input");
+    agent.context_type_ref = make_named_type_ref(name + "Ctx");
+    agent.output_type_ref = make_named_type_ref(name + "Output");
     agent.states = {"Init", "Done"};
     agent.initial_state = "Init";
     agent.final_states = {"Done"};
@@ -56,7 +74,7 @@ AgentDecl make_echo_agent(const std::string &name) {
 // 构造一个 EchoFlow：Init goto Done; Done return IntegerLiteral
 FlowDecl make_echo_flow(const std::string &target, const std::string &return_val) {
     FlowDecl flow;
-    flow.target = target;
+    flow.target_ref = make_agent_ref(target);
 
     // Init handler: goto Done
     StateHandler init_handler;
@@ -80,7 +98,7 @@ FlowDecl make_struct_return_flow(const std::string &target,
                                  const std::string &field_name,
                                  const std::string &int_val) {
     FlowDecl flow;
-    flow.target = target;
+    flow.target_ref = make_agent_ref(target);
 
     StateHandler init_handler;
     init_handler.state_name = "Init";
@@ -104,7 +122,7 @@ FlowDecl make_struct_return_flow(const std::string &target,
 // 构造一个 Flow：Init goto Done; Done return input.<field_name>
 FlowDecl make_input_field_return_flow(const std::string &target, const std::string &field_name) {
     FlowDecl flow;
-    flow.target = target;
+    flow.target_ref = make_agent_ref(target);
 
     StateHandler init_handler;
     init_handler.state_name = "Init";
@@ -127,7 +145,7 @@ FlowDecl make_input_field_return_flow(const std::string &target, const std::stri
 // 构造一个会失败的 flow（Init 状态 assert(false)）
 FlowDecl make_failing_flow(const std::string &target) {
     FlowDecl flow;
-    flow.target = target;
+    flow.target_ref = make_agent_ref(target);
 
     StateHandler init_handler;
     init_handler.state_name = "Init";
@@ -149,7 +167,7 @@ WorkflowNode
 make_node(const std::string &name, const std::string &target, std::vector<std::string> after = {}) {
     WorkflowNode node;
     node.name = name;
-    node.target = target;
+    node.target_ref = make_agent_ref(target);
     node.input = nullptr;
     node.after = std::move(after);
     return node;
@@ -163,7 +181,7 @@ WorkflowNode make_node_with_node_output_path(const std::string &name,
                                              std::vector<std::string> after = {}) {
     WorkflowNode node;
     node.name = name;
-    node.target = target;
+    node.target_ref = make_agent_ref(target);
     node.after = std::move(after);
 
     // source_node.field
@@ -190,8 +208,8 @@ void test_single_node_workflow() {
     // Workflow with one node
     WorkflowDecl workflow;
     workflow.name = "SingleNodeWorkflow";
-    workflow.input_type = "WfInput";
-    workflow.output_type = "WfOutput";
+    workflow.input_type_ref = make_named_type_ref("WfInput");
+    workflow.output_type_ref = make_named_type_ref("WfOutput");
     workflow.nodes.push_back(make_node("echo", "EchoAgent"));
     // return value: 直接返回 node output 的 PathExpr -> 此处简单设为 null
     program.declarations.push_back(std::move(workflow));
@@ -223,8 +241,8 @@ void test_linear_three_node_workflow() {
 
     WorkflowDecl workflow;
     workflow.name = "LinearWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("a", "AgentA"));
     workflow.nodes.push_back(make_node("b", "AgentB", {"a"}));
     workflow.nodes.push_back(make_node("c", "AgentC", {"b"}));
@@ -260,8 +278,8 @@ void test_diamond_workflow() {
 
     WorkflowDecl workflow;
     workflow.name = "DiamondWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("a", "AgentA"));
     workflow.nodes.push_back(make_node("b", "AgentB"));
     workflow.nodes.push_back(make_node("c", "AgentC", {"a", "b"}));
@@ -294,8 +312,8 @@ void test_node_failure_propagation() {
 
     WorkflowDecl workflow;
     workflow.name = "FailWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("fail_node", "FailAgent"));
     workflow.nodes.push_back(make_node("succ_node", "SuccessAgent", {"fail_node"}));
     program.declarations.push_back(std::move(workflow));
@@ -328,8 +346,8 @@ void test_return_value_from_node() {
 
     WorkflowDecl workflow;
     workflow.name = "ReturnWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("ret_node", "RetAgent"));
 
     // return_value: ret_node.result (PathExpr)
@@ -361,8 +379,8 @@ void test_return_value_eval_error_is_reported() {
 
     WorkflowDecl workflow;
     workflow.name = "BrokenReturnWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
 
     PathExpr missing_path;
     missing_path.path.root_kind = PathRootKind::Identifier;
@@ -389,8 +407,8 @@ void test_return_value_can_call_capability_inside_composite_expression() {
 
     WorkflowDecl workflow;
     workflow.name = "CapabilityReturnWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
 
     CallExpr ready_call;
     ready_call.callee = "is_ready";
@@ -444,12 +462,12 @@ void test_node_input_can_call_capability_inside_struct_literal() {
 
     WorkflowDecl workflow;
     workflow.name = "CapabilityNodeInputWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
 
     WorkflowNode node;
     node.name = "cap_node";
-    node.target = "InputEchoAgent";
+    node.target_ref = make_agent_ref("InputEchoAgent");
 
     StructLiteralExpr node_input;
     node_input.type_name = "NodeInput";
@@ -507,8 +525,8 @@ void test_empty_workflow() {
 
     WorkflowDecl workflow;
     workflow.name = "EmptyWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     // 无 nodes
     program.declarations.push_back(std::move(workflow));
 
@@ -530,8 +548,8 @@ void test_missing_agent_declaration() {
     // 不添加 Agent/Flow 声明，只有 workflow
     WorkflowDecl workflow;
     workflow.name = "BrokenWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("orphan", "NonExistentAgent"));
     program.declarations.push_back(std::move(workflow));
 
@@ -573,8 +591,8 @@ void test_node_input_uses_node_output() {
 
     WorkflowDecl workflow;
     workflow.name = "CrossNodeWorkflow";
-    workflow.input_type = "Input";
-    workflow.output_type = "Output";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("a", "AgentA"));
     // b 的 input 引用 a.value (via PathExpr with Identifier root)
     workflow.nodes.push_back(make_node_with_node_output_path("b", "AgentB", "a", "value", {"a"}));

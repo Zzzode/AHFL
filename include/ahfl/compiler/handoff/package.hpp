@@ -7,8 +7,11 @@
 #include <variant>
 #include <vector>
 
-#include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+
+namespace ahfl::ir {
+struct Program;
+}
 
 namespace ahfl::handoff {
 
@@ -59,8 +62,57 @@ struct PackageMetadata {
     std::unordered_map<std::string, std::string> capability_binding_keys;
 };
 
+struct DeclarationProvenance {
+    std::string module_name;
+    std::string source_path;
+};
+
+enum class WorkflowValueSourceKind {
+    WorkflowInput,
+    WorkflowNodeOutput,
+};
+
+struct WorkflowValueRead {
+    WorkflowValueSourceKind kind{WorkflowValueSourceKind::WorkflowInput};
+    std::string root_name;
+    std::vector<std::string> members;
+};
+
+struct WorkflowValueSummary {
+    std::vector<WorkflowValueRead> reads;
+};
+
+enum class FormalObservationScopeKind {
+    ContractClause,
+    WorkflowSafetyClause,
+    WorkflowLivenessClause,
+};
+
+struct FormalObservationScope {
+    FormalObservationScopeKind kind{FormalObservationScopeKind::ContractClause};
+    std::string owner;
+    std::size_t clause_index{0};
+    std::size_t atom_index{0};
+};
+
+struct CalledCapabilityObservation {
+    std::string agent;
+    std::string capability;
+};
+
+struct EmbeddedBoolObservation {
+    FormalObservationScope scope;
+};
+
+using FormalObservationNode = std::variant<CalledCapabilityObservation, EmbeddedBoolObservation>;
+
+struct FormalObservation {
+    std::string symbol;
+    FormalObservationNode node;
+};
+
 struct AgentExecutable {
-    ir::DeclarationProvenance provenance;
+    DeclarationProvenance provenance;
     std::string canonical_name;
     std::string input_type;
     std::string context_type;
@@ -93,13 +145,13 @@ struct WorkflowNodeLifecycleSummary {
 struct WorkflowExecutionNode {
     std::string name;
     std::string target;
-    ir::WorkflowExprSummary input_summary;
+    WorkflowValueSummary input_summary;
     std::vector<std::string> after;
     WorkflowNodeLifecycleSummary lifecycle;
 };
 
 struct WorkflowExecutable {
-    ir::DeclarationProvenance provenance;
+    DeclarationProvenance provenance;
     std::string canonical_name;
     std::string input_type;
     std::string output_type;
@@ -107,7 +159,7 @@ struct WorkflowExecutable {
     std::vector<WorkflowExecutionNode> nodes;
     std::size_t safety_clause_count{0};
     std::size_t liveness_clause_count{0};
-    ir::WorkflowExprSummary return_summary;
+    WorkflowValueSummary return_summary;
 };
 
 using ExecutableTarget = std::variant<AgentExecutable, WorkflowExecutable>;
@@ -130,7 +182,7 @@ struct Package {
     std::vector<ExecutableTarget> executable_targets;
     std::vector<CapabilityBindingSlot> capability_binding_slots;
     std::vector<PolicyObligation> policy_obligations;
-    std::vector<ir::FormalObservation> formal_observations;
+    std::vector<FormalObservation> formal_observations;
 };
 
 struct PackageReaderObservationSummary {
@@ -154,7 +206,7 @@ struct ExecutionPlannerBootstrapNode {
     std::string target;
     std::vector<std::string> after;
     WorkflowNodeLifecycleSummary lifecycle;
-    ir::WorkflowExprSummary input_summary;
+    WorkflowValueSummary input_summary;
 };
 
 struct ExecutionPlannerBootstrap {
@@ -164,7 +216,7 @@ struct ExecutionPlannerBootstrap {
     std::vector<std::string> entry_nodes;
     std::vector<WorkflowDependencyEdge> dependency_edges;
     std::vector<ExecutionPlannerBootstrapNode> nodes;
-    ir::WorkflowExprSummary return_summary;
+    WorkflowValueSummary return_summary;
 };
 
 struct CapabilityBindingReference {
@@ -180,7 +232,7 @@ struct WorkflowNodePlan {
     std::string target;
     std::vector<std::string> after;
     WorkflowNodeLifecycleSummary lifecycle;
-    ir::WorkflowExprSummary input_summary;
+    WorkflowValueSummary input_summary;
     std::vector<CapabilityBindingReference> capability_bindings;
 };
 
@@ -191,7 +243,7 @@ struct WorkflowPlan {
     std::vector<std::string> entry_nodes;
     std::vector<WorkflowDependencyEdge> dependency_edges;
     std::vector<WorkflowNodePlan> nodes;
-    ir::WorkflowExprSummary return_summary;
+    WorkflowValueSummary return_summary;
 };
 
 struct ExecutionPlan {

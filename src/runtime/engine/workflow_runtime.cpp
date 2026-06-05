@@ -1,9 +1,10 @@
 #include "runtime/engine/workflow_runtime.hpp"
 
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <variant>
 
+#include "ahfl/compiler/ir/identity.hpp"
 #include "runtime/engine/capability_eval.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 
@@ -22,43 +23,22 @@ bool WorkflowResult::has_errors() const {
 // ============================================================================
 
 WorkflowRuntime::WorkflowRuntime(const ir::Program &program, WorkflowRuntimeConfig config)
-    : program_(program), config_(std::move(config)) {}
+    : program_(program), index_(program_), config_(std::move(config)) {}
 
 // ============================================================================
 // Lookup Helpers
 // ============================================================================
 
 const ir::WorkflowDecl *WorkflowRuntime::find_workflow(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (const auto *wd = std::get_if<ir::WorkflowDecl>(&decl)) {
-            if (wd->name == name) {
-                return wd;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_workflow(name);
 }
 
 const ir::AgentDecl *WorkflowRuntime::find_agent(const std::string &name) const {
-    for (const auto &decl : program_.declarations) {
-        if (const auto *ad = std::get_if<ir::AgentDecl>(&decl)) {
-            if (ad->name == name) {
-                return ad;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_agent(name);
 }
 
 const ir::FlowDecl *WorkflowRuntime::find_flow(const std::string &agent_name) const {
-    for (const auto &decl : program_.declarations) {
-        if (const auto *fd = std::get_if<ir::FlowDecl>(&decl)) {
-            if (fd->target == agent_name) {
-                return fd;
-            }
-        }
-    }
-    return nullptr;
+    return index_.find_flow_for_agent(agent_name);
 }
 
 // ============================================================================
@@ -72,57 +52,7 @@ const ir::FlowDecl *WorkflowRuntime::find_flow(const std::string &agent_name) co
 
 std::vector<const ir::WorkflowNode *>
 WorkflowRuntime::topological_sort(const ir::WorkflowDecl &workflow) const {
-    // 统计每个 node 的初始未满足依赖数
-    std::unordered_map<std::string, std::size_t> remaining_deps;
-    for (const auto &node : workflow.nodes) {
-        remaining_deps.emplace(node.name, node.after.size());
-    }
-
-    // 先将无依赖的 node 入队
-    std::vector<const ir::WorkflowNode *> ready;
-    ready.reserve(workflow.nodes.size());
-    for (const auto &node : workflow.nodes) {
-        if (node.after.empty()) {
-            ready.push_back(&node);
-        }
-    }
-
-    std::vector<const ir::WorkflowNode *> order;
-    order.reserve(workflow.nodes.size());
-
-    std::unordered_set<std::string> processed;
-
-    for (std::size_t i = 0; i < ready.size(); ++i) {
-        const ir::WorkflowNode *node = ready[i];
-        if (processed.contains(node->name)) {
-            continue;
-        }
-        processed.insert(node->name);
-        order.push_back(node);
-
-        // 将依赖于当前节点且依赖全部满足的后继节点入队
-        for (const auto &candidate : workflow.nodes) {
-            if (processed.contains(candidate.name)) {
-                continue;
-            }
-            bool unlocked = false;
-            for (const auto &dep : candidate.after) {
-                if (dep != node->name) {
-                    continue;
-                }
-                auto &rem = remaining_deps[candidate.name];
-                if (rem > 0U) {
-                    rem -= 1U;
-                }
-                unlocked = true;
-            }
-            if (unlocked && remaining_deps[candidate.name] == 0U) {
-                ready.push_back(&candidate);
-            }
-        }
-    }
-
-    return order;
+    return index_.topological_order(workflow);
 }
 
 // ============================================================================
@@ -223,6 +153,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
 
     for (std::size_t idx = 0; idx < sorted_nodes.size(); ++idx) {
         const ir::WorkflowNode *node = sorted_nodes[idx];
+        const auto target = std::string(ir::symbol_canonical_name(node->target_ref));
 
         // 检查依赖是否有失败
         bool dep_failed = false;
@@ -238,7 +169,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             failed_nodes.insert(node->name);
             result.node_results.push_back(NodeExecutionResult{
                 .node_name = node->name,
-                .target = node->target,
+                .target = target,
                 .status = AgentStatus::Failed,
                 .output = std::nullopt,
                 .execution_index = idx,
@@ -260,7 +191,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 failed_nodes.insert(node->name);
                 result.node_results.push_back(NodeExecutionResult{
                     .node_name = node->name,
-                    .target = node->target,
+                    .target = target,
                     .status = AgentStatus::Failed,
                     .output = std::nullopt,
                     .execution_index = idx,
@@ -272,18 +203,18 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
 
         // 步骤 4b：查找 AgentDecl 与 FlowDecl
-        const ir::AgentDecl *agent_decl = find_agent(node->target);
-        const ir::FlowDecl *flow_decl = find_flow(node->target);
+        const ir::AgentDecl *agent_decl = find_agent(target);
+        const ir::FlowDecl *flow_decl = find_flow(target);
 
         if (agent_decl == nullptr || flow_decl == nullptr) {
             result.status = WorkflowStatus::NodeFailed;
             result.diagnostics.error()
-                .message("agent '" + node->target + "' declaration or flow not found")
+                .message("agent '" + target + "' declaration or flow not found")
                 .emit();
             failed_nodes.insert(node->name);
             result.node_results.push_back(NodeExecutionResult{
                 .node_name = node->name,
-                .target = node->target,
+                .target = target,
                 .status = AgentStatus::Failed,
                 .output = std::nullopt,
                 .execution_index = idx,
@@ -309,7 +240,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             }
             result.node_results.push_back(NodeExecutionResult{
                 .node_name = node->name,
-                .target = node->target,
+                .target = target,
                 .status = AgentStatus::Completed,
                 .output = std::move(agent_result.output),
                 .execution_index = idx,
@@ -322,7 +253,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             failed_nodes.insert(node->name);
             result.node_results.push_back(NodeExecutionResult{
                 .node_name = node->name,
-                .target = node->target,
+                .target = target,
                 .status = agent_result.status,
                 .output = std::nullopt,
                 .execution_index = idx,

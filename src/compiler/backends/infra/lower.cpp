@@ -1,8 +1,27 @@
 #include "compiler/backends/infra/lower.hpp"
 
+#include "ahfl/compiler/ir/identity.hpp"
+
 #include <variant>
+#include <vector>
 
 namespace ahfl::backends {
+
+namespace {
+
+[[nodiscard]] std::vector<std::string> symbol_names(const std::vector<ir::SymbolRef> &refs) {
+    std::vector<std::string> names;
+    names.reserve(refs.size());
+    for (const auto &ref : refs) {
+        const auto name = ir::symbol_canonical_name(ref);
+        if (!name.empty()) {
+            names.emplace_back(name);
+        }
+    }
+    return names;
+}
+
+} // namespace
 
 std::vector<K8sCrdConfig> lower_k8s_crd(const ir::Program &program) {
     std::vector<K8sCrdConfig> result;
@@ -11,7 +30,7 @@ std::vector<K8sCrdConfig> lower_k8s_crd(const ir::Program &program) {
             K8sCrdConfig config;
             config.agent_name = agent->name;
             config.states = agent->states;
-            config.capabilities = agent->capabilities;
+            config.capabilities = symbol_names(agent->capability_refs);
             result.push_back(std::move(config));
         }
     }
@@ -46,7 +65,8 @@ std::vector<TerraformConfig> lower_terraform(const ir::Program &program) {
                 TerraformResource resource;
                 resource.resource_type = "ahfl_workflow_node";
                 resource.resource_name = node.name;
-                resource.attributes.emplace_back("target", node.target);
+                resource.attributes.emplace_back("target",
+                                                 ir::symbol_canonical_name(node.target_ref));
                 config.resources.push_back(std::move(resource));
             }
             result.push_back(std::move(config));
@@ -65,7 +85,7 @@ std::vector<WasmAgentConfig> lower_wasm(const ir::Program &program) {
             for (const auto &t : agent->transitions) {
                 config.transitions.emplace_back(t.from_state, t.to_state);
             }
-            config.capabilities = agent->capabilities;
+            config.capabilities = symbol_names(agent->capability_refs);
             result.push_back(std::move(config));
         }
     }

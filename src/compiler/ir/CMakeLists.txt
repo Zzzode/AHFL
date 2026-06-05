@@ -1,7 +1,11 @@
 add_library(ahfl_compiler_ir STATIC
+    analysis.cpp
+    identity.cpp
     ir_lower.cpp
     ir_print.cpp
     ir_json.cpp
+    program_view.cpp
+    visitor.cpp
 )
 
 target_link_libraries(ahfl_compiler_ir

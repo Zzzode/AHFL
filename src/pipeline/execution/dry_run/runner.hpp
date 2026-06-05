@@ -5,8 +5,8 @@
 #include <string_view>
 #include <vector>
 
-#include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
 
 namespace ahfl::dry_run {
 
@@ -50,7 +50,7 @@ struct DryRunNodeTrace {
     std::size_t execution_index{0};
     std::vector<std::string> satisfied_dependencies;
     handoff::WorkflowNodeLifecycleSummary lifecycle;
-    ahfl::ir::WorkflowExprSummary input_summary;
+    handoff::WorkflowValueSummary input_summary;
     std::vector<handoff::CapabilityBindingReference> capability_bindings;
     std::vector<CapabilityMock> mock_results;
 };
@@ -65,7 +65,7 @@ struct DryRunTrace {
     std::optional<std::string> run_id;
     std::vector<std::string> execution_order;
     std::vector<DryRunNodeTrace> node_traces;
-    ahfl::ir::WorkflowExprSummary return_summary;
+    handoff::WorkflowValueSummary return_summary;
 };
 
 struct DryRunResult {

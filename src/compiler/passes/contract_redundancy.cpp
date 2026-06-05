@@ -1,7 +1,9 @@
 #include "compiler/passes/contract_redundancy.hpp"
 
+#include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -46,10 +48,11 @@ std::unique_ptr<AnalysisResult> ContractRedundancyPass::run(const ir::Program &p
         }
 
         const auto &clauses = contract->clauses;
+        const auto target = std::string(ir::symbol_canonical_name(contract->target_ref));
         for (std::size_t i = 0; i < clauses.size(); ++i) {
             for (std::size_t j = i + 1; j < clauses.size(); ++j) {
                 if (clauses_structurally_equal(clauses[i], clauses[j])) {
-                    result->duplicates.push_back({contract->target, i, j});
+                    result->duplicates.push_back({target, i, j});
                 }
             }
         }
