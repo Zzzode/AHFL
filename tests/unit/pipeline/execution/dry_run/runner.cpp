@@ -15,8 +15,7 @@
 
 namespace {
 
-[[nodiscard]] ahfl::handoff::PackageMetadata
-make_project_workflow_value_flow_metadata() {
+[[nodiscard]] ahfl::handoff::PackageMetadata make_project_workflow_value_flow_metadata() {
     ahfl::handoff::PackageMetadata metadata;
     metadata.identity = ahfl::handoff::PackageIdentity{
         .format_version = std::string(ahfl::handoff::kFormatVersion),
@@ -38,8 +37,7 @@ make_project_workflow_value_flow_metadata() {
     return metadata;
 }
 
-int run_local_dry_run_project_workflow_value_flow(
-    const std::filesystem::path &project_descriptor) {
+int run_local_dry_run_project_workflow_value_flow(const std::filesystem::path &project_descriptor) {
     const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
         return 1;
@@ -132,14 +130,15 @@ int run_local_dry_run_rejects_missing_workflow(const std::filesystem::path &proj
         },
         ahfl::dry_run::CapabilityMockSet{
             .format_version = std::string(ahfl::dry_run::kCapabilityMockSetFormatVersion),
-            .mocks = {
-                ahfl::dry_run::CapabilityMock{
-                    .capability_name = std::nullopt,
-                    .binding_key = std::string("runtime.echo"),
-                    .result_fixture = "fixture.echo.ok",
-                    .invocation_label = std::nullopt,
+            .mocks =
+                {
+                    ahfl::dry_run::CapabilityMock{
+                        .capability_name = std::nullopt,
+                        .binding_key = std::string("runtime.echo"),
+                        .result_fixture = "fixture.echo.ok",
+                        .invocation_label = std::nullopt,
+                    },
                 },
-            },
         });
     if (!dry_run.has_errors()) {
         std::cerr << "expected missing workflow dry-run failure\n";
@@ -148,7 +147,8 @@ int run_local_dry_run_rejects_missing_workflow(const std::filesystem::path &proj
 
     if (!ahfl::test_support::diagnostics_contain(
             dry_run.diagnostics,
-            "local dry-run request workflow 'app::main::MissingWorkflow' does not exist in execution plan")) {
+            "local dry-run request workflow 'app::main::MissingWorkflow' does not exist in "
+            "execution plan")) {
         dry_run.diagnostics.render(std::cout);
         std::cerr << "missing workflow dry-run diagnostic\n";
         return 1;
@@ -223,6 +223,26 @@ int run_parse_capability_mock_set_rejects_duplicate_selector(const std::filesyst
     return 0;
 }
 
+int run_parse_capability_mock_set_rejects_duplicate_json_field(const std::filesystem::path &) {
+    const auto result = ahfl::dry_run::parse_capability_mock_set_json(R"({
+  "format_version": "ahfl.capability-mocks.v0.6",
+  "format_version": "ahfl.capability-mocks.v0.6"
+})");
+    if (!result.has_errors()) {
+        std::cerr << "expected duplicate JSON field parse failure\n";
+        return 1;
+    }
+
+    if (!ahfl::test_support::diagnostics_contain(result.diagnostics,
+                                                 "capability mock set must be valid JSON")) {
+        result.diagnostics.render(std::cout);
+        std::cerr << "missing duplicate JSON field diagnostic\n";
+        return 1;
+    }
+
+    return 0;
+}
+
 int run_local_dry_run_rejects_missing_mock(const std::filesystem::path &project_descriptor) {
     const auto ir_program = ahfl::test_support::load_project_ir(project_descriptor);
     if (!ir_program.has_value()) {
@@ -255,7 +275,8 @@ int run_local_dry_run_rejects_missing_mock(const std::filesystem::path &project_
 
     if (!ahfl::test_support::diagnostics_contain(
             dry_run.diagnostics,
-            "local dry-run missing capability mock for binding key 'runtime.echo' capability 'lib::agents::Echo'")) {
+            "local dry-run missing capability mock for binding key 'runtime.echo' capability "
+            "'lib::agents::Echo'")) {
         dry_run.diagnostics.render(std::cout);
         std::cerr << "missing missing-mock diagnostic\n";
         return 1;
@@ -344,6 +365,10 @@ int main(int argc, char **argv) {
 
     if (test_case == "parse-capability-mock-set-rejects-duplicate-selector") {
         return run_parse_capability_mock_set_rejects_duplicate_selector(project_descriptor);
+    }
+
+    if (test_case == "parse-capability-mock-set-rejects-duplicate-json-field") {
+        return run_parse_capability_mock_set_rejects_duplicate_json_field(project_descriptor);
     }
 
     if (test_case == "local-dry-run-rejects-missing-mock") {

@@ -169,6 +169,13 @@ void test_parse_string() {
         auto *sv = std::get_if<StringValue>(&escaped->node);
         check(sv != nullptr && sv->value == "a\"b\\c", "parse.string_escaped");
     }
+
+    auto unicode = value_from_json(R"("\uD83D\uDE00")");
+    if (unicode) {
+        auto *sv = std::get_if<StringValue>(&unicode->node);
+        check(sv != nullptr && sv->value == std::string("\xF0\x9F\x98\x80"),
+              "parse.string_unicode_surrogate_pair");
+    }
 }
 
 void test_parse_array() {
@@ -284,6 +291,7 @@ void test_parse_errors() {
     check(!value_from_json("[1,").has_value(), "error.unclosed_array");
     check(!value_from_json("undefined").has_value(), "error.undefined");
     check(!value_from_json("123abc").has_value(), "error.trailing_garbage");
+    check(!value_from_json(R"({"field":1,"field":2})").has_value(), "error.duplicate_object_field");
 }
 
 } // anonymous namespace

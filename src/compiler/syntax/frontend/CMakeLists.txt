@@ -9,6 +9,8 @@ target_link_libraries(ahfl_compiler_syntax
     PUBLIC
         ahfl_compiler_syntax_parser
         ahfl_base_public
+    PRIVATE
+        ahfl_base_json
 )
 
 target_include_directories(ahfl_compiler_syntax PRIVATE ${PROJECT_SOURCE_DIR}/src)
