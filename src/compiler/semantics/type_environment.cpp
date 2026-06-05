@@ -89,8 +89,28 @@ MaybeCRef<StructTypeInfo> TypeEnvironment::get_struct(SymbolId id) const {
     return get_from_map(structs_, id);
 }
 
+MaybeCRef<StructTypeInfo> TypeEnvironment::get_struct(const Type &type) const {
+    if (type.nominal_symbol.has_value()) {
+        if (auto by_symbol = get_struct(*type.nominal_symbol); by_symbol.has_value()) {
+            return by_symbol;
+        }
+    }
+
+    return find_struct(type.name);
+}
+
 MaybeCRef<EnumTypeInfo> TypeEnvironment::get_enum(SymbolId id) const {
     return get_from_map(enums_, id);
+}
+
+MaybeCRef<EnumTypeInfo> TypeEnvironment::get_enum(const Type &type) const {
+    if (type.nominal_symbol.has_value()) {
+        if (auto by_symbol = get_enum(*type.nominal_symbol); by_symbol.has_value()) {
+            return by_symbol;
+        }
+    }
+
+    return find_enum(type.name);
 }
 
 MaybeCRef<StructTypeInfo> TypeEnvironment::find_struct(std::string_view canonical_name) const {

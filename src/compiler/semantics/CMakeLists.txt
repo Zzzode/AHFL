@@ -1,5 +1,8 @@
 add_library(ahfl_compiler_semantics STATIC
+    const_sema.cpp
+    effects.cpp
     resolver.cpp
+    type_relations.cpp
     typecheck.cpp
     type_environment.cpp
     validate.cpp

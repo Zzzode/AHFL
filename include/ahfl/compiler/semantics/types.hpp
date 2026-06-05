@@ -6,6 +6,7 @@
 #include <string>
 
 #include "ahfl/base/support/ownership.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
 
 namespace ahfl {
 
@@ -47,6 +48,7 @@ struct Type {
     std::optional<std::int64_t> decimal_scale;
     TypePtr first;
     TypePtr second;
+    std::optional<SymbolId> nominal_symbol;
 
     [[nodiscard]] static TypePtr make(TypeKind kind) {
         return make_owned<Type>(Type{
@@ -56,6 +58,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = nullptr,
             .second = nullptr,
+            .nominal_symbol = std::nullopt,
         });
     }
 
@@ -71,6 +74,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = nullptr,
             .second = nullptr,
+            .nominal_symbol = std::nullopt,
         });
     }
 
@@ -82,10 +86,20 @@ struct Type {
             .decimal_scale = scale,
             .first = nullptr,
             .second = nullptr,
+            .nominal_symbol = std::nullopt,
         });
     }
 
     [[nodiscard]] static TypePtr struct_type(std::string canonical_name) {
+        return struct_type(std::move(canonical_name), std::nullopt);
+    }
+
+    [[nodiscard]] static TypePtr struct_type(std::string canonical_name, SymbolId symbol) {
+        return struct_type(std::move(canonical_name), std::optional<SymbolId>{symbol});
+    }
+
+    [[nodiscard]] static TypePtr struct_type(std::string canonical_name,
+                                             std::optional<SymbolId> symbol) {
         return make_owned<Type>(Type{
             .kind = TypeKind::Struct,
             .name = std::move(canonical_name),
@@ -93,10 +107,20 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = nullptr,
             .second = nullptr,
+            .nominal_symbol = symbol,
         });
     }
 
     [[nodiscard]] static TypePtr enum_type(std::string canonical_name) {
+        return enum_type(std::move(canonical_name), std::nullopt);
+    }
+
+    [[nodiscard]] static TypePtr enum_type(std::string canonical_name, SymbolId symbol) {
+        return enum_type(std::move(canonical_name), std::optional<SymbolId>{symbol});
+    }
+
+    [[nodiscard]] static TypePtr enum_type(std::string canonical_name,
+                                           std::optional<SymbolId> symbol) {
         return make_owned<Type>(Type{
             .kind = TypeKind::Enum,
             .name = std::move(canonical_name),
@@ -104,6 +128,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = nullptr,
             .second = nullptr,
+            .nominal_symbol = symbol,
         });
     }
 
@@ -115,6 +140,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = std::move(value_type),
             .second = nullptr,
+            .nominal_symbol = std::nullopt,
         });
     }
 
@@ -126,6 +152,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = std::move(element_type),
             .second = nullptr,
+            .nominal_symbol = std::nullopt,
         });
     }
 
@@ -137,6 +164,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = std::move(element_type),
             .second = nullptr,
+            .nominal_symbol = std::nullopt,
         });
     }
 
@@ -148,6 +176,7 @@ struct Type {
             .decimal_scale = std::nullopt,
             .first = std::move(key_type),
             .second = std::move(value_type),
+            .nominal_symbol = std::nullopt,
         });
     }
 
@@ -159,6 +188,7 @@ struct Type {
         copy->decimal_scale = decimal_scale;
         copy->first = first ? first->clone() : nullptr;
         copy->second = second ? second->clone() : nullptr;
+        copy->nominal_symbol = nominal_symbol;
         return copy;
     }
 
@@ -226,85 +256,6 @@ struct Type {
 
 [[nodiscard]] inline bool is_schema_type_kind(TypeKind kind) noexcept {
     return kind == TypeKind::Struct;
-}
-
-[[nodiscard]] inline bool are_types_equivalent(const Type &lhs, const Type &rhs) {
-    if (lhs.kind != rhs.kind) {
-        return false;
-    }
-
-    switch (lhs.kind) {
-    case TypeKind::Any:
-    case TypeKind::Never:
-    case TypeKind::Unit:
-    case TypeKind::Bool:
-    case TypeKind::Int:
-    case TypeKind::Float:
-    case TypeKind::String:
-    case TypeKind::UUID:
-    case TypeKind::Timestamp:
-    case TypeKind::Duration:
-        return true;
-    case TypeKind::BoundedString:
-        return lhs.string_bounds == rhs.string_bounds;
-    case TypeKind::Decimal:
-        return lhs.decimal_scale == rhs.decimal_scale;
-    case TypeKind::Struct:
-    case TypeKind::Enum:
-        return lhs.name == rhs.name;
-    case TypeKind::Optional:
-    case TypeKind::List:
-    case TypeKind::Set:
-        return lhs.first && rhs.first && are_types_equivalent(*lhs.first, *rhs.first);
-    case TypeKind::Map:
-        return lhs.first && rhs.first && lhs.second && rhs.second &&
-               are_types_equivalent(*lhs.first, *rhs.first) &&
-               are_types_equivalent(*lhs.second, *rhs.second);
-    }
-
-    return false;
-}
-
-[[nodiscard]] inline bool is_subtype_of(const Type &source, const Type &target) {
-    if (are_types_equivalent(source, target)) {
-        return true;
-    }
-
-    if (source.kind == TypeKind::BoundedString && target.kind == TypeKind::String) {
-        return true;
-    }
-
-    if (source.kind == TypeKind::BoundedString && target.kind == TypeKind::BoundedString) {
-        return source.string_bounds->first >= target.string_bounds->first &&
-               source.string_bounds->second <= target.string_bounds->second;
-    }
-
-    if (source.kind == TypeKind::Optional && target.kind == TypeKind::Optional && source.first &&
-        target.first) {
-        return is_subtype_of(*source.first, *target.first);
-    }
-
-    if (source.kind == TypeKind::List && target.kind == TypeKind::List && source.first &&
-        target.first) {
-        return is_subtype_of(*source.first, *target.first);
-    }
-
-    if (source.kind == TypeKind::Set && target.kind == TypeKind::Set && source.first &&
-        target.first) {
-        return is_subtype_of(*source.first, *target.first);
-    }
-
-    if (source.kind == TypeKind::Map && target.kind == TypeKind::Map && source.first &&
-        target.first && source.second && target.second) {
-        return is_subtype_of(*source.first, *target.first) &&
-               is_subtype_of(*source.second, *target.second);
-    }
-
-    return false;
-}
-
-[[nodiscard]] inline bool is_exact_schema_match(const Type &source, const Type &target) {
-    return are_types_equivalent(source, target);
 }
 
 } // namespace ahfl

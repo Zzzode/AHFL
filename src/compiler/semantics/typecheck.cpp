@@ -1,6 +1,8 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/const_sema.hpp"
+#include "ahfl/compiler/semantics/type_relations.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -28,7 +30,19 @@ enum class CallContext {
 
 struct TypedValue {
     TypePtr type;
+    ExprEffect effect{ExprEffect::Pure};
     bool is_pure{true};
+};
+
+enum class ConstEvalKind {
+    KnownConst,
+    NotConst,
+    Error,
+};
+
+struct ConstEvalResult {
+    ConstEvalKind kind{ConstEvalKind::Error};
+    TypedValue typed_value;
 };
 
 struct ValueContext {
@@ -164,6 +178,7 @@ class TypeCheckPass final {
     void check_const_initializers_in_program(const ast::Program &program);
     void check_const_initializers();
     void check_struct_defaults();
+    void check_agent_context_defaults();
     void check_contracts_in_program(const ast::Program &program);
     void check_contracts();
     void check_flows_in_program(const ast::Program &program);
@@ -191,6 +206,9 @@ class TypeCheckPass final {
     [[nodiscard]] MaybeCRef<ResolvedReference> find_reference_here(ReferenceKind kind,
                                                                    SourceRange range) const;
     void error_here(std::string message, SourceRange range);
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range);
 
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
     [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
@@ -205,6 +223,15 @@ class TypeCheckPass final {
                                         const Type &target,
                                         SourceRange range,
                                         std::string_view context_label);
+    [[nodiscard]] bool check_exact_schema_boundary(const Type &source,
+                                                   const Type &target,
+                                                   SchemaBoundaryKind boundary,
+                                                   SourceRange range);
+    [[nodiscard]] bool is_agent_context_struct(std::string_view canonical_name) const;
+    [[nodiscard]] ConstEvalResult check_const_expr(const ast::ExprSyntax &expr,
+                                                   const ValueContext &context,
+                                                   MaybeCRef<Type> expected_type,
+                                                   std::string_view context_label);
 
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
                                         const ValueContext &context,
@@ -238,12 +265,15 @@ class TypeCheckPass final {
     [[nodiscard]] TypePtr
     field_access(const Type &base_type, std::string_view field_name, SourceRange range);
     [[nodiscard]] TypedValue typed(TypePtr type, bool is_pure = true) const;
+    [[nodiscard]] TypedValue typed_effect(TypePtr type, ExprEffect effect) const;
     [[nodiscard]] TypedValue error_typed(bool is_pure = true) const;
+    [[nodiscard]] TypedValue error_typed_effect(ExprEffect effect) const;
 };
 
 TypeCheckResult TypeCheckPass::run() {
     index_declarations();
     build_type_environment();
+    check_agent_context_defaults();
     check_const_initializers();
     check_struct_defaults();
     check_contracts();
@@ -329,12 +359,32 @@ MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind ki
 void TypeCheckPass::error_here(std::string message, SourceRange range) {
     if (current_source_ != nullptr) {
         result_.diagnostics.error()
+            .code(error_codes::typecheck::SemanticError)
             .message(std::move(message))
             .range(range)
             .source(current_source_->source)
             .emit();
     } else {
-        result_.diagnostics.error().message(std::move(message)).range(range).emit();
+        result_.diagnostics.error()
+            .code(error_codes::typecheck::SemanticError)
+            .message(std::move(message))
+            .range(range)
+            .emit();
+    }
+}
+
+void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                         std::string message,
+                                         SourceRange range) {
+    if (current_source_ != nullptr) {
+        result_.diagnostics.error()
+            .code(code)
+            .message(std::move(message))
+            .range(range)
+            .source(current_source_->source)
+            .emit();
+    } else {
+        result_.diagnostics.error().code(code).message(std::move(message)).range(range).emit();
     }
 }
 
@@ -474,7 +524,14 @@ void TypeCheckPass::build_struct_types() {
                 .declaration_range = decl.get().range,
             };
 
+            std::unordered_set<std::string> seen_fields;
             for (const auto &field : decl.get().fields) {
+                if (!seen_fields.insert(field->name).second) {
+                    typecheck_error_here(error_codes::typecheck::DuplicateField,
+                                         "duplicate struct field '" + field->name + "'",
+                                         field->range);
+                }
+
                 info.fields.push_back(StructFieldInfo{
                     .name = field->name,
                     .type = resolve_type(*field->type),
@@ -503,7 +560,14 @@ void TypeCheckPass::build_enum_types() {
                 .declaration_range = decl.get().range,
             };
 
+            std::unordered_set<std::string> seen_variants;
             for (const auto &variant : decl.get().variants) {
+                if (!seen_variants.insert(variant->name).second) {
+                    typecheck_error_here(error_codes::typecheck::DuplicateVariant,
+                                         "duplicate enum variant '" + variant->name + "'",
+                                         variant->range);
+                }
+
                 info.variants.push_back(EnumVariantInfo{
                     .name = variant->name,
                     .declaration_range = variant->range,
@@ -711,9 +775,9 @@ TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
 
     switch (symbol->get().kind) {
     case SymbolKind::Struct:
-        return Type::struct_type(symbol->get().canonical_name);
+        return Type::struct_type(symbol->get().canonical_name, id);
     case SymbolKind::Enum:
-        return Type::enum_type(symbol->get().canonical_name);
+        return Type::enum_type(symbol->get().canonical_name, id);
     case SymbolKind::TypeAlias:
         return resolve_type_alias(id, use_range);
     case SymbolKind::Const:
@@ -758,6 +822,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     for (auto &entry : expression_types) {
         if (same_range(entry.range, expr.range) && entry.source_id == current_source_id_) {
             entry.type = typed.type ? typed.type->clone() : make_any_type();
+            entry.effect = typed.effect;
             entry.is_pure = typed.is_pure;
             return;
         }
@@ -767,6 +832,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .range = expr.range,
         .source_id = current_source_id_,
         .type = typed.type ? typed.type->clone() : make_any_type(),
+        .effect = typed.effect,
         .is_pure = typed.is_pure,
     });
 }
@@ -779,27 +845,105 @@ bool TypeCheckPass::check_assignable(const Type &source,
         return true;
     }
 
-    if (is_subtype_of(source, target)) {
+    if (is_assignable_to(source, target)) {
         return true;
     }
 
-    error_here("type mismatch in " + std::string(context_label) + ": expected " +
-                   target.describe() + ", got " + source.describe(),
-               range);
+    typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                         messages::typecheck::TypeMismatch.format_with(
+                             context_label, target.describe(), source.describe()),
+                         range);
     return false;
 }
 
+bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
+                                                const Type &target,
+                                                SchemaBoundaryKind boundary,
+                                                SourceRange range) {
+    if (is_error_type(source) || is_error_type(target)) {
+        return true;
+    }
+
+    if (is_exact_schema_match(source, target)) {
+        return true;
+    }
+
+    typecheck_error_here(error_codes::typecheck::ExactSchemaMismatch,
+                         messages::typecheck::ExactSchemaMismatch.format_with(
+                             to_string(boundary), target.describe(), source.describe()),
+                         range);
+    return false;
+}
+
+bool TypeCheckPass::is_agent_context_struct(std::string_view canonical_name) const {
+    for (const auto &[id, agent] : result_.environment.agents()) {
+        (void)id;
+        if (agent.context_type && agent.context_type->kind == TypeKind::Struct &&
+            agent.context_type->name == canonical_name) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+ConstEvalResult TypeCheckPass::check_const_expr(const ast::ExprSyntax &expr,
+                                                const ValueContext &context,
+                                                MaybeCRef<Type> expected_type,
+                                                std::string_view context_label) {
+    auto value = check_expr(expr, context, expected_type);
+
+    const auto syntax_result = classify_const_expr_syntax(expr);
+    if (!syntax_result.is_const) {
+        typecheck_error_here(error_codes::typecheck::ConstExprRequired,
+                             messages::typecheck::ConstExprRequired.format_with(context_label,
+                                                                                syntax_result.reason),
+                             expr.range);
+        return ConstEvalResult{
+            .kind = ConstEvalKind::NotConst,
+            .typed_value = std::move(value),
+        };
+    }
+
+    if (!value.is_pure) {
+        typecheck_error_here(error_codes::typecheck::ConstExprRequired,
+                             messages::typecheck::ConstExprRequired.format_with(
+                                 context_label,
+                                 "expression has runtime effects"),
+                             expr.range);
+        return ConstEvalResult{
+            .kind = ConstEvalKind::NotConst,
+            .typed_value = std::move(value),
+        };
+    }
+
+    return ConstEvalResult{
+        .kind = ConstEvalKind::KnownConst,
+        .typed_value = std::move(value),
+    };
+}
+
 TypedValue TypeCheckPass::typed(TypePtr type, bool is_pure) const {
+    return typed_effect(std::move(type), is_pure ? ExprEffect::Pure : ExprEffect::CapabilityCall);
+}
+
+TypedValue TypeCheckPass::typed_effect(TypePtr type, ExprEffect effect) const {
     return TypedValue{
         .type = std::move(type),
-        .is_pure = is_pure,
+        .effect = effect,
+        .is_pure = is_effect_pure(effect),
     };
 }
 
 TypedValue TypeCheckPass::error_typed(bool is_pure) const {
+    return error_typed_effect(is_pure ? ExprEffect::Pure : ExprEffect::Unknown);
+}
+
+TypedValue TypeCheckPass::error_typed_effect(ExprEffect effect) const {
     return TypedValue{
         .type = make_any_type(),
-        .is_pure = is_pure,
+        .effect = effect,
+        .is_pure = is_effect_pure(effect),
     };
 }
 
@@ -814,7 +958,7 @@ TypeCheckPass::field_access(const Type &base_type, std::string_view field_name, 
         return make_any_type();
     }
 
-    const auto struct_info = result_.environment.find_struct(base_type.name);
+    const auto struct_info = result_.environment.get_struct(base_type);
     if (!struct_info.has_value()) {
         error_here("unknown struct type '" + base_type.name + "'", range);
         return make_any_type();
@@ -871,8 +1015,8 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
         }
 
         const auto inner = check_expr(*expr.first, context, inner_expected);
-        return typed(Type::optional(inner.type ? inner.type->clone() : make_any_type()),
-                     inner.is_pure);
+        return typed_effect(Type::optional(inner.type ? inner.type->clone() : make_any_type()),
+                            inner.effect);
     }
     case ast::ExprSyntaxKind::Path:
         return check_path(*expr.path, context);
@@ -929,7 +1073,7 @@ TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
             return error_typed();
         }
 
-        return typed(const_type->get().clone());
+        return typed_effect(const_type->get().clone(), ExprEffect::ConstOnly);
     }
 
     const auto owner_reference =
@@ -947,7 +1091,7 @@ TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
         return error_typed();
     }
 
-    const auto enum_info = result_.environment.find_enum(owner_type->name);
+    const auto enum_info = result_.environment.get_enum(*owner_type);
     if (!enum_info.has_value()) {
         error_here("enum type '" + owner_type->name + "' is missing", expr.range);
         return error_typed();
@@ -959,7 +1103,7 @@ TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
         return error_typed();
     }
 
-    return typed(std::move(owner_type));
+    return typed_effect(std::move(owner_type), ExprEffect::ConstOnly);
 }
 
 TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueContext &context) {
@@ -1022,9 +1166,9 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
                                    "capability argument");
         }
 
-        return typed(capability->get().return_type ? capability->get().return_type->clone()
-                                                   : make_any_type(),
-                     false);
+        return typed_effect(capability->get().return_type ? capability->get().return_type->clone()
+                                                          : make_any_type(),
+                            ExprEffect::CapabilityCall);
     }
 
     const auto predicate = result_.environment.get_predicate(reference->get().target);
@@ -1041,14 +1185,14 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
                    expr.range);
     }
 
-    bool is_pure = true;
+    ExprEffect effect = ExprEffect::PredicateCall;
     const auto limit = std::min(expr.items.size(), predicate->get().params.size());
     for (std::size_t index = 0; index < limit; ++index) {
         const auto argument = check_expr(
             *expr.items[index], context, std::cref(*predicate->get().params[index].type));
+        effect = join_effects(effect, argument.effect);
         if (!argument.is_pure) {
             error_here("predicate arguments must be pure expressions", expr.items[index]->range);
-            is_pure = false;
         }
 
         (void)check_assignable(*argument.type,
@@ -1057,7 +1201,7 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
                                "predicate argument");
     }
 
-    return typed(Type::make(TypeKind::Bool), is_pure);
+    return typed_effect(Type::make(TypeKind::Bool), effect);
 }
 
 TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
@@ -1076,14 +1220,14 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
         return error_typed();
     }
 
-    const auto struct_info = result_.environment.find_struct(struct_type->name);
+    const auto struct_info = result_.environment.get_struct(*struct_type);
     if (!struct_info.has_value()) {
         error_here("unknown struct type '" + struct_type->name + "'", expr.range);
         return error_typed();
     }
 
     std::unordered_set<std::string> seen_fields;
-    bool is_pure = true;
+    ExprEffect effect = ExprEffect::Pure;
 
     for (const auto &field_init : expr.struct_fields) {
         if (!seen_fields.insert(field_init->field_name).second) {
@@ -1101,7 +1245,7 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
         }
 
         const auto value = check_expr(*field_init->value, context, std::cref(*field->get().type));
-        is_pure = is_pure && value.is_pure;
+        effect = join_effects(effect, value.effect);
         (void)check_assignable(
             *value.type, *field->get().type, field_init->value->range, "struct field");
     }
@@ -1112,7 +1256,7 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
         }
     }
 
-    return typed(std::move(struct_type), is_pure);
+    return typed_effect(std::move(struct_type), effect);
 }
 
 TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
@@ -1135,11 +1279,11 @@ TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
 
     auto element_type = clone_or_any(element_expected);
     bool have_element_type = element_expected.has_value();
-    bool is_pure = true;
+    ExprEffect effect = ExprEffect::Pure;
 
     for (const auto &item : expr.items) {
         const auto value = check_expr(*item, context, element_expected);
-        is_pure = is_pure && value.is_pure;
+        effect = join_effects(effect, value.effect);
 
         if (!have_element_type) {
             element_type = value.type ? value.type->clone() : make_any_type();
@@ -1150,7 +1294,7 @@ TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
         (void)check_assignable(*value.type, *element_type, item->range, "list element");
     }
 
-    return typed(Type::list(std::move(element_type)), is_pure);
+    return typed_effect(Type::list(std::move(element_type)), effect);
 }
 
 TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
@@ -1173,11 +1317,11 @@ TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
 
     auto element_type = clone_or_any(element_expected);
     bool have_element_type = element_expected.has_value();
-    bool is_pure = true;
+    ExprEffect effect = ExprEffect::Pure;
 
     for (const auto &item : expr.items) {
         const auto value = check_expr(*item, context, element_expected);
-        is_pure = is_pure && value.is_pure;
+        effect = join_effects(effect, value.effect);
 
         if (!have_element_type) {
             element_type = value.type ? value.type->clone() : make_any_type();
@@ -1188,7 +1332,7 @@ TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
         (void)check_assignable(*value.type, *element_type, item->range, "set element");
     }
 
-    return typed(Type::set(std::move(element_type)), is_pure);
+    return typed_effect(Type::set(std::move(element_type)), effect);
 }
 
 TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
@@ -1215,12 +1359,12 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
     auto value_type = clone_or_any(value_expected);
     bool have_key_type = key_expected.has_value();
     bool have_value_type = value_expected.has_value();
-    bool is_pure = true;
+    ExprEffect effect = ExprEffect::Pure;
 
     for (const auto &entry : expr.map_entries) {
         const auto key = check_expr(*entry->key, context, key_expected);
         const auto value = check_expr(*entry->value, context, value_expected);
-        is_pure = is_pure && key.is_pure && value.is_pure;
+        effect = join_effects(effect, join_effects(key.effect, value.effect));
 
         if (!have_key_type) {
             key_type = key.type ? key.type->clone() : make_any_type();
@@ -1237,7 +1381,7 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
         }
     }
 
-    return typed(Type::map(std::move(key_type), std::move(value_type)), is_pure);
+    return typed_effect(Type::map(std::move(key_type), std::move(value_type)), effect);
 }
 
 TypedValue TypeCheckPass::check_unary_expr(const ast::ExprSyntax &expr,
@@ -1248,7 +1392,7 @@ TypedValue TypeCheckPass::check_unary_expr(const ast::ExprSyntax &expr,
         if (!is_bool_type(*operand.type) && !is_error_type(*operand.type)) {
             error_here("logical not requires Bool, got " + operand.type->describe(), expr.range);
         }
-        return typed(Type::make(TypeKind::Bool), operand.is_pure);
+        return typed_effect(Type::make(TypeKind::Bool), operand.effect);
     case ast::ExprUnaryOp::Negate:
     case ast::ExprUnaryOp::Positive:
         if (!is_numeric_type(*operand.type) && !is_error_type(*operand.type)) {
@@ -1256,17 +1400,18 @@ TypedValue TypeCheckPass::check_unary_expr(const ast::ExprSyntax &expr,
                            operand.type->describe(),
                        expr.range);
         }
-        return typed(operand.type ? operand.type->clone() : make_any_type(), operand.is_pure);
+        return typed_effect(operand.type ? operand.type->clone() : make_any_type(),
+                            operand.effect);
     }
 
-    return error_typed(operand.is_pure);
+    return error_typed_effect(operand.effect);
 }
 
 TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
                                             const ValueContext &context) {
     const auto lhs = check_expr(*expr.first, context);
     const auto rhs = check_expr(*expr.second, context);
-    const bool is_pure = lhs.is_pure && rhs.is_pure;
+    const auto effect = join_effects(lhs.effect, rhs.effect);
 
     const auto comparable = [&]() {
         return is_error_type(*lhs.type) || is_error_type(*rhs.type) ||
@@ -1281,7 +1426,7 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
             !is_error_type(*rhs.type)) {
             error_here("logical operator requires Bool operands", expr.range);
         }
-        return typed(Type::make(TypeKind::Bool), is_pure);
+        return typed_effect(Type::make(TypeKind::Bool), effect);
     case ast::ExprBinaryOp::Equal:
     case ast::ExprBinaryOp::NotEqual:
     case ast::ExprBinaryOp::Less:
@@ -1293,23 +1438,23 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
                            " vs " + rhs.type->describe(),
                        expr.range);
         }
-        return typed(Type::make(TypeKind::Bool), is_pure);
+        return typed_effect(Type::make(TypeKind::Bool), effect);
     case ast::ExprBinaryOp::Add:
         if (lhs.type->kind == TypeKind::String && rhs.type->kind == TypeKind::String) {
-            return typed(Type::string(), is_pure);
+            return typed_effect(Type::string(), effect);
         }
 
         if (lhs.type->kind == TypeKind::Decimal && rhs.type->kind == TypeKind::Decimal &&
             lhs.type->decimal_scale == rhs.type->decimal_scale) {
-            return typed(lhs.type->clone(), is_pure);
+            return typed_effect(lhs.type->clone(), effect);
         }
 
         if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
-            return typed(Type::make(TypeKind::Int), is_pure);
+            return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
         if (lhs.type->kind == TypeKind::Float && rhs.type->kind == TypeKind::Float) {
-            return typed(Type::make(TypeKind::Float), is_pure);
+            return typed_effect(Type::make(TypeKind::Float), effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
@@ -1317,19 +1462,19 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
                            rhs.type->describe(),
                        expr.range);
         }
-        return error_typed(is_pure);
+        return error_typed_effect(effect);
     case ast::ExprBinaryOp::Subtract:
         if (lhs.type->kind == TypeKind::Decimal && rhs.type->kind == TypeKind::Decimal &&
             lhs.type->decimal_scale == rhs.type->decimal_scale) {
-            return typed(lhs.type->clone(), is_pure);
+            return typed_effect(lhs.type->clone(), effect);
         }
 
         if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
-            return typed(Type::make(TypeKind::Int), is_pure);
+            return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
         if (lhs.type->kind == TypeKind::Float && rhs.type->kind == TypeKind::Float) {
-            return typed(Type::make(TypeKind::Float), is_pure);
+            return typed_effect(Type::make(TypeKind::Float), effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
@@ -1337,15 +1482,15 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
                            rhs.type->describe(),
                        expr.range);
         }
-        return error_typed(is_pure);
+        return error_typed_effect(effect);
     case ast::ExprBinaryOp::Multiply:
     case ast::ExprBinaryOp::Divide:
         if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
-            return typed(Type::make(TypeKind::Int), is_pure);
+            return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
         if (lhs.type->kind == TypeKind::Float && rhs.type->kind == TypeKind::Float) {
-            return typed(Type::make(TypeKind::Float), is_pure);
+            return typed_effect(Type::make(TypeKind::Float), effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
@@ -1353,32 +1498,32 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
                            rhs.type->describe(),
                        expr.range);
         }
-        return error_typed(is_pure);
+        return error_typed_effect(effect);
     case ast::ExprBinaryOp::Modulo:
         if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
-            return typed(Type::make(TypeKind::Int), is_pure);
+            return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
             error_here("operator '%' requires Int operands", expr.range);
         }
-        return error_typed(is_pure);
+        return error_typed_effect(effect);
     }
 
-    return error_typed(is_pure);
+    return error_typed_effect(effect);
 }
 
 TypedValue TypeCheckPass::check_member_access(const ast::ExprSyntax &expr,
                                               const ValueContext &context) {
     const auto base = check_expr(*expr.first, context);
-    return typed(field_access(*base.type, expr.name, expr.range), base.is_pure);
+    return typed_effect(field_access(*base.type, expr.name, expr.range), base.effect);
 }
 
 TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
                                              const ValueContext &context) {
     const auto collection = check_expr(*expr.first, context);
     const auto index = check_expr(*expr.second, context);
-    const bool is_pure = collection.is_pure && index.is_pure;
+    const auto effect = join_effects(collection.effect, index.effect);
 
     if (collection.type->kind == TypeKind::List) {
         if (index.type->kind != TypeKind::Int && !is_error_type(*index.type)) {
@@ -1386,10 +1531,10 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
         }
 
         if (collection.type->first) {
-            return typed(collection.type->first->clone(), is_pure);
+            return typed_effect(collection.type->first->clone(), effect);
         }
 
-        return error_typed(is_pure);
+        return error_typed_effect(effect);
     }
 
     if (collection.type->kind == TypeKind::Map) {
@@ -1399,10 +1544,10 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
         }
 
         if (collection.type->second) {
-            return typed(collection.type->second->clone(), is_pure);
+            return typed_effect(collection.type->second->clone(), effect);
         }
 
-        return error_typed(is_pure);
+        return error_typed_effect(effect);
     }
 
     if (!is_error_type(*collection.type)) {
@@ -1410,7 +1555,7 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
                    expr.range);
     }
 
-    return error_typed(is_pure);
+    return error_typed_effect(effect);
 }
 
 void TypeCheckPass::check_const_initializers_in_program(const ast::Program &program) {
@@ -1431,12 +1576,11 @@ void TypeCheckPass::check_const_initializers_in_program(const ast::Program &prog
         }
 
         const ValueContext context;
-        const auto value = check_expr(*decl.value, context, declared_type);
-        (void)check_assignable(
-            *value.type, declared_type->get(), decl.value->range, "const initializer");
-        if (!value.is_pure) {
-            error_here("const initializer must be a pure expression", decl.value->range);
-        }
+        auto value = check_const_expr(*decl.value, context, declared_type, "const initializer");
+        (void)check_assignable(*value.typed_value.type,
+                               declared_type->get(),
+                               decl.value->range,
+                               "const initializer");
     }
 }
 
@@ -1462,6 +1606,8 @@ void TypeCheckPass::check_struct_defaults() {
                 return;
             }
 
+            const bool is_context_struct =
+                is_agent_context_struct(struct_info->get().canonical_name);
             for (std::size_t index = 0; index < decl.get().fields.size(); ++index) {
                 const auto &field_decl = decl.get().fields[index];
                 if (!field_decl->default_value) {
@@ -1470,15 +1616,47 @@ void TypeCheckPass::check_struct_defaults() {
 
                 const auto &field_info = struct_info->get().fields[index];
                 const ValueContext context;
-                const auto value =
-                    check_expr(*field_decl->default_value, context, std::cref(*field_info.type));
-                (void)check_assignable(*value.type,
-                                       *field_info.type,
-                                       field_decl->default_value->range,
-                                       "struct field default");
-                if (!value.is_pure) {
-                    error_here("struct field default value must be pure",
-                               field_decl->default_value->range);
+                auto value = check_const_expr(*field_decl->default_value,
+                                              context,
+                                              std::cref(*field_info.type),
+                                              "struct field default");
+                if (is_context_struct) {
+                    (void)check_exact_schema_boundary(*value.typed_value.type,
+                                                      *field_info.type,
+                                                      SchemaBoundaryKind::AgentContextDefault,
+                                                      field_decl->default_value->range);
+                } else {
+                    (void)check_assignable(*value.typed_value.type,
+                                           *field_info.type,
+                                           field_decl->default_value->range,
+                                           "struct field default");
+                }
+            }
+        });
+    }
+}
+
+void TypeCheckPass::check_agent_context_defaults() {
+    std::unordered_set<std::string> checked_contexts;
+    for (const auto &[id, agent] : result_.environment.agents()) {
+        (void)id;
+        if (!agent.context_type || agent.context_type->kind != TypeKind::Struct ||
+            !checked_contexts.insert(agent.context_type->name).second) {
+            continue;
+        }
+
+        const auto context_struct = result_.environment.find_struct(agent.context_type->name);
+        if (!context_struct.has_value()) {
+            continue;
+        }
+
+        with_symbol_context(context_struct->get().symbol, [&]() {
+            for (const auto &field : context_struct->get().fields) {
+                if (!field.has_default) {
+                    typecheck_error_here(
+                        error_codes::typecheck::MissingField,
+                        "agent context field '" + field.name + "' must declare a default value",
+                        field.declaration_range);
                 }
             }
         });
@@ -1682,10 +1860,10 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
 
             const auto argument =
                 check_expr(*node->input, context, std::cref(*agent_info->get().input_type));
-            (void)check_assignable(*argument.type,
-                                   *agent_info->get().input_type,
-                                   node->input->range,
-                                   "workflow node input");
+            (void)check_exact_schema_boundary(*argument.type,
+                                              *agent_info->get().input_type,
+                                              SchemaBoundaryKind::WorkflowNodeInput,
+                                              node->input->range);
         }
 
         ValueContext return_context;
@@ -1706,10 +1884,10 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
 
         const auto return_value = check_expr(
             *decl.return_value, return_context, std::cref(*workflow_info->get().output_type));
-        (void)check_assignable(*return_value.type,
-                               *workflow_info->get().output_type,
-                               decl.return_value->range,
-                               "workflow return");
+        (void)check_exact_schema_boundary(*return_value.type,
+                                          *workflow_info->get().output_type,
+                                          SchemaBoundaryKind::WorkflowOutput,
+                                          decl.return_value->range);
     }
 }
 
@@ -1766,6 +1944,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         break;
     }
     case ast::StatementSyntaxKind::Assign: {
+        if (statement.assign_stmt->target->root_name != "ctx") {
+            typecheck_error_here(error_codes::typecheck::InvalidOperation,
+                                 "assignment target must be rooted at writable 'ctx'",
+                                 statement.assign_stmt->target->range);
+            break;
+        }
+
         const auto target = check_path(*statement.assign_stmt->target, context);
         const auto value =
             check_expr(*statement.assign_stmt->value, context, std::cref(*target.type));
@@ -1813,10 +1998,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         }
 
         const auto value = check_expr(*statement.return_stmt->value, context, expected_return_type);
-        (void)check_assignable(*value.type,
-                               expected_return_type->get(),
-                               statement.return_stmt->value->range,
-                               "return");
+        (void)check_exact_schema_boundary(*value.type,
+                                          expected_return_type->get(),
+                                          SchemaBoundaryKind::AgentOutput,
+                                          statement.return_stmt->value->range);
         break;
     }
     case ast::StatementSyntaxKind::Assert: {

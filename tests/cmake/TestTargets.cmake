@@ -363,6 +363,26 @@ target_link_libraries(ahfl_pass_manager_tests
 )
 ahfl_apply_project_warnings(ahfl_pass_manager_tests)
 
+add_executable(ahfl_semantics_type_relations_tests
+    unit/compiler/semantics/type_relations.cpp
+)
+target_link_libraries(ahfl_semantics_type_relations_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_type_relations_tests)
+
+add_executable(ahfl_semantics_effects_tests
+    unit/compiler/semantics/effects.cpp
+)
+target_link_libraries(ahfl_semantics_effects_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_effects_tests)
+
 add_executable(ahfl_streaming_tests
     unit/runtime/providers/llm/streaming.cpp
 )
@@ -654,6 +674,8 @@ foreach(_tgt
     ahfl_runtime_provider_secret_provider_tests
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests
+    ahfl_semantics_type_relations_tests
+    ahfl_semantics_effects_tests
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests
     ahfl_tooling_lsp_handler_tests
