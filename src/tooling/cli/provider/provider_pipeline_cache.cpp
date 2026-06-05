@@ -26,7 +26,7 @@ const ProviderArtifact *ProviderPipelineCache::get(ProviderArtifactKind kind) {
     if (graph_node == nullptr) {
         return nullptr;
     }
-    for (const auto dependency : graph_node->dependencies) {
+    for (const auto dependency : provider_artifact_dependencies(kind)) {
         if (get(dependency) == nullptr) {
             return nullptr;
         }

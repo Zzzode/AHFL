@@ -11,8 +11,7 @@ namespace ahfl::cli {
 class ProviderPipelineCache;
 
 struct ProviderArtifactGraphNode {
-    ProviderArtifactDescriptor descriptor;
-    std::span<const ProviderArtifactKind> dependencies;
+    ProviderArtifactKind kind;
     std::optional<ProviderArtifact> (*build)(ProviderPipelineCache &cache);
     bool (*print)(const ProviderArtifact &artifact, std::ostream &out);
 };
