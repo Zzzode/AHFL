@@ -1,6 +1,9 @@
 #include "runtime/engine/capability_transport_adapter.hpp"
 
+#include "runtime/engine/wire_transport_adapter.hpp"
+
 #include <memory>
+#include <string>
 
 namespace ahfl::runtime {
 namespace {
@@ -8,13 +11,47 @@ namespace {
 class DefaultCapabilityTransportAdapter final : public CapabilityTransportAdapter {
   public:
     [[nodiscard]] HttpResponse execute_http(const HttpRequest &request) const override {
-        HttpTransport transport;
-        return transport.execute(request);
+        const auto response = default_wire_transport().execute(request);
+        return HttpResponse{
+            .status_code = response.status_code,
+            .body = response.body,
+            .error = response.error,
+        };
     }
 
     [[nodiscard]] GrpcJsonTranscodingResponse
     execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) const override {
-        return ahfl::runtime::execute_grpc_json_transcoding(request);
+        const auto response = default_wire_transport().execute(request);
+        if (response.timed_out) {
+            return GrpcJsonTranscodingResponse{
+                .status_code = GrpcStatusCode::DeadlineExceeded,
+                .body = {},
+                .error_message = "gRPC JSON transcoding deadline exceeded",
+            };
+        }
+        if (response.status_code == 0 && !response.error.empty()) {
+            return GrpcJsonTranscodingResponse{
+                .status_code = GrpcStatusCode::Unavailable,
+                .body = response.body,
+                .error_message = response.error,
+            };
+        }
+
+        const auto grpc_status = grpc_status_from_http_status(response.status_code);
+        if (grpc_status != GrpcStatusCode::Ok) {
+            return GrpcJsonTranscodingResponse{
+                .status_code = grpc_status,
+                .body = response.body,
+                .error_message = std::string("gRPC ") + grpc_status_name(grpc_status) + " (HTTP " +
+                                 std::to_string(response.status_code) + ")",
+            };
+        }
+
+        return GrpcJsonTranscodingResponse{
+            .status_code = GrpcStatusCode::Ok,
+            .body = response.body,
+            .error_message = {},
+        };
     }
 };
 

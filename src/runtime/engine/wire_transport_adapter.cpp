@@ -52,20 +52,41 @@ make_http_request(const GrpcJsonTranscodingRequest &request) {
 
 } // namespace
 
-WireTransportResponse execute_wire_transport(const HttpRequest &request) {
+WireTransportResponse WireTransport::execute(const HttpRequest &request) const {
     return to_wire_response(ahfl::support::execute_http(make_http_request(request)));
+}
+
+WireTransportResponse WireTransport::execute(const GrpcJsonTranscodingRequest &request) const {
+    return to_wire_response(ahfl::support::execute_http(make_http_request(request)));
+}
+
+std::string WireTransport::describe(const HttpRequest &request) const {
+    return ahfl::support::describe_http_command(make_http_request(request));
+}
+
+std::string WireTransport::describe(const GrpcJsonTranscodingRequest &request) const {
+    return ahfl::support::describe_http_command(make_http_request(request));
+}
+
+const WireTransport &default_wire_transport() {
+    static const WireTransport transport;
+    return transport;
+}
+
+WireTransportResponse execute_wire_transport(const HttpRequest &request) {
+    return default_wire_transport().execute(request);
 }
 
 WireTransportResponse execute_wire_transport(const GrpcJsonTranscodingRequest &request) {
-    return to_wire_response(ahfl::support::execute_http(make_http_request(request)));
+    return default_wire_transport().execute(request);
 }
 
 std::string describe_wire_transport(const HttpRequest &request) {
-    return ahfl::support::describe_http_command(make_http_request(request));
+    return default_wire_transport().describe(request);
 }
 
 std::string describe_wire_transport(const GrpcJsonTranscodingRequest &request) {
-    return ahfl::support::describe_http_command(make_http_request(request));
+    return default_wire_transport().describe(request);
 }
 
 } // namespace ahfl::runtime

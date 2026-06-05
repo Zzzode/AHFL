@@ -14,6 +14,17 @@ struct WireTransportResponse {
     bool timed_out{false};
 };
 
+class WireTransport {
+  public:
+    [[nodiscard]] WireTransportResponse execute(const HttpRequest &request) const;
+    [[nodiscard]] WireTransportResponse execute(const GrpcJsonTranscodingRequest &request) const;
+
+    [[nodiscard]] std::string describe(const HttpRequest &request) const;
+    [[nodiscard]] std::string describe(const GrpcJsonTranscodingRequest &request) const;
+};
+
+[[nodiscard]] const WireTransport &default_wire_transport();
+
 [[nodiscard]] WireTransportResponse execute_wire_transport(const HttpRequest &request);
 [[nodiscard]] WireTransportResponse
 execute_wire_transport(const GrpcJsonTranscodingRequest &request);

@@ -24,7 +24,25 @@ ConnectionPool &global_connection_pool() {
     return url.substr(host_start, host_end - host_start);
 }
 
-[[nodiscard]] CapabilityCallResult value_from_wire_response_body(std::string body) {
+[[nodiscard]] CapabilityCallResult
+value_from_wire_response_body(std::string body, CapabilityResponseFormat response_format) {
+    if (response_format == CapabilityResponseFormat::TextPlain) {
+        if (body.empty()) {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Success,
+                .value = evaluator::make_none(),
+                .error_message = {},
+                .attempts = 1,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Success,
+            .value = Value{evaluator::StringValue{std::move(body)}},
+            .error_message = {},
+            .attempts = 1,
+        };
+    }
+
     auto parsed = parse_value_from_wire_json(body);
     if (parsed.has_value()) {
         return CapabilityCallResult{
@@ -45,9 +63,9 @@ ConnectionPool &global_connection_pool() {
     }
 
     return CapabilityCallResult{
-        .status = CapabilityCallStatus::Success,
-        .value = Value{evaluator::StringValue{std::move(body)}},
-        .error_message = {},
+        .status = CapabilityCallStatus::Error,
+        .value = std::nullopt,
+        .error_message = "invalid wire JSON response body",
         .attempts = 1,
     };
 }
@@ -107,7 +125,7 @@ execute_http_capability_call(const HTTPCapabilityConfig &config,
         };
     }
 
-    return value_from_wire_response_body(response.body);
+    return value_from_wire_response_body(response.body, config.response_format);
 }
 
 struct ParsedGrpcJsonTranscodingEndpoint {
@@ -194,7 +212,7 @@ execute_grpc_json_transcoding_capability_call(const GrpcJsonTranscodingCapabilit
         };
     }
 
-    return value_from_wire_response_body(response.body);
+    return value_from_wire_response_body(response.body, config.response_format);
 }
 
 } // namespace
