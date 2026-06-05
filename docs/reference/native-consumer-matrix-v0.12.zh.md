@@ -152,7 +152,7 @@ V0.12 当前 persistence-facing consumer 共享入口是：
 1. future durable store prototype 不应直接从 `ReplayView` / `AuditReport` 倒推 persistence state
 2. future durable store prototype 不应直接从 `DryRunTrace` 推导 export blocker
 3. `PersistenceReviewSummary` 是 projection，不是 durable store / recovery protocol
-4. 若以后需要 durable checkpoint id / resume token / store mutation ABI，应先扩 persistence compatibility contract，而不是把字段塞进 review 输出
+4. 若以后需要 durable checkpoint id / resume token / store mutation ABI，应先新增 persistence migration record 与 schema-drift evidence，而不是把字段塞进 review 输出
 
 ## 当前反模式
 

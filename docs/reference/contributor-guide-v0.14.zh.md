@@ -1,6 +1,6 @@
 # AHFL Contributor Guide V0.14
 
-本文给出面向新贡献者的 V0.14 上手路径，重点覆盖 `StoreImportDescriptor`、`StoreImportReviewSummary`、compatibility contract、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.13 export-package-facing artifact 的协作边界。
+本文给出面向新贡献者的 V0.14 上手路径，重点覆盖 `StoreImportDescriptor`、`StoreImportReviewSummary`、migration / schema-drift evidence、consumer matrix、golden regression、CI 标签切片，以及它们与 V0.13 export-package-facing artifact 的协作边界。
 
 关联文档：
 

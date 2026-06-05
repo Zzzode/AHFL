@@ -31,7 +31,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建有效的 schema compatibility report
+// 辅助函数：创建有效的 schema drift report
 [[nodiscard]] ProviderSchemaCompatibilityReport make_schema_report() {
     ProviderSchemaCompatibilityReport report;
     report.format_version = std::string(kProviderSchemaCompatibilityReportFormatVersion);
@@ -39,7 +39,7 @@ using namespace ahfl::durable_store_import;
     report.session_id = "session-001";
     report.run_id = "run-001";
     report.has_schema_drift = false;
-    report.compatibility_summary = "all versions compatible";
+    report.compatibility_summary = "schema drift gate inputs aligned";
     return report;
 }
 
@@ -105,7 +105,8 @@ int test_build_release_evidence_archive_manifest() {
     const auto config = make_config_report();
     const auto readiness = make_readiness_evidence();
 
-    const auto result = build_release_evidence_archive_manifest(conformance, schema, config, readiness);
+    const auto result =
+        build_release_evidence_archive_manifest(conformance, schema, config, readiness);
 
     if (!result.manifest.has_value()) {
         std::cerr << "FAIL: build_release_evidence_archive_manifest should produce a manifest\n";
@@ -169,8 +170,8 @@ int test_validate_manifest_format_version() {
 int test_validate_manifest_empty_fields() {
     ReleaseEvidenceArchiveManifest manifest;
     manifest.format_version = std::string(kProviderReleaseEvidenceArchiveManifestFormatVersion);
-    manifest.workflow_canonical_name = "";  // 空
-    manifest.session_id = "";  // 空
+    manifest.workflow_canonical_name = ""; // 空
+    manifest.session_id = "";              // 空
     manifest.archive_summary = "test summary";
 
     const auto result = validate_release_evidence_archive_manifest(manifest);
@@ -187,7 +188,7 @@ int test_validate_manifest_empty_fields() {
 // 测试：has_errors 的 conformance report 导致 manifest 构建失败
 int test_build_with_invalid_conformance() {
     ProviderConformanceReport conformance;
-    conformance.format_version = "invalid";  // 无效版本
+    conformance.format_version = "invalid"; // 无效版本
 
     const auto schema = make_schema_report();
     const auto config = make_config_report();
@@ -208,7 +209,7 @@ int test_build_with_invalid_conformance() {
 // 测试：失败 conformance 检查导致 invalid evidence
 int test_invalid_conformance_evidence() {
     auto conformance = make_conformance_report();
-    conformance.fail_count = 2;  // 有失败的检查
+    conformance.fail_count = 2; // 有失败的检查
     conformance.conformance_summary = "failed 2 checks";
 
     const auto schema = make_schema_report();
@@ -261,13 +262,18 @@ int main(int argc, char *argv[]) {
     // 支持通过命令行参数选择单个测试用例（CTest 集成）
     if (argc == 2) {
         std::string cmd = argv[1];
-        if (cmd == "test-build-manifest") return test_build_release_evidence_archive_manifest();
-        if (cmd == "test-validate-format-version") return test_validate_manifest_format_version();
-        if (cmd == "test-validate-empty-fields") return test_validate_manifest_empty_fields();
+        if (cmd == "test-build-manifest")
+            return test_build_release_evidence_archive_manifest();
+        if (cmd == "test-validate-format-version")
+            return test_validate_manifest_format_version();
+        if (cmd == "test-validate-empty-fields")
+            return test_validate_manifest_empty_fields();
         if (cmd == "test-build-with-invalid-conformance")
             return test_build_with_invalid_conformance();
-        if (cmd == "test-invalid-conformance-evidence") return test_invalid_conformance_evidence();
-        if (cmd == "test-count-consistency") return test_count_consistency();
+        if (cmd == "test-invalid-conformance-evidence")
+            return test_invalid_conformance_evidence();
+        if (cmd == "test-count-consistency")
+            return test_count_consistency();
         std::cerr << "unknown test: " << cmd << "\n";
         return 1;
     }

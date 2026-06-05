@@ -63,7 +63,7 @@ core chain 负责从 store-import descriptor 走到 local fake durable-store exe
 3. review summary 不能反向成为 machine-facing 输入。
 4. local fake durable store 只用于 deterministic regression，不暴露真实 store URI、object path、database key、credential、resume token 或 retry token。
 
-Receipt persistence 的核心 seam 是 `ReceiptPersistenceStage`。`PersistenceRequest` 与 `PersistenceResponse` 保留为 wire-compatible projection，用于现有 CLI、golden 和 schema compatibility；状态、boundary、blocker 与 identity 映射不得在两个 projection builder 中重复实现。
+Receipt persistence 的核心 seam 是 `ReceiptPersistenceStage`。`PersistenceRequest` 与 `PersistenceResponse` 保留为当前 wire projection，用于现有 CLI、golden 和 schema drift regression；状态、boundary、blocker 与 identity 映射不得在两个 projection builder 中重复实现。
 
 C++ model 层只暴露短语义名，例如 `Request`、`Decision`、`Receipt`、`PersistenceRequest`、`PersistenceResponse`。`durable-store-import-*` 长命名只能作为稳定外部 contract 出现在 CLI command、JSON field、format version、artifact id 或 golden 名称中，不能再作为内部 alias、builder shim 或 enum member 的命名策略。
 
@@ -79,7 +79,7 @@ provider pipeline 从 durable store import request 派生 provider-side contract
 | Sdk | SDK adapter request、interface、payload materialization、mock adapter | `src/pipeline/persistence/durable_store_import/provider/sdk/*.hpp` |
 | Configuration | config load、config snapshot、secret resolver placeholders | `src/pipeline/persistence/durable_store_import/provider/configuration/*.hpp` |
 | Reliability | retry decision、commit receipt、recovery checkpoint / plan / review、failure taxonomy | `src/pipeline/persistence/durable_store_import/provider/reliability/*.hpp` |
-| Governance | audit events、compatibility manifest/report、registry selection、conformance, schema compatibility | `src/pipeline/persistence/durable_store_import/provider/governance/*.hpp` |
+| Governance | audit events、release-gate manifest/report、registry selection、conformance, schema drift evidence | `src/pipeline/persistence/durable_store_import/provider/governance/*.hpp` |
 | Production | release evidence, approval, opt-in, runtime policy, integration dry run | `src/pipeline/persistence/durable_store_import/provider/production/*.hpp` |
 
 Provider artifact metadata 的 source of truth 是：
@@ -91,8 +91,8 @@ Provider artifact metadata 的 source of truth 是：
 CLI provider emission 的 source of truth 是：
 
 - `src/tooling/cli/provider/pipeline_durable_store_import_provider_artifacts.def`
-- `src/tooling/cli/provider/provider_artifact_catalog.hpp`
-- `src/tooling/cli/provider/provider_artifact_catalog.cpp`
+- `src/tooling/cli/provider/provider_artifact_catalog.*`（CLI 查询 / help / 解析）
+- `src/tooling/cli/provider/provider_artifact_graph.*`（build-time dependency / builder / printer graph）
 - `src/tooling/cli/provider/pipeline_durable_store_import_provider.hpp`
 - `src/tooling/cli/provider/pipeline_durable_store_import_provider.cpp`
 
@@ -104,9 +104,9 @@ CLI 不再为每个 provider artifact 暴露独立 `emit_*_with_diagnostics` wra
 ProviderPipeline::build(ProviderArtifactKind kind)
 ```
 
-`ProviderArtifactKind`、provider-local `artifact_id`、visibility、provider-local order 和 dependency list 都由 `pipeline_durable_store_import_provider_artifacts.def` 生成，并通过 `provider_artifact_catalog` 对 CLI help、`ahflc emit provider/...` 解析和 build 前置依赖预取暴露。`ProviderPipeline` 只负责 artifact build/print，不再维护另一张 command 或 dependency 矩阵。新增 provider artifact 时应修改这一个 registry，而不是手写一组新的 command handler / printer closure / builder declaration / dependency graph entry。
+`ProviderArtifactKind`、provider-local `artifact_id`、visibility、provider-local order、dependency list、builder 和 printer 都由同一个 `pipeline_durable_store_import_provider_artifacts.def` 生成。`provider_artifact_catalog` 只服务 CLI 查询、内部诊断 help 和 `ahflc emit-provider-artifact provider/...` 解析；`provider_artifact_graph` 服务 build-time dependency 预取、builder 调用和 printer 调度。新增 provider artifact 时应修改这一条 registry 记录，而不是手写新的 command handler / printer closure / builder declaration / dependency entry。
 
-`visibility = Public` 的 artifact 是默认用户 CLI 暴露面；`visibility = Internal` 的 artifact 属于 pipeline 中间节点，只能在显式 `--show-hidden` 时通过 CLI emit，主要用于 golden 覆盖、诊断和回归定位。
+`visibility = Public` 的 artifact 是默认可解析的 provider diagnostic artifact；`visibility = Internal` 的 artifact 属于 pipeline 中间节点，只能在显式 `--show-hidden` 时通过内部诊断入口 emit。Provider artifact 不挂到用户态 `ahflc emit <artifact>` 命令面，主要用于 golden 覆盖、诊断和回归定位。
 
 ## Include 边界
 

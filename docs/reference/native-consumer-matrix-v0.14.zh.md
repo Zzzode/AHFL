@@ -175,7 +175,7 @@ V0.14 当前 store-import-facing consumer 共享入口是：
 1. future durable store adapter 不应直接从 `ReplayView` / `AuditReport` 倒推 store import state
 2. future durable store adapter 不应直接从 `DryRunTrace` 推导 staging artifact set、candidate identity 或 blocker
 3. `StoreImportReviewSummary` 是 projection，不是 durable store / recovery protocol
-4. 若以后需要 durable checkpoint id / resume token / store location / import ABI，应先扩 store import compatibility contract，而不是把字段塞进 descriptor / review 输出
+4. 若以后需要 durable checkpoint id / resume token / store location / import ABI，应先新增 store import migration record 与 schema-drift evidence，而不是把字段塞进 descriptor / review 输出
 
 ## 当前反模式
 
