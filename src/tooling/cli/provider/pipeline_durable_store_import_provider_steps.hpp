@@ -1,20 +1,16 @@
 #pragma once
 
-#include "pipeline_durable_store_import_provider.hpp"
-
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "pipeline/persistence/durable_store_import/provider.hpp"
 #include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/provider/provider_pipeline_cache.hpp"
 
 #include <optional>
 #include <string_view>
 
 namespace ahfl::cli {
-
-class ProviderPipelineCache;
-struct ReleaseGateArtifacts;
 
 [[nodiscard]] std::optional<ReleaseGateArtifacts>
 build_release_gate_artifacts_for_cli(ProviderPipelineCache &cache);

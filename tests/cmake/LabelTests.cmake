@@ -2,6 +2,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.3 v0.3-project-model
     TESTS
         ahfl.frontend.project.fail_manifest_escape
+        ahfl.frontend.project.fail_manifest_duplicate_field
         ahfl.frontend.project.fail_workspace_duplicate_project_name
         ahflc.dump_project.project_manifest.ok_cross_file
         ahflc.check.project_manifest.ok_cross_file
@@ -168,6 +169,7 @@ ahfl_label_tests(
     TESTS
         ahfl.dry_run.mock_set.parse_ok
         ahfl.dry_run.mock_set.parse_fail_duplicate_selector
+        ahfl.dry_run.mock_set.parse_fail_duplicate_json_field
         ahfl.dry_run.local.fail_missing_mock
         ahfl.dry_run.local.fail_unused_mock
 )
@@ -1911,6 +1913,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.58 v0.58-json-dom
     TESTS
         ahfl.json.value_all
+        ahfl.runtime.value_json_all
 )
 
 ahfl_label_tests(

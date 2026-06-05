@@ -109,7 +109,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
         !selected_action_supports_package(selected_action)) {
         std::cerr << "error: --package is only supported with "
                   << format_comma_or_commands(command_list(CommandListKind::PackageSupported))
-                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -120,7 +119,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
         std::cerr << "error: --capability-mocks is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
-                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -131,7 +129,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
         std::cerr << "error: --input-fixture is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
-                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -142,7 +139,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
         std::cerr << "error: --run-id is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
-                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;
@@ -184,7 +180,6 @@ std::optional<ExitCode> CliDriver::validate_options() {
         std::cerr << "error: --workflow is only supported with "
                   << format_comma_or_commands(
                          command_list(CommandListKind::CapabilityInputSupported))
-                  << ", or emit provider/<artifact>"
                   << "\n";
         print_usage(std::cerr);
         return ExitCode::UsageError;

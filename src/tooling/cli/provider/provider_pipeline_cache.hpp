@@ -5,12 +5,22 @@
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/command_catalog.hpp"
 
-#include "pipeline/persistence/durable_store_import/provider.hpp"
+#include "tooling/cli/provider/provider_artifact_value.hpp"
 
+#include <map>
 #include <optional>
 #include <string_view>
+#include <variant>
 
 namespace ahfl::cli {
+
+struct ProviderPipelineInputs {
+    const ahfl::ir::Program &program;
+    const ahfl::handoff::PackageMetadata &metadata;
+    const ahfl::dry_run::CapabilityMockSet &mock_set;
+    const CommandLineOptions &options;
+    std::string_view command_name;
+};
 
 struct ReleaseGateArtifacts {
     ahfl::durable_store_import::ProviderCompatibilityReport compatibility;
@@ -34,45 +44,25 @@ class ProviderPipelineCache {
                           const CommandLineOptions &options,
                           std::string_view command_name);
 
+    [[nodiscard]] const ProviderPipelineInputs &inputs() const;
+
+    [[nodiscard]] const ProviderArtifact *get(ProviderArtifactKind kind);
+
+    template <ProviderArtifactKind Kind> [[nodiscard]] const ProviderArtifactModelT<Kind> *get() {
+        const auto *artifact = get(Kind);
+        if (artifact == nullptr) {
+            return nullptr;
+        }
+        return std::get_if<ProviderArtifactModelT<Kind>>(artifact);
+    }
+
     [[nodiscard]] const ReleaseGateArtifacts *get_release_gate_artifacts();
 
-    // One memoized getter per provider artifact kind.
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
-                                                        artifact_type,                             \
-                                                        builder,                                   \
-                                                        printer,                                   \
-                                                        artifact_id,                               \
-                                                        visibility,                                \
-                                                        order,                                     \
-                                                        dep_count,                                 \
-                                                        dependencies)                              \
-    [[nodiscard]] const ahfl::durable_store_import::artifact_type *get_##kind();
-#include "pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-
   private:
-    const ahfl::ir::Program &program_;
-    const ahfl::handoff::PackageMetadata &metadata_;
-    const ahfl::dry_run::CapabilityMockSet &mock_set_;
-    const CommandLineOptions &options_;
-    std::string_view command_name_;
+    ProviderPipelineInputs inputs_;
     bool release_gate_artifacts_loaded_{false};
     std::optional<ReleaseGateArtifacts> release_gate_artifacts_;
-
-    // Memoization storage — one loaded flag + optional per artifact.
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
-                                                        artifact_type,                             \
-                                                        builder,                                   \
-                                                        printer,                                   \
-                                                        artifact_id,                               \
-                                                        visibility,                                \
-                                                        order,                                     \
-                                                        dep_count,                                 \
-                                                        dependencies)                              \
-    bool kind##_loaded_{false};                                                                    \
-    std::optional<ahfl::durable_store_import::artifact_type> kind##_;
-#include "pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
+    std::map<ProviderArtifactKind, std::optional<ProviderArtifact>> artifacts_;
 };
 
 } // namespace ahfl::cli

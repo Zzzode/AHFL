@@ -6,32 +6,14 @@
 #include "tooling/cli/command_catalog.hpp"
 #include "tooling/cli/output_context.hpp"
 
-#include "pipeline/persistence/durable_store_import/provider.hpp"
-
-#include "provider_artifact_catalog.hpp"
+#include "provider_artifact_graph.hpp"
 #include "provider_pipeline_cache.hpp"
 
 #include <iosfwd>
 #include <optional>
 #include <string_view>
-#include <variant>
 
 namespace ahfl::cli {
-
-using ProviderArtifact = std::variant<std::monostate
-#define AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT(kind,                                      \
-                                                        artifact_type,                             \
-                                                        builder,                                   \
-                                                        printer,                                   \
-                                                        artifact_id,                               \
-                                                        visibility,                                \
-                                                        order,                                     \
-                                                        dep_count,                                 \
-                                                        dependencies)                              \
-    , ahfl::durable_store_import::artifact_type
-#include "pipeline_durable_store_import_provider_artifacts.def"
-#undef AHFL_CLI_DURABLE_STORE_IMPORT_PROVIDER_ARTIFACT
-                                      >;
 
 class ProviderPipeline {
   public:
@@ -46,10 +28,6 @@ class ProviderPipeline {
   private:
     mutable ProviderPipelineCache cache_;
 };
-
-[[nodiscard]] bool print_provider_artifact(ProviderArtifactKind kind,
-                                           const ProviderArtifact &artifact,
-                                           std::ostream &out);
 
 [[nodiscard]] int
 emit_provider_artifact_with_diagnostics(ProviderArtifactKind kind,
