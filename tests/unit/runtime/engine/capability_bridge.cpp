@@ -8,6 +8,7 @@
 #include <memory>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -27,6 +28,25 @@ void check(bool condition, const std::string &test_name) {
         std::cerr << "FAIL: " << test_name << "\n";
     }
 }
+
+class FakeCapabilityTransport final : public CapabilityTransportAdapter {
+  public:
+    HttpResponse http_response;
+    GrpcJsonTranscodingResponse grpc_response;
+    mutable std::vector<HttpRequest> http_requests;
+    mutable std::vector<GrpcJsonTranscodingRequest> grpc_requests;
+
+    [[nodiscard]] HttpResponse execute_http(const HttpRequest &request) const override {
+        http_requests.push_back(request);
+        return http_response;
+    }
+
+    [[nodiscard]] GrpcJsonTranscodingResponse
+    execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) const override {
+        grpc_requests.push_back(request);
+        return grpc_response;
+    }
+};
 
 // ============================================================================
 // Test 1: register_and_invoke_mock
@@ -184,24 +204,69 @@ void test_as_invoker_preserves_structured_result() {
 // ============================================================================
 
 void test_http_capability_binding() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 503,
+        .body = "unavailable",
+        .error = {},
+    };
+
     HTTPCapabilityConfig config;
     config.url = "https://example.com/api";
     config.method = "PUT";
     config.retry.max_retries = 3;
+    config.retry.initial_delay = std::chrono::milliseconds{0};
     config.timeout.deadline = std::chrono::milliseconds{5000};
-    auto binding = make_http_capability("http_call", std::move(config));
+    auto binding = make_http_capability("http_call", std::move(config), transport);
 
     check(binding.name == "http_call", "http_binding.name");
     check(binding.retry.max_retries == 3, "http_binding.retry");
     check(binding.timeout.deadline == std::chrono::milliseconds{5000}, "http_binding.timeout");
     check(binding.handler != nullptr, "http_binding.has_handler");
 
-    // Invoking will fail (no real server) but should produce a meaningful error
     CapabilityRegistry registry;
     registry.register_capability(std::move(binding));
     auto result = registry.invoke("http_call", {});
-    check(result.status != CapabilityCallStatus::Success, "http_binding.not_success");
-    check(!result.error_message.empty(), "http_binding.has_error");
+    check(result.status == CapabilityCallStatus::RetryExhausted, "http_binding.retry_exhausted");
+    check(result.error_message == "HTTP 503: unavailable", "http_binding.error_message");
+    check(transport->http_requests.size() == 4, "http_binding.retry_request_count");
+    if (!transport->http_requests.empty()) {
+        check(transport->http_requests.front().url == "https://example.com/api",
+              "http_binding.request_url");
+        check(transport->http_requests.front().method == "PUT", "http_binding.request_method");
+    }
+}
+
+void test_http_capability_injected_transport_success() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = R"("ok")",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/capability";
+    config.timeout.deadline = std::chrono::milliseconds{2500};
+    auto binding = make_http_capability("http_success", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    std::vector<Value> args;
+    args.push_back(make_int(7));
+    auto result = registry.invoke("http_success", args);
+
+    check(result.status == CapabilityCallStatus::Success, "http_success.status");
+    auto *value =
+        result.value.has_value() ? std::get_if<StringValue>(&result.value->node) : nullptr;
+    check(value != nullptr && value->value == "ok", "http_success.value");
+    check(transport->http_requests.size() == 1, "http_success.request_captured");
+    if (!transport->http_requests.empty()) {
+        const auto &request = transport->http_requests.front();
+        check(request.headers.count("Content-Type") == 1, "http_success.content_type");
+        check(request.body.find("\"value\":7") != std::string::npos, "http_success.body");
+        check(request.timeout_seconds == 2, "http_success.timeout_seconds");
+    }
 }
 
 // ============================================================================
@@ -209,23 +274,77 @@ void test_http_capability_binding() {
 // ============================================================================
 
 void test_grpc_capability_json_transcoding() {
-    GRPCCapabilityConfig config;
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Unavailable,
+        .body = {},
+        .error_message = "unavailable",
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
     config.endpoint = "http://localhost:50051";
     config.service = "TestService";
     config.method = "TestMethod";
     config.retry.max_retries = 1;
-    auto binding = make_grpc_capability("grpc_call", std::move(config));
+    auto binding = make_grpc_json_transcoding_capability("grpc_call", std::move(config), transport);
 
     check(binding.name == "grpc_call", "grpc_transcoding.name");
     check(binding.retry.max_retries == 1, "grpc_transcoding.retry");
     check(binding.handler != nullptr, "grpc_transcoding.has_handler");
 
-    // Invoking will fail (no real server) but should produce a meaningful error
     CapabilityRegistry registry;
     registry.register_capability(std::move(binding));
     auto result = registry.invoke("grpc_call", {});
-    check(result.status != CapabilityCallStatus::Success, "grpc_transcoding.not_success");
-    check(!result.error_message.empty(), "grpc_transcoding.has_error");
+    check(result.status == CapabilityCallStatus::RetryExhausted,
+          "grpc_transcoding.retry_exhausted");
+    check(result.error_message == "unavailable", "grpc_transcoding.has_error");
+    check(transport->grpc_requests.size() == 2, "grpc_transcoding.retry_request_count");
+    if (!transport->grpc_requests.empty()) {
+        const auto &request = transport->grpc_requests.front();
+        check(request.endpoint.host == "localhost", "grpc_transcoding.host");
+        check(request.endpoint.port == 50051, "grpc_transcoding.port");
+        check(request.endpoint.service_name == "TestService", "grpc_transcoding.service");
+        check(request.endpoint.method_name == "TestMethod", "grpc_transcoding.method");
+    }
+}
+
+void test_grpc_capability_injected_transport_success() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = "42",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.timeout.deadline = std::chrono::milliseconds{3000};
+    auto binding =
+        make_grpc_json_transcoding_capability("grpc_success", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    std::vector<Value> args;
+    args.push_back(make_string("payload"));
+    auto result = registry.invoke("grpc_success", args);
+
+    check(result.status == CapabilityCallStatus::Success, "grpc_success.status");
+    auto *value = result.value.has_value() ? std::get_if<IntValue>(&result.value->node) : nullptr;
+    check(value != nullptr && value->value == 42, "grpc_success.value");
+    check(transport->grpc_requests.size() == 1, "grpc_success.request_captured");
+    if (!transport->grpc_requests.empty()) {
+        const auto &request = transport->grpc_requests.front();
+        check(request.endpoint.host == "grpc.example.com", "grpc_success.host");
+        check(request.endpoint.port == 443, "grpc_success.port");
+        check(request.endpoint.use_tls, "grpc_success.tls");
+        check(request.endpoint.service_name == "Example.Service", "grpc_success.service");
+        check(request.endpoint.method_name == "Compute", "grpc_success.method");
+        check(request.serialized_body.find("\"value\":\"payload\"") != std::string::npos,
+              "grpc_success.body");
+        check(request.timeout == std::chrono::seconds{3}, "grpc_success.timeout");
+    }
 }
 
 // ============================================================================
@@ -464,7 +583,9 @@ int main() {
     test_retry_exhausted();
     test_as_invoker_preserves_structured_result();
     test_http_capability_binding();
+    test_http_capability_injected_transport_success();
     test_grpc_capability_json_transcoding();
+    test_grpc_capability_injected_transport_success();
     test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
     test_eval_with_capability_call();
