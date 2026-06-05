@@ -62,8 +62,27 @@ int main() {
         "duplicate IR backend",
         [](const ahfl::EmitContext &) -> ahfl::EmitResult { return {}; },
     };
-    check(!registry.register_backend(std::move(duplicate)), "duplicate backend kind is rejected");
+    check(!registry.register_builtin_backend(std::move(duplicate)),
+          "duplicate backend kind is rejected");
     check(registry.size() == original_size, "duplicate registration does not mutate registry");
+
+    ahfl::BackendRegistry local_registry;
+    ahfl::BackendEntry local_ir{
+        ahfl::BackendKind::Ir,
+        "ir",
+        "IR backend",
+        [](const ahfl::EmitContext &) -> ahfl::EmitResult { return {}; },
+    };
+    check(local_registry.register_builtin_backend(std::move(local_ir)),
+          "local backend registration succeeds");
+    ahfl::BackendEntry duplicate_name{
+        ahfl::BackendKind::IrJson,
+        "ir",
+        "duplicate name backend",
+        [](const ahfl::EmitContext &) -> ahfl::EmitResult { return {}; },
+    };
+    check(!local_registry.register_builtin_backend(std::move(duplicate_name)),
+          "duplicate backend name is rejected");
 
     ahfl::ir::Program program;
     std::ostringstream out;

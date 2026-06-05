@@ -1,6 +1,5 @@
 #pragma once
 
-#include <any>
 #include <functional>
 #include <ostream>
 #include <string>
@@ -18,24 +17,25 @@ struct EmitContext {
     const ir::Program &program;
     std::ostream &out;
     const handoff::PackageMetadata *package_metadata;
-    std::any extension; // Backend-specific typed config
 };
 
 /// A registered backend entry.
 struct BackendEntry {
     BackendKind kind;
-    std::string name;          // e.g. "smv", "native-json"
-    std::string description;   // Human-readable description
+    std::string name;        // e.g. "smv", "native-json"
+    std::string description; // Human-readable description
     std::function<EmitResult(const EmitContext &)> emitter;
 };
 
-/// Central registry of all available backends.
+/// Central registry of built-in BackendKind dispatch entries.
+/// This is intentionally not a plugin extension point; new backends are added
+/// by extending BackendKind and the built-in backend table together.
 class BackendRegistry {
   public:
     BackendRegistry() = default;
 
-    /// Register a new backend. Returns false if kind already registered.
-    bool register_backend(BackendEntry entry);
+    /// Register a built-in backend. Returns false if kind or name already exists.
+    bool register_builtin_backend(BackendEntry entry);
 
     /// Emit using a registered backend.
     /// Returns an error if the kind is not registered or the backend fails.
@@ -48,10 +48,14 @@ class BackendRegistry {
     [[nodiscard]] const BackendEntry *find_by_name(std::string_view name) const;
 
     /// List all registered backends.
-    [[nodiscard]] const std::vector<BackendEntry> &entries() const { return entries_; }
+    [[nodiscard]] const std::vector<BackendEntry> &entries() const {
+        return entries_;
+    }
 
     /// Get the number of registered backends.
-    [[nodiscard]] std::size_t size() const { return entries_.size(); }
+    [[nodiscard]] std::size_t size() const {
+        return entries_.size();
+    }
 
   private:
     std::vector<BackendEntry> entries_;
