@@ -862,7 +862,13 @@ TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
 void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed) {
     auto &expression_types = result_.mutable_expression_types();
     for (auto &entry : expression_types) {
-        if (same_range(entry.range, expr.range) && entry.source_id == current_source_id_) {
+        // Update in place when both the AST identity and the source agree.
+        // Falling back to range comparison preserves behaviour for synthesized
+        // expressions that haven't been assigned a node id (node_id == 0).
+        const bool same_identity =
+            (expr.node_id != 0 && entry.node_id == expr.node_id) ||
+            (expr.node_id == 0 && entry.node_id == 0 && same_range(entry.range, expr.range));
+        if (same_identity && entry.source_id == current_source_id_) {
             entry.type = typed.type ? typed.type->clone() : make_any_type();
             entry.effect = typed.effect;
             entry.is_pure = typed.is_pure;
@@ -873,6 +879,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     expression_types.push_back(ExpressionTypeInfo{
         .range = expr.range,
         .source_id = current_source_id_,
+        .node_id = expr.node_id,
         .type = typed.type ? typed.type->clone() : make_any_type(),
         .effect = typed.effect,
         .is_pure = typed.is_pure,

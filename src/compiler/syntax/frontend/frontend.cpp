@@ -339,6 +339,10 @@ class ProgramBuilder {
 
   private:
     const SourceFile &source_;
+    // Monotonic counter used to assign stable ExprSyntax::node_id values during
+    // the parse-tree lowering. Mutable so existing const builder methods remain
+    // const while still able to mint fresh ids.
+    mutable std::uint64_t next_expr_id_{0};
 
     // ProgramBuilder is the handwritten parse-tree lowering boundary. It is the
     // only place where later frontend work should routinely traverse generated
@@ -584,6 +588,7 @@ class ProgramBuilder {
         auto expr = make_owned<ast::ExprSyntax>();
         expr->kind = kind;
         expr->range = range;
+        expr->node_id = ++next_expr_id_;
         expr->text = source_text(source_, range);
         return expr;
     }
