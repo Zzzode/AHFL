@@ -471,65 +471,93 @@ TypedValue TypeCheckPass::check_expr(const ast::ExprSyntax &expr,
 TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
                                           const ValueContext &context,
                                           MaybeCRef<Type> expected_type) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::BoolLiteral:
-        return typed(Type::make(TypeKind::Bool));
-    case ast::ExprSyntaxKind::IntegerLiteral:
-        return typed(Type::make(TypeKind::Int));
-    case ast::ExprSyntaxKind::FloatLiteral:
-        return typed(Type::make(TypeKind::Float));
-    case ast::ExprSyntaxKind::DecimalLiteral:
-        return typed(Type::decimal(parse_decimal_scale(expr.text)));
-    case ast::ExprSyntaxKind::StringLiteral:
-        return typed(Type::string());
-    case ast::ExprSyntaxKind::DurationLiteral:
-        return typed(Type::make(TypeKind::Duration));
-    case ast::ExprSyntaxKind::NoneLiteral:
-        if (expected_type.has_value() && expected_type->get().kind == TypeKind::Optional) {
-            return typed(expected_type->get().clone());
+    // Visitor wrapper around the per-kind handlers below. Routing through
+    // visit_expr_syntax (Task #4) localises ExprSyntaxKind dispatch and lets
+    // the compiler enforce that every kind has a corresponding visit_*
+    // overload here when new kinds are added to the AST.
+    struct ExprChecker {
+        TypeCheckPass &pass;
+        const ValueContext &context;
+        MaybeCRef<Type> expected_type;
+
+        TypedValue visit_bool_literal(const ast::ExprSyntax &) const {
+            return pass.typed(Type::make(TypeKind::Bool));
         }
-
-        error_here("cannot infer type of 'none' without an expected Optional<T> context",
-                   expr.range);
-        return error_typed();
-    case ast::ExprSyntaxKind::Some: {
-        MaybeCRef<Type> inner_expected = std::nullopt;
-        if (expected_type.has_value() && expected_type->get().kind == TypeKind::Optional &&
-            expected_type->get().first) {
-            inner_expected = std::cref(*expected_type->get().first);
+        TypedValue visit_integer_literal(const ast::ExprSyntax &) const {
+            return pass.typed(Type::make(TypeKind::Int));
         }
+        TypedValue visit_float_literal(const ast::ExprSyntax &) const {
+            return pass.typed(Type::make(TypeKind::Float));
+        }
+        TypedValue visit_decimal_literal(const ast::ExprSyntax &e) const {
+            return pass.typed(Type::decimal(parse_decimal_scale(e.text)));
+        }
+        TypedValue visit_string_literal(const ast::ExprSyntax &) const {
+            return pass.typed(Type::string());
+        }
+        TypedValue visit_duration_literal(const ast::ExprSyntax &) const {
+            return pass.typed(Type::make(TypeKind::Duration));
+        }
+        TypedValue visit_none_literal(const ast::ExprSyntax &e) const {
+            if (expected_type.has_value() && expected_type->get().kind == TypeKind::Optional) {
+                return pass.typed(expected_type->get().clone());
+            }
+            pass.error_here("cannot infer type of 'none' without an expected Optional<T> context",
+                            e.range);
+            return pass.error_typed();
+        }
+        TypedValue visit_some(const ast::ExprSyntax &e) const {
+            MaybeCRef<Type> inner_expected = std::nullopt;
+            if (expected_type.has_value() && expected_type->get().kind == TypeKind::Optional &&
+                expected_type->get().first) {
+                inner_expected = std::cref(*expected_type->get().first);
+            }
+            const auto inner = pass.check_expr(*e.first, context, inner_expected);
+            return pass.typed_effect(
+                Type::optional(inner.type ? inner.type->clone() : make_any_type()),
+                inner.effect);
+        }
+        TypedValue visit_path(const ast::ExprSyntax &e) const {
+            return pass.check_path(*e.path, context);
+        }
+        TypedValue visit_qualified_value(const ast::ExprSyntax &e) const {
+            return pass.check_qualified_value(e);
+        }
+        TypedValue visit_call(const ast::ExprSyntax &e) const {
+            return pass.check_call(e, context);
+        }
+        TypedValue visit_struct_literal(const ast::ExprSyntax &e) const {
+            return pass.check_struct_literal(e, context);
+        }
+        TypedValue visit_list_literal(const ast::ExprSyntax &e) const {
+            return pass.check_list_literal(e, context, expected_type);
+        }
+        TypedValue visit_set_literal(const ast::ExprSyntax &e) const {
+            return pass.check_set_literal(e, context, expected_type);
+        }
+        TypedValue visit_map_literal(const ast::ExprSyntax &e) const {
+            return pass.check_map_literal(e, context, expected_type);
+        }
+        TypedValue visit_unary(const ast::ExprSyntax &e) const {
+            return pass.check_unary_expr(e, context);
+        }
+        TypedValue visit_binary(const ast::ExprSyntax &e) const {
+            return pass.check_binary_expr(e, context);
+        }
+        TypedValue visit_member_access(const ast::ExprSyntax &e) const {
+            return pass.check_member_access(e, context);
+        }
+        TypedValue visit_index_access(const ast::ExprSyntax &e) const {
+            return pass.check_index_access(e, context);
+        }
+        TypedValue visit_group(const ast::ExprSyntax &e) const {
+            return pass.check_expr(*e.first, context, expected_type);
+        }
+        // Fallback for the unreachable default branch in visit_expr_syntax.
+        TypedValue visit_unknown(const ast::ExprSyntax &) const { return pass.error_typed(); }
+    };
 
-        const auto inner = check_expr(*expr.first, context, inner_expected);
-        return typed_effect(Type::optional(inner.type ? inner.type->clone() : make_any_type()),
-                            inner.effect);
-    }
-    case ast::ExprSyntaxKind::Path:
-        return check_path(*expr.path, context);
-    case ast::ExprSyntaxKind::QualifiedValue:
-        return check_qualified_value(expr);
-    case ast::ExprSyntaxKind::Call:
-        return check_call(expr, context);
-    case ast::ExprSyntaxKind::StructLiteral:
-        return check_struct_literal(expr, context);
-    case ast::ExprSyntaxKind::ListLiteral:
-        return check_list_literal(expr, context, expected_type);
-    case ast::ExprSyntaxKind::SetLiteral:
-        return check_set_literal(expr, context, expected_type);
-    case ast::ExprSyntaxKind::MapLiteral:
-        return check_map_literal(expr, context, expected_type);
-    case ast::ExprSyntaxKind::Unary:
-        return check_unary_expr(expr, context);
-    case ast::ExprSyntaxKind::Binary:
-        return check_binary_expr(expr, context);
-    case ast::ExprSyntaxKind::MemberAccess:
-        return check_member_access(expr, context);
-    case ast::ExprSyntaxKind::IndexAccess:
-        return check_index_access(expr, context);
-    case ast::ExprSyntaxKind::Group:
-        return check_expr(*expr.first, context, expected_type);
-    }
-
-    return error_typed();
+    return internal::visit_expr_syntax(expr, ExprChecker{*this, context, expected_type});
 }
 
 TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueContext &context) {
