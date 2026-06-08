@@ -1427,19 +1427,23 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
 
         // Optional narrowing (Task #11 phase 1): if the condition is a
         // simple `Identifier != none` against a binding of type Optional<T>,
-        // narrow that binding to T inside the then-block. Only the simplest
-        // shape is honoured; anything else falls back to the unnarrowed
-        // value context, preserving the conservative-by-default policy in
-        // docs/design/optional-narrowing-rfc-v0.1.zh.md.
-        const auto try_narrow = [&]() -> std::optional<std::pair<std::string, TypePtr>> {
+        // narrow that binding to T inside the then-block. Anything else
+        // (member access, symmetric `none != x`, `&&`/`||` compositions,
+        // capability/predicate calls) falls back to the unnarrowed value
+        // context, preserving the conservative-by-default policy in
+        // docs/design/optional-narrowing-rfc-v0.1.zh.md. ctx.<field> /
+        // input.<field> narrowing requires extending check_path to consult
+        // the narrow override and is reserved for a future phase.
+        struct Narrow {
+            std::string binding_name;
+            TypePtr narrowed;
+        };
+        const auto try_narrow = [&]() -> std::optional<Narrow> {
             const auto &cond = *statement.if_stmt->condition;
             if (cond.kind != ast::ExprSyntaxKind::Binary ||
                 cond.binary_op != ast::ExprBinaryOp::NotEqual || !cond.first || !cond.second) {
                 return std::nullopt;
             }
-            // Pattern: `Identifier != none`. The `none` literal must be on
-            // the right; we don't try to handle the symmetric `none != x`
-            // form in this phase.
             if (cond.second->kind != ast::ExprSyntaxKind::NoneLiteral) {
                 return std::nullopt;
             }
@@ -1458,7 +1462,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             if (opt == nullptr || opt->inner == nullptr) {
                 return std::nullopt;
             }
-            return std::make_pair(lhs.path->root_name, opt->inner->clone());
+            return Narrow{
+                .binding_name = lhs.path->root_name,
+                .narrowed = opt->inner->clone(),
+            };
         }();
 
         auto then_context = ValueContext{
@@ -1467,7 +1474,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .current_agent = context.current_agent,
         };
         if (try_narrow.has_value()) {
-            then_context.bindings[try_narrow->first] = try_narrow->second;
+            then_context.bindings[try_narrow->binding_name] = try_narrow->narrowed;
         }
         check_block(*statement.if_stmt->then_block, then_context, expected_return_type, state_name,
                     expected_return_origin);
