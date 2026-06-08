@@ -161,6 +161,131 @@ bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
     return agent_context_struct_ids_.contains(id.value);
 }
 
+namespace {
+
+// 64-bit FNV-1a-style mix used for fingerprint composition. We do not use
+// std::hash<size_t> directly because we want byte-stable hashes that survive
+// rebuilds; FNV-1a meets that requirement and is cheap to compute.
+[[nodiscard]] std::uint64_t fingerprint_mix(std::uint64_t seed, std::uint64_t value) noexcept {
+    constexpr std::uint64_t kPrime = 0x100000001b3ULL;
+    seed ^= value;
+    seed *= kPrime;
+    return seed;
+}
+
+[[nodiscard]] std::uint64_t fingerprint_string(std::string_view text) noexcept {
+    std::uint64_t seed = 0xcbf29ce484222325ULL; // FNV offset basis
+    for (const auto byte : text) {
+        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(static_cast<unsigned char>(byte)));
+    }
+    return seed;
+}
+
+[[nodiscard]] std::uint64_t fingerprint_optional_symbol(std::optional<SymbolId> id) noexcept {
+    if (!id.has_value()) {
+        return 0xfeedfacefeedfaceULL;
+    }
+    return fingerprint_mix(0xc0ffeec0ffeec0ffULL, static_cast<std::uint64_t>(id->value));
+}
+
+// Hash-consed Type identity is sufficient at the structural level because
+// every distinct type lives at a single canonical address. We additionally
+// fold in payload fields so the fingerprint is stable across runs (where the
+// canonical address itself is not).
+[[nodiscard]] std::uint64_t fingerprint_type(const Type *type) noexcept {
+    if (type == nullptr) {
+        return 0xdeaddeaddeaddeadULL;
+    }
+
+    std::uint64_t seed = 0x9e3779b97f4a7c15ULL;
+    seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->kind));
+    seed = fingerprint_mix(seed, fingerprint_string(type->name));
+    if (type->string_bounds.has_value()) {
+        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->string_bounds->first));
+        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->string_bounds->second));
+    }
+    if (type->decimal_scale.has_value()) {
+        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(*type->decimal_scale));
+    }
+    seed = fingerprint_mix(seed, fingerprint_optional_symbol(type->nominal_symbol));
+    seed = fingerprint_mix(seed, fingerprint_type(type->first));
+    seed = fingerprint_mix(seed, fingerprint_type(type->second));
+    return seed;
+}
+
+} // namespace
+
+std::optional<std::uint64_t> TypeEnvironment::signature_fingerprint(SymbolId id) const {
+    if (const auto info = get_struct(id); info.has_value()) {
+        std::uint64_t seed = fingerprint_string("struct:");
+        seed = fingerprint_mix(seed, fingerprint_string(info->get().canonical_name));
+        for (const auto &field : info->get().fields) {
+            seed = fingerprint_mix(seed, fingerprint_string(field.name));
+            seed = fingerprint_mix(seed, fingerprint_type(field.type));
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(field.has_default ? 1U : 0U));
+        }
+        return seed;
+    }
+
+    if (const auto info = get_enum(id); info.has_value()) {
+        std::uint64_t seed = fingerprint_string("enum:");
+        seed = fingerprint_mix(seed, fingerprint_string(info->get().canonical_name));
+        for (const auto &variant : info->get().variants) {
+            seed = fingerprint_mix(seed, fingerprint_string(variant.name));
+        }
+        return seed;
+    }
+
+    if (const auto info = get_capability(id); info.has_value()) {
+        std::uint64_t seed = fingerprint_string("capability:");
+        seed = fingerprint_mix(seed, fingerprint_string(info->get().canonical_name));
+        for (const auto &param : info->get().params) {
+            seed = fingerprint_mix(seed, fingerprint_string(param.name));
+            seed = fingerprint_mix(seed, fingerprint_type(param.type));
+        }
+        seed = fingerprint_mix(seed, fingerprint_type(info->get().return_type));
+        return seed;
+    }
+
+    if (const auto info = get_predicate(id); info.has_value()) {
+        std::uint64_t seed = fingerprint_string("predicate:");
+        seed = fingerprint_mix(seed, fingerprint_string(info->get().canonical_name));
+        for (const auto &param : info->get().params) {
+            seed = fingerprint_mix(seed, fingerprint_string(param.name));
+            seed = fingerprint_mix(seed, fingerprint_type(param.type));
+        }
+        return seed;
+    }
+
+    if (const auto info = get_agent(id); info.has_value()) {
+        std::uint64_t seed = fingerprint_string("agent:");
+        seed = fingerprint_mix(seed, fingerprint_string(info->get().canonical_name));
+        seed = fingerprint_mix(seed, fingerprint_type(info->get().input_type));
+        seed = fingerprint_mix(seed, fingerprint_type(info->get().context_type));
+        seed = fingerprint_mix(seed, fingerprint_type(info->get().output_type));
+        for (const auto cap_id : info->get().capability_symbols) {
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(cap_id.value));
+        }
+        return seed;
+    }
+
+    if (const auto info = get_workflow(id); info.has_value()) {
+        std::uint64_t seed = fingerprint_string("workflow:");
+        seed = fingerprint_mix(seed, fingerprint_string(info->get().canonical_name));
+        seed = fingerprint_mix(seed, fingerprint_type(info->get().input_type));
+        seed = fingerprint_mix(seed, fingerprint_type(info->get().output_type));
+        return seed;
+    }
+
+    if (const auto type = get_const_type(id); type.has_value()) {
+        std::uint64_t seed = fingerprint_string("const:");
+        seed = fingerprint_mix(seed, fingerprint_type(&type->get()));
+        return seed;
+    }
+
+    return std::nullopt;
+}
+
 void TypeEnvironment::index_struct(std::size_t id, StructTypeInfo info) {
     struct_name_index_.insert_or_assign(info.canonical_name, id);
     structs_.insert_or_assign(id, std::move(info));
