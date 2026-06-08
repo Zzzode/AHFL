@@ -438,7 +438,7 @@ TypeCheckPass::field_access(const Type &base_type, std::string_view field_name, 
         return make_any_type();
     }
 
-    if (base_type.kind != TypeKind::Struct) {
+    if (!base_type.holds<types::StructT>()) {
         error_here("member access requires a struct value, got " + base_type.describe(), range);
         return make_any_type();
     }
@@ -600,7 +600,7 @@ TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
     }
 
     auto owner_type = resolve_type_symbol(owner_reference->get().target, expr.range);
-    if (!owner_type || owner_type->kind != TypeKind::Enum) {
+    if (!owner_type || !owner_type->holds<types::EnumT>()) {
         error_here("qualified value '" + expr.qualified_name->spelling() +
                        "' must refer to a constant or enum variant",
                    expr.range);
@@ -731,7 +731,7 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
     }
 
     auto struct_type = resolve_type_symbol(reference->get().target, expr.range);
-    if (!struct_type || struct_type->kind != TypeKind::Struct) {
+    if (!struct_type || !struct_type->holds<types::StructT>()) {
         error_here("struct literal target '" + expr.qualified_name->spelling() +
                        "' does not resolve to a struct type",
                    expr.range);
@@ -965,20 +965,20 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
         return typed_effect(Type::make(TypeKind::Bool), effect);
     case ast::ExprBinaryOp::Add:
-        if (lhs.type->kind == TypeKind::String && rhs.type->kind == TypeKind::String) {
+        if (lhs.type->holds<types::StringT>() && rhs.type->holds<types::StringT>()) {
             return typed_effect(Type::string(), effect);
         }
 
-        if (lhs.type->kind == TypeKind::Decimal && rhs.type->kind == TypeKind::Decimal &&
+        if (lhs.type->holds<types::DecimalT>() && rhs.type->holds<types::DecimalT>() &&
             lhs.type->decimal_scale == rhs.type->decimal_scale) {
             return typed_effect(lhs.type->clone(), effect);
         }
 
-        if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
+        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
             return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
-        if (lhs.type->kind == TypeKind::Float && rhs.type->kind == TypeKind::Float) {
+        if (lhs.type->holds<types::FloatT>() && rhs.type->holds<types::FloatT>()) {
             return typed_effect(Type::make(TypeKind::Float), effect);
         }
 
@@ -989,16 +989,16 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
         return error_typed_effect(effect);
     case ast::ExprBinaryOp::Subtract:
-        if (lhs.type->kind == TypeKind::Decimal && rhs.type->kind == TypeKind::Decimal &&
+        if (lhs.type->holds<types::DecimalT>() && rhs.type->holds<types::DecimalT>() &&
             lhs.type->decimal_scale == rhs.type->decimal_scale) {
             return typed_effect(lhs.type->clone(), effect);
         }
 
-        if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
+        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
             return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
-        if (lhs.type->kind == TypeKind::Float && rhs.type->kind == TypeKind::Float) {
+        if (lhs.type->holds<types::FloatT>() && rhs.type->holds<types::FloatT>()) {
             return typed_effect(Type::make(TypeKind::Float), effect);
         }
 
@@ -1010,11 +1010,11 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         return error_typed_effect(effect);
     case ast::ExprBinaryOp::Multiply:
     case ast::ExprBinaryOp::Divide:
-        if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
+        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
             return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
-        if (lhs.type->kind == TypeKind::Float && rhs.type->kind == TypeKind::Float) {
+        if (lhs.type->holds<types::FloatT>() && rhs.type->holds<types::FloatT>()) {
             return typed_effect(Type::make(TypeKind::Float), effect);
         }
 
@@ -1025,7 +1025,7 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
         return error_typed_effect(effect);
     case ast::ExprBinaryOp::Modulo:
-        if (lhs.type->kind == TypeKind::Int && rhs.type->kind == TypeKind::Int) {
+        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
             return typed_effect(Type::make(TypeKind::Int), effect);
         }
 
@@ -1051,7 +1051,7 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
     const auto effect = join_effects(collection.effect, index.effect);
 
     if (const auto *list = collection.type->get_if<types::ListT>(); list != nullptr) {
-        if (index.type->kind != TypeKind::Int && !is_error_type(*index.type)) {
+        if (!index.type->holds<types::IntT>() && !is_error_type(*index.type)) {
             error_here("list index must have type Int", expr.second->range);
         }
 

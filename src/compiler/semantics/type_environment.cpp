@@ -198,18 +198,38 @@ namespace {
     }
 
     std::uint64_t seed = 0x9e3779b97f4a7c15ULL;
-    seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->kind));
-    seed = fingerprint_mix(seed, fingerprint_string(type->name));
-    if (type->string_bounds.has_value()) {
-        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->string_bounds->first));
-        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->string_bounds->second));
-    }
-    if (type->decimal_scale.has_value()) {
-        seed = fingerprint_mix(seed, static_cast<std::uint64_t>(*type->decimal_scale));
-    }
-    seed = fingerprint_mix(seed, fingerprint_optional_symbol(type->nominal_symbol));
-    seed = fingerprint_mix(seed, fingerprint_type(type->first));
-    seed = fingerprint_mix(seed, fingerprint_type(type->second));
+    seed = fingerprint_mix(seed, static_cast<std::uint64_t>(type->payload.index()));
+
+    type->visit(types::Overloads{
+        [&](const types::BoundedStringT &b) {
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(b.minimum));
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(b.maximum));
+        },
+        [&](const types::DecimalT &d) {
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(d.scale));
+        },
+        [&](const types::StructT &s) {
+            seed = fingerprint_mix(seed, fingerprint_string(s.canonical_name));
+            seed = fingerprint_mix(seed, fingerprint_optional_symbol(s.symbol));
+        },
+        [&](const types::EnumT &e) {
+            seed = fingerprint_mix(seed, fingerprint_string(e.canonical_name));
+            seed = fingerprint_mix(seed, fingerprint_optional_symbol(e.symbol));
+        },
+        [&](const types::OptionalT &o) {
+            seed = fingerprint_mix(seed, fingerprint_type(o.inner));
+        },
+        [&](const types::ListT &l) {
+            seed = fingerprint_mix(seed, fingerprint_type(l.element));
+        },
+        [&](const types::SetT &s) { seed = fingerprint_mix(seed, fingerprint_type(s.element)); },
+        [&](const types::MapT &m) {
+            seed = fingerprint_mix(seed, fingerprint_type(m.key));
+            seed = fingerprint_mix(seed, fingerprint_type(m.value));
+        },
+        [](const auto &) {},
+    });
+
     return seed;
 }
 
