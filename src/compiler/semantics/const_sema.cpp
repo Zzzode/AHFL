@@ -46,15 +46,22 @@ namespace {
     case ast::ExprSyntaxKind::IndexAccess:
         return is_const_expr_syntax(*expr.first, reason) &&
                is_const_expr_syntax(*expr.second, reason);
+    case ast::ExprSyntaxKind::Unary:
+        // Pure unary operators (!, -, +) over constant operands are themselves
+        // constants. The full type-check pass still validates the operator
+        // applies to the operand kind; we only relax the syntactic gate.
+        return is_const_expr_syntax(*expr.first, reason);
+    case ast::ExprSyntaxKind::Binary:
+        // Same rationale as Unary: arithmetic/logical/comparison operators
+        // applied to constant operands fold to a constant. Type errors are
+        // still surfaced by check_binary_expr.
+        return is_const_expr_syntax(*expr.first, reason) &&
+               is_const_expr_syntax(*expr.second, reason);
     case ast::ExprSyntaxKind::Path:
         reason = "runtime path references are not compile-time constants";
         return false;
     case ast::ExprSyntaxKind::Call:
         reason = "capability and predicate calls are not compile-time constants";
-        return false;
-    case ast::ExprSyntaxKind::Unary:
-    case ast::ExprSyntaxKind::Binary:
-        reason = "constant folding for operators is not implemented";
         return false;
     }
 
