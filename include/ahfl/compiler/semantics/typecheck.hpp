@@ -167,6 +167,9 @@ class TypeEnvironment {
 struct ExpressionTypeInfo {
     SourceRange range;
     std::optional<SourceId> source_id;
+    // Stable AST identity (ast::ExprSyntax::node_id). 0 means "unassigned",
+    // which can happen for synthesized or pre-NodeId expressions.
+    std::uint64_t node_id{0};
     TypePtr type;
     ExprEffect effect{ExprEffect::Pure};
     bool is_pure{true};
@@ -187,6 +190,16 @@ struct TypeCheckResult {
     [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
     find_expression_type(SourceRange range, std::optional<SourceId> source_id = std::nullopt) const;
 
+    // Look up by stable AST node id. Preferred over the SourceRange-based
+    // overload when callers can carry the originating ast::ExprSyntax pointer
+    // because two expressions with overlapping ranges (e.g. a parent and a
+    // synthetic child) can be disambiguated. NodeIds are only unique within
+    // the source they were minted in, so callers in multi-source projects
+    // must pass the source id alongside.
+    [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
+    find_expression_type_by_node(std::uint64_t node_id,
+                                 std::optional<SourceId> source_id = std::nullopt) const;
+
   private:
     friend class TypeCheckPass;
 
@@ -203,6 +216,18 @@ struct TypeCheckResult {
         [[nodiscard]] std::size_t operator()(const ExpressionTypeLookupKey &key) const noexcept;
     };
 
+    struct ExpressionTypeNodeKey {
+        std::uint64_t node_id{0};
+        std::optional<SourceId> source_id;
+
+        [[nodiscard]] friend bool operator==(const ExpressionTypeNodeKey &lhs,
+                                             const ExpressionTypeNodeKey &rhs) noexcept = default;
+    };
+
+    struct ExpressionTypeNodeKeyHash {
+        [[nodiscard]] std::size_t operator()(const ExpressionTypeNodeKey &key) const noexcept;
+    };
+
     void rebuild_expression_type_lookup_cache() const;
     void ensure_expression_type_lookup_cache() const;
     void invalidate_expression_type_lookup_cache() const noexcept;
@@ -211,6 +236,8 @@ struct TypeCheckResult {
     std::vector<ExpressionTypeInfo> expression_types_;
     mutable std::unordered_map<ExpressionTypeLookupKey, std::size_t, ExpressionTypeLookupKeyHash>
         expression_type_lookup_cache_;
+    mutable std::unordered_map<ExpressionTypeNodeKey, std::size_t, ExpressionTypeNodeKeyHash>
+        expression_type_node_cache_;
     mutable std::size_t expression_type_lookup_cache_size_{0};
     mutable const ExpressionTypeInfo *expression_type_lookup_cache_data_{nullptr};
     mutable bool expression_type_lookup_cache_valid_{false};

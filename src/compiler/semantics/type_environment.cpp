@@ -191,6 +191,25 @@ TypeCheckResult::find_expression_type(SourceRange range, std::optional<SourceId>
     return std::cref(expression_types_[iter->second]);
 }
 
+MaybeCRef<ExpressionTypeInfo>
+TypeCheckResult::find_expression_type_by_node(std::uint64_t node_id,
+                                              std::optional<SourceId> source_id) const {
+    if (node_id == 0) {
+        return std::nullopt;
+    }
+    ensure_expression_type_lookup_cache();
+
+    const auto iter = expression_type_node_cache_.find(ExpressionTypeNodeKey{
+        .node_id = node_id,
+        .source_id = source_id,
+    });
+    if (iter == expression_type_node_cache_.end()) {
+        return std::nullopt;
+    }
+
+    return std::cref(expression_types_[iter->second]);
+}
+
 std::vector<ExpressionTypeInfo> &TypeCheckResult::mutable_expression_types() noexcept {
     invalidate_expression_type_lookup_cache();
     return expression_types_;
@@ -207,9 +226,21 @@ std::size_t TypeCheckResult::ExpressionTypeLookupKeyHash::operator()(
     return seed;
 }
 
+std::size_t TypeCheckResult::ExpressionTypeNodeKeyHash::operator()(
+    const TypeCheckResult::ExpressionTypeNodeKey &key) const noexcept {
+    auto seed = std::hash<std::uint64_t>{}(key.node_id);
+    seed = hash_mix(seed, std::hash<bool>{}(key.source_id.has_value()));
+    if (key.source_id.has_value()) {
+        seed = hash_mix(seed, std::hash<std::size_t>{}(key.source_id->value));
+    }
+    return seed;
+}
+
 void TypeCheckResult::rebuild_expression_type_lookup_cache() const {
     expression_type_lookup_cache_.clear();
     expression_type_lookup_cache_.reserve(expression_types_.size());
+    expression_type_node_cache_.clear();
+    expression_type_node_cache_.reserve(expression_types_.size());
 
     for (std::size_t index = 0; index < expression_types_.size(); ++index) {
         const auto &entry = expression_types_[index];
@@ -220,6 +251,16 @@ void TypeCheckResult::rebuild_expression_type_lookup_cache() const {
                 .source_id = entry.source_id,
             },
             index);
+        if (entry.node_id != 0) {
+            // Last writer wins on collision; remember_expression_type updates
+            // existing entries in place so the cache stays consistent.
+            expression_type_node_cache_.insert_or_assign(
+                ExpressionTypeNodeKey{
+                    .node_id = entry.node_id,
+                    .source_id = entry.source_id,
+                },
+                index);
+        }
     }
 
     expression_type_lookup_cache_size_ = expression_types_.size();

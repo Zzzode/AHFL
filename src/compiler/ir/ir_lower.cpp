@@ -918,8 +918,14 @@ class IrLowerer final {
         }
 
         if (statement.initializer) {
-            const auto expression_type = type_check_result_.find_expression_type(
-                statement.initializer->range, current_source_id_);
+            // Prefer the stable AST node id; fall back to source range for any
+            // synthesized initializer that pre-dates NodeId assignment.
+            auto expression_type = type_check_result_.find_expression_type_by_node(
+                statement.initializer->node_id, current_source_id_);
+            if (!expression_type.has_value()) {
+                expression_type = type_check_result_.find_expression_type(
+                    statement.initializer->range, current_source_id_);
+            }
             if (expression_type.has_value() && expression_type->get().type) {
                 return type_ref_from_type(*expression_type->get().type);
             }
