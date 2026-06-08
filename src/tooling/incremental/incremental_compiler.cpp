@@ -105,6 +105,7 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
         std::string serialized_ir;
         CompileStatus status = CompileStatus::Recompiled;
         std::string error_msg;
+        std::uint64_t new_signature_fingerprint = 0;
 
         ahfl::Frontend frontend;
         auto parse_result = frontend.parse_file(mod_path);
@@ -136,11 +137,83 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
                     status = CompileStatus::Failed;
                     error_msg = err.str();
                 } else {
+                    // Aggregate the per-symbol signature fingerprints into a
+                    // single 64-bit digest of the module's type environment.
+                    // Downstream cache decisions can later compare this
+                    // against an earlier run to detect semantic shape
+                    // changes that survive content-only edits.
+                    constexpr std::uint64_t kFprMixPrime = 0x100000001b3ULL;
+                    std::uint64_t fingerprint = 0xcbf29ce484222325ULL;
+                    for (const auto &[id, info] : tc_result.environment.structs()) {
+                        (void)info;
+                        if (const auto fp =
+                                tc_result.environment.signature_fingerprint(SymbolId{id});
+                            fp.has_value()) {
+                            fingerprint ^= *fp;
+                            fingerprint *= kFprMixPrime;
+                        }
+                    }
+                    for (const auto &[id, info] : tc_result.environment.enums()) {
+                        (void)info;
+                        if (const auto fp =
+                                tc_result.environment.signature_fingerprint(SymbolId{id});
+                            fp.has_value()) {
+                            fingerprint ^= *fp;
+                            fingerprint *= kFprMixPrime;
+                        }
+                    }
+                    for (const auto &[id, info] : tc_result.environment.capabilities()) {
+                        (void)info;
+                        if (const auto fp =
+                                tc_result.environment.signature_fingerprint(SymbolId{id});
+                            fp.has_value()) {
+                            fingerprint ^= *fp;
+                            fingerprint *= kFprMixPrime;
+                        }
+                    }
+                    for (const auto &[id, info] : tc_result.environment.predicates()) {
+                        (void)info;
+                        if (const auto fp =
+                                tc_result.environment.signature_fingerprint(SymbolId{id});
+                            fp.has_value()) {
+                            fingerprint ^= *fp;
+                            fingerprint *= kFprMixPrime;
+                        }
+                    }
+                    for (const auto &[id, info] : tc_result.environment.agents()) {
+                        (void)info;
+                        if (const auto fp =
+                                tc_result.environment.signature_fingerprint(SymbolId{id});
+                            fp.has_value()) {
+                            fingerprint ^= *fp;
+                            fingerprint *= kFprMixPrime;
+                        }
+                    }
+                    for (const auto &[id, info] : tc_result.environment.workflows()) {
+                        (void)info;
+                        if (const auto fp =
+                                tc_result.environment.signature_fingerprint(SymbolId{id});
+                            fp.has_value()) {
+                            fingerprint ^= *fp;
+                            fingerprint *= kFprMixPrime;
+                        }
+                    }
+
                     auto ir_program =
                         ahfl::lower_program_ir(*parse_result.program, resolve_result, tc_result);
                     std::ostringstream ir_json;
                     ahfl::print_program_ir_json(ir_program, ir_json);
                     serialized_ir = ir_json.str();
+
+                    // Look up the previous cache entry to track whether
+                    // the recompile actually shifted the type environment.
+                    if (const auto previous = cache_.lookup(mod_path, 0);
+                        previous.entry.has_value() &&
+                        previous.entry->signature_fingerprint == fingerprint) {
+                        ++stats_.fingerprint_unchanged;
+                    }
+
+                    new_signature_fingerprint = fingerprint;
                 }
             }
         }
@@ -149,6 +222,7 @@ IncrementalCompiler::compile_changed(const std::vector<std::string> &changed_pat
             CacheEntry new_entry;
             new_entry.module_path = mod_path;
             new_entry.content_hash = content_hash;
+            new_entry.signature_fingerprint = new_signature_fingerprint;
             new_entry.serialized_ir = serialized_ir;
             new_entry.cached_at = std::chrono::system_clock::now();
             cache_.store(std::move(new_entry));
