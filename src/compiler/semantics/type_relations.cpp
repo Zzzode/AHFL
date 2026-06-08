@@ -22,43 +22,78 @@ std::string_view to_string(SchemaBoundaryKind kind) noexcept {
 }
 
 bool are_types_equivalent(const Type &lhs, const Type &rhs) {
-    if (lhs.kind != rhs.kind) {
+    // After type interning, equal types share a single canonical instance.
+    // Pointer identity therefore short-circuits the structural comparison
+    // below in the common case.
+    if (&lhs == &rhs) {
+        return true;
+    }
+
+    if (lhs.payload.index() != rhs.payload.index()) {
         return false;
     }
 
-    switch (lhs.kind) {
-    case TypeKind::Any:
-    case TypeKind::Never:
-    case TypeKind::Unit:
-    case TypeKind::Bool:
-    case TypeKind::Int:
-    case TypeKind::Float:
-    case TypeKind::String:
-    case TypeKind::UUID:
-    case TypeKind::Timestamp:
-    case TypeKind::Duration:
-        return true;
-    case TypeKind::BoundedString:
-        return lhs.string_bounds == rhs.string_bounds;
-    case TypeKind::Decimal:
-        return lhs.decimal_scale == rhs.decimal_scale;
-    case TypeKind::Struct:
-    case TypeKind::Enum:
-        if (lhs.nominal_symbol.has_value() && rhs.nominal_symbol.has_value()) {
-            return *lhs.nominal_symbol == *rhs.nominal_symbol;
-        }
-        return lhs.name == rhs.name;
-    case TypeKind::Optional:
-    case TypeKind::List:
-    case TypeKind::Set:
-        return lhs.first && rhs.first && are_types_equivalent(*lhs.first, *rhs.first);
-    case TypeKind::Map:
-        return lhs.first && rhs.first && lhs.second && rhs.second &&
-               are_types_equivalent(*lhs.first, *rhs.first) &&
-               are_types_equivalent(*lhs.second, *rhs.second);
-    }
-
-    return false;
+    return lhs.visit(types::Overloads{
+        [](const types::AnyT &) { return true; },
+        [](const types::NeverT &) { return true; },
+        [](const types::UnitT &) { return true; },
+        [](const types::BoolT &) { return true; },
+        [](const types::IntT &) { return true; },
+        [](const types::FloatT &) { return true; },
+        [](const types::StringT &) { return true; },
+        [](const types::UUIDT &) { return true; },
+        [](const types::TimestampT &) { return true; },
+        [](const types::DurationT &) { return true; },
+        [&](const types::BoundedStringT &l) {
+            const auto *r = rhs.get_if<types::BoundedStringT>();
+            return r != nullptr && l.minimum == r->minimum && l.maximum == r->maximum;
+        },
+        [&](const types::DecimalT &l) {
+            const auto *r = rhs.get_if<types::DecimalT>();
+            return r != nullptr && l.scale == r->scale;
+        },
+        [&](const types::StructT &l) {
+            const auto *r = rhs.get_if<types::StructT>();
+            if (r == nullptr) {
+                return false;
+            }
+            if (l.symbol.has_value() && r->symbol.has_value()) {
+                return *l.symbol == *r->symbol;
+            }
+            return l.canonical_name == r->canonical_name;
+        },
+        [&](const types::EnumT &l) {
+            const auto *r = rhs.get_if<types::EnumT>();
+            if (r == nullptr) {
+                return false;
+            }
+            if (l.symbol.has_value() && r->symbol.has_value()) {
+                return *l.symbol == *r->symbol;
+            }
+            return l.canonical_name == r->canonical_name;
+        },
+        [&](const types::OptionalT &l) {
+            const auto *r = rhs.get_if<types::OptionalT>();
+            return r != nullptr && l.inner != nullptr && r->inner != nullptr &&
+                   are_types_equivalent(*l.inner, *r->inner);
+        },
+        [&](const types::ListT &l) {
+            const auto *r = rhs.get_if<types::ListT>();
+            return r != nullptr && l.element != nullptr && r->element != nullptr &&
+                   are_types_equivalent(*l.element, *r->element);
+        },
+        [&](const types::SetT &l) {
+            const auto *r = rhs.get_if<types::SetT>();
+            return r != nullptr && l.element != nullptr && r->element != nullptr &&
+                   are_types_equivalent(*l.element, *r->element);
+        },
+        [&](const types::MapT &l) {
+            const auto *r = rhs.get_if<types::MapT>();
+            return r != nullptr && l.key != nullptr && r->key != nullptr && l.value != nullptr &&
+                   r->value != nullptr && are_types_equivalent(*l.key, *r->key) &&
+                   are_types_equivalent(*l.value, *r->value);
+        },
+    });
 }
 
 bool is_subtype_of(const Type &source, const Type &target) {
@@ -66,14 +101,18 @@ bool is_subtype_of(const Type &source, const Type &target) {
         return true;
     }
 
-    if (source.kind == TypeKind::BoundedString && target.kind == TypeKind::String) {
+    // BoundedString relaxations: BoundedString <: String, and BoundedString
+    // is covariant in its bounds (a tighter range refines a wider one).
+    const auto *src_bs = source.get_if<types::BoundedStringT>();
+    if (src_bs != nullptr && target.holds<types::StringT>()) {
         return true;
     }
 
-    if (source.kind == TypeKind::BoundedString && target.kind == TypeKind::BoundedString) {
-        return source.string_bounds && target.string_bounds &&
-               source.string_bounds->first >= target.string_bounds->first &&
-               source.string_bounds->second <= target.string_bounds->second;
+    if (src_bs != nullptr) {
+        const auto *tgt_bs = target.get_if<types::BoundedStringT>();
+        if (tgt_bs != nullptr) {
+            return src_bs->minimum >= tgt_bs->minimum && src_bs->maximum <= tgt_bs->maximum;
+        }
     }
 
     return false;
