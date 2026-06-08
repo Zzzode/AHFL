@@ -783,113 +783,144 @@ class IrLowerer final {
     }
 
     [[nodiscard]] ir::ExprPtr lower_expr(const ast::ExprSyntax &expr) const {
-        const auto make = [this, &expr](auto node) {
-            return make_expr(std::move(node), expr.range);
+        // Visitor wrapper around the per-kind handlers below. Routes through
+        // ast::visit_expr_syntax so dispatch lives in one place shared with
+        // the type checker; -Wswitch -Werror flags missing kinds when new
+        // ExprSyntaxKind cases are added.
+        struct Lowerer {
+            const IrLowerer &self;
+            SourceRange range;
+
+            ir::ExprPtr visit_bool_literal(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::BoolLiteralExpr{.value = e.bool_value}, range);
+            }
+            ir::ExprPtr visit_integer_literal(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::IntegerLiteralExpr{
+                                          .spelling = e.integer_literal
+                                                          ? e.integer_literal->spelling
+                                                          : "0",
+                                      },
+                                      range);
+            }
+            ir::ExprPtr visit_float_literal(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::FloatLiteralExpr{.spelling = e.text}, range);
+            }
+            ir::ExprPtr visit_decimal_literal(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::DecimalLiteralExpr{.spelling = e.text}, range);
+            }
+            ir::ExprPtr visit_string_literal(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::StringLiteralExpr{.spelling = e.text}, range);
+            }
+            ir::ExprPtr visit_duration_literal(const ast::ExprSyntax &e) const {
+                return self.make_expr(
+                    ir::DurationLiteralExpr{
+                        .spelling = e.duration_literal ? e.duration_literal->spelling : e.text,
+                    },
+                    range);
+            }
+            ir::ExprPtr visit_none_literal(const ast::ExprSyntax &) const {
+                return self.make_expr(ir::NoneLiteralExpr{}, range);
+            }
+            ir::ExprPtr visit_some(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::SomeExpr{.value = self.lower_expr(*e.first)}, range);
+            }
+            ir::ExprPtr visit_path(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::PathExpr{.path = self.lower_path(*e.path)}, range);
+            }
+            ir::ExprPtr visit_qualified_value(const ast::ExprSyntax &e) const {
+                return self.make_expr(
+                    ir::QualifiedValueExpr{.value = self.render_qualified_value(e)}, range);
+            }
+            ir::ExprPtr visit_call(const ast::ExprSyntax &e) const {
+                ir::CallExpr call{
+                    .callee = self.render_call_target(*e.qualified_name),
+                    .arguments = {},
+                };
+                call.arguments.reserve(e.items.size());
+                for (const auto &item : e.items) {
+                    call.arguments.push_back(self.lower_expr(*item));
+                }
+                return self.make_expr(std::move(call), range);
+            }
+            ir::ExprPtr visit_struct_literal(const ast::ExprSyntax &e) const {
+                ir::StructLiteralExpr literal{
+                    .type_name = self.render_struct_target(*e.qualified_name),
+                    .fields = {},
+                };
+                literal.fields.reserve(e.struct_fields.size());
+                for (const auto &field : e.struct_fields) {
+                    literal.fields.push_back(ir::StructFieldInit{
+                        .name = field->field_name,
+                        .value = self.lower_expr(*field->value),
+                    });
+                }
+                return self.make_expr(std::move(literal), range);
+            }
+            ir::ExprPtr visit_list_literal(const ast::ExprSyntax &e) const {
+                ir::ListLiteralExpr literal;
+                literal.items.reserve(e.items.size());
+                for (const auto &item : e.items) {
+                    literal.items.push_back(self.lower_expr(*item));
+                }
+                return self.make_expr(std::move(literal), range);
+            }
+            ir::ExprPtr visit_set_literal(const ast::ExprSyntax &e) const {
+                ir::SetLiteralExpr literal;
+                literal.items.reserve(e.items.size());
+                for (const auto &item : e.items) {
+                    literal.items.push_back(self.lower_expr(*item));
+                }
+                return self.make_expr(std::move(literal), range);
+            }
+            ir::ExprPtr visit_map_literal(const ast::ExprSyntax &e) const {
+                ir::MapLiteralExpr literal;
+                literal.entries.reserve(e.map_entries.size());
+                for (const auto &entry : e.map_entries) {
+                    literal.entries.push_back(ir::MapEntryExpr{
+                        .key = self.lower_expr(*entry->key),
+                        .value = self.lower_expr(*entry->value),
+                    });
+                }
+                return self.make_expr(std::move(literal), range);
+            }
+            ir::ExprPtr visit_unary(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::UnaryExpr{
+                                          .op = lower_expr_unary_op(e.unary_op),
+                                          .operand = self.lower_expr(*e.first),
+                                      },
+                                      range);
+            }
+            ir::ExprPtr visit_binary(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::BinaryExpr{
+                                          .op = lower_expr_binary_op(e.binary_op),
+                                          .lhs = self.lower_expr(*e.first),
+                                          .rhs = self.lower_expr(*e.second),
+                                      },
+                                      range);
+            }
+            ir::ExprPtr visit_member_access(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::MemberAccessExpr{
+                                          .base = self.lower_expr(*e.first),
+                                          .member = e.name,
+                                      },
+                                      range);
+            }
+            ir::ExprPtr visit_index_access(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::IndexAccessExpr{
+                                          .base = self.lower_expr(*e.first),
+                                          .index = self.lower_expr(*e.second),
+                                      },
+                                      range);
+            }
+            ir::ExprPtr visit_group(const ast::ExprSyntax &e) const {
+                return self.make_expr(ir::GroupExpr{.expr = self.lower_expr(*e.first)}, range);
+            }
+            ir::ExprPtr visit_unknown(const ast::ExprSyntax &) const {
+                return self.make_expr(ir::QualifiedValueExpr{.value = "<invalid-expr>"}, range);
+            }
         };
 
-        switch (expr.kind) {
-        case ast::ExprSyntaxKind::BoolLiteral:
-            return make(ir::BoolLiteralExpr{.value = expr.bool_value});
-        case ast::ExprSyntaxKind::IntegerLiteral:
-            return make(ir::IntegerLiteralExpr{
-                .spelling = expr.integer_literal ? expr.integer_literal->spelling : "0",
-            });
-        case ast::ExprSyntaxKind::FloatLiteral:
-            return make(ir::FloatLiteralExpr{.spelling = expr.text});
-        case ast::ExprSyntaxKind::DecimalLiteral:
-            return make(ir::DecimalLiteralExpr{.spelling = expr.text});
-        case ast::ExprSyntaxKind::StringLiteral:
-            return make(ir::StringLiteralExpr{.spelling = expr.text});
-        case ast::ExprSyntaxKind::DurationLiteral:
-            return make(ir::DurationLiteralExpr{
-                .spelling = expr.duration_literal ? expr.duration_literal->spelling : expr.text,
-            });
-        case ast::ExprSyntaxKind::NoneLiteral:
-            return make(ir::NoneLiteralExpr{});
-        case ast::ExprSyntaxKind::Some:
-            return make(ir::SomeExpr{.value = lower_expr(*expr.first)});
-        case ast::ExprSyntaxKind::Path:
-            return make(ir::PathExpr{.path = lower_path(*expr.path)});
-        case ast::ExprSyntaxKind::QualifiedValue:
-            return make(ir::QualifiedValueExpr{.value = render_qualified_value(expr)});
-        case ast::ExprSyntaxKind::Call: {
-            ir::CallExpr call{
-                .callee = render_call_target(*expr.qualified_name),
-                .arguments = {},
-            };
-            call.arguments.reserve(expr.items.size());
-            for (const auto &item : expr.items) {
-                call.arguments.push_back(lower_expr(*item));
-            }
-            return make(std::move(call));
-        }
-        case ast::ExprSyntaxKind::StructLiteral: {
-            ir::StructLiteralExpr literal{
-                .type_name = render_struct_target(*expr.qualified_name),
-                .fields = {},
-            };
-            literal.fields.reserve(expr.struct_fields.size());
-            for (const auto &field : expr.struct_fields) {
-                literal.fields.push_back(ir::StructFieldInit{
-                    .name = field->field_name,
-                    .value = lower_expr(*field->value),
-                });
-            }
-            return make(std::move(literal));
-        }
-        case ast::ExprSyntaxKind::ListLiteral: {
-            ir::ListLiteralExpr literal;
-            literal.items.reserve(expr.items.size());
-            for (const auto &item : expr.items) {
-                literal.items.push_back(lower_expr(*item));
-            }
-            return make(std::move(literal));
-        }
-        case ast::ExprSyntaxKind::SetLiteral: {
-            ir::SetLiteralExpr literal;
-            literal.items.reserve(expr.items.size());
-            for (const auto &item : expr.items) {
-                literal.items.push_back(lower_expr(*item));
-            }
-            return make(std::move(literal));
-        }
-        case ast::ExprSyntaxKind::MapLiteral: {
-            ir::MapLiteralExpr literal;
-            literal.entries.reserve(expr.map_entries.size());
-            for (const auto &entry : expr.map_entries) {
-                literal.entries.push_back(ir::MapEntryExpr{
-                    .key = lower_expr(*entry->key),
-                    .value = lower_expr(*entry->value),
-                });
-            }
-            return make(std::move(literal));
-        }
-        case ast::ExprSyntaxKind::Unary:
-            return make(ir::UnaryExpr{
-                .op = lower_expr_unary_op(expr.unary_op),
-                .operand = lower_expr(*expr.first),
-            });
-        case ast::ExprSyntaxKind::Binary:
-            return make(ir::BinaryExpr{
-                .op = lower_expr_binary_op(expr.binary_op),
-                .lhs = lower_expr(*expr.first),
-                .rhs = lower_expr(*expr.second),
-            });
-        case ast::ExprSyntaxKind::MemberAccess:
-            return make(ir::MemberAccessExpr{
-                .base = lower_expr(*expr.first),
-                .member = expr.name,
-            });
-        case ast::ExprSyntaxKind::IndexAccess:
-            return make(ir::IndexAccessExpr{
-                .base = lower_expr(*expr.first),
-                .index = lower_expr(*expr.second),
-            });
-        case ast::ExprSyntaxKind::Group:
-            return make(ir::GroupExpr{.expr = lower_expr(*expr.first)});
-        }
-
-        return make(ir::QualifiedValueExpr{.value = "<invalid-expr>"});
+        return ast::visit_expr_syntax(expr, Lowerer{*this, expr.range});
     }
 
     [[nodiscard]] ir::TemporalExprPtr lower_temporal(const ast::TemporalExprSyntax &expr) const {
