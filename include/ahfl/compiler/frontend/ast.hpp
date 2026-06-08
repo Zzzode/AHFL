@@ -798,4 +798,63 @@ class RecursiveVisitor : public Visitor {
     void visit(WorkflowDecl &node) override;
 };
 
+// ============================================================================
+// ExprSyntax visitor (Task #4)
+// ============================================================================
+//
+// `visit_expr_syntax(expr, visitor)` dispatches an ExprSyntax to the matching
+// `Visitor::visit_*(expr)` overload. Centralises ExprSyntaxKind dispatch so
+// passes (typecheck, IR lowering, future analyses) share one switch and the
+// project's -Wswitch -Werror guard catches missing cases when ExprSyntaxKind
+// grows. Lives in ahfl::ast (public header) so any pass can opt in without
+// pulling in semantics-private internals.
+
+template <typename Visitor>
+decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
+    switch (expr.kind) {
+    case ExprSyntaxKind::BoolLiteral:
+        return std::forward<Visitor>(visitor).visit_bool_literal(expr);
+    case ExprSyntaxKind::IntegerLiteral:
+        return std::forward<Visitor>(visitor).visit_integer_literal(expr);
+    case ExprSyntaxKind::FloatLiteral:
+        return std::forward<Visitor>(visitor).visit_float_literal(expr);
+    case ExprSyntaxKind::DecimalLiteral:
+        return std::forward<Visitor>(visitor).visit_decimal_literal(expr);
+    case ExprSyntaxKind::StringLiteral:
+        return std::forward<Visitor>(visitor).visit_string_literal(expr);
+    case ExprSyntaxKind::DurationLiteral:
+        return std::forward<Visitor>(visitor).visit_duration_literal(expr);
+    case ExprSyntaxKind::NoneLiteral:
+        return std::forward<Visitor>(visitor).visit_none_literal(expr);
+    case ExprSyntaxKind::Some:
+        return std::forward<Visitor>(visitor).visit_some(expr);
+    case ExprSyntaxKind::Path:
+        return std::forward<Visitor>(visitor).visit_path(expr);
+    case ExprSyntaxKind::QualifiedValue:
+        return std::forward<Visitor>(visitor).visit_qualified_value(expr);
+    case ExprSyntaxKind::Call:
+        return std::forward<Visitor>(visitor).visit_call(expr);
+    case ExprSyntaxKind::StructLiteral:
+        return std::forward<Visitor>(visitor).visit_struct_literal(expr);
+    case ExprSyntaxKind::ListLiteral:
+        return std::forward<Visitor>(visitor).visit_list_literal(expr);
+    case ExprSyntaxKind::SetLiteral:
+        return std::forward<Visitor>(visitor).visit_set_literal(expr);
+    case ExprSyntaxKind::MapLiteral:
+        return std::forward<Visitor>(visitor).visit_map_literal(expr);
+    case ExprSyntaxKind::Unary:
+        return std::forward<Visitor>(visitor).visit_unary(expr);
+    case ExprSyntaxKind::Binary:
+        return std::forward<Visitor>(visitor).visit_binary(expr);
+    case ExprSyntaxKind::MemberAccess:
+        return std::forward<Visitor>(visitor).visit_member_access(expr);
+    case ExprSyntaxKind::IndexAccess:
+        return std::forward<Visitor>(visitor).visit_index_access(expr);
+    case ExprSyntaxKind::Group:
+        return std::forward<Visitor>(visitor).visit_group(expr);
+    }
+
+    return std::forward<Visitor>(visitor).visit_unknown(expr);
+}
+
 } // namespace ahfl::ast

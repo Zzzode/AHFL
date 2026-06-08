@@ -124,67 +124,14 @@ find_decl_ref(const std::unordered_map<std::size_t, std::reference_wrapper<const
 }
 
 // ============================================================================
-// Expression syntax visitor (Task #4)
+// Expression syntax visitor
 // ============================================================================
 //
-// `visit_expr_syntax(expr, visitor)` dispatches an `ast::ExprSyntax` to the
-// matching `Visitor::visit_*(expr)` overload. This keeps the dispatch point
-// localised here so type-check / IR-lower / future analyses can register
-// kind-specific handlers without each maintaining its own ExprSyntaxKind
-// switch. Adding a new ExprSyntaxKind requires both adding a case below and
-// a matching `visit_<NewKind>` member on every Visitor type, which is
-// flagged at compile time by the project's -Wswitch -Werror policy.
+// The actual visit_expr_syntax dispatch lives in ahfl::ast (see ast.hpp) so
+// it can be shared across passes. This re-export merely exposes it under the
+// `internal` alias used by typecheck.cpp.
 
-template <typename Visitor>
-decltype(auto) visit_expr_syntax(const ast::ExprSyntax &expr, Visitor &&visitor) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::BoolLiteral:
-        return std::forward<Visitor>(visitor).visit_bool_literal(expr);
-    case ast::ExprSyntaxKind::IntegerLiteral:
-        return std::forward<Visitor>(visitor).visit_integer_literal(expr);
-    case ast::ExprSyntaxKind::FloatLiteral:
-        return std::forward<Visitor>(visitor).visit_float_literal(expr);
-    case ast::ExprSyntaxKind::DecimalLiteral:
-        return std::forward<Visitor>(visitor).visit_decimal_literal(expr);
-    case ast::ExprSyntaxKind::StringLiteral:
-        return std::forward<Visitor>(visitor).visit_string_literal(expr);
-    case ast::ExprSyntaxKind::DurationLiteral:
-        return std::forward<Visitor>(visitor).visit_duration_literal(expr);
-    case ast::ExprSyntaxKind::NoneLiteral:
-        return std::forward<Visitor>(visitor).visit_none_literal(expr);
-    case ast::ExprSyntaxKind::Some:
-        return std::forward<Visitor>(visitor).visit_some(expr);
-    case ast::ExprSyntaxKind::Path:
-        return std::forward<Visitor>(visitor).visit_path(expr);
-    case ast::ExprSyntaxKind::QualifiedValue:
-        return std::forward<Visitor>(visitor).visit_qualified_value(expr);
-    case ast::ExprSyntaxKind::Call:
-        return std::forward<Visitor>(visitor).visit_call(expr);
-    case ast::ExprSyntaxKind::StructLiteral:
-        return std::forward<Visitor>(visitor).visit_struct_literal(expr);
-    case ast::ExprSyntaxKind::ListLiteral:
-        return std::forward<Visitor>(visitor).visit_list_literal(expr);
-    case ast::ExprSyntaxKind::SetLiteral:
-        return std::forward<Visitor>(visitor).visit_set_literal(expr);
-    case ast::ExprSyntaxKind::MapLiteral:
-        return std::forward<Visitor>(visitor).visit_map_literal(expr);
-    case ast::ExprSyntaxKind::Unary:
-        return std::forward<Visitor>(visitor).visit_unary(expr);
-    case ast::ExprSyntaxKind::Binary:
-        return std::forward<Visitor>(visitor).visit_binary(expr);
-    case ast::ExprSyntaxKind::MemberAccess:
-        return std::forward<Visitor>(visitor).visit_member_access(expr);
-    case ast::ExprSyntaxKind::IndexAccess:
-        return std::forward<Visitor>(visitor).visit_index_access(expr);
-    case ast::ExprSyntaxKind::Group:
-        return std::forward<Visitor>(visitor).visit_group(expr);
-    }
-
-    // Unreachable: all ExprSyntaxKind cases are exhaustively handled above.
-    // Project warnings (-Wswitch -Werror) flag any new kind that is added to
-    // ExprSyntaxKind without a matching case here.
-    return std::forward<Visitor>(visitor).visit_unknown(expr);
-}
+using ast::visit_expr_syntax;
 
 } // namespace internal
 
