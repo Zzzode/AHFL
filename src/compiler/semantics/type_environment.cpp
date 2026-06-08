@@ -114,25 +114,31 @@ MaybeCRef<EnumTypeInfo> TypeEnvironment::get_enum(const Type &type) const {
 }
 
 MaybeCRef<StructTypeInfo> TypeEnvironment::find_struct(std::string_view canonical_name) const {
-    for (const auto &[id, info] : structs_) {
-        (void)id;
-        if (info.canonical_name == canonical_name) {
-            return std::cref(info);
-        }
+    const auto iter = struct_name_index_.find(std::string(canonical_name));
+    if (iter == struct_name_index_.end()) {
+        return std::nullopt;
     }
 
-    return std::nullopt;
+    const auto info_iter = structs_.find(iter->second);
+    if (info_iter == structs_.end()) {
+        return std::nullopt;
+    }
+
+    return std::cref(info_iter->second);
 }
 
 MaybeCRef<EnumTypeInfo> TypeEnvironment::find_enum(std::string_view canonical_name) const {
-    for (const auto &[id, info] : enums_) {
-        (void)id;
-        if (info.canonical_name == canonical_name) {
-            return std::cref(info);
-        }
+    const auto iter = enum_name_index_.find(std::string(canonical_name));
+    if (iter == enum_name_index_.end()) {
+        return std::nullopt;
     }
 
-    return std::nullopt;
+    const auto info_iter = enums_.find(iter->second);
+    if (info_iter == enums_.end()) {
+        return std::nullopt;
+    }
+
+    return std::cref(info_iter->second);
 }
 
 MaybeCRef<CapabilityTypeInfo> TypeEnvironment::get_capability(SymbolId id) const {
@@ -149,6 +155,24 @@ MaybeCRef<AgentTypeInfo> TypeEnvironment::get_agent(SymbolId id) const {
 
 MaybeCRef<WorkflowTypeInfo> TypeEnvironment::get_workflow(SymbolId id) const {
     return get_from_map(workflows_, id);
+}
+
+bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
+    return agent_context_struct_ids_.contains(id.value);
+}
+
+void TypeEnvironment::index_struct(std::size_t id, StructTypeInfo info) {
+    struct_name_index_.insert_or_assign(info.canonical_name, id);
+    structs_.insert_or_assign(id, std::move(info));
+}
+
+void TypeEnvironment::index_enum(std::size_t id, EnumTypeInfo info) {
+    enum_name_index_.insert_or_assign(info.canonical_name, id);
+    enums_.insert_or_assign(id, std::move(info));
+}
+
+void TypeEnvironment::mark_agent_context_struct(SymbolId id) {
+    agent_context_struct_ids_.insert(id.value);
 }
 
 MaybeCRef<ExpressionTypeInfo>

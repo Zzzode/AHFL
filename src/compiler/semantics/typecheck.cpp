@@ -227,7 +227,6 @@ class TypeCheckPass final {
                                                    const Type &target,
                                                    SchemaBoundaryKind boundary,
                                                    SourceRange range);
-    [[nodiscard]] bool is_agent_context_struct(std::string_view canonical_name) const;
     [[nodiscard]] ConstEvalResult check_const_expr(const ast::ExprSyntax &expr,
                                                    const ValueContext &context,
                                                    MaybeCRef<Type> expected_type,
@@ -540,7 +539,7 @@ void TypeCheckPass::build_struct_types() {
                 });
             }
 
-            result_.environment.structs_.emplace(id, std::move(info));
+            result_.environment.index_struct(id, std::move(info));
         });
     }
 }
@@ -574,7 +573,7 @@ void TypeCheckPass::build_enum_types() {
                 });
             }
 
-            result_.environment.enums_.emplace(id, std::move(info));
+            result_.environment.index_enum(id, std::move(info));
         });
     }
 }
@@ -684,6 +683,13 @@ void TypeCheckPass::build_agent_types() {
             }
 
             result_.environment.agents_.emplace(id, std::move(info));
+
+            // Pre-compute agent context struct set for O(1) is_agent_context_struct queries.
+            const auto &stored = result_.environment.agents().at(id);
+            if (stored.context_type && stored.context_type->kind == TypeKind::Struct &&
+                stored.context_type->nominal_symbol.has_value()) {
+                result_.environment.mark_agent_context_struct(*stored.context_type->nominal_symbol);
+            }
         });
     }
 }
@@ -872,18 +878,6 @@ bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
                          messages::typecheck::ExactSchemaMismatch.format_with(
                              to_string(boundary), target.describe(), source.describe()),
                          range);
-    return false;
-}
-
-bool TypeCheckPass::is_agent_context_struct(std::string_view canonical_name) const {
-    for (const auto &[id, agent] : result_.environment.agents()) {
-        (void)id;
-        if (agent.context_type && agent.context_type->kind == TypeKind::Struct &&
-            agent.context_type->name == canonical_name) {
-            return true;
-        }
-    }
-
     return false;
 }
 
@@ -1607,7 +1601,7 @@ void TypeCheckPass::check_struct_defaults() {
             }
 
             const bool is_context_struct =
-                is_agent_context_struct(struct_info->get().canonical_name);
+                result_.environment.is_agent_context_struct(SymbolId{id});
             for (std::size_t index = 0; index < decl.get().fields.size(); ++index) {
                 const auto &field_decl = decl.get().fields[index];
                 if (!field_decl->default_value) {
@@ -1637,15 +1631,17 @@ void TypeCheckPass::check_struct_defaults() {
 }
 
 void TypeCheckPass::check_agent_context_defaults() {
-    std::unordered_set<std::string> checked_contexts;
+    std::unordered_set<std::size_t> checked_contexts;
     for (const auto &[id, agent] : result_.environment.agents()) {
         (void)id;
         if (!agent.context_type || agent.context_type->kind != TypeKind::Struct ||
-            !checked_contexts.insert(agent.context_type->name).second) {
+            !agent.context_type->nominal_symbol.has_value() ||
+            !checked_contexts.insert(agent.context_type->nominal_symbol->value).second) {
             continue;
         }
 
-        const auto context_struct = result_.environment.find_struct(agent.context_type->name);
+        const auto context_struct =
+            result_.environment.get_struct(*agent.context_type->nominal_symbol);
         if (!context_struct.has_value()) {
             continue;
         }

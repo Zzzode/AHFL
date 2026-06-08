@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "ahfl/compiler/frontend/ast.hpp"
@@ -135,9 +136,17 @@ class TypeEnvironment {
     [[nodiscard]] MaybeCRef<AgentTypeInfo> get_agent(SymbolId id) const;
     [[nodiscard]] MaybeCRef<WorkflowTypeInfo> get_workflow(SymbolId id) const;
 
+    // O(1) lookup: returns true iff `id` is the symbol of any agent's context struct.
+    [[nodiscard]] bool is_agent_context_struct(SymbolId id) const noexcept;
+
   private:
     friend class TypeChecker;
     friend class TypeCheckPass;
+
+    // Maintain reverse name index alongside primary maps so all queries are O(1) on average.
+    void index_struct(std::size_t id, StructTypeInfo info);
+    void index_enum(std::size_t id, EnumTypeInfo info);
+    void mark_agent_context_struct(SymbolId id);
 
     std::unordered_map<std::size_t, TypePtr> const_types_;
     std::unordered_map<std::size_t, StructTypeInfo> structs_;
@@ -146,6 +155,13 @@ class TypeEnvironment {
     std::unordered_map<std::size_t, PredicateTypeInfo> predicates_;
     std::unordered_map<std::size_t, AgentTypeInfo> agents_;
     std::unordered_map<std::size_t, WorkflowTypeInfo> workflows_;
+
+    // Reverse indices: canonical_name -> SymbolId.value, for O(1) name lookups.
+    std::unordered_map<std::string, std::size_t> struct_name_index_;
+    std::unordered_map<std::string, std::size_t> enum_name_index_;
+
+    // SymbolIds of structs used as any agent's context type.
+    std::unordered_set<std::size_t> agent_context_struct_ids_;
 };
 
 struct ExpressionTypeInfo {
