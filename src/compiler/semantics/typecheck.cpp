@@ -499,7 +499,8 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return pass.typed(Type::make(TypeKind::Duration));
         }
         TypedValue visit_none_literal(const ast::ExprSyntax &e) const {
-            if (expected_type.has_value() && expected_type->get().kind == TypeKind::Optional) {
+            if (expected_type.has_value() &&
+                expected_type->get().holds<types::OptionalT>()) {
                 return pass.typed(expected_type->get().clone());
             }
             pass.error_here("cannot infer type of 'none' without an expected Optional<T> context",
@@ -508,9 +509,11 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
         }
         TypedValue visit_some(const ast::ExprSyntax &e) const {
             MaybeCRef<Type> inner_expected = std::nullopt;
-            if (expected_type.has_value() && expected_type->get().kind == TypeKind::Optional &&
-                expected_type->get().first) {
-                inner_expected = std::cref(*expected_type->get().first);
+            if (expected_type.has_value()) {
+                if (const auto *opt = expected_type->get().get_if<types::OptionalT>();
+                    opt != nullptr && opt->inner != nullptr) {
+                    inner_expected = std::cref(*opt->inner);
+                }
             }
             const auto inner = pass.check_expr(*e.first, context, inner_expected);
             return pass.typed_effect(
@@ -779,13 +782,15 @@ TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
                                              const ValueContext &context,
                                              MaybeCRef<Type> expected_type) {
     MaybeCRef<Type> element_expected = std::nullopt;
-    if (expected_type.has_value() && expected_type->get().kind == TypeKind::List &&
-        expected_type->get().first) {
-        element_expected = std::cref(*expected_type->get().first);
+    if (expected_type.has_value()) {
+        if (const auto *list = expected_type->get().get_if<types::ListT>();
+            list != nullptr && list->element != nullptr) {
+            element_expected = std::cref(*list->element);
+        }
     }
 
     if (expr.items.empty()) {
-        if (expected_type.has_value() && expected_type->get().kind == TypeKind::List) {
+        if (expected_type.has_value() && expected_type->get().holds<types::ListT>()) {
             return typed(expected_type->get().clone());
         }
 
@@ -817,13 +822,15 @@ TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
                                             const ValueContext &context,
                                             MaybeCRef<Type> expected_type) {
     MaybeCRef<Type> element_expected = std::nullopt;
-    if (expected_type.has_value() && expected_type->get().kind == TypeKind::Set &&
-        expected_type->get().first) {
-        element_expected = std::cref(*expected_type->get().first);
+    if (expected_type.has_value()) {
+        if (const auto *set = expected_type->get().get_if<types::SetT>();
+            set != nullptr && set->element != nullptr) {
+            element_expected = std::cref(*set->element);
+        }
     }
 
     if (expr.items.empty()) {
-        if (expected_type.has_value() && expected_type->get().kind == TypeKind::Set) {
+        if (expected_type.has_value() && expected_type->get().holds<types::SetT>()) {
             return typed(expected_type->get().clone());
         }
 
@@ -856,14 +863,16 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
                                             MaybeCRef<Type> expected_type) {
     MaybeCRef<Type> key_expected = std::nullopt;
     MaybeCRef<Type> value_expected = std::nullopt;
-    if (expected_type.has_value() && expected_type->get().kind == TypeKind::Map &&
-        expected_type->get().first && expected_type->get().second) {
-        key_expected = std::cref(*expected_type->get().first);
-        value_expected = std::cref(*expected_type->get().second);
+    if (expected_type.has_value()) {
+        if (const auto *map = expected_type->get().get_if<types::MapT>();
+            map != nullptr && map->key != nullptr && map->value != nullptr) {
+            key_expected = std::cref(*map->key);
+            value_expected = std::cref(*map->value);
+        }
     }
 
     if (expr.map_entries.empty()) {
-        if (expected_type.has_value() && expected_type->get().kind == TypeKind::Map) {
+        if (expected_type.has_value() && expected_type->get().holds<types::MapT>()) {
             return typed(expected_type->get().clone());
         }
 
@@ -1041,26 +1050,25 @@ TypedValue TypeCheckPass::check_index_access(const ast::ExprSyntax &expr,
     const auto index = check_expr(*expr.second, context);
     const auto effect = join_effects(collection.effect, index.effect);
 
-    if (collection.type->kind == TypeKind::List) {
+    if (const auto *list = collection.type->get_if<types::ListT>(); list != nullptr) {
         if (index.type->kind != TypeKind::Int && !is_error_type(*index.type)) {
             error_here("list index must have type Int", expr.second->range);
         }
 
-        if (collection.type->first) {
-            return typed_effect(collection.type->first->clone(), effect);
+        if (list->element != nullptr) {
+            return typed_effect(list->element->clone(), effect);
         }
 
         return error_typed_effect(effect);
     }
 
-    if (collection.type->kind == TypeKind::Map) {
-        if (collection.type->first) {
-            (void)check_assignable(
-                *index.type, *collection.type->first, expr.second->range, "map index");
+    if (const auto *map = collection.type->get_if<types::MapT>(); map != nullptr) {
+        if (map->key != nullptr) {
+            (void)check_assignable(*index.type, *map->key, expr.second->range, "map index");
         }
 
-        if (collection.type->second) {
-            return typed_effect(collection.type->second->clone(), effect);
+        if (map->value != nullptr) {
+            return typed_effect(map->value->clone(), effect);
         }
 
         return error_typed_effect(effect);
