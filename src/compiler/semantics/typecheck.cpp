@@ -191,11 +191,13 @@ class TypeCheckPass final {
     void check_block(const ast::BlockSyntax &block,
                      ValueContext &context,
                      MaybeCRef<Type> expected_return_type,
-                     std::string_view state_name = "");
+                     std::string_view state_name = "",
+                     std::optional<SourceRange> expected_return_origin = std::nullopt);
     void check_statement(const ast::StatementSyntax &statement,
                          ValueContext &context,
                          MaybeCRef<Type> expected_return_type,
-                         std::string_view state_name = "");
+                         std::string_view state_name = "",
+                         std::optional<SourceRange> expected_return_origin = std::nullopt);
 
     void enter_source(const SourceUnit &source);
     void leave_source();
@@ -209,6 +211,10 @@ class TypeCheckPass final {
     void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                               std::string message,
                               SourceRange range);
+    void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                              std::string message,
+                              SourceRange range,
+                              std::vector<Diagnostic::Related> notes);
 
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
     [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
@@ -223,10 +229,20 @@ class TypeCheckPass final {
                                         const Type &target,
                                         SourceRange range,
                                         std::string_view context_label);
+    [[nodiscard]] bool check_assignable(const Type &source,
+                                        const Type &target,
+                                        SourceRange range,
+                                        std::string_view context_label,
+                                        std::optional<SourceRange> expected_origin);
     [[nodiscard]] bool check_exact_schema_boundary(const Type &source,
                                                    const Type &target,
                                                    SchemaBoundaryKind boundary,
                                                    SourceRange range);
+    [[nodiscard]] bool check_exact_schema_boundary(const Type &source,
+                                                   const Type &target,
+                                                   SchemaBoundaryKind boundary,
+                                                   SourceRange range,
+                                                   std::optional<SourceRange> expected_origin);
     [[nodiscard]] ConstEvalResult check_const_expr(const ast::ExprSyntax &expr,
                                                    const ValueContext &context,
                                                    MaybeCRef<Type> expected_type,
@@ -385,6 +401,26 @@ void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck
     } else {
         result_.diagnostics.error().code(code).message(std::move(message)).range(range).emit();
     }
+}
+
+void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                         std::string message,
+                                         SourceRange range,
+                                         std::vector<Diagnostic::Related> notes) {
+    Diagnostic diagnostic{
+        .severity = DiagnosticSeverity::Error,
+        .message = std::move(message),
+        .code = code.full_code(),
+        .range = range,
+        .source_name = std::nullopt,
+        .position = std::nullopt,
+        .related = std::move(notes),
+    };
+    if (current_source_ != nullptr) {
+        diagnostic.source_name = current_source_->source.display_name;
+        diagnostic.position = current_source_->source.locate(range.begin_offset);
+    }
+    result_.diagnostics.add_diagnostic(std::move(diagnostic));
 }
 
 void TypeCheckPass::index_program_declarations(const ast::Program &program) {
@@ -847,6 +883,14 @@ bool TypeCheckPass::check_assignable(const Type &source,
                                      const Type &target,
                                      SourceRange range,
                                      std::string_view context_label) {
+    return check_assignable(source, target, range, context_label, std::nullopt);
+}
+
+bool TypeCheckPass::check_assignable(const Type &source,
+                                     const Type &target,
+                                     SourceRange range,
+                                     std::string_view context_label,
+                                     std::optional<SourceRange> expected_origin) {
     if (is_error_type(source) || is_error_type(target)) {
         return true;
     }
@@ -855,10 +899,18 @@ bool TypeCheckPass::check_assignable(const Type &source,
         return true;
     }
 
+    std::vector<Diagnostic::Related> notes;
+    if (expected_origin.has_value()) {
+        notes.push_back(Diagnostic::Related{
+            .message = "expected type '" + target.describe() + "' declared here",
+            .range = expected_origin,
+        });
+    }
     typecheck_error_here(error_codes::typecheck::TypeMismatch,
                          messages::typecheck::TypeMismatch.format_with(
                              context_label, target.describe(), source.describe()),
-                         range);
+                         range,
+                         std::move(notes));
     return false;
 }
 
@@ -866,6 +918,14 @@ bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
                                                 const Type &target,
                                                 SchemaBoundaryKind boundary,
                                                 SourceRange range) {
+    return check_exact_schema_boundary(source, target, boundary, range, std::nullopt);
+}
+
+bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
+                                                const Type &target,
+                                                SchemaBoundaryKind boundary,
+                                                SourceRange range,
+                                                std::optional<SourceRange> expected_origin) {
     if (is_error_type(source) || is_error_type(target)) {
         return true;
     }
@@ -874,10 +934,23 @@ bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
         return true;
     }
 
+    std::vector<Diagnostic::Related> notes;
+    notes.push_back(Diagnostic::Related{
+        .message = std::string(to_string(boundary)) +
+                   " requires an exact schema match (no width or depth subtyping)",
+        .range = std::nullopt,
+    });
+    if (expected_origin.has_value()) {
+        notes.push_back(Diagnostic::Related{
+            .message = "expected schema '" + target.describe() + "' declared here",
+            .range = expected_origin,
+        });
+    }
     typecheck_error_here(error_codes::typecheck::ExactSchemaMismatch,
                          messages::typecheck::ExactSchemaMismatch.format_with(
                              to_string(boundary), target.describe(), source.describe()),
-                         range);
+                         range,
+                         std::move(notes));
     return false;
 }
 
@@ -1157,7 +1230,8 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
             (void)check_assignable(*argument.type,
                                    *capability->get().params[index].type,
                                    expr.items[index]->range,
-                                   "capability argument");
+                                   "capability argument",
+                                   capability->get().params[index].declaration_range);
         }
 
         return typed_effect(capability->get().return_type ? capability->get().return_type->clone()
@@ -1192,7 +1266,8 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
         (void)check_assignable(*argument.type,
                                *predicate->get().params[index].type,
                                expr.items[index]->range,
-                               "predicate argument");
+                               "predicate argument",
+                               predicate->get().params[index].declaration_range);
     }
 
     return typed_effect(Type::make(TypeKind::Bool), effect);
@@ -1241,7 +1316,8 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
         const auto value = check_expr(*field_init->value, context, std::cref(*field->get().type));
         effect = join_effects(effect, value.effect);
         (void)check_assignable(
-            *value.type, *field->get().type, field_init->value->range, "struct field");
+            *value.type, *field->get().type, field_init->value->range, "struct field",
+            field->get().declaration_range);
     }
 
     for (const auto &field : struct_info->get().fields) {
@@ -1618,12 +1694,14 @@ void TypeCheckPass::check_struct_defaults() {
                     (void)check_exact_schema_boundary(*value.typed_value.type,
                                                       *field_info.type,
                                                       SchemaBoundaryKind::AgentContextDefault,
-                                                      field_decl->default_value->range);
+                                                      field_decl->default_value->range,
+                                                      field_info.declaration_range);
                 } else {
                     (void)check_assignable(*value.typed_value.type,
                                            *field_info.type,
                                            field_decl->default_value->range,
-                                           "struct field default");
+                                           "struct field default",
+                                           field_info.declaration_range);
                 }
             }
         });
@@ -1776,7 +1854,8 @@ void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
             check_block(*handler->body,
                         context,
                         std::cref(*agent_info->get().output_type),
-                        handler->state_name);
+                        handler->state_name,
+                        agent_info->get().declaration_range);
         }
     }
 }
@@ -1859,7 +1938,8 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
             (void)check_exact_schema_boundary(*argument.type,
                                               *agent_info->get().input_type,
                                               SchemaBoundaryKind::WorkflowNodeInput,
-                                              node->input->range);
+                                              node->input->range,
+                                              agent_info->get().declaration_range);
         }
 
         ValueContext return_context;
@@ -1883,7 +1963,8 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
         (void)check_exact_schema_boundary(*return_value.type,
                                           *workflow_info->get().output_type,
                                           SchemaBoundaryKind::WorkflowOutput,
-                                          decl.return_value->range);
+                                          decl.return_value->range,
+                                          workflow_info->get().declaration_range);
     }
 }
 
@@ -1904,16 +1985,19 @@ void TypeCheckPass::check_workflows() {
 void TypeCheckPass::check_block(const ast::BlockSyntax &block,
                                 ValueContext &context,
                                 MaybeCRef<Type> expected_return_type,
-                                std::string_view state_name) {
+                                std::string_view state_name,
+                                std::optional<SourceRange> expected_return_origin) {
     for (const auto &statement : block.statements) {
-        check_statement(*statement, context, expected_return_type, state_name);
+        check_statement(*statement, context, expected_return_type, state_name,
+                        expected_return_origin);
     }
 }
 
 void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                     ValueContext &context,
                                     MaybeCRef<Type> expected_return_type,
-                                    std::string_view state_name) {
+                                    std::string_view state_name,
+                                    std::optional<SourceRange> expected_return_origin) {
     (void)state_name;
 
     switch (statement.kind) {
@@ -1973,7 +2057,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .call_context = context.call_context,
             .current_agent = context.current_agent,
         };
-        check_block(*statement.if_stmt->then_block, then_context, expected_return_type, state_name);
+        check_block(*statement.if_stmt->then_block, then_context, expected_return_type, state_name,
+                    expected_return_origin);
 
         if (statement.if_stmt->else_block) {
             auto else_context = ValueContext{
@@ -1981,8 +2066,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 .call_context = context.call_context,
                 .current_agent = context.current_agent,
             };
-            check_block(
-                *statement.if_stmt->else_block, else_context, expected_return_type, state_name);
+            check_block(*statement.if_stmt->else_block, else_context, expected_return_type,
+                        state_name, expected_return_origin);
         }
         break;
     }
@@ -1997,7 +2082,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         (void)check_exact_schema_boundary(*value.type,
                                           expected_return_type->get(),
                                           SchemaBoundaryKind::AgentOutput,
-                                          statement.return_stmt->value->range);
+                                          statement.return_stmt->value->range,
+                                          expected_return_origin);
         break;
     }
     case ast::StatementSyntaxKind::Assert: {
