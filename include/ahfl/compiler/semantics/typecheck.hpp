@@ -139,6 +139,19 @@ class TypeEnvironment {
     // O(1) lookup: returns true iff `id` is the symbol of any agent's context struct.
     [[nodiscard]] bool is_agent_context_struct(SymbolId id) const noexcept;
 
+    // Compute a stable 64-bit fingerprint of a declaration's outward-facing
+    // signature: a struct's field types, an enum's variants, a capability's
+    // parameter / return types, etc. The fingerprint depends only on
+    // hash-consed Type identities and canonical names, so two compilations
+    // of an unchanged declaration always produce the same value.
+    //
+    // Returns std::nullopt when `id` does not correspond to a known
+    // declaration in this environment. Intended consumers are incremental
+    // rebuild drivers and LSP cache invalidation: when a declaration's
+    // fingerprint is unchanged, downstream cached results can be reused.
+    [[nodiscard]] std::optional<std::uint64_t>
+    signature_fingerprint(SymbolId id) const;
+
   private:
     friend class TypeChecker;
     friend class TypeCheckPass;
