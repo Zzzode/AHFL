@@ -79,16 +79,16 @@ struct ValueContext {
 }
 
 [[nodiscard]] inline bool is_error_type(const Type &type) noexcept {
-    return type.kind == TypeKind::Any || type.kind == TypeKind::Never;
+    return type.holds<types::AnyT>() || type.holds<types::NeverT>();
 }
 
 [[nodiscard]] inline bool is_bool_type(const Type &type) noexcept {
-    return type.kind == TypeKind::Bool;
+    return type.holds<types::BoolT>();
 }
 
 [[nodiscard]] inline bool is_numeric_type(const Type &type) noexcept {
-    return type.kind == TypeKind::Int || type.kind == TypeKind::Float ||
-           type.kind == TypeKind::Decimal;
+    return type.holds<types::IntT>() || type.holds<types::FloatT>() ||
+           type.holds<types::DecimalT>();
 }
 
 [[nodiscard]] inline BindingMap clone_bindings(const BindingMap &bindings) {

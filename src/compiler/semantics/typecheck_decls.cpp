@@ -280,17 +280,17 @@ void TypeCheckPass::build_agent_types() {
                 .declaration_range = decl.get().range,
             };
 
-            if (info.input_type && info.input_type->kind != TypeKind::Struct) {
+            if (info.input_type && !info.input_type->holds<types::StructT>()) {
                 error_here("agent input type must resolve to a struct type",
                            decl.get().input_type->range);
             }
 
-            if (info.context_type && info.context_type->kind != TypeKind::Struct) {
+            if (info.context_type && !info.context_type->holds<types::StructT>()) {
                 error_here("agent context type must resolve to a struct type",
                            decl.get().context_type->range);
             }
 
-            if (info.output_type && info.output_type->kind != TypeKind::Struct) {
+            if (info.output_type && !info.output_type->holds<types::StructT>()) {
                 error_here("agent output type must resolve to a struct type",
                            decl.get().output_type->range);
             }
@@ -312,9 +312,11 @@ void TypeCheckPass::build_agent_types() {
 
             // Pre-compute agent context struct set for O(1) is_agent_context_struct queries.
             const auto &stored = result_.environment.agents().at(id);
-            if (stored.context_type && stored.context_type->kind == TypeKind::Struct &&
-                stored.context_type->nominal_symbol.has_value()) {
-                result_.environment.mark_agent_context_struct(*stored.context_type->nominal_symbol);
+            if (stored.context_type) {
+                if (const auto *ctx = stored.context_type->get_if<types::StructT>();
+                    ctx != nullptr && ctx->symbol.has_value()) {
+                    result_.environment.mark_agent_context_struct(*ctx->symbol);
+                }
             }
         });
     }
@@ -336,12 +338,12 @@ void TypeCheckPass::build_workflow_types() {
                 .declaration_range = decl.get().range,
             };
 
-            if (info.input_type && info.input_type->kind != TypeKind::Struct) {
+            if (info.input_type && !info.input_type->holds<types::StructT>()) {
                 error_here("workflow input type must resolve to a struct type",
                            decl.get().input_type->range);
             }
 
-            if (info.output_type && info.output_type->kind != TypeKind::Struct) {
+            if (info.output_type && !info.output_type->holds<types::StructT>()) {
                 error_here("workflow output type must resolve to a struct type",
                            decl.get().output_type->range);
             }
@@ -435,14 +437,17 @@ void TypeCheckPass::check_agent_context_defaults() {
     std::unordered_set<std::size_t> checked_contexts;
     for (const auto &[id, agent] : result_.environment.agents()) {
         (void)id;
-        if (!agent.context_type || agent.context_type->kind != TypeKind::Struct ||
-            !agent.context_type->nominal_symbol.has_value() ||
-            !checked_contexts.insert(agent.context_type->nominal_symbol->value).second) {
+        if (!agent.context_type) {
+            continue;
+        }
+        const auto *ctx = agent.context_type->get_if<types::StructT>();
+        if (ctx == nullptr || !ctx->symbol.has_value() ||
+            !checked_contexts.insert(ctx->symbol->value).second) {
             continue;
         }
 
         const auto context_struct =
-            result_.environment.get_struct(*agent.context_type->nominal_symbol);
+            result_.environment.get_struct(*ctx->symbol);
         if (!context_struct.has_value()) {
             continue;
         }
