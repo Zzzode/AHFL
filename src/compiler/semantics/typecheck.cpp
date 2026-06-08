@@ -1425,12 +1425,14 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             error_here("if condition must be pure", statement.if_stmt->condition->range);
         }
 
-        // Optional narrowing (Task #11 phase 1): if the condition is a
-        // simple `Identifier != none` against a binding of type Optional<T>,
-        // narrow that binding to T inside the then-block. Anything else
-        // (member access, symmetric `none != x`, `&&`/`||` compositions,
-        // capability/predicate calls) falls back to the unnarrowed value
-        // context, preserving the conservative-by-default policy in
+        // Optional narrowing (Task #11 phase 1+3): identify Identifier !=
+        // none patterns and propagate the narrowed types into the then-
+        // block. Phase 3 extends the matcher across left-associated
+        // `&&` chains, since each conjunct only narrows when the chain as
+        // a whole evaluates true. Anything more complex (member access,
+        // symmetric `none != x`, capability/predicate calls, `||`) falls
+        // back to the unnarrowed value context, preserving the
+        // conservative-by-default policy in
         // docs/design/optional-narrowing-rfc-v0.1.zh.md. ctx.<field> /
         // input.<field> narrowing requires extending check_path to consult
         // the narrow override and is reserved for a future phase.
@@ -1438,8 +1440,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             std::string binding_name;
             TypePtr narrowed;
         };
-        const auto try_narrow = [&]() -> std::optional<Narrow> {
-            const auto &cond = *statement.if_stmt->condition;
+        const auto match_single_narrow = [&](const ast::ExprSyntax &cond) -> std::optional<Narrow> {
             if (cond.kind != ast::ExprSyntaxKind::Binary ||
                 cond.binary_op != ast::ExprBinaryOp::NotEqual || !cond.first || !cond.second) {
                 return std::nullopt;
@@ -1466,15 +1467,37 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 .binding_name = lhs.path->root_name,
                 .narrowed = opt->inner->clone(),
             };
-        }();
+        };
+
+        std::vector<Narrow> narrows;
+        // Walk a left-associative `&& && ...` chain, collecting narrow
+        // candidates from every leaf. Group expressions are transparent
+        // so users may parenthesise individual conjuncts.
+        const std::function<void(const ast::ExprSyntax &)> collect =
+            [&](const ast::ExprSyntax &node) {
+                if (node.kind == ast::ExprSyntaxKind::Group && node.first) {
+                    collect(*node.first);
+                    return;
+                }
+                if (node.kind == ast::ExprSyntaxKind::Binary &&
+                    node.binary_op == ast::ExprBinaryOp::And && node.first && node.second) {
+                    collect(*node.first);
+                    collect(*node.second);
+                    return;
+                }
+                if (auto narrow = match_single_narrow(node); narrow.has_value()) {
+                    narrows.push_back(std::move(*narrow));
+                }
+            };
+        collect(*statement.if_stmt->condition);
 
         auto then_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
             .call_context = context.call_context,
             .current_agent = context.current_agent,
         };
-        if (try_narrow.has_value()) {
-            then_context.bindings[try_narrow->binding_name] = try_narrow->narrowed;
+        for (auto &narrow : narrows) {
+            then_context.bindings[narrow.binding_name] = std::move(narrow.narrowed);
         }
         check_block(*statement.if_stmt->then_block, then_context, expected_return_type, state_name,
                     expected_return_origin);
