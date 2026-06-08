@@ -88,6 +88,7 @@ class TypeContext {
         owned->first = key.first;
         owned->second = key.second;
         owned->nominal_symbol = key.nominal_symbol;
+        owned->payload = build_payload(key);
 
         const Type *raw = owned.get();
         storage_.push_back(std::move(owned));
@@ -97,6 +98,60 @@ class TypeContext {
 
   private:
     TypeContext() = default;
+
+    [[nodiscard]] static types::Payload build_payload(const TypeKey &key) {
+        switch (key.kind) {
+        case TypeKind::Any:
+            return types::AnyT{};
+        case TypeKind::Never:
+            return types::NeverT{};
+        case TypeKind::Unit:
+            return types::UnitT{};
+        case TypeKind::Bool:
+            return types::BoolT{};
+        case TypeKind::Int:
+            return types::IntT{};
+        case TypeKind::Float:
+            return types::FloatT{};
+        case TypeKind::String:
+            return types::StringT{};
+        case TypeKind::BoundedString:
+            return types::BoundedStringT{
+                .minimum = key.string_bounds ? key.string_bounds->first : 0,
+                .maximum = key.string_bounds ? key.string_bounds->second : 0,
+            };
+        case TypeKind::UUID:
+            return types::UUIDT{};
+        case TypeKind::Timestamp:
+            return types::TimestampT{};
+        case TypeKind::Duration:
+            return types::DurationT{};
+        case TypeKind::Decimal:
+            return types::DecimalT{
+                .scale = key.decimal_scale.value_or(0),
+            };
+        case TypeKind::Struct:
+            return types::StructT{
+                .canonical_name = key.name,
+                .symbol = key.nominal_symbol,
+            };
+        case TypeKind::Enum:
+            return types::EnumT{
+                .canonical_name = key.name,
+                .symbol = key.nominal_symbol,
+            };
+        case TypeKind::Optional:
+            return types::OptionalT{.inner = key.first};
+        case TypeKind::List:
+            return types::ListT{.element = key.first};
+        case TypeKind::Set:
+            return types::SetT{.element = key.first};
+        case TypeKind::Map:
+            return types::MapT{.key = key.first, .value = key.second};
+        }
+
+        return types::AnyT{};
+    }
 
     std::mutex mutex_;
     std::vector<std::unique_ptr<Type>> storage_;
