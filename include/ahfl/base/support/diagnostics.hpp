@@ -181,6 +181,7 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownCapability{"UNK
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
     "CAPABILITY_NOT_ALLOWED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARITY"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADOWED_BINDING"};
 } // namespace typecheck
 
 namespace validation {

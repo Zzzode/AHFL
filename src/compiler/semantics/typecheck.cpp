@@ -1324,6 +1324,34 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                    expected->get(),
                                    statement.let_stmt->initializer->range,
                                    "let initializer");
+        }
+
+        // Emit a SHADOWED_BINDING warning when the new binding masks an
+        // existing one in the surrounding scope. Mirrors Rust/Swift behaviour
+        // where shadowing is permitted but flagged so the user notices the
+        // accidental masking of `input`/`ctx`/`output`/an enclosing `let`.
+        if (const auto previous = find_binding(context.bindings, statement.let_stmt->name);
+            previous.has_value()) {
+            Diagnostic diagnostic{
+                .severity = DiagnosticSeverity::Warning,
+                .message = "let binding '" + statement.let_stmt->name +
+                           "' shadows an existing binding of type '" +
+                           previous->get().describe() + "'",
+                .code = error_codes::typecheck::ShadowedBinding.full_code(),
+                .range = statement.let_stmt->range,
+                .source_name = std::nullopt,
+                .position = std::nullopt,
+                .related = {},
+            };
+            if (current_source_ != nullptr) {
+                diagnostic.source_name = current_source_->source.display_name;
+                diagnostic.position =
+                    current_source_->source.locate(statement.let_stmt->range.begin_offset);
+            }
+            result_.diagnostics.add_diagnostic(std::move(diagnostic));
+        }
+
+        if (expected.has_value()) {
             context.bindings[statement.let_stmt->name] =
                 annotated_type ? annotated_type->clone() : make_any_type();
         } else {
