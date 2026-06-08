@@ -4,6 +4,7 @@ add_library(ahfl_compiler_semantics STATIC
     resolver.cpp
     type_relations.cpp
     typecheck.cpp
+    typecheck_decls.cpp
     type_environment.cpp
     validate.cpp
 )
