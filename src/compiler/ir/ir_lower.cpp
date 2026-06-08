@@ -1420,7 +1420,7 @@ class IrLowerer final {
                 const auto &param = capability_info->get().params[index];
                 result.push_back(ir::ParamDecl{
                     .name = param.name,
-                    .type_ref = type_ref_from_maybe(borrow(param.type.get())),
+                    .type_ref = type_ref_from_maybe(borrow(param.type)),
                     .source_range = index < params.size() ? ir::SourceRangeOpt{params[index]->range}
                                                           : std::nullopt,
                 });
@@ -1434,7 +1434,7 @@ class IrLowerer final {
                 const auto &param = predicate_info->get().params[index];
                 result.push_back(ir::ParamDecl{
                     .name = param.name,
-                    .type_ref = type_ref_from_maybe(borrow(param.type.get())),
+                    .type_ref = type_ref_from_maybe(borrow(param.type)),
                     .source_range = index < params.size() ? ir::SourceRangeOpt{params[index]->range}
                                                           : std::nullopt,
                 });
@@ -1500,7 +1500,7 @@ class IrLowerer final {
                 .name = symbol_name,
                 .params = lower_params(node.params, info, std::nullopt),
                 .return_type_ref = info.has_value()
-                                       ? type_ref_from_maybe(borrow(info->get().return_type.get()))
+                                       ? type_ref_from_maybe(borrow(info->get().return_type))
                                        : type_ref_from_syntax(*node.return_type),
                 .effect = lower_capability_effect(node.effect.get()),
                 .symbol_ref =
@@ -1541,13 +1541,13 @@ class IrLowerer final {
                 .quota = {},
                 .transitions = {},
                 .input_type_ref = info.has_value()
-                                      ? type_ref_from_maybe(borrow(info->get().input_type.get()))
+                                      ? type_ref_from_maybe(borrow(info->get().input_type))
                                       : type_ref_from_syntax(*node.input_type),
                 .context_type_ref =
-                    info.has_value() ? type_ref_from_maybe(borrow(info->get().context_type.get()))
+                    info.has_value() ? type_ref_from_maybe(borrow(info->get().context_type))
                                      : type_ref_from_syntax(*node.context_type),
                 .output_type_ref = info.has_value()
-                                       ? type_ref_from_maybe(borrow(info->get().output_type.get()))
+                                       ? type_ref_from_maybe(borrow(info->get().output_type))
                                        : type_ref_from_syntax(*node.output_type),
                 .capability_refs = {},
                 .symbol_ref = symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Agent, node.name),
@@ -1708,10 +1708,10 @@ class IrLowerer final {
                 .liveness = {},
                 .return_value = lower_expr(*node.return_value),
                 .input_type_ref = info.has_value()
-                                      ? type_ref_from_maybe(borrow(info->get().input_type.get()))
+                                      ? type_ref_from_maybe(borrow(info->get().input_type))
                                       : type_ref_from_syntax(*node.input_type),
                 .output_type_ref = info.has_value()
-                                       ? type_ref_from_maybe(borrow(info->get().output_type.get()))
+                                       ? type_ref_from_maybe(borrow(info->get().output_type))
                                        : type_ref_from_syntax(*node.output_type),
                 .symbol_ref =
                     symbol_ref_from_symbol(symbol, ir::SymbolRefKind::Workflow, node.name),

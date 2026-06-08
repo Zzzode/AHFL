@@ -3,6 +3,7 @@ add_library(ahfl_compiler_semantics STATIC
     effects.cpp
     resolver.cpp
     type_relations.cpp
+    types.cpp
     typecheck.cpp
     typecheck_decls.cpp
     type_environment.cpp

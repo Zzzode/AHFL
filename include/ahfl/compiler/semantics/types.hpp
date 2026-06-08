@@ -5,7 +5,6 @@
 #include <sstream>
 #include <string>
 
-#include "ahfl/base/support/ownership.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 
 namespace ahfl {
@@ -39,157 +38,51 @@ enum class TypeKind {
 };
 
 struct Type;
-using TypePtr = Owned<Type>;
+
+// `TypePtr` was historically `Owned<Type>`. As of the type-interning refactor
+// it is a non-owning `const Type*`: every Type is hash-consed by the global
+// TypeContext so identical types share a single canonical instance and no
+// caller needs to deep-copy them. `nullptr` is still a valid sentinel for
+// "missing/optional".
+using TypePtr = const Type *;
 
 struct Type {
     TypeKind kind{TypeKind::Any};
     std::string name;
     std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
     std::optional<std::int64_t> decimal_scale;
-    TypePtr first;
-    TypePtr second;
+    TypePtr first{nullptr};
+    TypePtr second{nullptr};
     std::optional<SymbolId> nominal_symbol;
 
-    [[nodiscard]] static TypePtr make(TypeKind kind) {
-        return make_owned<Type>(Type{
-            .kind = kind,
-            .name = {},
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = nullptr,
-            .second = nullptr,
-            .nominal_symbol = std::nullopt,
-        });
-    }
+    // Factories below intern through the process-wide TypeContext (see
+    // types.cpp). They return canonical `const Type*` pointers; identical
+    // arguments always yield the same pointer.
+    [[nodiscard]] static TypePtr make(TypeKind kind);
+    [[nodiscard]] static TypePtr string();
+    [[nodiscard]] static TypePtr bounded_string(std::int64_t minimum, std::int64_t maximum);
+    [[nodiscard]] static TypePtr decimal(std::int64_t scale);
 
-    [[nodiscard]] static TypePtr string() {
-        return make(TypeKind::String);
-    }
-
-    [[nodiscard]] static TypePtr bounded_string(std::int64_t minimum, std::int64_t maximum) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::BoundedString,
-            .name = {},
-            .string_bounds = std::make_pair(minimum, maximum),
-            .decimal_scale = std::nullopt,
-            .first = nullptr,
-            .second = nullptr,
-            .nominal_symbol = std::nullopt,
-        });
-    }
-
-    [[nodiscard]] static TypePtr decimal(std::int64_t scale) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::Decimal,
-            .name = {},
-            .string_bounds = std::nullopt,
-            .decimal_scale = scale,
-            .first = nullptr,
-            .second = nullptr,
-            .nominal_symbol = std::nullopt,
-        });
-    }
-
-    [[nodiscard]] static TypePtr struct_type(std::string canonical_name) {
-        return struct_type(std::move(canonical_name), std::nullopt);
-    }
-
-    [[nodiscard]] static TypePtr struct_type(std::string canonical_name, SymbolId symbol) {
-        return struct_type(std::move(canonical_name), std::optional<SymbolId>{symbol});
-    }
-
+    [[nodiscard]] static TypePtr struct_type(std::string canonical_name);
+    [[nodiscard]] static TypePtr struct_type(std::string canonical_name, SymbolId symbol);
     [[nodiscard]] static TypePtr struct_type(std::string canonical_name,
-                                             std::optional<SymbolId> symbol) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::Struct,
-            .name = std::move(canonical_name),
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = nullptr,
-            .second = nullptr,
-            .nominal_symbol = symbol,
-        });
-    }
+                                             std::optional<SymbolId> symbol);
 
-    [[nodiscard]] static TypePtr enum_type(std::string canonical_name) {
-        return enum_type(std::move(canonical_name), std::nullopt);
-    }
-
-    [[nodiscard]] static TypePtr enum_type(std::string canonical_name, SymbolId symbol) {
-        return enum_type(std::move(canonical_name), std::optional<SymbolId>{symbol});
-    }
-
+    [[nodiscard]] static TypePtr enum_type(std::string canonical_name);
+    [[nodiscard]] static TypePtr enum_type(std::string canonical_name, SymbolId symbol);
     [[nodiscard]] static TypePtr enum_type(std::string canonical_name,
-                                           std::optional<SymbolId> symbol) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::Enum,
-            .name = std::move(canonical_name),
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = nullptr,
-            .second = nullptr,
-            .nominal_symbol = symbol,
-        });
-    }
+                                           std::optional<SymbolId> symbol);
 
-    [[nodiscard]] static TypePtr optional(TypePtr value_type) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::Optional,
-            .name = {},
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = std::move(value_type),
-            .second = nullptr,
-            .nominal_symbol = std::nullopt,
-        });
-    }
+    [[nodiscard]] static TypePtr optional(TypePtr value_type);
+    [[nodiscard]] static TypePtr list(TypePtr element_type);
+    [[nodiscard]] static TypePtr set(TypePtr element_type);
+    [[nodiscard]] static TypePtr map(TypePtr key_type, TypePtr value_type);
 
-    [[nodiscard]] static TypePtr list(TypePtr element_type) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::List,
-            .name = {},
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = std::move(element_type),
-            .second = nullptr,
-            .nominal_symbol = std::nullopt,
-        });
-    }
-
-    [[nodiscard]] static TypePtr set(TypePtr element_type) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::Set,
-            .name = {},
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = std::move(element_type),
-            .second = nullptr,
-            .nominal_symbol = std::nullopt,
-        });
-    }
-
-    [[nodiscard]] static TypePtr map(TypePtr key_type, TypePtr value_type) {
-        return make_owned<Type>(Type{
-            .kind = TypeKind::Map,
-            .name = {},
-            .string_bounds = std::nullopt,
-            .decimal_scale = std::nullopt,
-            .first = std::move(key_type),
-            .second = std::move(value_type),
-            .nominal_symbol = std::nullopt,
-        });
-    }
-
-    [[nodiscard]] TypePtr clone() const {
-        auto copy = make_owned<Type>();
-        copy->kind = kind;
-        copy->name = name;
-        copy->string_bounds = string_bounds;
-        copy->decimal_scale = decimal_scale;
-        copy->first = first ? first->clone() : nullptr;
-        copy->second = second ? second->clone() : nullptr;
-        copy->nominal_symbol = nominal_symbol;
-        return copy;
+    // After interning, cloning is a no-op identity. The signature is kept so
+    // existing call sites that wrote `type->clone()` keep compiling without
+    // dereferencing changes; semantically these now share the canonical node.
+    [[nodiscard]] TypePtr clone() const noexcept {
+        return this;
     }
 
     [[nodiscard]] std::string describe() const {
