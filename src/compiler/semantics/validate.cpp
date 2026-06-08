@@ -210,8 +210,14 @@ class ValidationPass final {
     }
 
     void check_typed_temporal_expr(const ast::ExprSyntax &expr) {
-        const auto expression_info =
-            type_check_result_.find_expression_type(expr.range, current_source_id_);
+        // Prefer NodeId-based lookup so overlapping ranges in temporal formulas
+        // do not alias each other.
+        auto expression_info =
+            type_check_result_.find_expression_type_by_node(expr.node_id, current_source_id_);
+        if (!expression_info.has_value()) {
+            expression_info =
+                type_check_result_.find_expression_type(expr.range, current_source_id_);
+        }
         if (!expression_info.has_value() || !expression_info->get().type) {
             return;
         }

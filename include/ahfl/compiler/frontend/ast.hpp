@@ -321,6 +321,11 @@ struct StructInitSyntax {
 ///   - Group: first (内部表达式)
 struct ExprSyntax {
     ahfl::SourceRange range;
+    // Stable identity assigned at AST construction time. Distinct from
+    // SourceRange so that two expressions with overlapping ranges (e.g. the
+    // generated synthetic expressions and their parents) can be unambiguously
+    // referenced by downstream side tables. 0 means "unassigned".
+    std::uint64_t node_id{0};
     std::string text; // 字面量原文
     ExprSyntaxKind kind{ExprSyntaxKind::NoneLiteral};
     bool bool_value{false};                             // BoolLiteral
