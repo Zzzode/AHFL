@@ -553,15 +553,34 @@ class IrLowerer final {
             .second = nullptr,
         };
 
-        if (type.kind == TypeKind::Struct || type.kind == TypeKind::Enum) {
-            ref.canonical_name = type.name;
-        }
-        if (type.first) {
-            ref.first = make_type_ref(type_ref_from_type(*type.first));
-        }
-        if (type.second) {
-            ref.second = make_type_ref(type_ref_from_type(*type.second));
-        }
+        type.visit(types::Overloads{
+            [&](const types::StructT &s) { ref.canonical_name = s.canonical_name; },
+            [&](const types::EnumT &e) { ref.canonical_name = e.canonical_name; },
+            [&](const types::OptionalT &o) {
+                if (o.inner != nullptr) {
+                    ref.first = make_type_ref(type_ref_from_type(*o.inner));
+                }
+            },
+            [&](const types::ListT &l) {
+                if (l.element != nullptr) {
+                    ref.first = make_type_ref(type_ref_from_type(*l.element));
+                }
+            },
+            [&](const types::SetT &s) {
+                if (s.element != nullptr) {
+                    ref.first = make_type_ref(type_ref_from_type(*s.element));
+                }
+            },
+            [&](const types::MapT &m) {
+                if (m.key != nullptr) {
+                    ref.first = make_type_ref(type_ref_from_type(*m.key));
+                }
+                if (m.value != nullptr) {
+                    ref.second = make_type_ref(type_ref_from_type(*m.value));
+                }
+            },
+            [](const auto &) {},
+        });
 
         return ref;
     }

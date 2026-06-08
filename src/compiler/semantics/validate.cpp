@@ -24,11 +24,11 @@ struct ControlFlowSummary {
 };
 
 [[nodiscard]] bool is_error_type(const Type &type) noexcept {
-    return type.kind == TypeKind::Any || type.kind == TypeKind::Never;
+    return type.holds<types::AnyT>() || type.holds<types::NeverT>();
 }
 
 [[nodiscard]] bool is_bool_type(const Type &type) noexcept {
-    return type.kind == TypeKind::Bool;
+    return type.holds<types::BoolT>();
 }
 
 [[nodiscard]] bool contains_name(const std::vector<std::string> &names, std::string_view name) {
