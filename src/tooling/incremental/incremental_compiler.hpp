@@ -21,6 +21,11 @@ struct IncrementalStats {
     std::size_t modules_recompiled = 0;
     std::size_t cache_hits = 0;
     std::size_t cache_misses = 0;
+    // Number of times a recompile produced the same TypeEnvironment
+    // signature fingerprint as the previous cache entry. Useful for
+    // distinguishing whitespace/comment churn from real semantic
+    // changes when reasoning about reverse-dependency rebuild fan-out.
+    std::size_t fingerprint_unchanged = 0;
 };
 
 class IncrementalCompiler {
