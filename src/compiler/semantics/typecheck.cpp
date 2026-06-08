@@ -1425,11 +1425,50 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             error_here("if condition must be pure", statement.if_stmt->condition->range);
         }
 
+        // Optional narrowing (Task #11 phase 1): if the condition is a
+        // simple `Identifier != none` against a binding of type Optional<T>,
+        // narrow that binding to T inside the then-block. Only the simplest
+        // shape is honoured; anything else falls back to the unnarrowed
+        // value context, preserving the conservative-by-default policy in
+        // docs/design/optional-narrowing-rfc-v0.1.zh.md.
+        const auto try_narrow = [&]() -> std::optional<std::pair<std::string, TypePtr>> {
+            const auto &cond = *statement.if_stmt->condition;
+            if (cond.kind != ast::ExprSyntaxKind::Binary ||
+                cond.binary_op != ast::ExprBinaryOp::NotEqual || !cond.first || !cond.second) {
+                return std::nullopt;
+            }
+            // Pattern: `Identifier != none`. The `none` literal must be on
+            // the right; we don't try to handle the symmetric `none != x`
+            // form in this phase.
+            if (cond.second->kind != ast::ExprSyntaxKind::NoneLiteral) {
+                return std::nullopt;
+            }
+            const auto &lhs = *cond.first;
+            if (lhs.kind != ast::ExprSyntaxKind::Path || !lhs.path) {
+                return std::nullopt;
+            }
+            if (!lhs.path->members.empty()) {
+                return std::nullopt;
+            }
+            const auto binding = find_binding(context.bindings, lhs.path->root_name);
+            if (!binding.has_value()) {
+                return std::nullopt;
+            }
+            const auto *opt = binding->get().get_if<types::OptionalT>();
+            if (opt == nullptr || opt->inner == nullptr) {
+                return std::nullopt;
+            }
+            return std::make_pair(lhs.path->root_name, opt->inner->clone());
+        }();
+
         auto then_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
             .call_context = context.call_context,
             .current_agent = context.current_agent,
         };
+        if (try_narrow.has_value()) {
+            then_context.bindings[try_narrow->first] = try_narrow->second;
+        }
         check_block(*statement.if_stmt->then_block, then_context, expected_return_type, state_name,
                     expected_return_origin);
 
