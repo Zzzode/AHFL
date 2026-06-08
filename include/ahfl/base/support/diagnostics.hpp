@@ -280,6 +280,15 @@ struct Diagnostic {
     std::optional<SourceRange> range;
     std::optional<std::string> source_name;
     std::optional<SourcePosition> position;
+
+    // Secondary "related" notes attached to this diagnostic. They share the
+    // diagnostic's owning bag (i.e. they do not contribute to error/warning
+    // counts), and are rendered immediately after the primary message.
+    struct Related {
+        std::string message;
+        std::optional<SourceRange> range;
+    };
+    std::vector<Related> related;
 };
 
 // ============================================================================
@@ -356,6 +365,18 @@ class DiagnosticBuilder {
         return std::move(*this);
     }
 
+    // Attach a secondary "related" note (e.g. "expected here", "declared here").
+    // The note inherits the primary diagnostic's source_name; its `range` is
+    // optional so callers can omit it when only contextual prose is needed.
+    DiagnosticBuilder &&with_note(std::string note_message,
+                                  std::optional<SourceRange> note_range = std::nullopt) && {
+        related_.push_back(Diagnostic::Related{
+            .message = std::move(note_message),
+            .range = note_range,
+        });
+        return std::move(*this);
+    }
+
     // Emit the diagnostic
     void emit() &&;
 
@@ -367,6 +388,7 @@ class DiagnosticBuilder {
     std::optional<SourceRange> range_;
     std::optional<std::string> source_name_;
     std::optional<SourcePosition> position_;
+    std::vector<Diagnostic::Related> related_;
 };
 
 // ============================================================================
@@ -494,6 +516,27 @@ class DiagnosticBag {
                 out << "  " << gutter << " | " << std::string(col_start, ' ')
                     << std::string(span_end_in_line - col_start, '~') << '\n';
             }
+
+            // Render attached "related" notes (e.g. "note: expected here").
+            for (const auto &related : diagnostic.related) {
+                out << "  note: " << related.message;
+                if (related.range.has_value()) {
+                    if (diagnostic.source_name.has_value()) {
+                        out << " (" << *diagnostic.source_name;
+                        if (source.has_value()) {
+                            const auto pos = source->get().locate(related.range->begin_offset);
+                            out << ":" << pos.line << ":" << pos.column;
+                        }
+                        out << ")";
+                    } else if (source.has_value()) {
+                        const auto &src_file = source->get();
+                        const auto pos = src_file.locate(related.range->begin_offset);
+                        out << " (" << src_file.display_name << ":" << pos.line << ":"
+                            << pos.column << ")";
+                    }
+                }
+                out << '\n';
+            }
         }
     }
 
@@ -522,6 +565,7 @@ inline void DiagnosticBuilder::emit() && {
         .range = range_,
         .source_name = std::move(source_name_),
         .position = position_,
+        .related = std::move(related_),
     });
 }
 
