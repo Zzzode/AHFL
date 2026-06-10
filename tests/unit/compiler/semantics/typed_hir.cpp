@@ -796,3 +796,255 @@ workflow DoJob {
     REQUIRE_FALSE(typed_fp.empty());
     CHECK(ast_fp == typed_fp);
 }
+
+// ============================================================================
+// T1.6 P3: TypedProgram.statements coverage parity for flow body +
+//          TypedStatement children resolve to valid TypedExpr records.
+// ============================================================================
+
+// Recursively count every `StatementSyntax` reachable from a BlockSyntax,
+// descending into if/then/else sub-blocks. The BlockSyntax itself is visited
+// exactly once per call.
+static std::size_t count_ast_statements(const ahfl::ast::BlockSyntax &block) {
+    std::size_t count = 0;
+    for (const auto &stmt : block.statements) {
+        ++count;
+        // Descend into if sub-blocks.
+        if (stmt->kind == ahfl::ast::StatementSyntaxKind::If) {
+            if (stmt->if_stmt && stmt->if_stmt->then_block) {
+                count += count_ast_statements(*stmt->if_stmt->then_block);
+            }
+            if (stmt->if_stmt && stmt->if_stmt->else_block) {
+                count += count_ast_statements(*stmt->if_stmt->else_block);
+            }
+        }
+    }
+    return count;
+}
+
+// Walk a Program, collect every FlowDecl, then within each FlowDecl walk
+// every StateHandlerSyntax body and recursively count all statements.
+static std::size_t total_flow_statement_count(const ahfl::ast::Program &program) {
+    std::size_t total = 0;
+    for (const auto &decl : program.declarations) {
+        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) continue;
+        const auto *flow = static_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        for (const auto &handler : flow->state_handlers) {
+            if (handler->body) {
+                total += count_ast_statements(*handler->body);
+            }
+        }
+    }
+    return total;
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "T1.6 P2 TypedProgram.statements coverage parity for flow body") {
+    // Source exercises all 7 TypedStmtKind variants across an agent + flow.
+    //   state Init   -> let / assign / if(else) / assert / expr / goto
+    //   state Done   -> let / return
+    // The `if` branches also contain statements so nested BlockSyntax nodes
+    // are exercised for parity and TypedProgram.blocks coverage.
+    const std::string source = R"AHFL(
+struct Req { v: String; token: Optional<String> = none; }
+struct Ctx { v: String = ""; count: Int = 0; }
+struct Resp { v: String; code: Int = 200; }
+
+capability SideEffect(x: String) -> Resp;
+predicate Safe(s: String) -> Bool;
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [SideEffect];
+    transition Init -> Done;
+}
+contract for Worker { requires: true; }
+flow for Worker {
+    state Init {
+        // 1) Let: bind a local.
+        let greeting: String = "hello";
+        // 2) Assign: mutate ctx.
+        ctx.v = greeting;
+        // 3) Assert: pure boolean condition.
+        assert(ctx.v == "hello");
+        // 4) Expr statement: capability call.
+        SideEffect(input.v);
+        // 5) If with else. Both branches contain additional Let / Assign /
+        //    ExprStatement statements so that nested BlockSyntax is created
+        //    and visited.
+        if (input.token != none) {
+            let tok = input.token;
+            ctx.count = ctx.count + 2;
+            SideEffect(ctx.v);
+        } else {
+            let defaulted: String = "default";
+            ctx.v = defaulted;
+            let extra: Int = ctx.count + 1;
+            ctx.count = extra;
+        }
+        // 6) Assign (second occurrence) to make sure let/assign appear in
+        //    multiple contexts.
+        ctx.count = ctx.count + 1;
+        // 7) Goto.
+        goto Done;
+    }
+    state Done {
+        let final_msg: String = ctx.v + " world";
+        return Resp { v: final_msg, code: 200 };
+    }
+}
+)AHFL";
+
+    // Parse + resolve + typecheck via fixture.
+    const auto parse = frontend.parse_text("t16_p3_parity.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+    ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    ahfl::TypeChecker checker;
+    const auto tc = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(tc.has_errors());
+
+    // --- TC1 assertions ----------------------------------------------------
+    const std::size_t total_ast_stmt_count = total_flow_statement_count(*parse.program);
+    const std::size_t typed_stmt_count = tc.typed_program.statements.size();
+
+    // The typechecker records exactly one TypedStatement per AST
+    // StatementSyntax (including statements inside nested if/then/else
+    // blocks). 1:1 parity is the design goal.
+    INFO("AST statements = " << total_ast_stmt_count
+                             << ", TypedProgram.statements = " << typed_stmt_count);
+    CHECK(typed_stmt_count == total_ast_stmt_count);
+
+    // TypedProgram must contain at least 3 blocks:
+    //   * state Init body
+    //   * then block of the `if (input.token != none)`
+    //   * else block of the same if
+    //   (state Done body is an additional fourth)
+    CHECK(tc.typed_program.blocks.size() >= 3);
+
+    // Secondary structural check: at least one TypedStatement per kind must
+    // appear in the flat store for the 7 kinds we explicitly used.
+    using K = ahfl::TypedStmtKind;
+    std::unordered_set<K> seen_kinds;
+    for (const auto &s : tc.typed_program.statements) seen_kinds.insert(s.kind);
+    CHECK(seen_kinds.contains(K::Let));
+    CHECK(seen_kinds.contains(K::Assign));
+    CHECK(seen_kinds.contains(K::If));
+    CHECK(seen_kinds.contains(K::Goto));
+    CHECK(seen_kinds.contains(K::Return));
+    CHECK(seen_kinds.contains(K::Assert));
+    CHECK(seen_kinds.contains(K::ExprStatement));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "T1.6 P2 TypedStatement children resolve to valid TypedExpr records") {
+    // Use the same rich source as TC1 so every statement kind has a chance
+    // to carry non-trivial children_expr_index entries.
+    const std::string source = R"AHFL(
+struct Req { v: String; token: Optional<String> = none; }
+struct Ctx { v: String = ""; count: Int = 0; }
+struct Resp { v: String; code: Int = 200; }
+
+capability SideEffect(x: String) -> Resp;
+predicate Safe(s: String) -> Bool;
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [SideEffect];
+    transition Init -> Done;
+}
+contract for Worker { requires: true; }
+flow for Worker {
+    state Init {
+        let greeting: String = "hello";
+        ctx.v = greeting;
+        assert(ctx.v == "hello");
+        SideEffect(input.v);
+        if (input.token != none) {
+            let tok = input.token;
+            ctx.count = ctx.count + 2;
+            SideEffect(ctx.v);
+        } else {
+            let defaulted: String = "default";
+            ctx.v = defaulted;
+            let extra: Int = ctx.count + 1;
+            ctx.count = extra;
+        }
+        ctx.count = ctx.count + 1;
+        goto Done;
+    }
+    state Done {
+        let final_msg: String = ctx.v + " world";
+        return Resp { v: final_msg, code: 200 };
+    }
+}
+)AHFL";
+
+    const auto parse = frontend.parse_text("t16_p3_children.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    REQUIRE(parse.program != nullptr);
+    ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    ahfl::TypeChecker checker;
+    const auto tc = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(tc.has_errors());
+
+    // --- TC2 assertions ----------------------------------------------------
+    const auto &stmts = tc.typed_program.statements;
+    const auto &exprs = tc.typed_program.expressions;
+    REQUIRE_FALSE(stmts.empty());
+    REQUIRE_FALSE(exprs.empty());
+
+    std::size_t total_slots = 0;
+    std::size_t valid_slots = 0;
+    for (const auto &s : stmts) {
+        for (const auto idx : s.children_expr_index) {
+            ++total_slots;
+            if (idx == UINT32_MAX) {
+                // INTENTIONAL: an absent payload (e.g. a hypothetical
+                // `return;` with no value). Counted in the denominator to
+                // remain pessimistic.
+                continue;
+            }
+            // (1) index must be in range.
+            if (idx >= exprs.size()) {
+                FAIL_CHECK("children_expr_index[" << idx << "] out of range ["
+                                                  << exprs.size() << "]");
+                continue;
+            }
+            // (2) resolved TypedExpr must have a resolved type pointer.
+            const auto &typed = exprs[idx];
+            if (typed.type != nullptr) {
+                ++valid_slots;
+            } else {
+                FAIL_CHECK("children_expr_index["
+                           << idx << "] resolves to a TypedExpr with type == nullptr"
+                           << " (stmt kind = " << static_cast<int>(s.kind) << ")");
+            }
+        }
+    }
+
+    INFO("total child slots = " << total_slots << ", valid = " << valid_slots);
+    REQUIRE(total_slots > 0);
+
+    // At least 60% of all non-null children slots must resolve to a valid,
+    // typed TypedExpr entry. For the source above, Goto is the only
+    // statement that never has a payload (UINT32_MAX); every other kind
+    // carries at least one.
+    const auto ratio = static_cast<double>(valid_slots) /
+                       static_cast<double>(total_slots);
+    CHECK(ratio >= 0.60);
+}
