@@ -2,10 +2,16 @@
 #include <doctest.h>
 
 #include "ahfl/base/support/ownership.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
+#include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
+#include "ahfl/compiler/ir/typed_hir_lower.hpp"
 #include "ahfl/compiler/ir/visitor.hpp"
+#include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_context.hpp"
+#include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <string>
 
@@ -180,4 +186,462 @@ TEST_CASE("IR visitor and rewriter traverse workflow node inputs") {
     const auto *node_call = std::get_if<ahfl::ir::CallExpr>(&rewritten->nodes.front().input->node);
     REQUIRE(node_call != nullptr);
     CHECK(node_call->callee == "pkg::CanonicalCall");
+}
+
+TEST_CASE("Typed HIR lowering matches AST lowering for checked programs") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent HirAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for HirAgent {
+    state Done {
+        let reply = Response { value: input.value };
+        return reply;
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_lowering.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto ast_ir = ahfl::lower_program_ir(*parse_result.program, resolve_result, type_result);
+    const auto typed_ir = ahfl::lower_typed_program(type_result.typed_program);
+
+    CHECK(typed_ir.declarations.size() == ast_ir.declarations.size());
+    REQUIRE_FALSE(typed_ir.declarations.empty());
+}
+
+TEST_CASE("IR lowering prefers Typed HIR expression types for inferred let bindings") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent HirAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for HirAgent {
+    state Done {
+        let reply = Response { value: input.value };
+        return reply;
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_preferred.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    ahfl::TypedExpr *struct_literal = nullptr;
+    for (auto &expr : type_result.typed_program.expressions) {
+        if (expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral && expr.type != nullptr &&
+            expr.type->describe() == "Response") {
+            struct_literal = &expr;
+            break;
+        }
+    }
+    REQUIRE(struct_literal != nullptr);
+    struct_literal->type = ahfl::TypeContext::global().make(ahfl::TypeKind::Int);
+
+    const auto lowered = ahfl::lower_program_ir(*parse_result.program, resolve_result, type_result);
+
+    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE(flow->state_handlers.front().body.statements.size() >= 1);
+
+    const auto *let_statement = std::get_if<ahfl::ir::LetStatement>(
+        &flow->state_handlers.front().body.statements.front()->node);
+    REQUIRE(let_statement != nullptr);
+    CHECK(let_statement->name == "reply");
+    CHECK(let_statement->type_ref.kind == ahfl::ir::TypeRefKind::Int);
+    CHECK(let_statement->type_ref.display_name == "Int");
+}
+
+TEST_CASE("Typed HIR lowering can consume detached typed expressions without legacy result") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent DetachedHirAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for DetachedHirAgent {
+    state Done {
+        let reply = Response { value: input.value };
+        return reply;
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_detached_lowering.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    auto detached = type_result.typed_program;
+    detached.type_check_result = nullptr;
+    ahfl::TypedExpr *struct_literal = nullptr;
+    for (auto &expr : detached.expressions) {
+        if (expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral && expr.type != nullptr &&
+            expr.type->describe() == "Response") {
+            struct_literal = &expr;
+            break;
+        }
+    }
+    REQUIRE(struct_literal != nullptr);
+    // Force lowering off the TypedProgram::find_expr(node_id) fast path so this
+    // regression specifically proves lower_typed_program rebuilds the legacy
+    // range-indexed expression type side table from detached TypedExpr records.
+    struct_literal->node_id = 0;
+    struct_literal->type = ahfl::TypeContext::global().make(ahfl::TypeKind::Int);
+
+    const auto lowered = ahfl::lower_typed_program(detached);
+
+    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
+
+    const auto *let_statement = std::get_if<ahfl::ir::LetStatement>(
+        &flow->state_handlers.front().body.statements.front()->node);
+    REQUIRE(let_statement != nullptr);
+    CHECK(let_statement->name == "reply");
+    CHECK(let_statement->type_ref.kind == ahfl::ir::TypeRefKind::Int);
+    CHECK(let_statement->type_ref.display_name == "Int");
+}
+
+TEST_CASE("Typed HIR lowering prefers resolved call target metadata over AST references") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Original(value: String) -> Response;
+capability Redirected(value: String) -> Response;
+
+agent MetadataCallAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Original, Redirected];
+}
+
+flow for MetadataCallAgent {
+    state Done {
+        return Original(input.value);
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_call_target_lowering.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto redirected_symbol = resolve_result.symbol_table.find_local(
+        ahfl::SymbolNamespace::Capabilities, "Redirected");
+    REQUIRE(redirected_symbol.has_value());
+
+    auto detached = type_result.typed_program;
+    detached.type_check_result = nullptr;
+    ahfl::TypedExpr *call = nullptr;
+    for (auto &expr : detached.expressions) {
+        if (expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Original") {
+            call = &expr;
+            break;
+        }
+    }
+    REQUIRE(call != nullptr);
+    call->resolved_symbol = redirected_symbol->get().id;
+    call->semantic_name = "Redirected";
+    call->call_target_kind = ahfl::TypedCallTargetKind::Capability;
+
+    const auto lowered = ahfl::lower_typed_program(detached);
+
+    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
+
+    const auto *return_statement = std::get_if<ahfl::ir::ReturnStatement>(
+        &flow->state_handlers.front().body.statements.front()->node);
+    REQUIRE(return_statement != nullptr);
+    REQUIRE(return_statement->value != nullptr);
+    const auto *return_call = std::get_if<ahfl::ir::CallExpr>(&return_statement->value->node);
+    REQUIRE(return_call != nullptr);
+    CHECK(return_call->callee == "Redirected");
+}
+
+TEST_CASE("Typed HIR lowering prefers resolved struct target metadata over AST references") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct OriginalResponse {
+    value: String;
+}
+
+struct RedirectedResponse {
+    value: String;
+}
+
+agent MetadataStructAgent {
+    input: Request;
+    context: Context;
+    output: OriginalResponse;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for MetadataStructAgent {
+    state Done {
+        return OriginalResponse { value: input.value };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_struct_target_lowering.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto redirected_symbol = resolve_result.symbol_table.find_local(
+        ahfl::SymbolNamespace::Types, "RedirectedResponse");
+    REQUIRE(redirected_symbol.has_value());
+
+    auto detached = type_result.typed_program;
+    detached.type_check_result = nullptr;
+    ahfl::TypedExpr *struct_literal = nullptr;
+    for (auto &expr : detached.expressions) {
+        if (expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
+            expr.semantic_name == "OriginalResponse") {
+            struct_literal = &expr;
+            break;
+        }
+    }
+    REQUIRE(struct_literal != nullptr);
+    struct_literal->resolved_symbol = redirected_symbol->get().id;
+    struct_literal->semantic_name = "RedirectedResponse";
+
+    const auto lowered = ahfl::lower_typed_program(detached);
+
+    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
+
+    const auto *return_statement = std::get_if<ahfl::ir::ReturnStatement>(
+        &flow->state_handlers.front().body.statements.front()->node);
+    REQUIRE(return_statement != nullptr);
+    REQUIRE(return_statement->value != nullptr);
+    const auto *return_literal = std::get_if<ahfl::ir::StructLiteralExpr>(
+        &return_statement->value->node);
+    REQUIRE(return_literal != nullptr);
+    CHECK(return_literal->type_name == "RedirectedResponse");
+}
+
+TEST_CASE("Typed HIR lowering prefers resolved qualified value metadata over AST references") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+enum OriginalStatus {
+    Ready,
+    Blocked,
+}
+
+enum RedirectedStatus {
+    Forwarded,
+    Blocked,
+}
+
+struct Response {
+    status: OriginalStatus;
+}
+
+agent MetadataQualifiedValueAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for MetadataQualifiedValueAgent {
+    state Done {
+        return Response { status: OriginalStatus::Ready };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_qualified_value_lowering.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto redirected_symbol = resolve_result.symbol_table.find_local(
+        ahfl::SymbolNamespace::Types, "RedirectedStatus");
+    REQUIRE(redirected_symbol.has_value());
+
+    auto detached = type_result.typed_program;
+    detached.type_check_result = nullptr;
+    ahfl::TypedExpr *qualified_value = nullptr;
+    for (auto &expr : detached.expressions) {
+        if (expr.kind == ahfl::ast::ExprSyntaxKind::QualifiedValue &&
+            expr.semantic_name == "OriginalStatus::Ready") {
+            qualified_value = &expr;
+            break;
+        }
+    }
+    REQUIRE(qualified_value != nullptr);
+    qualified_value->resolved_symbol = redirected_symbol->get().id;
+    qualified_value->semantic_name = "RedirectedStatus::Forwarded";
+
+    const auto lowered = ahfl::lower_typed_program(detached);
+
+    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
+
+    const auto *return_statement = std::get_if<ahfl::ir::ReturnStatement>(
+        &flow->state_handlers.front().body.statements.front()->node);
+    REQUIRE(return_statement != nullptr);
+    REQUIRE(return_statement->value != nullptr);
+    const auto *return_literal = std::get_if<ahfl::ir::StructLiteralExpr>(
+        &return_statement->value->node);
+    REQUIRE(return_literal != nullptr);
+    REQUIRE(return_literal->fields.size() == 1);
+    REQUIRE(return_literal->fields.front().value != nullptr);
+    const auto *return_value = std::get_if<ahfl::ir::QualifiedValueExpr>(
+        &return_literal->fields.front().value->node);
+    REQUIRE(return_value != nullptr);
+    CHECK(return_value->value == "RedirectedStatus::Forwarded");
 }

@@ -30,7 +30,6 @@ add_executable(ahfl_compiler_ir_tests
 )
 target_link_libraries(ahfl_compiler_ir_tests
     PRIVATE
-        ahfl_compiler_ir
         ahfl_compiler_handoff
         doctest
 )
@@ -150,7 +149,6 @@ add_executable(ahfl_pipeline_durable_store_import_tests
 target_link_libraries(ahfl_pipeline_durable_store_import_tests
     PRIVATE
         ahfl_pipeline_durable_store_import
-        ahfl_pipeline_persistence
 )
 ahfl_apply_project_warnings(ahfl_pipeline_durable_store_import_tests)
 
@@ -160,7 +158,6 @@ add_executable(ahfl_pipeline_durable_store_import_decision_tests
 target_link_libraries(ahfl_pipeline_durable_store_import_decision_tests
     PRIVATE
         ahfl_pipeline_durable_store_import
-        ahfl_pipeline_persistence
 )
 ahfl_apply_project_warnings(ahfl_pipeline_durable_store_import_decision_tests)
 
@@ -373,6 +370,16 @@ target_link_libraries(ahfl_semantics_type_relations_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_type_relations_tests)
 
+add_executable(ahfl_semantics_typed_hir_tests
+    unit/compiler/semantics/typed_hir.cpp
+)
+target_link_libraries(ahfl_semantics_typed_hir_tests
+    PRIVATE
+        ahfl_compiler_ir
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_typed_hir_tests)
+
 add_executable(ahfl_semantics_effects_tests
     unit/compiler/semantics/effects.cpp
 )
@@ -382,6 +389,26 @@ target_link_libraries(ahfl_semantics_effects_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_effects_tests)
+
+add_executable(ahfl_semantics_flow_condition_tests
+    unit/compiler/semantics/flow_condition.cpp
+)
+target_link_libraries(ahfl_semantics_flow_condition_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_flow_condition_tests)
+
+add_executable(ahfl_semantics_concurrency_tests
+    unit/compiler/semantics/concurrency.cpp
+)
+target_link_libraries(ahfl_semantics_concurrency_tests
+    PRIVATE
+        ahfl_compiler_ir
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_concurrency_tests)
 
 add_executable(ahfl_streaming_tests
     unit/runtime/providers/llm/streaming.cpp
@@ -675,7 +702,10 @@ foreach(_tgt
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests
     ahfl_semantics_type_relations_tests
+    ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
+    ahfl_semantics_flow_condition_tests
+    ahfl_semantics_concurrency_tests
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests
     ahfl_tooling_lsp_handler_tests
