@@ -39,6 +39,29 @@ enum class TypedCallTargetKind {
 
 struct TypedExpr;
 
+// ----------------------------------------------------------------------------
+// TypedStatement kind enum (decoupled from ast::StatementSyntaxKind)
+// ----------------------------------------------------------------------------
+enum class TypedStmtKind : std::uint8_t {
+    None = 0, // sentinel
+    Let,
+    Assign,
+    If,
+    Goto,
+    Return,
+    Assert,
+    ExprStatement,
+};
+
+enum class TypedTemporalKind : std::uint8_t {
+    None = 0,
+    Atom,
+    NameLiteral,
+    StateLiteral,
+    Unary,
+    Binary,
+};
+
 struct TypedExprChild {
     TypedExprChildRole role{TypedExprChildRole::Operand};
     std::string name;
@@ -103,6 +126,55 @@ struct TypedDecl {
     TypePtr type{nullptr};
 };
 
+// ----------------------------------------------------------------------------
+// TypedBlock / TypedStatement / TypedTemporalExpr
+// ----------------------------------------------------------------------------
+//
+// Flat-store representation of statements, blocks, and temporal expressions.
+// P1 introduces the skeletal structure only; wiring from the typechecker and
+// visitor coverage for TypedTemporalExpr are deferred to later phases.
+
+struct TypedBlock {
+    SourceRange range;
+    std::optional<SourceId> source_id;
+    // Indexes into TypedProgram::statements.
+    std::vector<std::uint32_t> statement_indexes;
+};
+
+struct TypedStatement {
+    TypedStmtKind kind{TypedStmtKind::None};
+    SourceRange range;
+    std::optional<SourceId> source_id;
+    std::uint64_t node_id{0};
+    // Children pointing into TypedProgram::expressions (expr_index);
+    // UINT32_MAX = none.
+    std::vector<std::uint32_t> children_expr_index;
+    // Payload mirrors:
+    //   Let: local name
+    //   Assign: target path spelling
+    std::string target_name;
+    // Goto: target state spelling
+    std::string goto_target_state;
+    // If: indexes into TypedProgram::blocks (UINT32_MAX = absent)
+    std::uint32_t then_block_index{UINT32_MAX};
+    std::uint32_t else_block_index{UINT32_MAX};
+    // Assert message / future use (optional, may stay empty)
+    std::string extra;
+};
+
+struct TypedTemporalExpr {
+    TypedTemporalKind kind{TypedTemporalKind::None};
+    SourceRange range;
+    std::optional<SourceId> source_id;
+    std::uint64_t node_id{0};
+    // Atom:          children_index[0] is expressions index
+    // Unary:         children_index[0] is temporal_exprs index
+    // Binary:        children_index[0], [1] are temporal_exprs indexes
+    std::vector<std::uint32_t> children_index;
+    // name / state / unary op / binary op string
+    std::string payload_spelling;
+};
+
 struct TypedProgram {
     const ast::Program *ast_program{nullptr};
     const SourceGraph *source_graph{nullptr};
@@ -110,6 +182,9 @@ struct TypedProgram {
     const TypeCheckResult *type_check_result{nullptr};
     std::vector<TypedDecl> declarations;
     std::vector<TypedExpr> expressions;
+    std::vector<TypedBlock> blocks;
+    std::vector<TypedStatement> statements;
+    std::vector<TypedTemporalExpr> temporal_exprs;
 
     [[nodiscard]] const TypedExpr *find_expr(std::uint64_t node_id,
                                              std::optional<SourceId> source_id) const noexcept;
@@ -202,6 +277,37 @@ decltype(auto) typed_visit(const TypedExpr &expr, Visitor &&visitor) {
     }
 
     return std::forward<Visitor>(visitor).visit_unknown(expr);
+}
+
+// ----------------------------------------------------------------------------
+// TypedStatement visitor
+// ----------------------------------------------------------------------------
+//
+// `typed_visit(stmt, visitor)` dispatches a TypedStatement to the matching
+// `Visitor::visit_*_stmt(stmt)` overload based on TypedStmtKind. Coverage is
+// enforced by the project's -Wswitch guard.
+template <typename Visitor>
+decltype(auto) typed_visit(const TypedStatement &stmt, Visitor &&visitor) {
+    switch (stmt.kind) {
+    case TypedStmtKind::Let:
+        return std::forward<Visitor>(visitor).visit_let_stmt(stmt);
+    case TypedStmtKind::Assign:
+        return std::forward<Visitor>(visitor).visit_assign_stmt(stmt);
+    case TypedStmtKind::If:
+        return std::forward<Visitor>(visitor).visit_if_stmt(stmt);
+    case TypedStmtKind::Goto:
+        return std::forward<Visitor>(visitor).visit_goto_stmt(stmt);
+    case TypedStmtKind::Return:
+        return std::forward<Visitor>(visitor).visit_return_stmt(stmt);
+    case TypedStmtKind::Assert:
+        return std::forward<Visitor>(visitor).visit_assert_stmt(stmt);
+    case TypedStmtKind::ExprStatement:
+        return std::forward<Visitor>(visitor).visit_expr_stmt(stmt);
+    case TypedStmtKind::None:
+        break;
+    }
+
+    return std::forward<Visitor>(visitor).visit_unknown_stmt(stmt);
 }
 
 } // namespace ahfl
