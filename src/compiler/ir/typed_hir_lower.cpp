@@ -24,45 +24,14 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// AST-dependency boundary (P3 / T1.4)
+// AST-dependency boundary (P3 / T1.4 / T1.6)
 //
-// This pass used to delegate entirely to `lower_program_ir`, which walked the
-// raw `ast::Program` / `ast::ExprSyntax` tree directly. The P3 goal is to
-// eliminate AST walks for *expressions* so that post-typecheck mutations
-// (rewrites, constant folding, narrowing tweaks, synthetic-expression injection)
-// made to `TypedProgram::expressions` are faithfully reflected in the final IR.
-//
-// DECLARATION-LEVEL ITERATION now also comes from TypedProgram.declarations
-// (T1.4): the `lower()` entry walks the typed declarations list and looks up
-// the originating AST node by (range, kind) when structural details (struct
-// fields, agent states, flow handlers, workflow nodes, quotas, ...) are needed.
-// Expression bodies, statement blocks, and temporal formulas still route the
-// same way as before: AST for structure, `typed_visit` for leaves.
-//
-// Statement-level typed nodes and temporal typed nodes do not yet exist in
-// TypedProgram, so those layers still consult AST directly (follows T1.4+
-// roadmap).
-//
-// T1.4 stmt+temporal deferred to T1.6 — see
-// docs/plan/typechecker-t1.4-stmt-temporal-design.zh.md for the full design:
-//   * TypedStmtKind (7 kinds) + TypedStatement (children expr_indexes +
-//     then/else block_indexes + primitive payload mirrors)
-//   * TypedTemporalKind (7 kinds) + TypedTemporalExpr (temporal children +
-//     embedded_expr bridge + operator/name payloads)
-//   * TypedBlock (statement_indexes flat vector, shared by if-then/else and
-//     FlowDecl handler bodies)
-//   * TypeCheckPass entry points: check_block / check_statement return
-//     uint32_t flat-index; new check_temporal_expr walks formulas post-order
-//   * Migration line: lower_statement/lower_block/lower_temporal switch to
-//     TypedProgram.{statements,blocks,temporal_exprs} iteration, drop the
-//     typed_expr_for bridge inside statement payloads (already AST-free for
-//     expressions via lower_expr today)
-// ROI assessment (2026/06 snapshot, Medium):
-//   * payload expressions already reach the typed store via lower_expr bridge
-//   * statement/temporal-level rewrites (DCE, let hoist, de-Morgan) not yet
-//     scheduled on the product backlog
-//   * hidden dependency: Block typed-ization required for If control-flow to
-//     leave AST; pushes work beyond the 10-kind "high ROI" threshold
+// Expression 100% typed (T1.3); Decl iteration 100% typed (T1.4), structural
+// fields still read AST (intentional); Statement dispatch + block iteration
+// 100% typed (T1.6 P4), let type_ref / assign target path / assert message /
+// goto AST fields still consult AST via typed->AST bridge; Temporal dispatch
+// 100% typed (T1.6 P5), fallback retained; T1.7 follow-up: remove fallbacks
+// after typed payloads are complete.
 //
 // Inside the expression-lowering boundary (100% AST-free):
 //   * Dispatch is `typed_visit` on TypedExpr::kind.
@@ -1185,11 +1154,24 @@ class TypedIrLowerer final {
     }
 
     // =====================================================================
-    // Temporal lowering (AST consulted for structure per boundary above;
-    // embedded expressions route through lower_expr -> typed tree).
+    // Temporal lowering (AST -> typed bridge first, AST walk fallback)
     // =====================================================================
 
-    [[nodiscard]] ir::TemporalExprPtr lower_temporal(const ast::TemporalExprSyntax &expr) const {
+    // AST->typed bridge: consult the typed temporal store by exact range
+    // match first. When present, dispatch through lower_typed_temporal so
+    // any post-typecheck edits (rewrites, de-Morgan, synthetic-atom
+    // injection) made to TypedProgram::temporal_exprs are honoured. Falls
+    // back to the AST-only lower_temporal_ast_fallback when the temporal
+    // typed store is empty (legacy / detached test cases).
+    [[nodiscard]] ir::TemporalExprPtr
+    lower_temporal(const ast::TemporalExprSyntax &expr) const {
+        const TypedTemporalExpr *tte = find_typed_temporal_by_range(expr.range, current_source_id_);
+        if (tte != nullptr) return lower_typed_temporal(*tte);
+        return lower_temporal_ast_fallback(expr);
+    }
+
+    [[nodiscard]] ir::TemporalExprPtr
+    lower_temporal_ast_fallback(const ast::TemporalExprSyntax &expr) const {
         const auto make = [this, &expr](auto node) {
             return make_temporal(std::move(node), expr.range);
         };
@@ -1213,13 +1195,13 @@ class TypedIrLowerer final {
         case ast::TemporalExprSyntaxKind::Unary:
             return make(ir::TemporalUnaryExpr{
                 .op = lower_temporal_unary_op(expr.unary_op),
-                .operand = lower_temporal(*expr.first),
+                .operand = lower_temporal_ast_fallback(*expr.first),
             });
         case ast::TemporalExprSyntaxKind::Binary:
             return make(ir::TemporalBinaryExpr{
                 .op = lower_temporal_binary_op(expr.binary_op),
-                .lhs = lower_temporal(*expr.first),
-                .rhs = lower_temporal(*expr.second),
+                .lhs = lower_temporal_ast_fallback(*expr.first),
+                .rhs = lower_temporal_ast_fallback(*expr.second),
             });
         }
         return make(ir::CalledTemporalExpr{.capability = "<invalid-temporal-expr>"});
@@ -1243,6 +1225,17 @@ class TypedIrLowerer final {
     }
 
     [[nodiscard]] ir::Block lower_block(const ast::BlockSyntax &block) const {
+        // AST->typed bridge: if a matching TypedBlock is present, dispatch
+        // through the typed-store path so any post-typecheck statement
+        // mutations are honoured. Falls back to the AST-only path when the
+        // typed block store is empty (legacy / detached test cases).
+        const TypedBlock *tb = find_typed_block_by_range(block.range, current_source_id_);
+        if (tb != nullptr) return lower_typed_block(*tb);
+        return lower_block_ast_fallback(block);
+    }
+
+    [[nodiscard]] ir::Block
+    lower_block_ast_fallback(const ast::BlockSyntax &block) const {
         ir::Block ir_block{.statements = {}, .source_range = block.range};
         ir_block.statements.reserve(block.statements.size());
         for (const auto &statement : block.statements)
@@ -1250,7 +1243,16 @@ class TypedIrLowerer final {
         return ir_block;
     }
 
-    [[nodiscard]] ir::StatementPtr lower_statement(const ast::StatementSyntax &statement) const {
+    [[nodiscard]] ir::StatementPtr
+    lower_statement(const ast::StatementSyntax &statement) const {
+        // AST->typed bridge: identical shape to the block bridge above.
+        const TypedStatement *ts = typed_stmt_for(statement);
+        if (ts != nullptr) return lower_typed_statement(*ts);
+        return lower_statement_ast_fallback(statement);
+    }
+
+    [[nodiscard]] ir::StatementPtr
+    lower_statement_ast_fallback(const ast::StatementSyntax &statement) const {
         const auto make = [this, &statement](auto node) {
             return make_statement(std::move(node), statement.range);
         };
@@ -1297,6 +1299,418 @@ class TypedIrLowerer final {
                 make_expr(ir::QualifiedValueExpr{.value = "<invalid-statement>"}, statement.range),
         });
     }
+
+    // =====================================================================
+    // Typed-store statement / block lowering (T1.6)
+    //
+    // The dispatch chain below walks TypedProgram::statements /
+    // TypedProgram::blocks (the flat typed-store) instead of the AST.
+    // Expression payloads are pulled from TypedStatement::children_expr_index
+    // via lower_typed_expr; then/else blocks come from TypedStatement block
+    // indexes. For typed records that do not carry enough primitive detail to
+    // construct the full IR (let type annotations, assign target path root
+    // kind, assert messages, goto provenance), we consult the originating
+    // AST via a (range, kind) range lookup – see find_orig_ast_stmt below.
+    // =====================================================================
+
+    [[nodiscard]] static TypedStmtKind
+    typed_stmt_kind_from_ast(ast::StatementSyntaxKind kind) noexcept {
+        switch (kind) {
+        case ast::StatementSyntaxKind::Let:    return TypedStmtKind::Let;
+        case ast::StatementSyntaxKind::Assign: return TypedStmtKind::Assign;
+        case ast::StatementSyntaxKind::If:     return TypedStmtKind::If;
+        case ast::StatementSyntaxKind::Goto:   return TypedStmtKind::Goto;
+        case ast::StatementSyntaxKind::Return: return TypedStmtKind::Return;
+        case ast::StatementSyntaxKind::Assert: return TypedStmtKind::Assert;
+        case ast::StatementSyntaxKind::Expr:   return TypedStmtKind::ExprStatement;
+        }
+        return TypedStmtKind::None;
+    }
+
+    // One-way bridge: AST StatementSyntax -> TypedStatement.
+    // Uses range+kind lookup directly. Unlike TypedExpr, StatementSyntax does
+    // not carry a node_id field, so the fast path is skipped and we always
+    // consult the exact range+kind match. Falls back to nullptr when the
+    // typed statement store is empty (legacy / detached test cases) so the
+    // caller can route through lower_statement_ast_fallback.
+    [[nodiscard]] const TypedStatement *
+    typed_stmt_for(const ast::StatementSyntax &stmt) const {
+        const auto kind = typed_stmt_kind_from_ast(stmt.kind);
+        return typed_program_->find_statement_by_range(stmt.range, kind, current_source_id_);
+    }
+
+    // Convenience wrapper around TypedProgram::find_block_by_range.
+    [[nodiscard]] const TypedBlock *
+    find_typed_block_by_range(SourceRange range,
+                              std::optional<SourceId> source_id) const {
+        return typed_program_->find_block_by_range(range, source_id);
+    }
+
+    // Convenience wrapper around TypedProgram::find_statement_by_range.
+    [[nodiscard]] const TypedStatement *
+    find_typed_stmt_by_range(SourceRange range,
+                             TypedStmtKind kind,
+                             std::optional<SourceId> source_id) const {
+        return typed_program_->find_statement_by_range(range, kind, source_id);
+    }
+
+    // Convenience wrapper around TypedProgram::find_temporal_by_range.
+    // Returns nullptr when the temporal typed store has not been populated
+    // (legacy / detached test cases) so the caller can transparently fall
+    // back to the AST-based lower_temporal path.
+    [[nodiscard]] const TypedTemporalExpr *
+    find_typed_temporal_by_range(SourceRange range,
+                                 std::optional<SourceId> source_id) const {
+        return typed_program_->find_temporal_by_range(range, source_id);
+    }
+
+    // Parse a TemporalUnaryOp from the payload_spelling string stored on a
+    // TypedTemporalExpr (Unary kind). Mirrors the enum→string mapping that
+    // TypeCheckPass::check_temporal_embedded_exprs writes.
+    [[nodiscard]] static ir::TemporalUnaryOp
+    parse_temporal_unary_op(std::string_view s) {
+        if (s == "always")     return ir::TemporalUnaryOp::Always;
+        if (s == "eventually") return ir::TemporalUnaryOp::Eventually;
+        if (s == "next")       return ir::TemporalUnaryOp::Next;
+        if (s == "not")        return ir::TemporalUnaryOp::Not;
+        return ir::TemporalUnaryOp::Always;
+    }
+
+    // Parse a TemporalBinaryOp from the payload_spelling string stored on a
+    // TypedTemporalExpr (Binary kind).
+    [[nodiscard]] static ir::TemporalBinaryOp
+    parse_temporal_binary_op(std::string_view s) {
+        if (s == "implies") return ir::TemporalBinaryOp::Implies;
+        if (s == "or")      return ir::TemporalBinaryOp::Or;
+        if (s == "and")     return ir::TemporalBinaryOp::And;
+        if (s == "until")   return ir::TemporalBinaryOp::Until;
+        return ir::TemporalBinaryOp::Implies;
+    }
+
+    // Split a "prefix:remainder" payload_spelling on the first ':' character.
+    // Returns {prefix, remainder} – if no ':' exists remainder is empty and
+    // prefix is the whole string.
+    [[nodiscard]] static std::pair<std::string_view, std::string_view>
+    split_payload(std::string_view s) {
+        const auto pos = s.find(':');
+        if (pos == std::string_view::npos) return {s, {}};
+        return {s.substr(0, pos), s.substr(pos + 1)};
+    }
+
+    // =====================================================================
+    // Typed-tree temporal lowering (AST-free dispatch via TypedTemporalExpr)
+    // =====================================================================
+    //
+    // lower_typed_temporal walks the flat TypedProgram::temporal_exprs store
+    // by index and builds IR nodes. When a sub-index references the
+    // expressions store (Atom leaf) we re-enter lower_typed_expr. The
+    // payload_spelling strings encode both the structural variant (for
+    // NameLiteral/StateLiteral we prefix with "called:", "running:",
+    // "completed:", "state:") and the operator mnemonic (for Unary/Binary).
+    [[nodiscard]] ir::TemporalExprPtr
+    lower_typed_temporal(const TypedTemporalExpr &te) const {
+        const auto make = [this, &te](auto node) {
+            return make_temporal(std::move(node), te.range);
+        };
+        switch (te.kind) {
+        case TypedTemporalKind::Atom: {
+            ir::ExprPtr embedded = nullptr;
+            if (!te.children_index.empty() && te.children_index[0] != UINT32_MAX &&
+                te.children_index[0] < typed_program_->expressions.size()) {
+                embedded = lower_typed_expr(typed_program_->expressions[te.children_index[0]]);
+            }
+            return make(ir::EmbeddedTemporalExpr{.expr = std::move(embedded)});
+        }
+        case TypedTemporalKind::NameLiteral: {
+            const auto [prefix, remainder] = split_payload(te.payload_spelling);
+            if (prefix == "called") {
+                return make(ir::CalledTemporalExpr{.capability = std::string(remainder)});
+            }
+            if (prefix == "running") {
+                return make(ir::RunningTemporalExpr{.node = std::string(remainder)});
+            }
+            if (prefix == "completed") {
+                // remainder == "node_name|optional_state_name"
+                const auto pipe = remainder.find('|');
+                if (pipe == std::string_view::npos) {
+                    return make(ir::CompletedTemporalExpr{
+                        .node = std::string(remainder), .state_name = std::nullopt,
+                    });
+                }
+                const auto node = remainder.substr(0, pipe);
+                const auto state = remainder.substr(pipe + 1);
+                return make(ir::CompletedTemporalExpr{
+                    .node = std::string(node),
+                    .state_name = state.empty() ? std::nullopt
+                                                : std::optional<std::string>(std::string(state)),
+                });
+            }
+            // Unknown prefix: fall through to safe default.
+            return make(ir::CalledTemporalExpr{.capability = std::string(remainder)});
+        }
+        case TypedTemporalKind::StateLiteral: {
+            const auto [prefix, remainder] = split_payload(te.payload_spelling);
+            std::string state = (prefix == "state") ? std::string(remainder)
+                                                    : std::string(te.payload_spelling);
+            return make(ir::InStateTemporalExpr{.state = std::move(state)});
+        }
+        case TypedTemporalKind::Unary: {
+            ir::TemporalExprPtr operand = nullptr;
+            if (!te.children_index.empty() && te.children_index[0] != UINT32_MAX &&
+                te.children_index[0] < typed_program_->temporal_exprs.size()) {
+                operand = lower_typed_temporal(typed_program_->temporal_exprs[te.children_index[0]]);
+            }
+            return make(ir::TemporalUnaryExpr{
+                .op = parse_temporal_unary_op(te.payload_spelling),
+                .operand = std::move(operand),
+            });
+        }
+        case TypedTemporalKind::Binary: {
+            ir::TemporalExprPtr lhs = nullptr;
+            ir::TemporalExprPtr rhs = nullptr;
+            if (te.children_index.size() >= 2) {
+                if (te.children_index[0] != UINT32_MAX &&
+                    te.children_index[0] < typed_program_->temporal_exprs.size()) {
+                    lhs = lower_typed_temporal(typed_program_->temporal_exprs[te.children_index[0]]);
+                }
+                if (te.children_index[1] != UINT32_MAX &&
+                    te.children_index[1] < typed_program_->temporal_exprs.size()) {
+                    rhs = lower_typed_temporal(typed_program_->temporal_exprs[te.children_index[1]]);
+                }
+            }
+            return make(ir::TemporalBinaryExpr{
+                .op = parse_temporal_binary_op(te.payload_spelling),
+                .lhs = std::move(lhs),
+                .rhs = std::move(rhs),
+            });
+        }
+        case TypedTemporalKind::None:
+            break;
+        }
+        return make(ir::CalledTemporalExpr{.capability = "<invalid-typed-temporal>"});
+    }
+
+    // Recursive helper: walk the owning AST source's block/statement tree to
+    // locate a StatementSyntax with matching (range, kind). Used from the
+    // typed-store lowering path when a typed record lacks the primitive
+    // payload (let type syntax, assign target path shape, assert message)
+    // needed to build the full IR. Returns nullptr when no match is found –
+    // the caller degrades gracefully (Any type_ref, empty path, etc.).
+    [[nodiscard]] const ast::StatementSyntax *
+    find_orig_ast_stmt(SourceRange range, ast::StatementSyntaxKind kind) const {
+        // Prefer the active source (SourceGraph path); fall back to the raw
+        // program_ pointer when we were constructed from a single Program.
+        const ast::Program *ast_program =
+            current_source_ ? current_source_->program.get() : program_;
+        if (ast_program == nullptr) return nullptr;
+
+        struct Walker {
+            const ast::Program &program;
+            SourceRange range;
+            ast::StatementSyntaxKind kind;
+            const ast::StatementSyntax *found{nullptr};
+
+            void walk_block(const ast::BlockSyntax &block) {
+                for (const auto &s : block.statements) walk_stmt(*s);
+            }
+            void walk_stmt(const ast::StatementSyntax &s) {
+                if (found) return;
+                if (s.range.begin_offset == range.begin_offset &&
+                    s.range.end_offset == range.end_offset && s.kind == kind) {
+                    found = &s;
+                    return;
+                }
+                if (s.kind == ast::StatementSyntaxKind::If) {
+                    walk_block(*s.if_stmt->then_block);
+                    if (s.if_stmt->else_block) walk_block(*s.if_stmt->else_block);
+                }
+            }
+            void walk_decl(const ast::Decl &d) {
+                if (found) return;
+                if (d.kind == ast::NodeKind::FlowDecl) {
+                    const auto &flow = static_cast<const ast::FlowDecl &>(d);
+                    for (const auto &h : flow.state_handlers)
+                        walk_block(*h->body);
+                }
+            }
+        };
+        Walker w{*ast_program, range, kind, nullptr};
+        for (const auto &d : ast_program->declarations) w.walk_decl(*d);
+        return w.found;
+    }
+
+    // Let type_ref construction for the typed-store path. Strategy mirrors
+    // inferred_statement_type_ref exactly so the two paths produce identical
+    // output for the T1.2 equivalence test:
+    //   1. AST syntax type annotation (requires find_orig_ast_stmt fallback)
+    //   2. Initializer TypedExpr's resolved type
+    //   3. Any / unresolved sentinel
+    [[nodiscard]] ir::TypeRef
+    inferred_typed_let_type_ref(const TypedStatement &stmt,
+                                const TypedExpr *initializer) const {
+        if (!stmt.children_expr_index.empty()) {
+            const ast::StatementSyntax *orig =
+                find_orig_ast_stmt(stmt.range, ast::StatementSyntaxKind::Let);
+            if (orig != nullptr && orig->let_stmt && orig->let_stmt->type) {
+                return type_ref_from_syntax(*orig->let_stmt->type);
+            }
+        }
+        if (initializer != nullptr && initializer->type != nullptr) {
+            return type_ref_from_type(*initializer->type);
+        }
+        return type_ref_from_maybe(std::nullopt, "Any");
+    }
+
+    // Assign target path construction for the typed-store path. The typed
+    // record stores the full path string in target_name but does not mirror
+    // PathSyntax::root_kind; when the origin AST is available we pull the
+    // structured path directly. As a backstop we parse the spelling into a
+    // single-identifier root path.
+    [[nodiscard]] ir::Path
+    typed_assign_target_path(const TypedStatement &stmt) const {
+        const ast::StatementSyntax *orig =
+            find_orig_ast_stmt(stmt.range, ast::StatementSyntaxKind::Assign);
+        if (orig != nullptr && orig->assign_stmt && orig->assign_stmt->target) {
+            return lower_path_syntax(*orig->assign_stmt->target);
+        }
+        // Backstop: target_name is the source-level spelling. We don't know
+        // root_kind, but identifier paths are the dominant case and the
+        // fallback preserves byte-identical output for the common case.
+        return ir::Path{
+            .root_kind = ir::PathRootKind::Identifier,
+            .root_name = stmt.target_name,
+            .members = {},
+        };
+    }
+
+    // Typed-store statement lowering visitor. Each method builds the same
+    // ir::Statement variant as the AST fallback path (see
+    // lower_statement_ast_fallback) – the two paths are kept byte-identical
+    // by the T1.2 test. The unknown_stmt fallback gracefully degrades when a
+    // new TypedStmtKind is introduced but the visitor hasn't been updated.
+    struct TypedStmtPerKindLowerer {
+        const TypedIrLowerer &self;
+        SourceRange range;
+
+        const TypedExpr *child_expr(std::size_t index) const {
+            if (index >= self.current_statement_->children_expr_index.size())
+                return nullptr;
+            const auto expr_idx = self.current_statement_->children_expr_index[index];
+            if (expr_idx == UINT32_MAX) return nullptr;
+            if (expr_idx >= self.typed_program_->expressions.size()) return nullptr;
+            return &self.typed_program_->expressions[expr_idx];
+        }
+
+        ir::StatementPtr visit_let_stmt(const TypedStatement &stmt) const {
+            const TypedExpr *initializer = child_expr(0);
+            return self.make_statement(
+                ir::LetStatement{
+                    .name = stmt.target_name,
+                    .type_ref = self.inferred_typed_let_type_ref(stmt, initializer),
+                    .initializer = initializer ? self.lower_typed_expr(*initializer) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_assign_stmt(const TypedStatement &stmt) const {
+            const TypedExpr *value = child_expr(0);
+            return self.make_statement(
+                ir::AssignStatement{
+                    .target = self.typed_assign_target_path(stmt),
+                    .value = value ? self.lower_typed_expr(*value) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_if_stmt(const TypedStatement &stmt) const {
+            const TypedExpr *condition = child_expr(0);
+            const auto *then_block = stmt.then_block_index != UINT32_MAX &&
+                                             stmt.then_block_index <
+                                                 self.typed_program_->blocks.size()
+                                         ? &self.typed_program_->blocks[stmt.then_block_index]
+                                         : nullptr;
+            const auto *else_block = stmt.else_block_index != UINT32_MAX &&
+                                             stmt.else_block_index <
+                                                 self.typed_program_->blocks.size()
+                                         ? &self.typed_program_->blocks[stmt.else_block_index]
+                                         : nullptr;
+            auto else_ptr = else_block
+                                ? make_owned<ir::Block>(self.lower_typed_block(*else_block))
+                                : nullptr;
+            return self.make_statement(
+                ir::IfStatement{
+                    .condition = condition ? self.lower_typed_expr(*condition) : nullptr,
+                    .then_block = then_block ? make_owned<ir::Block>(
+                                                   self.lower_typed_block(*then_block))
+                                             : nullptr,
+                    .else_block = std::move(else_ptr),
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_goto_stmt(const TypedStatement &stmt) const {
+            // goto_target_state is the primary source; the AST fallback only
+            // runs when the typed record carries an empty string (legacy
+            // store). Both variants produce identical IR.
+            std::string target = stmt.goto_target_state;
+            if (target.empty()) {
+                const ast::StatementSyntax *orig = self.find_orig_ast_stmt(
+                    stmt.range, ast::StatementSyntaxKind::Goto);
+                if (orig != nullptr && orig->goto_stmt) {
+                    target = orig->goto_stmt->target_state;
+                }
+            }
+            return self.make_statement(
+                ir::GotoStatement{.target_state = std::move(target)}, range);
+        }
+
+        ir::StatementPtr visit_return_stmt([[maybe_unused]] const TypedStatement &stmt) const {
+            const TypedExpr *value = child_expr(0);
+            return self.make_statement(
+                ir::ReturnStatement{
+                    .value = value ? self.lower_typed_expr(*value) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_assert_stmt([[maybe_unused]] const TypedStatement &stmt) const {
+            const TypedExpr *condition = child_expr(0);
+            return self.make_statement(
+                ir::AssertStatement{
+                    .condition = condition ? self.lower_typed_expr(*condition) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_expr_stmt([[maybe_unused]] const TypedStatement &stmt) const {
+            const TypedExpr *expr = child_expr(0);
+            return self.make_statement(
+                ir::ExprStatement{
+                    .expr = expr ? self.lower_typed_expr(*expr) : nullptr,
+                },
+                range);
+        }
+
+        ir::StatementPtr visit_unknown_stmt(const TypedStatement &stmt) const {
+            return self.make_statement(
+                ir::ExprStatement{
+                    .expr = self.make_expr(
+                        ir::QualifiedValueExpr{.value = "<invalid-statement>"},
+                        stmt.range),
+                },
+                stmt.range);
+        }
+    };
+
+    // Forward declarations.
+    [[nodiscard]] ir::Block lower_typed_block(const TypedBlock &block) const;
+    [[nodiscard]] ir::StatementPtr lower_typed_statement(const TypedStatement &stmt) const;
+
+    // Current statement pointer, set for the lifetime of each
+    // lower_typed_statement dispatch so the visitor can read
+    // children_expr_index through the TypedIrLowerer (avoids passing the
+    // pointer through every visit method).
+    mutable const TypedStatement *current_statement_{nullptr};
 
     // =====================================================================
     // Flow / workflow summaries (copied verbatim from ir_lower.cpp so the
@@ -1967,7 +2381,36 @@ class TypedIrLowerer final {
 };
 
 // Out-of-line for the mutual recursion.
-inline ir::StateHandler::Summary TypedIrLowerer::summarize_block(const ir::Block &block) const {
+inline ir::Block TypedIrLowerer::lower_typed_block(const TypedBlock &block) const {
+    ir::Block ir_block{.statements = {}, .source_range = block.range};
+    ir_block.statements.reserve(block.statement_indexes.size());
+    for (const auto &stmt_idx : block.statement_indexes) {
+        if (stmt_idx == UINT32_MAX) continue;
+        if (stmt_idx >= typed_program_->statements.size()) continue;
+        ir_block.statements.push_back(
+            lower_typed_statement(typed_program_->statements[stmt_idx]));
+    }
+    return ir_block;
+}
+
+inline ir::StatementPtr
+TypedIrLowerer::lower_typed_statement(const TypedStatement &stmt) const {
+    // Temporarily bind the current statement so the visitor can reach
+    // children_expr_index through the class pointer. Resets the pointer on
+    // exit so re-entrant calls (nested if-else blocks) do not leak state.
+    const TypedStatement *prev = current_statement_;
+    current_statement_ = &stmt;
+    struct Restore {
+        const TypedStatement **slot;
+        const TypedStatement *prev;
+        ~Restore() { *slot = prev; }
+    } restore{&current_statement_, prev};
+    return typed_visit(stmt, TypedStmtPerKindLowerer{*this, stmt.range});
+}
+
+// Out-of-line for the mutual recursion.
+inline ir::StateHandler::Summary
+TypedIrLowerer::summarize_block(const ir::Block &block) const {
     ir::StateHandler::Summary summary;
     for (const auto &statement : block.statements) {
         if (!summary.may_fallthrough)
