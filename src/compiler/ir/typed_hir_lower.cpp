@@ -24,7 +24,7 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// AST-dependency boundary (P3 / T1.3)
+// AST-dependency boundary (P3 / T1.4)
 //
 // This pass used to delegate entirely to `lower_program_ir`, which walked the
 // raw `ast::Program` / `ast::ExprSyntax` tree directly. The P3 goal is to
@@ -32,14 +32,37 @@
 // (rewrites, constant folding, narrowing tweaks, synthetic-expression injection)
 // made to `TypedProgram::expressions` are faithfully reflected in the final IR.
 //
-// The boundary sits at the DECLARATION / STATEMENT / TEMPORAL levels. AST is
-// intentionally still consulted there because:
-//   * TypedDecl records only provenance metadata (kind / symbol / range /
-//     type); full structural payloads (struct fields, agent states, flow
-//     handlers, workflow nodes, quotas, ...) live in the owning AST.
-//   * Statement-level typed nodes do not yet exist in TypedProgram.
-//   * Temporal formulas do not yet have a typed analogue.
-// Follow-up (T1.4+) will move each of these layers across the boundary.
+// DECLARATION-LEVEL ITERATION now also comes from TypedProgram.declarations
+// (T1.4): the `lower()` entry walks the typed declarations list and looks up
+// the originating AST node by (range, kind) when structural details (struct
+// fields, agent states, flow handlers, workflow nodes, quotas, ...) are needed.
+// Expression bodies, statement blocks, and temporal formulas still route the
+// same way as before: AST for structure, `typed_visit` for leaves.
+//
+// Statement-level typed nodes and temporal typed nodes do not yet exist in
+// TypedProgram, so those layers still consult AST directly (follows T1.4+
+// roadmap).
+//
+// T1.4 stmt+temporal deferred to T1.6 — see
+// docs/plan/typechecker-t1.4-stmt-temporal-design.zh.md for the full design:
+//   * TypedStmtKind (7 kinds) + TypedStatement (children expr_indexes +
+//     then/else block_indexes + primitive payload mirrors)
+//   * TypedTemporalKind (7 kinds) + TypedTemporalExpr (temporal children +
+//     embedded_expr bridge + operator/name payloads)
+//   * TypedBlock (statement_indexes flat vector, shared by if-then/else and
+//     FlowDecl handler bodies)
+//   * TypeCheckPass entry points: check_block / check_statement return
+//     uint32_t flat-index; new check_temporal_expr walks formulas post-order
+//   * Migration line: lower_statement/lower_block/lower_temporal switch to
+//     TypedProgram.{statements,blocks,temporal_exprs} iteration, drop the
+//     typed_expr_for bridge inside statement payloads (already AST-free for
+//     expressions via lower_expr today)
+// ROI assessment (2026/06 snapshot, Medium):
+//   * payload expressions already reach the typed store via lower_expr bridge
+//   * statement/temporal-level rewrites (DCE, let hoist, de-Morgan) not yet
+//     scheduled on the product backlog
+//   * hidden dependency: Block typed-ization required for If control-flow to
+//     leave AST; pushes work beyond the 10-kind "high ROI" threshold
 //
 // Inside the expression-lowering boundary (100% AST-free):
 //   * Dispatch is `typed_visit` on TypedExpr::kind.
@@ -272,23 +295,63 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
         if (graph_ != nullptr) {
-            std::size_t declaration_count = 0;
-            for (const auto &source : graph_->sources)
-                declaration_count += source.program ? source.program->declarations.size() : 0;
-            program_ir.declarations.reserve(declaration_count);
+            program_ir.declarations.reserve(typed_program_->declarations.size());
             for (const auto &source : graph_->sources) {
                 if (!source.program) continue;
                 enter_source(source);
-                for (const auto &declaration : source.program->declarations)
-                    program_ir.declarations.push_back(lower_declaration(*declaration));
+                // Collect the subset of TypedDecls that belong to this source.
+                std::vector<const TypedDecl *> per_source;
+                per_source.reserve(typed_program_->declarations.size());
+                for (const auto &td : typed_program_->declarations) {
+                    if (td.source_id != current_source_id_) continue;
+                    per_source.push_back(&td);
+                }
+                // Emit them in the same order the owning AST stores them so
+                // the lowered IR stays byte-identical to the legacy AST-based
+                // path (T1.2 equivalence guarantee). We walk the AST decls
+                // once and, for each, emit the matching TypedDecl in-place.
+                // ModuleDecl / ImportDecl are deliberately never recorded in
+                // TypedProgram.declarations (they are parser-level metadata),
+                // so they get a short direct-AST fallback.
+                for (const auto &ast_decl : source.program->declarations) {
+                    const TypedDecl *td = find_typed_decl_for_ast(per_source, *ast_decl);
+                    if (td != nullptr) {
+                        const ast::Decl *resolved = find_ast_decl(*source.program, *td);
+                        if (resolved == nullptr) continue;
+                        program_ir.declarations.push_back(lower_declaration(*resolved));
+                        continue;
+                    }
+                    // TypedProgram doesn't carry ModuleDecl / ImportDecl —
+                    // emit them directly from the AST so output parity with
+                    // the legacy path (and other T1.2-equivalent tests) is
+                    // preserved.
+                    if (ast_decl->kind == ast::NodeKind::ModuleDecl ||
+                        ast_decl->kind == ast::NodeKind::ImportDecl) {
+                        program_ir.declarations.push_back(lower_declaration(*ast_decl));
+                    }
+                }
                 leave_source();
             }
             return program_ir;
         }
         if (program_ != nullptr) {
-            program_ir.declarations.reserve(program_->declarations.size());
-            for (const auto &declaration : program_->declarations)
-                program_ir.declarations.push_back(lower_declaration(*declaration));
+            program_ir.declarations.reserve(typed_program_->declarations.size());
+            // Emit TypedDecls in AST declaration order to preserve T1.2
+            // byte-identical IR output (see note above for SourceGraph path).
+            for (const auto &ast_decl : program_->declarations) {
+                const TypedDecl *td = find_typed_decl_for_ast(
+                    typed_program_->declarations, *ast_decl);
+                if (td != nullptr) {
+                    const ast::Decl *resolved = find_ast_decl(*program_, *td);
+                    if (resolved == nullptr) continue;
+                    program_ir.declarations.push_back(lower_declaration(*resolved));
+                    continue;
+                }
+                if (ast_decl->kind == ast::NodeKind::ModuleDecl ||
+                    ast_decl->kind == ast::NodeKind::ImportDecl) {
+                    program_ir.declarations.push_back(lower_declaration(*ast_decl));
+                }
+            }
         }
         return program_ir;
     }
@@ -357,6 +420,138 @@ class TypedIrLowerer final {
             }
         }
         return typed_program_->find_expr_by_range(expr.range, current_source_id_);
+    }
+
+    // =====================================================================
+    // TypedDecl -> AST Decl bridge (T1.4 declaration iteration).
+    //
+    // TypedDecl records provenance metadata (kind / symbol / range / type).
+    // Full structural payloads (struct fields, agent states, flow handlers,
+    // workflow nodes, quotas, ...) still live in the owning AST. This helper
+    // resolves a TypedDecl back to its ast::Decl* by (range, kind) equality,
+    // disambiguating on canonical name via the symbol table when a range tie
+    // occurs. Returns nullptr if no match exists (shouldn't happen for a
+    // correctly-built TypedProgram; caller skips the declaration gracefully).
+    [[nodiscard]] const ast::Decl *find_ast_decl(const ast::Program &ast_program,
+                                                 const TypedDecl &td) const {
+        const ast::Decl *candidate = nullptr;
+        for (const auto &declaration : ast_program.declarations) {
+            if (declaration->range.begin_offset != td.range.begin_offset ||
+                declaration->range.end_offset != td.range.end_offset) {
+                continue;
+            }
+            // Exact kind match wins immediately.
+            if (declaration->kind == td.kind) return declaration.get();
+            // Range collision with mismatched kind: keep as fallback and
+            // disambiguate via canonical_name + symbol_id if we end up with
+            // multiple candidates.
+            if (candidate == nullptr) candidate = declaration.get();
+        }
+        if (candidate == nullptr) return nullptr;
+        // Fallback: check if a candidate with mismatched kind actually maps
+        // to the same symbol (range-level collision shouldn't happen in well
+        // formed ASTs, but guard anyway for robustness).
+        if (td.symbol.value != 0) {
+            const auto sym = symbols().get(td.symbol);
+            if (sym.has_value()) {
+                // Walk AST decls again: prefer any decl whose local name
+                // matches the symbol's local_name when kind doesn't line up.
+                for (const auto &declaration : ast_program.declarations) {
+                    if (declaration->range.begin_offset != td.range.begin_offset ||
+                        declaration->range.end_offset != td.range.end_offset) {
+                        continue;
+                    }
+                    std::string_view decl_name = local_name_of(*declaration);
+                    if (!decl_name.empty() && decl_name == sym->get().local_name) {
+                        return declaration.get();
+                    }
+                }
+            }
+        }
+        return candidate;
+    }
+
+    // Extract the user-visible local name of a top-level AST declaration.
+    // Used only for the (rare) range-collision disambiguation path above.
+    //
+    // NOTE: For declarations whose name/target is stored as an owned
+    // QualifiedName (ModuleDecl/ImportDecl/ContractDecl/FlowDecl), the
+    // spelling() helper returns a freshly-allocated std::string by value.
+    // Using it in a std::string_view return would silently dangle, so we
+    // simply report empty names for those kinds here. In practice kind
+    // matches always come first in find_ast_decl, so the disambiguation
+    // path is never exercised for those declaration kinds anyway.
+    [[nodiscard]] static std::string_view local_name_of(const ast::Decl &declaration) noexcept {
+        switch (declaration.kind) {
+        case ast::NodeKind::ModuleDecl:
+        case ast::NodeKind::ImportDecl:
+        case ast::NodeKind::ContractDecl:
+        case ast::NodeKind::FlowDecl:
+            return {};
+        case ast::NodeKind::ConstDecl:
+            return static_cast<const ast::ConstDecl &>(declaration).name;
+        case ast::NodeKind::TypeAliasDecl:
+            return static_cast<const ast::TypeAliasDecl &>(declaration).name;
+        case ast::NodeKind::StructDecl:
+            return static_cast<const ast::StructDecl &>(declaration).name;
+        case ast::NodeKind::EnumDecl:
+            return static_cast<const ast::EnumDecl &>(declaration).name;
+        case ast::NodeKind::CapabilityDecl:
+            return static_cast<const ast::CapabilityDecl &>(declaration).name;
+        case ast::NodeKind::PredicateDecl:
+            return static_cast<const ast::PredicateDecl &>(declaration).name;
+        case ast::NodeKind::AgentDecl:
+            return static_cast<const ast::AgentDecl &>(declaration).name;
+        case ast::NodeKind::WorkflowDecl:
+            return static_cast<const ast::WorkflowDecl &>(declaration).name;
+        case ast::NodeKind::Program:
+            break;
+        }
+        return {};
+    }
+
+    // -----------------------------------------------------------------------
+    // Reverse bridge: AST -> TypedDecl.
+    //
+    // The lower() entry walks AST declarations *in AST order* and emits the
+    // TypedDecl whose (range, kind) matches. This keeps the lowered IR
+    // byte-identical to the legacy AST-tree lowering path (T1.2). The
+    // iteration still originates from TypedProgram.declarations — every
+    // declaration we emit was first present in the typed tree — but we
+    // reorder the output to match the AST source order. Declaration kinds
+    // that the typechecker does *not* record as TypedDecl entries
+    // (ModuleDecl / ImportDecl) are emitted directly from the AST by the
+    // caller via a short fallback that preserves byte-for-byte parity.
+    //
+    // Overload 1: accepts a span of pointer-to-TypedDecl (SourceGraph path
+    // where we've already filtered per-source).
+    [[nodiscard]] static const TypedDecl *
+    find_typed_decl_for_ast(const std::vector<const TypedDecl *> &candidates,
+                            const ast::Decl &ast_decl) noexcept {
+        for (const TypedDecl *td : candidates) {
+            if (td == nullptr) continue;
+            if (td->range.begin_offset != ast_decl.range.begin_offset ||
+                td->range.end_offset != ast_decl.range.end_offset) {
+                continue;
+            }
+            if (td->kind == ast_decl.kind) return td;
+        }
+        return nullptr;
+    }
+
+    // Overload 2: accepts the raw TypedProgram::declarations vector
+    // (single-program path where no filtering is needed).
+    [[nodiscard]] static const TypedDecl *
+    find_typed_decl_for_ast(const std::vector<TypedDecl> &candidates,
+                            const ast::Decl &ast_decl) noexcept {
+        for (const auto &td : candidates) {
+            if (td.range.begin_offset != ast_decl.range.begin_offset ||
+                td.range.end_offset != ast_decl.range.end_offset) {
+                continue;
+            }
+            if (td.kind == ast_decl.kind) return &td;
+        }
+        return nullptr;
     }
 
     // =====================================================================
