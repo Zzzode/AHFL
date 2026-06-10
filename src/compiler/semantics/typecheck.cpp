@@ -1865,6 +1865,16 @@ void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
             continue;
         }
 
+        // Record the ContractDecl in the typed HIR program declarations
+        // so passers downstream (lowering, rewrite, analysis) can iterate
+        // the full top-level surface model without re-entering the AST.
+        result_.typed_program.declarations.push_back(TypedDecl{
+            .kind = ast::NodeKind::ContractDecl,
+            .range = declaration->range,
+            .source_id = current_source_id_,
+            .associated_agent_symbol = target->get().target,
+        });
+
         for (const auto &clause : decl.clauses) {
             if (!clause->expr && clause->temporal_expr) {
                 ValueContext context;
@@ -1953,6 +1963,16 @@ void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
         if (!agent_info.has_value()) {
             continue;
         }
+
+        // Record the FlowDecl in the typed HIR program declarations so
+        // downstream passes can enumerate all agent-associated top-level
+        // constructs without walking the AST.
+        result_.typed_program.declarations.push_back(TypedDecl{
+            .kind = ast::NodeKind::FlowDecl,
+            .range = declaration->range,
+            .source_id = current_source_id_,
+            .associated_agent_symbol = target->get().target,
+        });
 
         for (const auto &handler : decl.state_handlers) {
             ValueContext context;
