@@ -10,7 +10,10 @@
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
+#include "ahfl/compiler/semantics/flow_facts.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_context.hpp"
+#include "ahfl/compiler/semantics/type_expectation.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
@@ -58,24 +61,13 @@ struct ConstEvalResult {
 
 struct ValueContext {
     BindingMap bindings;
+    FlowFacts flow_facts;
     CallContext call_context{CallContext::PureOnly};
     std::optional<SymbolId> current_agent;
 };
 
 [[nodiscard]] inline bool same_range(SourceRange lhs, SourceRange rhs) noexcept {
     return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
-}
-
-[[nodiscard]] inline TypePtr make_any_type() {
-    return Type::make(TypeKind::Any);
-}
-
-[[nodiscard]] inline TypePtr clone_or_any(MaybeCRef<Type> type) {
-    if (!type.has_value()) {
-        return make_any_type();
-    }
-
-    return type->get().clone();
 }
 
 [[nodiscard]] inline bool is_error_type(const Type &type) noexcept {
@@ -89,17 +81,6 @@ struct ValueContext {
 [[nodiscard]] inline bool is_numeric_type(const Type &type) noexcept {
     return type.holds<types::IntT>() || type.holds<types::FloatT>() ||
            type.holds<types::DecimalT>();
-}
-
-[[nodiscard]] inline BindingMap clone_bindings(const BindingMap &bindings) {
-    BindingMap result;
-    result.reserve(bindings.size());
-
-    for (const auto &[name, type] : bindings) {
-        result.emplace(name, type ? type->clone() : make_any_type());
-    }
-
-    return result;
 }
 
 [[nodiscard]] inline MaybeCRef<Type> find_binding(const BindingMap &bindings,
@@ -138,9 +119,35 @@ using ast::visit_expr_syntax;
 class TypeCheckPass final {
   public:
     TypeCheckPass(const ast::Program &program, const ResolveResult &resolve_result)
-        : program_(&program), resolve_result_(resolve_result) {}
+        : program_(&program), resolve_result_(resolve_result), types_(&TypeContext::global()) {}
+    TypeCheckPass(const ast::Program &program,
+                  const ResolveResult &resolve_result,
+                  TypeCheckOptions options)
+        : program_(&program), resolve_result_(resolve_result), types_(&TypeContext::global()),
+          options_(options) {}
+    TypeCheckPass(const ast::Program &program,
+                  const ResolveResult &resolve_result,
+                  TypeContext &types)
+        : program_(&program), resolve_result_(resolve_result), types_(&types) {}
+    TypeCheckPass(const ast::Program &program,
+                  const ResolveResult &resolve_result,
+                  TypeContext &types,
+                  TypeCheckOptions options)
+        : program_(&program), resolve_result_(resolve_result), types_(&types), options_(options) {}
     TypeCheckPass(const SourceGraph &graph, const ResolveResult &resolve_result)
-        : graph_(&graph), resolve_result_(resolve_result) {}
+        : graph_(&graph), resolve_result_(resolve_result), types_(&TypeContext::global()) {}
+    TypeCheckPass(const SourceGraph &graph,
+                  const ResolveResult &resolve_result,
+                  TypeCheckOptions options)
+        : graph_(&graph), resolve_result_(resolve_result), types_(&TypeContext::global()),
+          options_(options) {}
+    TypeCheckPass(const SourceGraph &graph, const ResolveResult &resolve_result, TypeContext &types)
+        : graph_(&graph), resolve_result_(resolve_result), types_(&types) {}
+    TypeCheckPass(const SourceGraph &graph,
+                  const ResolveResult &resolve_result,
+                  TypeContext &types,
+                  TypeCheckOptions options)
+        : graph_(&graph), resolve_result_(resolve_result), types_(&types), options_(options) {}
 
     [[nodiscard]] TypeCheckResult run();
 
@@ -157,6 +164,9 @@ class TypeCheckPass final {
     const ast::Program *program_{nullptr};
     const SourceGraph *graph_{nullptr};
     const ResolveResult &resolve_result_;
+    TypeContext *types_{nullptr};
+    TypeCheckOptions options_;
+    TypeRelationContext relations_;
     TypeCheckResult result_;
     const SourceUnit *current_source_{nullptr};
     std::optional<SourceId> current_source_id_;
@@ -226,6 +236,7 @@ class TypeCheckPass final {
     [[nodiscard]] MaybeCRef<ResolvedReference> find_reference_here(ReferenceKind kind,
                                                                    SourceRange range) const;
     void error_here(std::string message, SourceRange range);
+    void note_here(std::string message, SourceRange range);
     void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                               std::string message,
                               SourceRange range);
@@ -252,6 +263,11 @@ class TypeCheckPass final {
                                         SourceRange range,
                                         std::string_view context_label,
                                         std::optional<SourceRange> expected_origin);
+    [[nodiscard]] bool check_assignable(const Type &source,
+                                        const Type &target,
+                                        SourceRange range,
+                                        std::string_view context_label,
+                                        const TypeExpectation &expectation);
     [[nodiscard]] bool check_exact_schema_boundary(const Type &source,
                                                    const Type &target,
                                                    SchemaBoundaryKind boundary,
@@ -261,6 +277,11 @@ class TypeCheckPass final {
                                                    SchemaBoundaryKind boundary,
                                                    SourceRange range,
                                                    std::optional<SourceRange> expected_origin);
+    [[nodiscard]] bool check_exact_schema_boundary(const Type &source,
+                                                   const Type &target,
+                                                   SchemaBoundaryKind boundary,
+                                                   SourceRange range,
+                                                   const TypeExpectation &expectation);
     [[nodiscard]] ConstEvalResult check_const_expr(const ast::ExprSyntax &expr,
                                                    const ValueContext &context,
                                                    MaybeCRef<Type> expected_type,
@@ -269,9 +290,13 @@ class TypeCheckPass final {
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
                                         const ValueContext &context,
                                         MaybeCRef<Type> expected_type = std::nullopt);
+    [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
+                                        const ValueContext &context,
+                                        const TypeExpectation &expectation);
     [[nodiscard]] TypedValue check_expr_impl(const ast::ExprSyntax &expr,
                                              const ValueContext &context,
-                                             MaybeCRef<Type> expected_type = std::nullopt);
+                                             MaybeCRef<Type> expected_type = std::nullopt,
+                                             const TypeExpectation *expectation = nullptr);
     [[nodiscard]] TypedValue check_path(const ast::PathSyntax &path, const ValueContext &context);
     [[nodiscard]] TypedValue check_qualified_value(const ast::ExprSyntax &expr);
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr, const ValueContext &context);
@@ -279,13 +304,16 @@ class TypeCheckPass final {
                                                   const ValueContext &context);
     [[nodiscard]] TypedValue check_list_literal(const ast::ExprSyntax &expr,
                                                 const ValueContext &context,
-                                                MaybeCRef<Type> expected_type);
+                                                MaybeCRef<Type> expected_type,
+                                                const TypeExpectation *expectation = nullptr);
     [[nodiscard]] TypedValue check_set_literal(const ast::ExprSyntax &expr,
                                                const ValueContext &context,
-                                               MaybeCRef<Type> expected_type);
+                                               MaybeCRef<Type> expected_type,
+                                               const TypeExpectation *expectation = nullptr);
     [[nodiscard]] TypedValue check_map_literal(const ast::ExprSyntax &expr,
                                                const ValueContext &context,
-                                               MaybeCRef<Type> expected_type);
+                                               MaybeCRef<Type> expected_type,
+                                               const TypeExpectation *expectation = nullptr);
     [[nodiscard]] TypedValue check_unary_expr(const ast::ExprSyntax &expr,
                                               const ValueContext &context);
     [[nodiscard]] TypedValue check_binary_expr(const ast::ExprSyntax &expr,
@@ -297,10 +325,53 @@ class TypeCheckPass final {
 
     [[nodiscard]] TypePtr
     field_access(const Type &base_type, std::string_view field_name, SourceRange range);
+    [[nodiscard]] TypePtr make_any_type() const { return types_->make(TypeKind::Any); }
+    [[nodiscard]] TypePtr make_type(TypeKind kind) const { return types_->make(kind); }
+    [[nodiscard]] TypePtr string_type() const { return types_->string(); }
+    [[nodiscard]] TypePtr bounded_string_type(std::int64_t minimum, std::int64_t maximum) const {
+        return types_->bounded_string(minimum, maximum);
+    }
+    [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const { return types_->decimal(scale); }
+    [[nodiscard]] TypePtr struct_type(std::string canonical_name) const {
+        return types_->struct_type(std::move(canonical_name));
+    }
+    [[nodiscard]] TypePtr struct_type(std::string canonical_name, SymbolId symbol) const {
+        return types_->struct_type(std::move(canonical_name), symbol);
+    }
+    [[nodiscard]] TypePtr enum_type(std::string canonical_name) const {
+        return types_->enum_type(std::move(canonical_name));
+    }
+    [[nodiscard]] TypePtr enum_type(std::string canonical_name, SymbolId symbol) const {
+        return types_->enum_type(std::move(canonical_name), symbol);
+    }
+    [[nodiscard]] TypePtr optional_type(TypePtr value_type) const {
+        return types_->optional(value_type);
+    }
+    [[nodiscard]] TypePtr list_type(TypePtr element_type) const { return types_->list(element_type); }
+    [[nodiscard]] TypePtr set_type(TypePtr element_type) const { return types_->set(element_type); }
+    [[nodiscard]] TypePtr map_type(TypePtr key_type, TypePtr value_type) const {
+        return types_->map(key_type, value_type);
+    }
     [[nodiscard]] TypedValue typed(TypePtr type, bool is_pure = true) const;
     [[nodiscard]] TypedValue typed_effect(TypePtr type, ExprEffect effect) const;
     [[nodiscard]] TypedValue error_typed(bool is_pure = true) const;
     [[nodiscard]] TypedValue error_typed_effect(ExprEffect effect) const;
+
+    // Helpers moved from the global internal namespace (Del-L2 cleanup).
+    [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const {
+        if (!type.has_value()) {
+            return make_any_type();
+        }
+        return type->get().clone();
+    }
+    [[nodiscard]] BindingMap clone_bindings(const BindingMap &bindings) const {
+        BindingMap result;
+        result.reserve(bindings.size());
+        for (const auto &[name, type] : bindings) {
+            result.emplace(name, type ? type->clone() : make_any_type());
+        }
+        return result;
+    }
 };
 
 template <typename Fn> decltype(auto) TypeCheckPass::with_symbol_context(SymbolId id, Fn &&fn) {

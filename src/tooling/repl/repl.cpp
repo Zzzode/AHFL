@@ -72,11 +72,11 @@ std::string default_type_handler(const std::string &input) {
         return "Error: " + pipeline.error;
     }
 
-    // Extract type from expression_types
-    const auto &expr_types = pipeline.typecheck_result.expression_types();
-    if (!expr_types.empty()) {
+    // Extract type from typed_program expressions
+    const auto &expressions = pipeline.typecheck_result.typed_program.expressions;
+    if (!expressions.empty()) {
         // Return the last expression type found
-        const auto &last = expr_types.back();
+        const auto &last = expressions.back();
         if (last.type) {
             std::ostringstream oss;
             oss << last.type->describe();

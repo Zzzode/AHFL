@@ -212,22 +212,21 @@ class ValidationPass final {
     void check_typed_temporal_expr(const ast::ExprSyntax &expr) {
         // Prefer NodeId-based lookup so overlapping ranges in temporal formulas
         // do not alias each other.
-        auto expression_info =
-            type_check_result_.find_expression_type_by_node(expr.node_id, current_source_id_);
-        if (!expression_info.has_value()) {
-            expression_info =
-                type_check_result_.find_expression_type(expr.range, current_source_id_);
+        const TypedExpr *expr_info =
+            type_check_result_.typed_program.find_expr(expr.node_id, current_source_id_);
+        if (expr_info == nullptr) {
+            expr_info = type_check_result_.typed_program.find_expr_by_range(expr.range,
+                                                                             current_source_id_);
         }
-        if (!expression_info.has_value() || !expression_info->get().type) {
+        if (expr_info == nullptr || expr_info->type == nullptr) {
             return;
         }
 
-        if (!is_bool_type(*expression_info->get().type) &&
-            !is_error_type(*expression_info->get().type)) {
+        if (!is_bool_type(*expr_info->type) && !is_error_type(*expr_info->type)) {
             error_here("temporal embedded expression must have type Bool", expr.range);
         }
 
-        if (!expression_info->get().is_pure) {
+        if (!expr_info->is_pure) {
             error_here("temporal embedded expression must be pure", expr.range);
         }
     }
