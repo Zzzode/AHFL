@@ -2113,14 +2113,55 @@ void TypeCheckPass::check_workflows() {
     check_workflows_in_program(require(program_, "typecheck program must exist"));
 }
 
+std::uint32_t
+TypeCheckPass::resolve_payload_expr_index(const ast::ExprSyntax &expr) const noexcept {
+    auto &tp = result_.typed_program;
+    if (const auto *typed = tp.find_expr(expr.node_id, current_source_id_); typed != nullptr) {
+        const auto *base = tp.expressions.data();
+        return static_cast<std::uint32_t>(typed - base);
+    }
+    if (expr.node_id == 0) {
+        if (const auto *typed = tp.find_expr_by_range(expr.range, current_source_id_);
+            typed != nullptr) {
+            const auto *base = tp.expressions.data();
+            return static_cast<std::uint32_t>(typed - base);
+        }
+    }
+    return UINT32_MAX;
+}
+
+std::uint32_t
+TypeCheckPass::find_block_index_by_range(const ast::BlockSyntax &block) const noexcept {
+    const auto &blocks = result_.typed_program.blocks;
+    for (auto i = blocks.size(); i > 0; --i) {
+        const auto idx = i - 1;
+        if (same_range(blocks[idx].range, block.range) &&
+            blocks[idx].source_id == current_source_id_) {
+            return static_cast<std::uint32_t>(idx);
+        }
+    }
+    return UINT32_MAX;
+}
+
 void TypeCheckPass::check_block(const ast::BlockSyntax &block,
                                 ValueContext &context,
                                 MaybeCRef<Type> expected_return_type,
                                 std::string_view state_name,
                                 std::optional<SourceRange> expected_return_origin) {
+    result_.typed_program.blocks.push_back(TypedBlock{
+        .range = block.range,
+        .source_id = current_source_id_,
+        .statement_indexes = {},
+    });
+    const auto my_block_idx = result_.typed_program.blocks.size() - 1;
+
     for (const auto &statement : block.statements) {
         check_statement(*statement, context, expected_return_type, state_name,
                         expected_return_origin);
+        if (last_written_statement_index_.has_value()) {
+            result_.typed_program.blocks[my_block_idx].statement_indexes.push_back(
+                static_cast<std::uint32_t>(*last_written_statement_index_));
+        }
     }
 }
 
@@ -2129,6 +2170,11 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                     MaybeCRef<Type> expected_return_type,
                                     std::string_view state_name,
                                     std::optional<SourceRange> expected_return_origin) {
+    // Reset the bookkeeping index at entry so a nested / earlier
+    // check_block returning with a leftover index can't pollute the
+    // parent's block iteration if, for any reason, the current
+    // statement does not push a new TypedStatement.
+    last_written_statement_index_.reset();
     (void)state_name;
 
     switch (statement.kind) {
@@ -2194,6 +2240,15 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             context.bindings[statement.let_stmt->name] =
                 initializer.type ? initializer.type->clone() : make_any_type();
         }
+
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::Let,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = {resolve_payload_expr_index(*statement.let_stmt->initializer)},
+            .target_name = statement.let_stmt->name,
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Assign: {
@@ -2201,24 +2256,38 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             typecheck_error_here(error_codes::typecheck::InvalidOperation,
                                  "assignment target must be rooted at writable 'ctx'",
                                  statement.assign_stmt->target->range);
-            break;
+        } else {
+            context.flow_facts.invalidate(
+                Place{.root = statement.assign_stmt->target->root_name,
+                      .members = statement.assign_stmt->target->members});
+            const auto target = check_path(*statement.assign_stmt->target, context);
+            const auto expectation = TypeExpectation{
+                .expected = target.type ? target.type->clone() : make_any_type(),
+                .origin_kind = TypeExpectationOriginKind::AssignmentTarget,
+                .origin_range = statement.assign_stmt->target->range,
+                .description =
+                    "assignment target '" + path_spelling(*statement.assign_stmt->target) + "'",
+            };
+            const auto value = check_expr(*statement.assign_stmt->value, context, expectation);
+            (void)check_assignable(*value.type,
+                                   *target.type,
+                                   statement.assign_stmt->value->range,
+                                   "assignment",
+                                   expectation);
         }
 
-        context.flow_facts.invalidate(Place{.root = statement.assign_stmt->target->root_name,
-                                            .members = statement.assign_stmt->target->members});
-        const auto target = check_path(*statement.assign_stmt->target, context);
-        const auto expectation = TypeExpectation{
-            .expected = target.type ? target.type->clone() : make_any_type(),
-            .origin_kind = TypeExpectationOriginKind::AssignmentTarget,
-            .origin_range = statement.assign_stmt->target->range,
-            .description = "assignment target '" + path_spelling(*statement.assign_stmt->target) + "'",
-        };
-        const auto value = check_expr(*statement.assign_stmt->value, context, expectation);
-        (void)check_assignable(*value.type,
-                               *target.type,
-                               statement.assign_stmt->value->range,
-                               "assignment",
-                               expectation);
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::Assign,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index =
+                statement.assign_stmt->value
+                    ? std::vector<std::uint32_t>{resolve_payload_expr_index(
+                          *statement.assign_stmt->value)}
+                    : std::vector<std::uint32_t>{UINT32_MAX},
+            .target_name = path_spelling(*statement.assign_stmt->target),
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::If: {
@@ -2294,37 +2363,74 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             check_block(*statement.if_stmt->else_block, else_context, expected_return_type,
                         state_name, expected_return_origin);
         }
+
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::If,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = {resolve_payload_expr_index(*statement.if_stmt->condition)},
+            .then_block_index = find_block_index_by_range(*statement.if_stmt->then_block),
+            .else_block_index = statement.if_stmt->else_block
+                                    ? find_block_index_by_range(*statement.if_stmt->else_block)
+                                    : UINT32_MAX,
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
-    case ast::StatementSyntaxKind::Goto:
+    case ast::StatementSyntaxKind::Goto: {
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::Goto,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .goto_target_state = statement.goto_stmt ? statement.goto_stmt->target_state
+                                                     : std::string{},
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
+    }
     case ast::StatementSyntaxKind::Return: {
-        if (!expected_return_type.has_value()) {
-            break;
+        std::uint32_t value_index = UINT32_MAX;
+        if (statement.return_stmt && statement.return_stmt->value) {
+            if (expected_return_type.has_value()) {
+                if (expected_return_origin.has_value()) {
+                    const auto expectation = TypeExpectation{
+                        .expected = expected_return_type->get().clone(),
+                        .origin_kind = TypeExpectationOriginKind::ReturnType,
+                        .origin_range = *expected_return_origin,
+                        .description = "flow return",
+                    };
+                    const auto value =
+                        check_expr(*statement.return_stmt->value, context, expectation);
+                    (void)check_exact_schema_boundary(*value.type,
+                                                      expected_return_type->get(),
+                                                      SchemaBoundaryKind::AgentOutput,
+                                                      statement.return_stmt->value->range,
+                                                      expectation);
+                } else {
+                    const auto value =
+                        check_expr(*statement.return_stmt->value, context, expected_return_type);
+                    (void)check_exact_schema_boundary(*value.type,
+                                                      expected_return_type->get(),
+                                                      SchemaBoundaryKind::AgentOutput,
+                                                      statement.return_stmt->value->range,
+                                                      expected_return_origin);
+                }
+            } else {
+                // Still walk the return value so nested expressions are recorded
+                // into the flat TypedProgram::expressions store even when
+                // no return type context is available.
+                (void)check_expr(*statement.return_stmt->value, context);
+            }
+            value_index = resolve_payload_expr_index(*statement.return_stmt->value);
         }
 
-        if (expected_return_origin.has_value()) {
-            const auto expectation = TypeExpectation{
-                .expected = expected_return_type->get().clone(),
-                .origin_kind = TypeExpectationOriginKind::ReturnType,
-                .origin_range = *expected_return_origin,
-                .description = "flow return",
-            };
-            const auto value = check_expr(*statement.return_stmt->value, context, expectation);
-            (void)check_exact_schema_boundary(*value.type,
-                                              expected_return_type->get(),
-                                              SchemaBoundaryKind::AgentOutput,
-                                              statement.return_stmt->value->range,
-                                              expectation);
-        } else {
-            const auto value =
-                check_expr(*statement.return_stmt->value, context, expected_return_type);
-            (void)check_exact_schema_boundary(*value.type,
-                                              expected_return_type->get(),
-                                              SchemaBoundaryKind::AgentOutput,
-                                              statement.return_stmt->value->range,
-                                              expected_return_origin);
-        }
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::Return,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = {value_index},
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Assert: {
@@ -2341,11 +2447,28 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         if (!condition.is_pure) {
             error_here("assert condition must be pure", statement.assert_stmt->condition->range);
         }
+
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::Assert,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = {resolve_payload_expr_index(*statement.assert_stmt->condition)},
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
-    case ast::StatementSyntaxKind::Expr:
+    case ast::StatementSyntaxKind::Expr: {
         (void)check_expr(*statement.expr_stmt->expr, context);
+
+        result_.typed_program.statements.push_back(TypedStatement{
+            .kind = TypedStmtKind::ExprStatement,
+            .range = statement.range,
+            .source_id = current_source_id_,
+            .children_expr_index = {resolve_payload_expr_index(*statement.expr_stmt->expr)},
+        });
+        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
+    }
     }
 }
 
