@@ -59,7 +59,6 @@ target_link_libraries(ahfl_runtime_bundle
         ahfl_runtime_evaluator
         ahfl_runtime_engine
         ahfl_pipeline_observation
-        ahfl_pipeline_persistence
         ahfl_pipeline_durable_store_import
         ahfl_verification_formal
         ahfl_runtime_provider_llm
