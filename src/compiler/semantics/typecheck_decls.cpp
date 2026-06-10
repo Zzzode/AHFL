@@ -33,6 +33,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -46,6 +47,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -59,6 +61,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -72,6 +75,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -85,6 +89,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -98,6 +103,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -111,6 +117,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
@@ -124,6 +131,7 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
+                    .source_id = current_source_id_,
                 });
             }
             break;
