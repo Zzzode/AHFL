@@ -91,6 +91,15 @@ struct TypedDecl {
     ast::NodeKind kind{ast::NodeKind::Program};
     SymbolId symbol;
     SourceRange range;
+    // Source owning this declaration. Set for SourceGraph-based typechecks;
+    // left empty for single-program typechecks. The lowering pass uses this
+    // to partition the flat TypedProgram::declarations list back into
+    // per-source iteration (T1.4).
+    std::optional<SourceId> source_id;
+    // For ContractDecl/FlowDecl: SymbolId of the owning agent. For all other
+    // declaration kinds (Struct/Enum/Agent/...) left empty: the `symbol` field
+    // already records the declaration's own id.
+    std::optional<SymbolId> associated_agent_symbol;
     TypePtr type{nullptr};
 };
 
