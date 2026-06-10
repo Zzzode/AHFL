@@ -132,43 +132,11 @@ template <class... Fs> Overloads(Fs...) -> Overloads<Fs...>;
 } // namespace types
 
 struct Type {
-    // Authoritative payload introduced by Task #2. The legacy mirror fields
-    // below are derived from this in the factories (see types.cpp) and exist
-    // purely for backward compatibility with the ~270 call sites that still
-    // read kind / name / first / second / etc. directly.
+    // Authoritative semantic type representation. All payload-specific data
+    // must be accessed through visit(), get_if<T>(), or holds<T>(); this keeps
+    // Type as a single-source-of-truth tagged union rather than a kind plus
+    // nullable mirror fields.
     types::Payload payload{types::AnyT{}};
-
-    // Legacy mirror fields. Treat as read-only views into `payload`.
-    TypeKind kind{TypeKind::Any};
-    std::string name;
-    std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
-    std::optional<std::int64_t> decimal_scale;
-    TypePtr first{nullptr};
-    TypePtr second{nullptr};
-    std::optional<SymbolId> nominal_symbol;
-
-    // Factories below intern through the process-wide TypeContext (see
-    // types.cpp). They return canonical `const Type*` pointers; identical
-    // arguments always yield the same pointer.
-    [[nodiscard]] static TypePtr make(TypeKind kind);
-    [[nodiscard]] static TypePtr string();
-    [[nodiscard]] static TypePtr bounded_string(std::int64_t minimum, std::int64_t maximum);
-    [[nodiscard]] static TypePtr decimal(std::int64_t scale);
-
-    [[nodiscard]] static TypePtr struct_type(std::string canonical_name);
-    [[nodiscard]] static TypePtr struct_type(std::string canonical_name, SymbolId symbol);
-    [[nodiscard]] static TypePtr struct_type(std::string canonical_name,
-                                             std::optional<SymbolId> symbol);
-
-    [[nodiscard]] static TypePtr enum_type(std::string canonical_name);
-    [[nodiscard]] static TypePtr enum_type(std::string canonical_name, SymbolId symbol);
-    [[nodiscard]] static TypePtr enum_type(std::string canonical_name,
-                                           std::optional<SymbolId> symbol);
-
-    [[nodiscard]] static TypePtr optional(TypePtr value_type);
-    [[nodiscard]] static TypePtr list(TypePtr element_type);
-    [[nodiscard]] static TypePtr set(TypePtr element_type);
-    [[nodiscard]] static TypePtr map(TypePtr key_type, TypePtr value_type);
 
     // Variant-aware accessors (Task #4 visitor entry points).
     template <typename Visitor> decltype(auto) visit(Visitor &&visitor) const {
@@ -191,52 +159,46 @@ struct Type {
     }
 
     [[nodiscard]] std::string describe() const {
-        switch (kind) {
-        case TypeKind::Any:
-            return "Any";
-        case TypeKind::Never:
-            return "Never";
-        case TypeKind::Unit:
-            return "Unit";
-        case TypeKind::Bool:
-            return "Bool";
-        case TypeKind::Int:
-            return "Int";
-        case TypeKind::Float:
-            return "Float";
-        case TypeKind::String:
-            return "String";
-        case TypeKind::BoundedString: {
-            std::ostringstream builder;
-            builder << "String(" << string_bounds->first << ", " << string_bounds->second << ")";
-            return builder.str();
-        }
-        case TypeKind::UUID:
-            return "UUID";
-        case TypeKind::Timestamp:
-            return "Timestamp";
-        case TypeKind::Duration:
-            return "Duration";
-        case TypeKind::Decimal: {
-            std::ostringstream builder;
-            builder << "Decimal(" << *decimal_scale << ")";
-            return builder.str();
-        }
-        case TypeKind::Struct:
-            return name;
-        case TypeKind::Enum:
-            return name;
-        case TypeKind::Optional:
-            return "Optional<" + first->describe() + ">";
-        case TypeKind::List:
-            return "List<" + first->describe() + ">";
-        case TypeKind::Set:
-            return "Set<" + first->describe() + ">";
-        case TypeKind::Map:
-            return "Map<" + first->describe() + ", " + second->describe() + ">";
-        }
-
-        return "<invalid-type>";
+        return visit(types::Overloads{
+            [](const types::AnyT &) { return std::string{"Any"}; },
+            [](const types::NeverT &) { return std::string{"Never"}; },
+            [](const types::UnitT &) { return std::string{"Unit"}; },
+            [](const types::BoolT &) { return std::string{"Bool"}; },
+            [](const types::IntT &) { return std::string{"Int"}; },
+            [](const types::FloatT &) { return std::string{"Float"}; },
+            [](const types::StringT &) { return std::string{"String"}; },
+            [](const types::UUIDT &) { return std::string{"UUID"}; },
+            [](const types::TimestampT &) { return std::string{"Timestamp"}; },
+            [](const types::DurationT &) { return std::string{"Duration"}; },
+            [](const types::BoundedStringT &value) {
+                std::ostringstream builder;
+                builder << "String(" << value.minimum << ", " << value.maximum << ")";
+                return builder.str();
+            },
+            [](const types::DecimalT &value) {
+                std::ostringstream builder;
+                builder << "Decimal(" << value.scale << ")";
+                return builder.str();
+            },
+            [](const types::StructT &value) { return value.canonical_name; },
+            [](const types::EnumT &value) { return value.canonical_name; },
+            [](const types::OptionalT &value) {
+                return "Optional<" + (value.inner ? value.inner->describe() : std::string{"Any"}) +
+                       ">";
+            },
+            [](const types::ListT &value) {
+                return "List<" + (value.element ? value.element->describe() : std::string{"Any"}) +
+                       ">";
+            },
+            [](const types::SetT &value) {
+                return "Set<" + (value.element ? value.element->describe() : std::string{"Any"}) +
+                       ">";
+            },
+            [](const types::MapT &value) {
+                return "Map<" + (value.key ? value.key->describe() : std::string{"Any"}) + ", " +
+                       (value.value ? value.value->describe() : std::string{"Any"}) + ">";
+            },
+        });
     }
 };
 
