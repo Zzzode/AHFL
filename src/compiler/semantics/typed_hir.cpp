@@ -80,4 +80,76 @@ TypedProgram::find_expr_containing(std::size_t offset, std::optional<SourceId> s
     return best;
 }
 
+const TypedBlock *TypedProgram::find_block_by_range(SourceRange range,
+                                                    std::optional<SourceId> source_id) const noexcept {
+    for (const auto &block : blocks) {
+        if (block.range.begin_offset == range.begin_offset &&
+            block.range.end_offset == range.end_offset && block.source_id == source_id) {
+            return &block;
+        }
+    }
+    return nullptr;
+}
+
+TypedBlock *TypedProgram::find_block_by_range(SourceRange range,
+                                              std::optional<SourceId> source_id) noexcept {
+    for (auto &block : blocks) {
+        if (block.range.begin_offset == range.begin_offset &&
+            block.range.end_offset == range.end_offset && block.source_id == source_id) {
+            return &block;
+        }
+    }
+    return nullptr;
+}
+
+const TypedStatement *TypedProgram::find_statement_by_range(SourceRange range,
+                                                            TypedStmtKind kind,
+                                                            std::optional<SourceId> source_id) const noexcept {
+    for (const auto &stmt : statements) {
+        if (stmt.range.begin_offset == range.begin_offset &&
+            stmt.range.end_offset == range.end_offset && stmt.kind == kind &&
+            stmt.source_id == source_id) {
+            return &stmt;
+        }
+    }
+    return nullptr;
+}
+
+TypedStatement *TypedProgram::find_statement_by_range(SourceRange range,
+                                                      TypedStmtKind kind,
+                                                      std::optional<SourceId> source_id) noexcept {
+    for (auto &stmt : statements) {
+        if (stmt.range.begin_offset == range.begin_offset &&
+            stmt.range.end_offset == range.end_offset && stmt.kind == kind &&
+            stmt.source_id == source_id) {
+            return &stmt;
+        }
+    }
+    return nullptr;
+}
+
+const TypedTemporalExpr *
+TypedProgram::find_temporal_by_range(SourceRange range,
+                                     std::optional<SourceId> source_id) const noexcept {
+    for (const auto &te : temporal_exprs) {
+        if (te.range.begin_offset == range.begin_offset &&
+            te.range.end_offset == range.end_offset && te.source_id == source_id) {
+            return &te;
+        }
+    }
+    return nullptr;
+}
+
+TypedTemporalExpr *
+TypedProgram::find_temporal_by_range(SourceRange range,
+                                     std::optional<SourceId> source_id) noexcept {
+    for (auto &te : temporal_exprs) {
+        if (te.range.begin_offset == range.begin_offset &&
+            te.range.end_offset == range.end_offset && te.source_id == source_id) {
+            return &te;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace ahfl

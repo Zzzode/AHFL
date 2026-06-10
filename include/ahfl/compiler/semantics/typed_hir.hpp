@@ -202,6 +202,40 @@ struct TypedProgram {
     // given byte offset. Used by LSP hover for "what type is under the cursor".
     [[nodiscard]] const TypedExpr *
     find_expr_containing(std::size_t offset, std::optional<SourceId> source_id) const noexcept;
+
+    // Range-based exact match for blocks and statements.
+    // Used by the typed-tree IR lowering pass to bridge from AST structures
+    // (BlockSyntax / StatementSyntax) back into their flat typed-store
+    // counterparts. Falls back to nullptr when the typed record has not been
+    // recorded (e.g. legacy tests that build a TypedProgram without
+    // statement/block vectors) so the caller can transparently switch between
+    // the AST-fallback and typed-store paths.
+    [[nodiscard]] const TypedBlock *
+    find_block_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
+    [[nodiscard]] TypedBlock *
+    find_block_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
+    [[nodiscard]] const TypedStatement *
+    find_statement_by_range(SourceRange range,
+                            TypedStmtKind kind,
+                            std::optional<SourceId> source_id) const noexcept;
+    [[nodiscard]] TypedStatement *
+    find_statement_by_range(SourceRange range,
+                            TypedStmtKind kind,
+                            std::optional<SourceId> source_id) noexcept;
+
+    // Range-based exact match for temporal expressions.
+    // Used by the typed-tree IR lowering pass to bridge from
+    // ast::TemporalExprSyntax* (handed out by contract/flow/workflow
+    // declaration structural walks) into the flat typed temporal store.
+    // Falls back to nullptr when the typed record has not been recorded
+    // so the caller can transparently fall back to the AST-based
+    // lower_temporal path.
+    [[nodiscard]] const TypedTemporalExpr *
+    find_temporal_by_range(SourceRange range,
+                           std::optional<SourceId> source_id) const noexcept;
+    [[nodiscard]] TypedTemporalExpr *
+    find_temporal_by_range(SourceRange range,
+                           std::optional<SourceId> source_id) noexcept;
 };
 
 // ----------------------------------------------------------------------------
