@@ -236,8 +236,13 @@ class TypeCheckPass final {
     void check_flows();
     void check_workflows_in_program(const ast::Program &program);
     void check_workflows();
-    void check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
-                                       const ValueContext &context);
+    // Walks a temporal expression tree, type-checking every embedded Expr
+    // (EmbeddedExpr leaves) against Bool and building a parallel flat-store
+    // of TypedTemporalExpr records in result_.typed_program.temporal_exprs.
+    // Returns the index of the newly-created TypedTemporalExpr entry (callers
+    // that don't need the index can freely ignore the return value).
+    std::uint32_t check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
+                                                const ValueContext &context);
 
     void check_block(const ast::BlockSyntax &block,
                      ValueContext &context,
