@@ -21,6 +21,7 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -29,6 +30,8 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "ahfl/compiler/semantics/typed_hir.hpp"
 
 namespace ahfl {
 
@@ -171,6 +174,26 @@ class TypeCheckPass final {
     const SourceUnit *current_source_{nullptr};
     std::optional<SourceId> current_source_id_;
     std::string current_module_name_;
+
+    // After the most recent check_statement call completes, holds the index
+    // of the TypedStatement that was just appended to
+    // result_.typed_program.statements. check_block reads this to link
+    // statements into the flat block store.
+    mutable std::optional<std::size_t> last_written_statement_index_;
+
+    // Resolve a payload expression of a statement to its index in
+    // result_.typed_program.expressions. Tries node_id lookup first, then
+    // falls back to exact range-based lookup for synthesized expressions.
+    // Returns UINT32_MAX when not found.
+    [[nodiscard]] std::uint32_t
+    resolve_payload_expr_index(const ast::ExprSyntax &expr) const noexcept;
+
+    // Reverse-lookup the block index for a given AST BlockSyntax by walking
+    // TypedProgram::blocks from the end. Used by If-statement wiring to avoid
+    // double-push (check_block handles the push itself). Returns UINT32_MAX
+    // when not found (shouldn't happen in well-formed inputs).
+    [[nodiscard]] std::uint32_t
+    find_block_index_by_range(const ast::BlockSyntax &block) const noexcept;
 
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TypeAliasDecl>>
         type_alias_decls_;
