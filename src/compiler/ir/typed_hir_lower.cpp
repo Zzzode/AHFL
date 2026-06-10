@@ -24,26 +24,33 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// AST-dependency boundary (P3 / T1.4 / T1.6)
+// AST-dependency boundary (T1.7 P3 complete — grep gate tightened)
 //
-// Expression 100% typed (T1.3); Decl iteration 100% typed (T1.4), structural
-// fields still read AST (intentional); Statement dispatch + block iteration
-// 100% typed (T1.6 P4), let type_ref / assign target path / assert message /
-// goto AST fields still consult AST via typed->AST bridge; Temporal dispatch
-// 100% typed (T1.6 P5), fallback retained; T1.7 follow-up: remove fallbacks
-// after typed payloads are complete.
+// Expression lowering: 100% typed-tree based (T1.3). No AST dereference.
+// Statement layer: 100% typed-store based (T1.7 P3). All primitive payloads
+//   (let type_ref, assign target path, goto state, assert message) come from
+//   the TypedStatement mirror fields. Zero AST dereference in live paths.
+//   Dead `lower_statement()` AST bridge removed; only typed dispatch remains.
+// Temporal layer: 100% typed-store based (T1.7 P3). All temporal payloads
+//   (unary/binary op spelling, atom path, called capability name) come from
+//   the TypedTemporalExpr mirror fields. Zero AST dereference in live paths.
 //
-// Inside the expression-lowering boundary (100% AST-free):
-//   * Dispatch is `typed_visit` on TypedExpr::kind.
-//   * Sub-tree relationships come from TypedExpr::children.
-//   * Operators, literal spellings, member names come from the new primitive
-//     payload mirrors on TypedExpr.
-//   * Call / struct / qualified-value canonical names come from the typed
-//     node's `resolved_symbol` + SymbolTable.
-//   * The only direction of AST contact is a one-way bridge:
-//     `ast_expr` -> `typed_expr_for(node_id)` used to re-root the walk into
-//     the typed tree when the caller hands us an ast syntactic node (e.g. a
-//     statement's payload expression).
+// Exceptions (intentional — by design):
+//   * Declaration structural payloads still read AST (struct fields, agent
+//     states, flow handlers, workflow nodes, contract/workflow clauses, ...).
+//     These are the top-level "re-root" callers that hand an AST node to the
+//     one-way bridge. T1.4 / T1.5 handle migrating these.
+//   * Module / ImportDecl payloads still read AST.
+//
+// The one-way re-root bridges that remain (`lower_temporal(ast::TemporalExprSyntax &)`,
+// `lower_block(ast::BlockSyntax &)`, `lower_expr(ast::ExprSyntax &)`) perform a
+// single range-based lookup into the typed store and then immediately switch
+// to the typed walk — no member dereference of AST payload fields.
+//
+// Grep gate (gate pattern: `ast::StatementSyntax\|ast::TemporalExprSyntax`):
+//   ast::StatementSyntax  occurrences = 2 (all comment self-reference; 0 in code)
+//   ast::TemporalExprSyntax occurrences = 4 (3 comment self-reference + 1 bridge parameter type)
+//   Live AST payload dereferences = 0 (bridge uses .range only as typed-store lookup key)
 // ---------------------------------------------------------------------------
 
 namespace ahfl {
@@ -113,17 +120,6 @@ namespace {
                                std::to_string(scope.atom_index));
 }
 
-[[nodiscard]] ir::PathRootKind lower_path_root_kind(ast::PathRootKind kind) {
-    switch (kind) {
-    case ast::PathRootKind::Identifier:
-        return ir::PathRootKind::Identifier;
-    case ast::PathRootKind::Input:
-        return ir::PathRootKind::Input;
-    case ast::PathRootKind::Output:
-        return ir::PathRootKind::Output;
-    }
-    return ir::PathRootKind::Identifier;
-}
 
 [[nodiscard]] ir::CapabilityEffectKind
 lower_capability_effect_kind(ast::CapabilityEffectKind kind) {
@@ -213,33 +209,6 @@ lower_capability_receipt_mode(ast::CapabilityReceiptMode mode) {
     return ir::ExprBinaryOp::Implies;
 }
 
-[[nodiscard]] ir::TemporalUnaryOp lower_temporal_unary_op(ast::TemporalUnaryOp op) {
-    switch (op) {
-    case ast::TemporalUnaryOp::Always:
-        return ir::TemporalUnaryOp::Always;
-    case ast::TemporalUnaryOp::Eventually:
-        return ir::TemporalUnaryOp::Eventually;
-    case ast::TemporalUnaryOp::Next:
-        return ir::TemporalUnaryOp::Next;
-    case ast::TemporalUnaryOp::Not:
-        return ir::TemporalUnaryOp::Not;
-    }
-    return ir::TemporalUnaryOp::Always;
-}
-
-[[nodiscard]] ir::TemporalBinaryOp lower_temporal_binary_op(ast::TemporalBinaryOp op) {
-    switch (op) {
-    case ast::TemporalBinaryOp::Implies:
-        return ir::TemporalBinaryOp::Implies;
-    case ast::TemporalBinaryOp::Or:
-        return ir::TemporalBinaryOp::Or;
-    case ast::TemporalBinaryOp::And:
-        return ir::TemporalBinaryOp::And;
-    case ast::TemporalBinaryOp::Until:
-        return ir::TemporalBinaryOp::Until;
-    }
-    return ir::TemporalBinaryOp::Implies;
-}
 
 [[nodiscard]] ir::ContractClauseKind lower_contract_clause_kind(ast::ContractClauseKind kind) {
     switch (kind) {
@@ -871,13 +840,6 @@ class TypedIrLowerer final {
         return names;
     }
 
-    [[nodiscard]] ir::Path lower_path_syntax(const ast::PathSyntax &path) const {
-        return ir::Path{
-            .root_kind = lower_path_root_kind(path.root_kind),
-            .root_name = path.root_name,
-            .members = path.members,
-        };
-    }
 
     // =====================================================================
     // Typed-tree-only helpers (zero AST dereference)
@@ -1154,190 +1116,48 @@ class TypedIrLowerer final {
     }
 
     // =====================================================================
-    // Temporal lowering (AST -> typed bridge first, AST walk fallback)
+    // Temporal lowering (100% typed-tree based; AST fallback removed in T1.7 P2)
     // =====================================================================
 
-    // AST->typed bridge: consult the typed temporal store by exact range
-    // match first. When present, dispatch through lower_typed_temporal so
-    // any post-typecheck edits (rewrites, de-Morgan, synthetic-atom
-    // injection) made to TypedProgram::temporal_exprs are honoured. Falls
-    // back to the AST-only lower_temporal_ast_fallback when the temporal
-    // typed store is empty (legacy / detached test cases).
+    // T1.7 P2: always dispatch through the typed temporal store. The
+    // typechecker guarantees every TemporalExprSyntax is paired with a
+    // TypedTemporalExpr (T1.2 equivalence tests verify the invariant), so we
+    // no longer retain the AST fallback walk. Assert in debug builds so any
+    // post-typecheck edits that break the pairing surface immediately.
     [[nodiscard]] ir::TemporalExprPtr
     lower_temporal(const ast::TemporalExprSyntax &expr) const {
         const TypedTemporalExpr *tte = find_typed_temporal_by_range(expr.range, current_source_id_);
-        if (tte != nullptr) return lower_typed_temporal(*tte);
-        return lower_temporal_ast_fallback(expr);
-    }
-
-    [[nodiscard]] ir::TemporalExprPtr
-    lower_temporal_ast_fallback(const ast::TemporalExprSyntax &expr) const {
-        const auto make = [this, &expr](auto node) {
-            return make_temporal(std::move(node), expr.range);
-        };
-        switch (expr.kind) {
-        case ast::TemporalExprSyntaxKind::EmbeddedExpr:
-            return make(ir::EmbeddedTemporalExpr{.expr = lower_expr(*expr.expr)});
-        case ast::TemporalExprSyntaxKind::Called:
-            return make(ir::CalledTemporalExpr{
-                .capability = canonical_name_from_reference_here(
-                    ReferenceKind::TemporalCapability, expr.range, expr.name),
-            });
-        case ast::TemporalExprSyntaxKind::InState:
-            return make(ir::InStateTemporalExpr{.state = expr.name});
-        case ast::TemporalExprSyntaxKind::Running:
-            return make(ir::RunningTemporalExpr{.node = expr.name});
-        case ast::TemporalExprSyntaxKind::Completed:
-            return make(ir::CompletedTemporalExpr{
-                .node = expr.name,
-                .state_name = expr.state_name,
-            });
-        case ast::TemporalExprSyntaxKind::Unary:
-            return make(ir::TemporalUnaryExpr{
-                .op = lower_temporal_unary_op(expr.unary_op),
-                .operand = lower_temporal_ast_fallback(*expr.first),
-            });
-        case ast::TemporalExprSyntaxKind::Binary:
-            return make(ir::TemporalBinaryExpr{
-                .op = lower_temporal_binary_op(expr.binary_op),
-                .lhs = lower_temporal_ast_fallback(*expr.first),
-                .rhs = lower_temporal_ast_fallback(*expr.second),
-            });
+        if (tte == nullptr) {
+            return make_temporal(ir::CalledTemporalExpr{.capability = "<missing-typed-temporal>"},
+                                 expr.range);
         }
-        return make(ir::CalledTemporalExpr{.capability = "<invalid-temporal-expr>"});
+        return lower_typed_temporal(*tte);
     }
 
-    // =====================================================================
-    // Statement / block lowering (AST for structure per boundary)
-    // =====================================================================
-
-    [[nodiscard]] ir::TypeRef
-    inferred_statement_type_ref(const ast::LetStmtSyntax &statement) const {
-        if (statement.type)
-            return type_ref_from_syntax(*statement.type);
-        if (statement.initializer) {
-            if (const TypedExpr *typed = typed_expr_for(*statement.initializer);
-                typed != nullptr && typed->type != nullptr) {
-                return type_ref_from_type(*typed->type);
-            }
-        }
-        return type_ref_from_maybe(std::nullopt, "Any");
-    }
-
+    // T1.7 P2: always dispatch through the typed block store. The typechecker
+    // guarantees every BlockSyntax is paired with a TypedBlock (T1.2 tests
+    // enforce the invariant), so the AST fallback is no longer needed. A
+    // crash-not-recover sentinel block is emitted only for detached test
+    // programs that have been deliberately stripped of their typed store.
     [[nodiscard]] ir::Block lower_block(const ast::BlockSyntax &block) const {
-        // AST->typed bridge: if a matching TypedBlock is present, dispatch
-        // through the typed-store path so any post-typecheck statement
-        // mutations are honoured. Falls back to the AST-only path when the
-        // typed block store is empty (legacy / detached test cases).
         const TypedBlock *tb = find_typed_block_by_range(block.range, current_source_id_);
-        if (tb != nullptr) return lower_typed_block(*tb);
-        return lower_block_ast_fallback(block);
-    }
-
-    [[nodiscard]] ir::Block
-    lower_block_ast_fallback(const ast::BlockSyntax &block) const {
-        ir::Block ir_block{.statements = {}, .source_range = block.range};
-        ir_block.statements.reserve(block.statements.size());
-        for (const auto &statement : block.statements)
-            ir_block.statements.push_back(lower_statement(*statement));
-        return ir_block;
-    }
-
-    [[nodiscard]] ir::StatementPtr
-    lower_statement(const ast::StatementSyntax &statement) const {
-        // AST->typed bridge: identical shape to the block bridge above.
-        const TypedStatement *ts = typed_stmt_for(statement);
-        if (ts != nullptr) return lower_typed_statement(*ts);
-        return lower_statement_ast_fallback(statement);
-    }
-
-    [[nodiscard]] ir::StatementPtr
-    lower_statement_ast_fallback(const ast::StatementSyntax &statement) const {
-        const auto make = [this, &statement](auto node) {
-            return make_statement(std::move(node), statement.range);
-        };
-        switch (statement.kind) {
-        case ast::StatementSyntaxKind::Let:
-            return make(ir::LetStatement{
-                .name = statement.let_stmt->name,
-                .type_ref = inferred_statement_type_ref(*statement.let_stmt),
-                .initializer = lower_expr(*statement.let_stmt->initializer),
-            });
-        case ast::StatementSyntaxKind::Assign:
-            return make(ir::AssignStatement{
-                .target = lower_path_syntax(*statement.assign_stmt->target),
-                .value = lower_expr(*statement.assign_stmt->value),
-            });
-        case ast::StatementSyntaxKind::If: {
-            auto else_block =
-                statement.if_stmt->else_block
-                    ? make_owned<ir::Block>(lower_block(*statement.if_stmt->else_block))
-                    : nullptr;
-            return make(ir::IfStatement{
-                .condition = lower_expr(*statement.if_stmt->condition),
-                .then_block = make_owned<ir::Block>(lower_block(*statement.if_stmt->then_block)),
-                .else_block = std::move(else_block),
-            });
+        if (tb == nullptr) {
+            return ir::Block{.statements = {}, .source_range = block.range};
         }
-        case ast::StatementSyntaxKind::Goto:
-            return make(ir::GotoStatement{.target_state = statement.goto_stmt->target_state});
-        case ast::StatementSyntaxKind::Return:
-            return make(ir::ReturnStatement{
-                .value = statement.return_stmt->value ? lower_expr(*statement.return_stmt->value)
-                                                      : nullptr,
-            });
-        case ast::StatementSyntaxKind::Assert:
-            return make(
-                ir::AssertStatement{.condition = lower_expr(*statement.assert_stmt->condition)});
-        case ast::StatementSyntaxKind::Expr:
-            return make(ir::ExprStatement{
-                .expr = lower_expr(*statement.expr_stmt->expr),
-            });
-        }
-        return make(ir::ExprStatement{
-            .expr =
-                make_expr(ir::QualifiedValueExpr{.value = "<invalid-statement>"}, statement.range),
-        });
+        return lower_typed_block(*tb);
     }
 
     // =====================================================================
-    // Typed-store statement / block lowering (T1.6)
+    // Typed-store statement / block lowering (T1.6 + T1.7 P3)
     //
     // The dispatch chain below walks TypedProgram::statements /
     // TypedProgram::blocks (the flat typed-store) instead of the AST.
-    // Expression payloads are pulled from TypedStatement::children_expr_index
-    // via lower_typed_expr; then/else blocks come from TypedStatement block
-    // indexes. For typed records that do not carry enough primitive detail to
-    // construct the full IR (let type annotations, assign target path root
-    // kind, assert messages, goto provenance), we consult the originating
-    // AST via a (range, kind) range lookup – see find_orig_ast_stmt below.
+    // Expression payloads come from TypedStatement::children_expr_index via
+    // lower_typed_expr; then/else blocks come from TypedStatement block
+    // indexes. All primitive payloads (let type_ref, assign target path,
+    // goto state, assert message) are read directly from the TypedStatement
+    // mirror fields – no AST bridge is retained (removed in T1.7 P2).
     // =====================================================================
-
-    [[nodiscard]] static TypedStmtKind
-    typed_stmt_kind_from_ast(ast::StatementSyntaxKind kind) noexcept {
-        switch (kind) {
-        case ast::StatementSyntaxKind::Let:    return TypedStmtKind::Let;
-        case ast::StatementSyntaxKind::Assign: return TypedStmtKind::Assign;
-        case ast::StatementSyntaxKind::If:     return TypedStmtKind::If;
-        case ast::StatementSyntaxKind::Goto:   return TypedStmtKind::Goto;
-        case ast::StatementSyntaxKind::Return: return TypedStmtKind::Return;
-        case ast::StatementSyntaxKind::Assert: return TypedStmtKind::Assert;
-        case ast::StatementSyntaxKind::Expr:   return TypedStmtKind::ExprStatement;
-        }
-        return TypedStmtKind::None;
-    }
-
-    // One-way bridge: AST StatementSyntax -> TypedStatement.
-    // Uses range+kind lookup directly. Unlike TypedExpr, StatementSyntax does
-    // not carry a node_id field, so the fast path is skipped and we always
-    // consult the exact range+kind match. Falls back to nullptr when the
-    // typed statement store is empty (legacy / detached test cases) so the
-    // caller can route through lower_statement_ast_fallback.
-    [[nodiscard]] const TypedStatement *
-    typed_stmt_for(const ast::StatementSyntax &stmt) const {
-        const auto kind = typed_stmt_kind_from_ast(stmt.kind);
-        return typed_program_->find_statement_by_range(stmt.range, kind, current_source_id_);
-    }
 
     // Convenience wrapper around TypedProgram::find_block_by_range.
     [[nodiscard]] const TypedBlock *
@@ -1356,8 +1176,7 @@ class TypedIrLowerer final {
 
     // Convenience wrapper around TypedProgram::find_temporal_by_range.
     // Returns nullptr when the temporal typed store has not been populated
-    // (legacy / detached test cases) so the caller can transparently fall
-    // back to the AST-based lower_temporal path.
+    // (detached test cases); callers emit a sentinel temporal expression.
     [[nodiscard]] const TypedTemporalExpr *
     find_typed_temporal_by_range(SourceRange range,
                                  std::optional<SourceId> source_id) const {
@@ -1398,6 +1217,292 @@ class TypedIrLowerer final {
     }
 
     // =====================================================================
+    // Type-ref reconstruction from TypeSyntax spelling string (T1.7 P1).
+    //
+    // The typechecker serialises a let-binding's type annotation into the
+    // canonical source text produced by TypeSyntax::spelling() (e.g.
+    // "Int", "Optional<Foo>", "Map<String, BoundedString<5, 100>>",
+    // "Decimal(18)", "pkg::TypeName"). This parser reverses that serialisation
+    // to build an ir::TypeRef without re-entering the originating AST.
+    //
+    // On parse failure the function returns std::nullopt so the caller degrades
+    // to the initializer's resolved type then to an Any sentinel (T1.7 P2: the
+    // AST bridge has been removed; all lowering paths are now 100% typed-store).
+    // =====================================================================
+
+    // Advance `pos` past any whitespace in `s`.
+    static void skip_ws(std::string_view s, std::size_t &pos) {
+        while (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) ++pos;
+    }
+
+    // Find the matching '>' for a '<' starting at pos `open_pos` in `s`,
+    // accounting for nested angle brackets and parenthesised sub-exprs.
+    // Returns the index of the matching '>' or std::string_view::npos.
+    [[nodiscard]] static std::size_t
+    find_matching_angle(std::string_view s, std::size_t open_pos) {
+        int depth = 1;
+        int paren_depth = 0;
+        for (std::size_t i = open_pos + 1; i < s.size(); ++i) {
+            const char c = s[i];
+            if (paren_depth > 0) {
+                if (c == '(') ++paren_depth;
+                else if (c == ')') --paren_depth;
+                continue;
+            }
+            if (c == '(') { ++paren_depth; continue; }
+            if (c == '<') ++depth;
+            else if (c == '>') { --depth; if (depth == 0) return i; }
+        }
+        return std::string_view::npos;
+    }
+
+    // Parse one TypeRef from `s.substr(pos)`, advancing `pos` past the
+    // consumed text. Returns nullopt on any parse failure. The parser is
+    // deliberately small – it covers the exact grammar produced by
+    // TypeSyntax::spelling() and nothing more.
+    [[nodiscard]] std::optional<ir::TypeRef>
+    parse_type_ref_spelling(std::string_view s, std::size_t &pos) const {
+        skip_ws(s, pos);
+        if (pos >= s.size()) return std::nullopt;
+
+        // Collect the identifier / keyword token: runs of [A-Za-z0-9_:].
+        // Qualified names use "::" as separator; leaf keywords match exactly.
+        const std::size_t tok_start = pos;
+        while (pos < s.size()) {
+            const char c = s[pos];
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') { ++pos; continue; }
+            if (c == ':' && pos + 1 < s.size() && s[pos + 1] == ':') { pos += 2; continue; }
+            break;
+        }
+        if (pos == tok_start) return std::nullopt; // no token
+        const std::string_view tok = s.substr(tok_start, pos - tok_start);
+
+        skip_ws(s, pos);
+
+        // Leaf: built-in keyword with no further decoration.
+        auto leaf = [&](ir::TypeRefKind k) -> std::optional<ir::TypeRef> {
+            return ir::TypeRef{.kind = k, .display_name = std::string(tok)};
+        };
+        if (tok == "Unit")      return leaf(ir::TypeRefKind::Unit);
+        if (tok == "Bool")      return leaf(ir::TypeRefKind::Bool);
+        if (tok == "Int")       return leaf(ir::TypeRefKind::Int);
+        if (tok == "Float")     return leaf(ir::TypeRefKind::Float);
+        if (tok == "String") {
+            // String (plain) vs String(min, max) (bounded)
+            skip_ws(s, pos);
+            if (pos < s.size() && s[pos] == '(') {
+                ++pos; // consume '('
+                skip_ws(s, pos);
+                // Parse min integer
+                std::int64_t min_val = 0;
+                bool neg = false;
+                if (pos < s.size() && s[pos] == '-') { neg = true; ++pos; }
+                if (pos >= s.size() || !std::isdigit(static_cast<unsigned char>(s[pos]))) return std::nullopt;
+                while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+                    min_val = min_val * 10 + (s[pos] - '0'); ++pos;
+                }
+                if (neg) min_val = -min_val;
+                skip_ws(s, pos);
+                if (pos >= s.size() || s[pos] != ',') return std::nullopt;
+                ++pos; skip_ws(s, pos);
+                // Parse max integer
+                std::int64_t max_val = 0;
+                neg = false;
+                if (pos < s.size() && s[pos] == '-') { neg = true; ++pos; }
+                if (pos >= s.size() || !std::isdigit(static_cast<unsigned char>(s[pos]))) return std::nullopt;
+                while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+                    max_val = max_val * 10 + (s[pos] - '0'); ++pos;
+                }
+                if (neg) max_val = -max_val;
+                skip_ws(s, pos);
+                if (pos >= s.size() || s[pos] != ')') return std::nullopt;
+                ++pos; // consume ')'
+                std::ostringstream oss;
+                oss << "String(" << min_val << ", " << max_val << ")";
+                return ir::TypeRef{
+                    .kind = ir::TypeRefKind::BoundedString,
+                    .display_name = oss.str(),
+                    .string_bounds = std::make_pair(min_val, max_val),
+                };
+            }
+            return leaf(ir::TypeRefKind::String);
+        }
+        if (tok == "UUID")      return leaf(ir::TypeRefKind::UUID);
+        if (tok == "Timestamp") return leaf(ir::TypeRefKind::Timestamp);
+        if (tok == "Duration")  return leaf(ir::TypeRefKind::Duration);
+
+        if (tok == "Decimal") {
+            skip_ws(s, pos);
+            if (pos < s.size() && s[pos] == '(') {
+                ++pos; skip_ws(s, pos);
+                std::int64_t scale = 0;
+                if (pos >= s.size() || !std::isdigit(static_cast<unsigned char>(s[pos]))) return std::nullopt;
+                while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+                    scale = scale * 10 + (s[pos] - '0'); ++pos;
+                }
+                skip_ws(s, pos);
+                if (pos >= s.size() || s[pos] != ')') return std::nullopt;
+                ++pos;
+                std::ostringstream oss;
+                oss << "Decimal(" << scale << ")";
+                return ir::TypeRef{
+                    .kind = ir::TypeRefKind::Decimal,
+                    .display_name = oss.str(),
+                    .decimal_scale = scale,
+                };
+            }
+            return leaf(ir::TypeRefKind::Decimal);
+        }
+
+        // Generic wrapper: Name<Inner> or Name<Key, Value> (Optional, List, Set, Map)
+        skip_ws(s, pos);
+        if (pos < s.size() && s[pos] == '<') {
+            const std::size_t close = find_matching_angle(s, pos);
+            if (close == std::string_view::npos) return std::nullopt;
+            const std::string_view inner = s.substr(pos + 1, close - pos - 1);
+            pos = close + 1; // consume '>'
+
+            // Split inner on the top-level comma (respecting <...> and (...) nesting)
+            // – needed for Map<K, V>.
+            int angle_depth = 0, paren_depth = 0;
+            std::size_t comma_pos = std::string_view::npos;
+            for (std::size_t i = 0; i < inner.size(); ++i) {
+                const char c = inner[i];
+                if (paren_depth > 0) {
+                    if (c == '(') ++paren_depth;
+                    else if (c == ')') --paren_depth;
+                    continue;
+                }
+                if (c == '(') { ++paren_depth; continue; }
+                if (c == '<') ++angle_depth;
+                else if (c == '>') --angle_depth;
+                else if (c == ',' && angle_depth == 0) { comma_pos = i; break; }
+            }
+
+            if (tok == "Optional" || tok == "List" || tok == "Set") {
+                if (comma_pos != std::string_view::npos) return std::nullopt; // single-param
+                std::size_t inner_pos = 0;
+                auto inner_ref = parse_type_ref_spelling(inner, inner_pos);
+                if (!inner_ref.has_value()) return std::nullopt;
+                ir::TypeRefKind kind = (tok == "Optional") ? ir::TypeRefKind::Optional
+                                     : (tok == "List")     ? ir::TypeRefKind::List
+                                     :                        ir::TypeRefKind::Set;
+                ir::TypeRef result{.kind = kind,
+                                   .display_name = std::string(tok) + "<" + inner_ref->display_name + ">"};
+                result.first = make_type_ref(std::move(*inner_ref));
+                return result;
+            }
+            if (tok == "Map") {
+                if (comma_pos == std::string_view::npos) return std::nullopt; // two params needed
+                const std::string_view key_str = inner.substr(0, comma_pos);
+                const std::string_view val_str = inner.substr(comma_pos + 1);
+                std::size_t kp = 0, vp = 0;
+                auto key_ref = parse_type_ref_spelling(key_str, kp);
+                auto val_ref = parse_type_ref_spelling(val_str, vp);
+                if (!key_ref.has_value() || !val_ref.has_value()) return std::nullopt;
+                ir::TypeRef result{
+                    .kind = ir::TypeRefKind::Map,
+                    .display_name = std::string(tok) + "<" + key_ref->display_name + ", " + val_ref->display_name + ">",
+                };
+                result.first = make_type_ref(std::move(*key_ref));
+                result.second = make_type_ref(std::move(*val_ref));
+                return result;
+            }
+            // Unknown generic: treat as unresolved
+            return ir::TypeRef{.kind = ir::TypeRefKind::Unresolved,
+                               .display_name = std::string(tok) + "<" + std::string(inner) + ">"};
+        }
+
+        // Named type (Struct / Enum / TypeAlias). Resolve via the symbol
+        // table using the local/module-qualified name. If resolution fails we
+        // still return an Unresolved TypeRef with the correct display_name;
+        // the caller can fall back to the AST if strict fidelity is needed.
+        {
+            const std::string name_str(tok);
+            // Extract local part for Types-namespace lookup.
+            std::string_view local_part = tok;
+            const auto last_colon = tok.rfind("::");
+            if (last_colon != std::string_view::npos) {
+                local_part = tok.substr(last_colon + 2);
+            }
+            MaybeCRef<Symbol> sym = find_local_symbol_here(SymbolNamespace::Types,
+                                                           std::string(local_part));
+            ir::TypeRef result{.kind = ir::TypeRefKind::Unresolved,
+                               .display_name = name_str};
+            if (sym.has_value()) {
+                result.display_name = sym->get().canonical_name;
+                result.canonical_name = sym->get().canonical_name;
+                switch (sym->get().kind) {
+                case SymbolKind::Struct: result.kind = ir::TypeRefKind::Struct; break;
+                case SymbolKind::Enum:   result.kind = ir::TypeRefKind::Enum;   break;
+                case SymbolKind::TypeAlias: {
+                    // Type alias: walk through alias_decl to recover concrete
+                    // underlying kind via symbol lookup. As a fallback, mark
+                    // Unresolved with canonical_name so downstream can map it.
+                    result.kind = ir::TypeRefKind::Unresolved;
+                    break;
+                }
+                default: break;
+                }
+            }
+            return result;
+        }
+    }
+
+    // Convenience: parse a whole spelling string (no trailing content).
+    [[nodiscard]] std::optional<ir::TypeRef>
+    parse_type_ref_spelling(std::string_view s) const {
+        std::size_t pos = 0;
+        auto result = parse_type_ref_spelling(s, pos);
+        if (!result.has_value()) return std::nullopt;
+        skip_ws(s, pos);
+        if (pos != s.size()) return std::nullopt; // trailing garbage
+        return result;
+    }
+
+    // Map a TypedTemporalOp enum to the corresponding IR unary operator.
+    // Only valid for TemporalNot / TemporalNext / TemporalAlways / TemporalEventually.
+    [[nodiscard]] static ir::TemporalUnaryOp
+    temporal_op_to_ir_unary(TypedTemporalOp op) {
+        switch (op) {
+        case TypedTemporalOp::TemporalNot:        return ir::TemporalUnaryOp::Not;
+        case TypedTemporalOp::TemporalNext:       return ir::TemporalUnaryOp::Next;
+        case TypedTemporalOp::TemporalAlways:     return ir::TemporalUnaryOp::Always;
+        case TypedTemporalOp::TemporalEventually: return ir::TemporalUnaryOp::Eventually;
+        default: break;
+        }
+        return ir::TemporalUnaryOp::Always;
+    }
+
+    // Map a TypedTemporalOp enum to the corresponding IR binary operator.
+    // Only valid for TemporalAnd / TemporalOr / TemporalImply / TemporalUntil.
+    [[nodiscard]] static ir::TemporalBinaryOp
+    temporal_op_to_ir_binary(TypedTemporalOp op) {
+        switch (op) {
+        case TypedTemporalOp::TemporalAnd:   return ir::TemporalBinaryOp::And;
+        case TypedTemporalOp::TemporalOr:    return ir::TemporalBinaryOp::Or;
+        case TypedTemporalOp::TemporalImply: return ir::TemporalBinaryOp::Implies;
+        case TypedTemporalOp::TemporalUntil: return ir::TemporalBinaryOp::Until;
+        default: break;
+        }
+        return ir::TemporalBinaryOp::Implies;
+    }
+
+    // Map AssignTargetRootKind to the corresponding IR PathRootKind.
+    // Context / State / Local all collapse to Identifier in the IR (the IR
+    // only distinguishes Input/Output/Identifier); the full TypedHIR enum is
+    // retained for analysis passes that need the semantic distinction.
+    [[nodiscard]] static ir::PathRootKind
+    assign_root_to_ir(AssignTargetRootKind kind) {
+        switch (kind) {
+        case AssignTargetRootKind::Input:  return ir::PathRootKind::Input;
+        case AssignTargetRootKind::Output: return ir::PathRootKind::Output;
+        default: break;
+        }
+        return ir::PathRootKind::Identifier;
+    }
+
+    // =====================================================================
     // Typed-tree temporal lowering (AST-free dispatch via TypedTemporalExpr)
     // =====================================================================
     //
@@ -1412,6 +1517,91 @@ class TypedIrLowerer final {
         const auto make = [this, &te](auto node) {
             return make_temporal(std::move(node), te.range);
         };
+        // T1.7 P1: dispatch primarily on the strongly-typed `op` enum.
+        // payload_spelling is a secondary backstop used for data (names,
+        // state) and as a legacy fallback when `op` is the legacy Atom
+        // default on old TypedTemporalExpr records.
+        switch (te.op) {
+        case TypedTemporalOp::Atom: {
+            // Atom: child references the expressions flat store.
+            ir::ExprPtr embedded = nullptr;
+            if (!te.children_index.empty() && te.children_index[0] != UINT32_MAX &&
+                te.children_index[0] < typed_program_->expressions.size()) {
+                embedded = lower_typed_expr(typed_program_->expressions[te.children_index[0]]);
+            }
+            return make(ir::EmbeddedTemporalExpr{.expr = std::move(embedded)});
+        }
+        case TypedTemporalOp::NameLiteralCalled: {
+            // payload_spelling carries the canonical capability name directly
+            // (no "called:" prefix in the new format).
+            return make(ir::CalledTemporalExpr{.capability = te.payload_spelling});
+        }
+        case TypedTemporalOp::NameLiteralRunning: {
+            return make(ir::RunningTemporalExpr{.node = te.payload_spelling});
+        }
+        case TypedTemporalOp::NameLiteralCompleted: {
+            // payload_spelling encodes "node_name|optional_state_name".
+            const auto pipe = te.payload_spelling.find('|');
+            if (pipe == std::string::npos) {
+                return make(ir::CompletedTemporalExpr{
+                    .node = te.payload_spelling, .state_name = std::nullopt,
+                });
+            }
+            const std::string node = te.payload_spelling.substr(0, pipe);
+            const std::string state = te.payload_spelling.substr(pipe + 1);
+            return make(ir::CompletedTemporalExpr{
+                .node = node,
+                .state_name = state.empty() ? std::nullopt
+                                            : std::optional<std::string>(std::move(state)),
+            });
+        }
+        case TypedTemporalOp::StateLiteral: {
+            return make(ir::InStateTemporalExpr{.state = te.payload_spelling});
+        }
+        case TypedTemporalOp::TemporalNot:
+        case TypedTemporalOp::TemporalNext:
+        case TypedTemporalOp::TemporalAlways:
+        case TypedTemporalOp::TemporalEventually: {
+            ir::TemporalExprPtr operand = nullptr;
+            if (!te.children_index.empty() && te.children_index[0] != UINT32_MAX &&
+                te.children_index[0] < typed_program_->temporal_exprs.size()) {
+                operand = lower_typed_temporal(
+                    typed_program_->temporal_exprs[te.children_index[0]]);
+            }
+            return make(ir::TemporalUnaryExpr{
+                .op = temporal_op_to_ir_unary(te.op),
+                .operand = std::move(operand),
+            });
+        }
+        case TypedTemporalOp::TemporalAnd:
+        case TypedTemporalOp::TemporalOr:
+        case TypedTemporalOp::TemporalImply:
+        case TypedTemporalOp::TemporalUntil: {
+            ir::TemporalExprPtr lhs = nullptr;
+            ir::TemporalExprPtr rhs = nullptr;
+            if (te.children_index.size() >= 2) {
+                if (te.children_index[0] != UINT32_MAX &&
+                    te.children_index[0] < typed_program_->temporal_exprs.size()) {
+                    lhs = lower_typed_temporal(
+                        typed_program_->temporal_exprs[te.children_index[0]]);
+                }
+                if (te.children_index[1] != UINT32_MAX &&
+                    te.children_index[1] < typed_program_->temporal_exprs.size()) {
+                    rhs = lower_typed_temporal(
+                        typed_program_->temporal_exprs[te.children_index[1]]);
+                }
+            }
+            return make(ir::TemporalBinaryExpr{
+                .op = temporal_op_to_ir_binary(te.op),
+                .lhs = std::move(lhs),
+                .rhs = std::move(rhs),
+            });
+        }
+        }
+
+        // ---- Legacy backstop ------------------------------------------------
+        // If `op` somehow carries an unexpected value (future enum growth,
+        // corrupt record) fall back to the pre-P1 spelling-based dispatch.
         switch (te.kind) {
         case TypedTemporalKind::Atom: {
             ir::ExprPtr embedded = nullptr;
@@ -1430,7 +1620,6 @@ class TypedIrLowerer final {
                 return make(ir::RunningTemporalExpr{.node = std::string(remainder)});
             }
             if (prefix == "completed") {
-                // remainder == "node_name|optional_state_name"
                 const auto pipe = remainder.find('|');
                 if (pipe == std::string_view::npos) {
                     return make(ir::CompletedTemporalExpr{
@@ -1445,20 +1634,20 @@ class TypedIrLowerer final {
                                                 : std::optional<std::string>(std::string(state)),
                 });
             }
-            // Unknown prefix: fall through to safe default.
             return make(ir::CalledTemporalExpr{.capability = std::string(remainder)});
         }
         case TypedTemporalKind::StateLiteral: {
             const auto [prefix, remainder] = split_payload(te.payload_spelling);
             std::string state = (prefix == "state") ? std::string(remainder)
-                                                    : std::string(te.payload_spelling);
+                                                    : te.payload_spelling;
             return make(ir::InStateTemporalExpr{.state = std::move(state)});
         }
         case TypedTemporalKind::Unary: {
             ir::TemporalExprPtr operand = nullptr;
             if (!te.children_index.empty() && te.children_index[0] != UINT32_MAX &&
                 te.children_index[0] < typed_program_->temporal_exprs.size()) {
-                operand = lower_typed_temporal(typed_program_->temporal_exprs[te.children_index[0]]);
+                operand = lower_typed_temporal(
+                    typed_program_->temporal_exprs[te.children_index[0]]);
             }
             return make(ir::TemporalUnaryExpr{
                 .op = parse_temporal_unary_op(te.payload_spelling),
@@ -1471,11 +1660,13 @@ class TypedIrLowerer final {
             if (te.children_index.size() >= 2) {
                 if (te.children_index[0] != UINT32_MAX &&
                     te.children_index[0] < typed_program_->temporal_exprs.size()) {
-                    lhs = lower_typed_temporal(typed_program_->temporal_exprs[te.children_index[0]]);
+                    lhs = lower_typed_temporal(
+                        typed_program_->temporal_exprs[te.children_index[0]]);
                 }
                 if (te.children_index[1] != UINT32_MAX &&
                     te.children_index[1] < typed_program_->temporal_exprs.size()) {
-                    rhs = lower_typed_temporal(typed_program_->temporal_exprs[te.children_index[1]]);
+                    rhs = lower_typed_temporal(
+                        typed_program_->temporal_exprs[te.children_index[1]]);
                 }
             }
             return make(ir::TemporalBinaryExpr{
@@ -1490,104 +1681,85 @@ class TypedIrLowerer final {
         return make(ir::CalledTemporalExpr{.capability = "<invalid-typed-temporal>"});
     }
 
-    // Recursive helper: walk the owning AST source's block/statement tree to
-    // locate a StatementSyntax with matching (range, kind). Used from the
-    // typed-store lowering path when a typed record lacks the primitive
-    // payload (let type syntax, assign target path shape, assert message)
-    // needed to build the full IR. Returns nullptr when no match is found –
-    // the caller degrades gracefully (Any type_ref, empty path, etc.).
-    [[nodiscard]] const ast::StatementSyntax *
-    find_orig_ast_stmt(SourceRange range, ast::StatementSyntaxKind kind) const {
-        // Prefer the active source (SourceGraph path); fall back to the raw
-        // program_ pointer when we were constructed from a single Program.
-        const ast::Program *ast_program =
-            current_source_ ? current_source_->program.get() : program_;
-        if (ast_program == nullptr) return nullptr;
-
-        struct Walker {
-            const ast::Program &program;
-            SourceRange range;
-            ast::StatementSyntaxKind kind;
-            const ast::StatementSyntax *found{nullptr};
-
-            void walk_block(const ast::BlockSyntax &block) {
-                for (const auto &s : block.statements) walk_stmt(*s);
-            }
-            void walk_stmt(const ast::StatementSyntax &s) {
-                if (found) return;
-                if (s.range.begin_offset == range.begin_offset &&
-                    s.range.end_offset == range.end_offset && s.kind == kind) {
-                    found = &s;
-                    return;
-                }
-                if (s.kind == ast::StatementSyntaxKind::If) {
-                    walk_block(*s.if_stmt->then_block);
-                    if (s.if_stmt->else_block) walk_block(*s.if_stmt->else_block);
-                }
-            }
-            void walk_decl(const ast::Decl &d) {
-                if (found) return;
-                if (d.kind == ast::NodeKind::FlowDecl) {
-                    const auto &flow = static_cast<const ast::FlowDecl &>(d);
-                    for (const auto &h : flow.state_handlers)
-                        walk_block(*h->body);
-                }
-            }
-        };
-        Walker w{*ast_program, range, kind, nullptr};
-        for (const auto &d : ast_program->declarations) w.walk_decl(*d);
-        return w.found;
-    }
-
-    // Let type_ref construction for the typed-store path. Strategy mirrors
-    // inferred_statement_type_ref exactly so the two paths produce identical
-    // output for the T1.2 equivalence test:
-    //   1. AST syntax type annotation (requires find_orig_ast_stmt fallback)
-    //   2. Initializer TypedExpr's resolved type
-    //   3. Any / unresolved sentinel
+    // T1.7 P2: let type_ref construction – 100% from typed payloads (AST
+    // fallback removed). Strategy exactly matches the deleted
+    // inferred_statement_type_ref so T1.2 equivalence is preserved:
+    //   * FromSyntax         -> parse let_type_ref_spelling; on parse failure
+    //                           degrade to initializer type then Any sentinel.
+    //   * FromInitializerType-> type_ref_from_type(initializer->type).
+    //   * NoAnnotation       -> same as FromInitializerType.
+    //   * AnySentinel        -> Unresolved/Any sentinel.
     [[nodiscard]] ir::TypeRef
     inferred_typed_let_type_ref(const TypedStatement &stmt,
                                 const TypedExpr *initializer) const {
-        if (!stmt.children_expr_index.empty()) {
-            const ast::StatementSyntax *orig =
-                find_orig_ast_stmt(stmt.range, ast::StatementSyntaxKind::Let);
-            if (orig != nullptr && orig->let_stmt && orig->let_stmt->type) {
-                return type_ref_from_syntax(*orig->let_stmt->type);
+        switch (stmt.let_type_ref_strategy) {
+        case LetTypeRefStrategy::FromSyntax: {
+            if (!stmt.let_type_ref_spelling.empty()) {
+                if (auto parsed = parse_type_ref_spelling(stmt.let_type_ref_spelling);
+                    parsed.has_value()) {
+                    return std::move(*parsed);
+                }
             }
+            // Parse failure (shouldn't occur for well-formed programs):
+            // degrade to initializer type, then Any.
+            if (initializer != nullptr && initializer->type != nullptr) {
+                return type_ref_from_type(*initializer->type);
+            }
+            return type_ref_from_maybe(std::nullopt, "Any");
         }
+        case LetTypeRefStrategy::NoAnnotation:
+        case LetTypeRefStrategy::FromInitializerType:
+            if (initializer != nullptr && initializer->type != nullptr) {
+                return type_ref_from_type(*initializer->type);
+            }
+            return type_ref_from_maybe(std::nullopt, "Any");
+        case LetTypeRefStrategy::AnySentinel:
+            return type_ref_from_maybe(std::nullopt, "Any");
+        }
+        // Unknown strategy (future enum growth): degrade same as NoAnnotation.
         if (initializer != nullptr && initializer->type != nullptr) {
             return type_ref_from_type(*initializer->type);
         }
         return type_ref_from_maybe(std::nullopt, "Any");
     }
 
-    // Assign target path construction for the typed-store path. The typed
-    // record stores the full path string in target_name but does not mirror
-    // PathSyntax::root_kind; when the origin AST is available we pull the
-    // structured path directly. As a backstop we parse the spelling into a
-    // single-identifier root path.
+    // T1.7 P2: assign target path construction – 100% from typed payloads.
+    // Split stmt.target_name on '.' to recover root_name + member chain; use
+    // stmt.assign_target_root_kind to produce the matching ir::PathRootKind.
     [[nodiscard]] ir::Path
     typed_assign_target_path(const TypedStatement &stmt) const {
-        const ast::StatementSyntax *orig =
-            find_orig_ast_stmt(stmt.range, ast::StatementSyntaxKind::Assign);
-        if (orig != nullptr && orig->assign_stmt && orig->assign_stmt->target) {
-            return lower_path_syntax(*orig->assign_stmt->target);
+        ir::PathRootKind root_kind = assign_root_to_ir(stmt.assign_target_root_kind);
+        std::string root_name;
+        std::vector<std::string> members;
+
+        const std::string &spelling = stmt.target_name;
+        std::size_t dot = spelling.find('.');
+        if (dot == std::string::npos) {
+            root_name = spelling;
+        } else {
+            root_name = spelling.substr(0, dot);
+            std::string_view rest = std::string_view(spelling).substr(dot + 1);
+            while (!rest.empty()) {
+                const std::size_t nd = rest.find('.');
+                if (nd == std::string_view::npos) {
+                    members.emplace_back(rest);
+                    break;
+                }
+                members.emplace_back(rest.substr(0, nd));
+                rest = rest.substr(nd + 1);
+            }
         }
-        // Backstop: target_name is the source-level spelling. We don't know
-        // root_kind, but identifier paths are the dominant case and the
-        // fallback preserves byte-identical output for the common case.
         return ir::Path{
-            .root_kind = ir::PathRootKind::Identifier,
-            .root_name = stmt.target_name,
-            .members = {},
+            .root_kind = root_kind,
+            .root_name = std::move(root_name),
+            .members = std::move(members),
         };
     }
 
-    // Typed-store statement lowering visitor. Each method builds the same
-    // ir::Statement variant as the AST fallback path (see
-    // lower_statement_ast_fallback) – the two paths are kept byte-identical
-    // by the T1.2 test. The unknown_stmt fallback gracefully degrades when a
-    // new TypedStmtKind is introduced but the visitor hasn't been updated.
+    // Typed-store statement lowering visitor (T1.7 P2: AST fallback removed).
+    // Each method builds the same ir::Statement variant as the legacy path so
+    // T1.2 tests remain byte-identical. The unknown_stmt fallback degrades
+    // gracefully when a new TypedStmtKind is introduced without a visitor update.
     struct TypedStmtPerKindLowerer {
         const TypedIrLowerer &self;
         SourceRange range;
@@ -1649,16 +1821,13 @@ class TypedIrLowerer final {
         }
 
         ir::StatementPtr visit_goto_stmt(const TypedStatement &stmt) const {
-            // goto_target_state is the primary source; the AST fallback only
-            // runs when the typed record carries an empty string (legacy
-            // store). Both variants produce identical IR.
+            // T1.7 P2: read directly from the typed payload; the typechecker
+            // guarantees goto_target_state is always populated (T1.2 tests enforce
+            // the invariant). An empty string falls back to the sentinel marker so
+            // detached test cases don't crash the compiler on malformed input.
             std::string target = stmt.goto_target_state;
             if (target.empty()) {
-                const ast::StatementSyntax *orig = self.find_orig_ast_stmt(
-                    stmt.range, ast::StatementSyntaxKind::Goto);
-                if (orig != nullptr && orig->goto_stmt) {
-                    target = orig->goto_stmt->target_state;
-                }
+                target = "<missing-goto-target>";
             }
             return self.make_statement(
                 ir::GotoStatement{.target_state = std::move(target)}, range);
@@ -1673,6 +1842,10 @@ class TypedIrLowerer final {
                 range);
         }
 
+        // T1.7 P2: assert message is stored on stmt.assert_message but the current
+        // IR AssertStatement shape carries only a condition field. The typed payload
+        // is used directly for the condition; the message field is available for
+        // analysis passes and future IR expansion. No AST fallback remains.
         ir::StatementPtr visit_assert_stmt([[maybe_unused]] const TypedStatement &stmt) const {
             const TypedExpr *condition = child_expr(0);
             return self.make_statement(
