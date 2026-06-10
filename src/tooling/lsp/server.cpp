@@ -409,26 +409,25 @@ void LspServer::handle_hover(const JsonRpcRequest &req) {
     auto offset = parse_result.source.offset_of(pos.line + 1, pos.character + 1);
 
     // Try to find expression type at this offset
-    for (const auto &expr_info : tc_result.expression_types()) {
-        if (expr_info.range.begin_offset <= offset && offset <= expr_info.range.end_offset) {
-            Hover hover;
-            hover.contents = "```\n" + expr_info.type->describe() + "\n```";
+    const auto *hover_expr = tc_result.typed_program.find_expr_containing(offset, std::nullopt);
+    if (hover_expr != nullptr && hover_expr->type != nullptr) {
+        Hover hover;
+        hover.contents = "```\n" + hover_expr->type->describe() + "\n```";
 
-            auto start_pos = parse_result.source.locate(expr_info.range.begin_offset);
-            auto end_pos = parse_result.source.locate(expr_info.range.end_offset);
-            hover.range = Range{
-                {static_cast<uint32_t>(start_pos.line - 1),
-                 static_cast<uint32_t>(start_pos.column - 1)},
-                {static_cast<uint32_t>(end_pos.line - 1),
-                 static_cast<uint32_t>(end_pos.column - 1)},
-            };
+        auto start_pos = parse_result.source.locate(hover_expr->range.begin_offset);
+        auto end_pos = parse_result.source.locate(hover_expr->range.end_offset);
+        hover.range = Range{
+            {static_cast<uint32_t>(start_pos.line - 1),
+             static_cast<uint32_t>(start_pos.column - 1)},
+            {static_cast<uint32_t>(end_pos.line - 1),
+             static_cast<uint32_t>(end_pos.column - 1)},
+        };
 
-            JsonRpcResponse resp;
-            resp.id = req.id;
-            resp.result = serialize_hover(hover);
-            transport_.send_response(resp);
-            return;
-        }
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_hover(hover);
+        transport_.send_response(resp);
+        return;
     }
 
     // Fallback: check if hovering over a symbol reference

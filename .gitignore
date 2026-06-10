@@ -3,6 +3,7 @@ compile_commands.json
 .cache
 .vscode
 .agents/
+.claude/
 grammar/.antlr/
 log/
 .codex
