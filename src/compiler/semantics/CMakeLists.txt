@@ -1,8 +1,13 @@
 add_library(ahfl_compiler_semantics STATIC
     const_sema.cpp
+    condition_facts.cpp
     effects.cpp
+    flow_facts.cpp
+    name_suggestions.cpp
     resolver.cpp
     type_relations.cpp
+    type_expectation.cpp
+    typed_hir.cpp
     types.cpp
     typecheck.cpp
     typecheck_decls.cpp
