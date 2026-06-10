@@ -338,9 +338,123 @@ workflow W {
     CHECK(seen.contains(K::AgentDecl));
     CHECK(seen.contains(K::WorkflowDecl));
 
-    // ContractDecl and FlowDecl are intentionally NOT recorded as
-    // standalone TypedDecl entries: they are attached to their owning
-    // agent symbolically rather than emitted as top-level records.
+    // T1.5: ContractDecl and FlowDecl are now recorded as standalone
+    // TypedDecl entries with associated_agent_symbol pointing to the
+    // owning agent.
+    CHECK(seen.contains(K::ContractDecl));
+    CHECK(seen.contains(K::FlowDecl));
+
+    // Locate the agent and contract/flow records by kind and verify the
+    // associated agent symbol wiring.
+    const auto agent_it = std::find_if(
+        decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::AgentDecl; });
+    REQUIRE(agent_it != decls.end());
+    const auto agent_symbol = agent_it->symbol;
+
+    const auto contract_it = std::find_if(
+        decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::ContractDecl; });
+    REQUIRE(contract_it != decls.end());
+    REQUIRE(contract_it->associated_agent_symbol.has_value());
+    CHECK(*contract_it->associated_agent_symbol == agent_symbol);
+
+    const auto flow_it = std::find_if(
+        decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::FlowDecl; });
+    REQUIRE(flow_it != decls.end());
+    REQUIRE(flow_it->associated_agent_symbol.has_value());
+    CHECK(*flow_it->associated_agent_symbol == agent_symbol);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "T1.5 TypedProgram records ContractDecl with agent association") {
+    const std::string source = R"AHFL(
+struct Req { v: String; }
+struct Resp { v: String; }
+struct Ctx { v: String = ""; }
+capability Nop(x: String) -> Resp;
+predicate Safe(s: String) -> Bool;
+
+agent Guard {
+    input: Req; context: Ctx; output: Resp;
+    states: [Init, Done]; initial: Init; final: [Done];
+    capabilities: [Nop];
+    transition Init -> Done;
+}
+contract for Guard {
+    requires: Safe(input.v);
+    ensures:  true;
+}
+flow for Guard {
+    state Init { goto Done; }
+    state Done { return Resp { v: input.v }; }
+}
+)AHFL";
+    const auto r = check(source);
+    const auto &decls = r.typed_program.declarations;
+
+    using K = ahfl::ast::NodeKind;
+
+    // Locate the Guard agent SymbolId.
+    const auto agent_it = std::find_if(
+        decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::AgentDecl; });
+    REQUIRE(agent_it != decls.end());
+    const auto agent_symbol = agent_it->symbol;
+
+    // Find ContractDecl entries. There must be exactly one for `Guard`.
+    std::size_t contract_count = 0;
+    for (const auto &d : decls) {
+        if (d.kind != K::ContractDecl) continue;
+        ++contract_count;
+        REQUIRE(d.associated_agent_symbol.has_value());
+        CHECK(*d.associated_agent_symbol == agent_symbol);
+        // Range should be non-empty.
+        CHECK(d.range.end_offset > d.range.begin_offset);
+    }
+    CHECK(contract_count == 1);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "T1.5 TypedProgram records FlowDecl with agent association") {
+    const std::string source = R"AHFL(
+struct Req { v: String; }
+struct Resp { v: String; }
+struct Ctx { v: String = ""; }
+capability Work(x: String) -> Resp;
+
+agent Runner {
+    input: Req; context: Ctx; output: Resp;
+    states: [Init, Run, Done]; initial: Init; final: [Done];
+    capabilities: [Work];
+    transition Init -> Run;
+    transition Run -> Done;
+}
+contract for Runner { requires: true; }
+flow for Runner {
+    state Init { goto Run; }
+    state Run  { let r = Work(input.v); goto Done; }
+    state Done { return Resp { v: input.v }; }
+}
+)AHFL";
+    const auto r = check(source);
+    const auto &decls = r.typed_program.declarations;
+
+    using K = ahfl::ast::NodeKind;
+
+    // Locate the Runner agent SymbolId.
+    const auto agent_it = std::find_if(
+        decls.begin(), decls.end(), [](const auto &d) { return d.kind == K::AgentDecl; });
+    REQUIRE(agent_it != decls.end());
+    const auto agent_symbol = agent_it->symbol;
+
+    // Find FlowDecl entries.
+    std::size_t flow_count = 0;
+    for (const auto &d : decls) {
+        if (d.kind != K::FlowDecl) continue;
+        ++flow_count;
+        REQUIRE(d.associated_agent_symbol.has_value());
+        CHECK(*d.associated_agent_symbol == agent_symbol);
+        CHECK(d.range.end_offset > d.range.begin_offset);
+    }
+    CHECK(flow_count == 1);
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "T1.2 lowering produces equivalent IR via typed HIR entry") {
@@ -542,4 +656,143 @@ flow for A {
         CHECK(results[t].find("__SAME_PTR__") == std::string::npos);
         CHECK(results[t].find("ERROR") == std::string::npos);
     }
+}
+
+// ============================================================================
+// T1.4: Declaration iteration walks TypedProgram.declarations
+// (not the raw AST decl list) and preserves T1.2 equivalence.
+// ============================================================================
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "T1.4 decl iteration walks typed tree and covers all kinds") {
+    // Source with multiple agents, multiple structs, a contract, a flow, an
+    // enum, a type alias, a const, a capability, a predicate, and a workflow:
+    // exercises the full TypedDecl kind set so we can assert coverage.
+    const std::string source = R"AHFL(
+struct Req { v: String; }
+struct Ctx { v: String = ""; }
+struct Resp { v: String; code: Int = 200; }
+
+enum Color { Red, Green, Blue }
+type Tag = String;
+
+const kPreamble: String = "ok:";
+const kLimit: Int = 100;
+
+capability Echo(payload: String) -> Resp;
+capability Validate(tag: String) -> Bool;
+
+predicate Safe(s: String) -> Bool;
+predicate Positive(n: Int) -> Bool;
+
+agent Worker {
+    input: Req; context: Ctx; output: Resp;
+    states: [Init, Run, Done]; initial: Init; final: [Done];
+    capabilities: [Echo];
+    transition Init -> Run;
+    transition Run -> Done;
+}
+
+agent Inspector {
+    input: Req; context: Ctx; output: Resp;
+    states: [Start, End]; initial: Start; final: [End];
+    capabilities: [Validate];
+    transition Start -> End;
+}
+
+contract for Worker {
+    requires: Safe(input.v);
+    ensures:  true;
+}
+
+contract for Inspector {
+    requires: true;
+}
+
+flow for Worker {
+    state Init { goto Run; }
+    state Run  { let r = Echo(input.v); goto Done; }
+    state Done { return Resp { v: input.v, code: 200 }; }
+}
+
+flow for Inspector {
+    state Start { goto End; }
+    state End   { return Resp { v: "checked", code: 200 }; }
+}
+
+workflow DoJob {
+    input: Req; output: Resp;
+    node w: Worker(input);
+    node i: Inspector(input);
+    return: w;
+}
+)AHFL";
+    const auto parse = frontend.parse_text("t14_iter.ahfl", source);
+    REQUIRE_FALSE(parse.has_errors());
+    ahfl::Resolver resolver;
+    const auto resolve = resolver.resolve(*parse.program);
+    REQUIRE_FALSE(resolve.has_errors());
+    ahfl::TypeChecker checker;
+    const auto tc = checker.check(*parse.program, resolve);
+    REQUIRE_FALSE(tc.has_errors());
+
+    const auto &decls = tc.typed_program.declarations;
+    using K = ahfl::ast::NodeKind;
+    std::unordered_set<K> seen;
+    for (const auto &d : decls) seen.insert(d.kind);
+
+    // Kind coverage: all nominal kinds + contract + flow.
+    CHECK(seen.contains(K::StructDecl));
+    CHECK(seen.contains(K::EnumDecl));
+    CHECK(seen.contains(K::TypeAliasDecl));
+    CHECK(seen.contains(K::ConstDecl));
+    CHECK(seen.contains(K::CapabilityDecl));
+    CHECK(seen.contains(K::PredicateDecl));
+    CHECK(seen.contains(K::AgentDecl));
+    CHECK(seen.contains(K::ContractDecl));
+    CHECK(seen.contains(K::FlowDecl));
+    CHECK(seen.contains(K::WorkflowDecl));
+
+    // Count multiple structs / agents / contracts / flows / consts / caps / preds
+    // to confirm the flat list accumulates them and not just one-per-kind.
+    std::size_t struct_count = 0, agent_count = 0, contract_count = 0;
+    std::size_t flow_count = 0, const_count = 0, cap_count = 0, pred_count = 0;
+    for (const auto &d : decls) {
+        if (d.kind == K::StructDecl) ++struct_count;
+        if (d.kind == K::AgentDecl) ++agent_count;
+        if (d.kind == K::ContractDecl) ++contract_count;
+        if (d.kind == K::FlowDecl) ++flow_count;
+        if (d.kind == K::ConstDecl) ++const_count;
+        if (d.kind == K::CapabilityDecl) ++cap_count;
+        if (d.kind == K::PredicateDecl) ++pred_count;
+    }
+    CHECK(struct_count == 3);
+    CHECK(agent_count == 2);
+    CHECK(contract_count == 2);
+    CHECK(flow_count == 2);
+    CHECK(const_count == 2);
+    CHECK(cap_count == 2);
+    CHECK(pred_count == 2);
+
+    // Single-program mode: source_id on each TypedDecl must be empty.
+    for (const auto &d : decls) CHECK_FALSE(d.source_id.has_value());
+
+    // T1.2 equivalence: typed-tree lowering and AST-tree lowering must
+    // produce byte-identical IR even when the declaration iteration path
+    // changed to walk TypedProgram.declarations.
+    const auto via_ast = ahfl::lower_program_ir(*parse.program, resolve, tc);
+    const auto via_typed = ahfl::lower_typed_program(tc.typed_program);
+
+    CHECK(via_ast.declarations.size() == via_typed.declarations.size());
+    REQUIRE_FALSE(via_ast.declarations.empty());
+
+    std::ostringstream ast_json, typed_json;
+    ahfl::print_program_ir_json(via_ast, ast_json);
+    ahfl::print_program_ir_json(via_typed, typed_json);
+    const std::string ast_fp = ast_json.str();
+    const std::string typed_fp = typed_json.str();
+
+    REQUIRE_FALSE(ast_fp.empty());
+    REQUIRE_FALSE(typed_fp.empty());
+    CHECK(ast_fp == typed_fp);
 }
