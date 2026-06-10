@@ -29,6 +29,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Consts, decl.name);
                 symbol.has_value()) {
                 const_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -37,6 +42,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 type_alias_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -45,6 +55,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 struct_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -53,6 +68,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
                 enum_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -61,6 +81,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Capabilities, decl.name);
                 symbol.has_value()) {
                 capability_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -69,6 +94,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Predicates, decl.name);
                 symbol.has_value()) {
                 predicate_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -77,6 +107,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Agents, decl.name);
                 symbol.has_value()) {
                 agent_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -85,6 +120,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             if (const auto symbol = find_local_here(SymbolNamespace::Workflows, decl.name);
                 symbol.has_value()) {
                 workflow_decls_.emplace(symbol->get().id.value, std::cref(decl));
+                result_.typed_program.declarations.push_back(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                });
             }
             break;
         }
@@ -120,6 +160,12 @@ void TypeCheckPass::build_type_environment() {
     build_predicate_types();
     build_agent_types();
     build_workflow_types();
+
+    for (auto &decl : result_.typed_program.declarations) {
+        if (const auto type = result_.environment.get_const_type(decl.symbol); type.has_value()) {
+            decl.type = type->get().clone();
+        }
+    }
 }
 
 void TypeCheckPass::build_const_types() {
@@ -372,10 +418,17 @@ void TypeCheckPass::check_const_initializers_in_program(const ast::Program &prog
 
         const ValueContext context;
         auto value = check_const_expr(*decl.value, context, declared_type, "const initializer");
+        const TypeExpectation expectation{
+            .expected = declared_type->get().clone(),
+            .origin_kind = TypeExpectationOriginKind::Annotation,
+            .origin_range = decl.type->range,
+            .description = "declared type of const '" + std::string(decl.name) + "'",
+        };
         (void)check_assignable(*value.typed_value.type,
                                declared_type->get(),
                                decl.value->range,
-                               "const initializer");
+                               "const initializer",
+                               expectation);
     }
 }
 
