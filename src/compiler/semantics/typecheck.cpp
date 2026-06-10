@@ -1918,8 +1918,13 @@ void TypeCheckPass::check_contracts() {
     check_contracts_in_program(require(program_, "typecheck program must exist"));
 }
 
-void TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
-                                                  const ValueContext &context) {
+std::uint32_t
+TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
+                                             const ValueContext &context) {
+    TypedTemporalExpr te;
+    te.range = expr.range;
+    te.source_id = current_source_id_;
+
     switch (expr.kind) {
     case ast::TemporalExprSyntaxKind::EmbeddedExpr: {
         const auto bool_type = make_type(TypeKind::Bool);
@@ -1930,21 +1935,74 @@ void TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax 
         if (!value.is_pure) {
             error_here("temporal embedded expression must be pure", expr.expr->range);
         }
+        te.kind = TypedTemporalKind::Atom;
+        const std::uint32_t expr_idx = resolve_payload_expr_index(*expr.expr);
+        te.children_index.push_back(expr_idx);
         break;
     }
-    case ast::TemporalExprSyntaxKind::Called:
-    case ast::TemporalExprSyntaxKind::InState:
-    case ast::TemporalExprSyntaxKind::Running:
-    case ast::TemporalExprSyntaxKind::Completed:
-        break;
-    case ast::TemporalExprSyntaxKind::Unary:
-        check_temporal_embedded_exprs(*expr.first, context);
-        break;
-    case ast::TemporalExprSyntaxKind::Binary:
-        check_temporal_embedded_exprs(*expr.first, context);
-        check_temporal_embedded_exprs(*expr.second, context);
+    case ast::TemporalExprSyntaxKind::Called: {
+        te.kind = TypedTemporalKind::NameLiteral;
+        std::string canonical = expr.name;
+        if (const auto ref = find_reference_here(ReferenceKind::TemporalCapability, expr.range);
+            ref.has_value()) {
+            if (const auto sym = resolve_result_.symbol_table.get(ref->get().target);
+                sym.has_value()) {
+                canonical = sym->get().canonical_name;
+            }
+        }
+        te.payload_spelling = "called:" + canonical;
         break;
     }
+    case ast::TemporalExprSyntaxKind::InState: {
+        te.kind = TypedTemporalKind::StateLiteral;
+        te.payload_spelling = "state:" + expr.name;
+        break;
+    }
+    case ast::TemporalExprSyntaxKind::Running: {
+        te.kind = TypedTemporalKind::NameLiteral;
+        te.payload_spelling = "running:" + expr.name;
+        break;
+    }
+    case ast::TemporalExprSyntaxKind::Completed: {
+        te.kind = TypedTemporalKind::NameLiteral;
+        std::string data = "completed:" + expr.name;
+        if (expr.state_name.has_value()) {
+            data += "|";
+            data += *expr.state_name;
+        }
+        te.payload_spelling = std::move(data);
+        break;
+    }
+    case ast::TemporalExprSyntaxKind::Unary: {
+        const std::uint32_t child_idx = check_temporal_embedded_exprs(*expr.first, context);
+        te.kind = TypedTemporalKind::Unary;
+        te.children_index.push_back(child_idx);
+        switch (expr.unary_op) {
+        case ast::TemporalUnaryOp::Always:     te.payload_spelling = "always"; break;
+        case ast::TemporalUnaryOp::Eventually: te.payload_spelling = "eventually"; break;
+        case ast::TemporalUnaryOp::Next:       te.payload_spelling = "next"; break;
+        case ast::TemporalUnaryOp::Not:        te.payload_spelling = "not"; break;
+        }
+        break;
+    }
+    case ast::TemporalExprSyntaxKind::Binary: {
+        const std::uint32_t lhs_idx = check_temporal_embedded_exprs(*expr.first, context);
+        const std::uint32_t rhs_idx = check_temporal_embedded_exprs(*expr.second, context);
+        te.kind = TypedTemporalKind::Binary;
+        te.children_index.push_back(lhs_idx);
+        te.children_index.push_back(rhs_idx);
+        switch (expr.binary_op) {
+        case ast::TemporalBinaryOp::Implies: te.payload_spelling = "implies"; break;
+        case ast::TemporalBinaryOp::Or:      te.payload_spelling = "or"; break;
+        case ast::TemporalBinaryOp::And:     te.payload_spelling = "and"; break;
+        case ast::TemporalBinaryOp::Until:   te.payload_spelling = "until"; break;
+        }
+        break;
+    }
+    }
+
+    result_.typed_program.temporal_exprs.push_back(std::move(te));
+    return static_cast<std::uint32_t>(result_.typed_program.temporal_exprs.size() - 1);
 }
 
 void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
