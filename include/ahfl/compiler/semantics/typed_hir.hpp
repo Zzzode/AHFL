@@ -62,6 +62,70 @@ enum class TypedTemporalKind : std::uint8_t {
     Binary,
 };
 
+// ----------------------------------------------------------------------------
+// Let type-ref strategy (how the let binding's type_ref was determined).
+// ----------------------------------------------------------------------------
+// The lowering pass reconstructs an ir::TypeRef from the typed record without
+// re-entering the AST by combining this enum with let_type_ref_spelling:
+//   * NoAnnotation       -> no type was written; fall back to initializer type.
+//   * FromSyntax         -> spelling carries the canonical source text of the
+//                           user's TypeSyntax (e.g. "Int", "Optional<Foo>",
+//                           "Map<String,BoundedString<5,100>>"); lowering can
+//                           re-parse or (preferred) look it up in the type
+//                           environment via canonical-name resolution.
+//   * FromInitializerType-> no annotation; the resolved initializer type was
+//                           captured (spelling unused, kept empty).
+//   * AnySentinel        -> error path; type-ref should be Any sentinel.
+enum class LetTypeRefStrategy : std::uint32_t {
+    NoAnnotation = 0,
+    FromSyntax,
+    FromInitializerType,
+    AnySentinel,
+};
+
+// ----------------------------------------------------------------------------
+// Assignment target root kind. Mirrors ir::PathRootKind one-to-one so typed-
+// tree lowering can build an ir::Path without consulting the originating
+// PathSyntax. Local / State / Context / Output are distinguished from plain
+// Identifier to keep the mirror faithful to the IR's root_kind space.
+// ----------------------------------------------------------------------------
+enum class AssignTargetRootKind : std::uint8_t {
+    Identifier = 0,
+    Input,
+    Context,
+    Output,
+    State,
+    Local,
+};
+
+// ----------------------------------------------------------------------------
+// TypedTemporalOp: a single enum covering every concrete temporal construct.
+// ----------------------------------------------------------------------------
+// Replaces the ad-hoc payload_spelling string concat for Unary/Binary (and
+// removes string-prefix parsing from the NameLiteral/StateLiteral branches of
+// lower_typed_temporal). payload_spelling is retained for NameLiteral/
+// StateLiteral as a human-readable fallback, but the lowering pass should
+// prefer this strongly-typed op enum for dispatch.
+enum class TypedTemporalOp : std::uint8_t {
+    Atom = 0,
+    // NameLiteral variants
+    NameLiteralCalled,
+    NameLiteralRunning,
+    NameLiteralCompleted,
+    // StateLiteral
+    StateLiteral,
+    // Unary
+    TemporalNot,
+    TemporalNext,
+    TemporalAlways,
+    TemporalEventually,
+    // Binary
+    TemporalAnd,
+    TemporalOr,
+    TemporalImply,
+    TemporalUntil,
+};
+
 struct TypedExprChild {
     TypedExprChildRole role{TypedExprChildRole::Operand};
     std::string name;
@@ -158,8 +222,24 @@ struct TypedStatement {
     // If: indexes into TypedProgram::blocks (UINT32_MAX = absent)
     std::uint32_t then_block_index{UINT32_MAX};
     std::uint32_t else_block_index{UINT32_MAX};
-    // Assert message / future use (optional, may stay empty)
-    std::string extra;
+
+    // Let type annotation payload (T1.7 P1).
+    //   let_type_ref_strategy describes how the let binding's type_ref should
+    //   be reconstructed; let_type_ref_spelling carries the canonical source
+    //   text (spelling()) of the user's TypeSyntax when strategy == FromSyntax.
+    LetTypeRefStrategy let_type_ref_strategy{LetTypeRefStrategy::NoAnnotation};
+    std::string let_type_ref_spelling;
+
+    // Assign target path root kind (T1.7 P1).
+    // Mirrors ir::PathRootKind so typed-tree lowering builds an ir::Path
+    // without reaching back into the originating PathSyntax.
+    AssignTargetRootKind assign_target_root_kind{AssignTargetRootKind::Identifier};
+
+    // Assert message (T1.7 P1).
+    // Filled from AST assert_stmt->message when the AST carries one; kept
+    // empty for asserts without a message (current AssertStmtSyntax shape) so
+    // the field is future-proof for when messages are added to the AST.
+    std::string assert_message;
 };
 
 struct TypedTemporalExpr {
@@ -171,7 +251,16 @@ struct TypedTemporalExpr {
     // Unary:         children_index[0] is temporal_exprs index
     // Binary:        children_index[0], [1] are temporal_exprs indexes
     std::vector<std::uint32_t> children_index;
-    // name / state / unary op / binary op string
+    // Strongly-typed op enum (T1.7 P1): covers every concrete temporal
+    // construct so lower_typed_temporal can dispatch without string-parsing.
+    TypedTemporalOp op{TypedTemporalOp::Atom};
+    // NameLiteral/StateLiteral payload (T1.7 P1 – kept for diagnostic
+    // readability and as a backstop). For Unary/Binary the lowering pass
+    // prefers `op` over parsing payload_spelling.
+    //   Called:    canonical capability name (no "called:" prefix)
+    //   Running:   node name
+    //   Completed: "node_name|optional_state_name"
+    //   InState:   state name
     std::string payload_spelling;
 };
 

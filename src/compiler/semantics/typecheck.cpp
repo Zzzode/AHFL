@@ -230,6 +230,24 @@ typed_children_for(const ast::ExprSyntax &expr,
     return spelling;
 }
 
+// Map an AST PathSyntax root_kind + root_name to AssignTargetRootKind.
+// The simple enum mapping is: ast PathRootKind directly maps for Input/Output;
+// for Identifier we further classify by the well-known root names that AHFL
+// semantics recognise (ctx → Context, state → State) so typed-tree lowering
+// can reconstruct an ir::Path without re-reading the AST.
+[[nodiscard]] AssignTargetRootKind
+assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
+    switch (path.root_kind) {
+    case ast::PathRootKind::Input:  return AssignTargetRootKind::Input;
+    case ast::PathRootKind::Output: return AssignTargetRootKind::Output;
+    case ast::PathRootKind::Identifier:
+        if (path.root_name == "ctx")   return AssignTargetRootKind::Context;
+        if (path.root_name == "state") return AssignTargetRootKind::State;
+        return AssignTargetRootKind::Identifier;
+    }
+    return AssignTargetRootKind::Identifier;
+}
+
 [[nodiscard]] std::string place_spelling(const Place &place) {
     std::string spelling = place.root;
     for (const auto &member : place.members) {
@@ -1936,12 +1954,14 @@ TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr
             error_here("temporal embedded expression must be pure", expr.expr->range);
         }
         te.kind = TypedTemporalKind::Atom;
+        te.op = TypedTemporalOp::Atom;
         const std::uint32_t expr_idx = resolve_payload_expr_index(*expr.expr);
         te.children_index.push_back(expr_idx);
         break;
     }
     case ast::TemporalExprSyntaxKind::Called: {
         te.kind = TypedTemporalKind::NameLiteral;
+        te.op = TypedTemporalOp::NameLiteralCalled;
         std::string canonical = expr.name;
         if (const auto ref = find_reference_here(ReferenceKind::TemporalCapability, expr.range);
             ref.has_value()) {
@@ -1950,22 +1970,31 @@ TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr
                 canonical = sym->get().canonical_name;
             }
         }
-        te.payload_spelling = "called:" + canonical;
+        // T1.7 P1: payload_spelling stores the canonical name directly
+        // (no "called:" prefix). The op enum encodes the variant.
+        te.payload_spelling = std::move(canonical);
         break;
     }
     case ast::TemporalExprSyntaxKind::InState: {
         te.kind = TypedTemporalKind::StateLiteral;
-        te.payload_spelling = "state:" + expr.name;
+        te.op = TypedTemporalOp::StateLiteral;
+        // payload_spelling stores the state name directly (no "state:" prefix).
+        te.payload_spelling = expr.name;
         break;
     }
     case ast::TemporalExprSyntaxKind::Running: {
         te.kind = TypedTemporalKind::NameLiteral;
-        te.payload_spelling = "running:" + expr.name;
+        te.op = TypedTemporalOp::NameLiteralRunning;
+        // payload_spelling stores the node name directly (no "running:" prefix).
+        te.payload_spelling = expr.name;
         break;
     }
     case ast::TemporalExprSyntaxKind::Completed: {
         te.kind = TypedTemporalKind::NameLiteral;
-        std::string data = "completed:" + expr.name;
+        te.op = TypedTemporalOp::NameLiteralCompleted;
+        // payload_spelling encodes "node_name|optional_state_name" for the
+        // Completed variant so lowering can extract both without AST.
+        std::string data = expr.name;
         if (expr.state_name.has_value()) {
             data += "|";
             data += *expr.state_name;
@@ -1978,10 +2007,22 @@ TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr
         te.kind = TypedTemporalKind::Unary;
         te.children_index.push_back(child_idx);
         switch (expr.unary_op) {
-        case ast::TemporalUnaryOp::Always:     te.payload_spelling = "always"; break;
-        case ast::TemporalUnaryOp::Eventually: te.payload_spelling = "eventually"; break;
-        case ast::TemporalUnaryOp::Next:       te.payload_spelling = "next"; break;
-        case ast::TemporalUnaryOp::Not:        te.payload_spelling = "not"; break;
+        case ast::TemporalUnaryOp::Always:
+            te.op = TypedTemporalOp::TemporalAlways;
+            te.payload_spelling = "always";
+            break;
+        case ast::TemporalUnaryOp::Eventually:
+            te.op = TypedTemporalOp::TemporalEventually;
+            te.payload_spelling = "eventually";
+            break;
+        case ast::TemporalUnaryOp::Next:
+            te.op = TypedTemporalOp::TemporalNext;
+            te.payload_spelling = "next";
+            break;
+        case ast::TemporalUnaryOp::Not:
+            te.op = TypedTemporalOp::TemporalNot;
+            te.payload_spelling = "not";
+            break;
         }
         break;
     }
@@ -1992,10 +2033,22 @@ TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr
         te.children_index.push_back(lhs_idx);
         te.children_index.push_back(rhs_idx);
         switch (expr.binary_op) {
-        case ast::TemporalBinaryOp::Implies: te.payload_spelling = "implies"; break;
-        case ast::TemporalBinaryOp::Or:      te.payload_spelling = "or"; break;
-        case ast::TemporalBinaryOp::And:     te.payload_spelling = "and"; break;
-        case ast::TemporalBinaryOp::Until:   te.payload_spelling = "until"; break;
+        case ast::TemporalBinaryOp::Implies:
+            te.op = TypedTemporalOp::TemporalImply;
+            te.payload_spelling = "implies";
+            break;
+        case ast::TemporalBinaryOp::Or:
+            te.op = TypedTemporalOp::TemporalOr;
+            te.payload_spelling = "or";
+            break;
+        case ast::TemporalBinaryOp::And:
+            te.op = TypedTemporalOp::TemporalAnd;
+            te.payload_spelling = "and";
+            break;
+        case ast::TemporalBinaryOp::Until:
+            te.op = TypedTemporalOp::TemporalUntil;
+            te.payload_spelling = "until";
+            break;
         }
         break;
     }
@@ -2299,12 +2352,33 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 initializer.type ? initializer.type->clone() : make_any_type();
         }
 
+        // Determine the let type-ref strategy and (optional) spelling string.
+        // The lowering pass reconstructs an ir::TypeRef from this pair plus
+        // the initializer's resolved type without consulting the AST:
+        //   * FromSyntax: user wrote a type annotation; spelling = canonical
+        //     TypeSyntax text (e.g. "Optional<Foo>").
+        //   * FromInitializerType: no annotation; binding type was inferred
+        //     from the initializer.
+        //   * AnySentinel: reserved for error paths.
+        LetTypeRefStrategy let_strategy = LetTypeRefStrategy::FromInitializerType;
+        std::string let_type_spelling;
+        if (statement.let_stmt->type) {
+            let_strategy = LetTypeRefStrategy::FromSyntax;
+            let_type_spelling = statement.let_stmt->type->spelling();
+        } else if (!initializer.type) {
+            let_strategy = LetTypeRefStrategy::AnySentinel;
+        } else {
+            let_strategy = LetTypeRefStrategy::FromInitializerType;
+        }
+
         result_.typed_program.statements.push_back(TypedStatement{
             .kind = TypedStmtKind::Let,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.let_stmt->initializer)},
             .target_name = statement.let_stmt->name,
+            .let_type_ref_strategy = let_strategy,
+            .let_type_ref_spelling = std::move(let_type_spelling),
         });
         last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
@@ -2344,6 +2418,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                           *statement.assign_stmt->value)}
                     : std::vector<std::uint32_t>{UINT32_MAX},
             .target_name = path_spelling(*statement.assign_stmt->target),
+            .assign_target_root_kind = assign_target_root_kind_of(*statement.assign_stmt->target),
         });
         last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
@@ -2436,12 +2511,18 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         break;
     }
     case ast::StatementSyntaxKind::Goto: {
+        // GotoStmtSyntax::target_state is always populated by the parser; the
+        // typed-record field mirrors it directly so lowering never needs to
+        // reach back into the AST. The empty-string fallback in
+        // typed_hir_lower.cpp is now dead code (kept for T1.7 backward compat).
+        const std::string target_state = statement.goto_stmt
+                                             ? statement.goto_stmt->target_state
+                                             : std::string{};
         result_.typed_program.statements.push_back(TypedStatement{
             .kind = TypedStmtKind::Goto,
             .range = statement.range,
             .source_id = current_source_id_,
-            .goto_target_state = statement.goto_stmt ? statement.goto_stmt->target_state
-                                                     : std::string{},
+            .goto_target_state = target_state,
         });
         last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
@@ -2506,11 +2587,20 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             error_here("assert condition must be pure", statement.assert_stmt->condition->range);
         }
 
+        // Assert message: currently AssertStmtSyntax in the AST does not
+        // carry a user-facing message (field reserved for a future AST
+        // extension). We deliberately leave assert_message empty so the
+        // typed record remains forward-compatible: once the AST gains a
+        // message field the filling here will light up.
+        std::string assert_msg;
+        (void)assert_msg; // silence unused warning when the AST lacks the field
+
         result_.typed_program.statements.push_back(TypedStatement{
             .kind = TypedStmtKind::Assert,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.assert_stmt->condition)},
+            .assert_message = std::move(assert_msg),
         });
         last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
