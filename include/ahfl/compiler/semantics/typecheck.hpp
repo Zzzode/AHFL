@@ -7,11 +7,14 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_relations.hpp"
+#include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/base/support/ownership.hpp"
@@ -21,6 +24,7 @@ namespace ahfl {
 
 struct SourceGraph;
 class TypeCheckPass;
+class TypeContext;
 
 struct StructFieldInfo {
     std::string name;
@@ -177,91 +181,93 @@ class TypeEnvironment {
     std::unordered_set<std::size_t> agent_context_struct_ids_;
 };
 
-struct ExpressionTypeInfo {
-    SourceRange range;
-    std::optional<SourceId> source_id;
-    // Stable AST identity (ast::ExprSyntax::node_id). 0 means "unassigned",
-    // which can happen for synthesized or pre-NodeId expressions.
-    std::uint64_t node_id{0};
-    TypePtr type;
-    ExprEffect effect{ExprEffect::Pure};
-    bool is_pure{true};
+struct TypeCheckOptions {
+    // Emit note-level diagnostics explaining why Optional<T> narrowing facts
+    // were or were not produced from if conditions. Disabled by default so
+    // normal user-facing diagnostics stay quiet.
+    bool explain_narrowing{false};
+    // Record relation checks performed by the type checker through
+    // TypeRelationContext. Disabled by default to avoid retaining trace data in
+    // normal compilation.
+    bool trace_type_relations{false};
 };
 
 struct TypeCheckResult {
     TypeEnvironment environment;
     DiagnosticBag diagnostics;
+    TypedProgram typed_program;
+    RelationTrace relation_trace;
+
+    TypeCheckResult() { typed_program.type_check_result = this; }
+
+    TypeCheckResult(const TypeCheckResult &other)
+        : environment(other.environment), diagnostics(other.diagnostics),
+          typed_program(other.typed_program), relation_trace(other.relation_trace) {
+        typed_program.type_check_result = this;
+    }
+
+    TypeCheckResult(TypeCheckResult &&other) noexcept
+        : environment(std::move(other.environment)), diagnostics(std::move(other.diagnostics)),
+          typed_program(std::move(other.typed_program)),
+          relation_trace(std::move(other.relation_trace)) {
+        typed_program.type_check_result = this;
+    }
+
+    TypeCheckResult &operator=(const TypeCheckResult &other) {
+        if (this == &other) {
+            return *this;
+        }
+        environment = other.environment;
+        diagnostics = other.diagnostics;
+        typed_program = other.typed_program;
+        relation_trace = other.relation_trace;
+        typed_program.type_check_result = this;
+        return *this;
+    }
+
+    TypeCheckResult &operator=(TypeCheckResult &&other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+        environment = std::move(other.environment);
+        diagnostics = std::move(other.diagnostics);
+        typed_program = std::move(other.typed_program);
+        relation_trace = std::move(other.relation_trace);
+        typed_program.type_check_result = this;
+        return *this;
+    }
 
     [[nodiscard]] bool has_errors() const noexcept {
         return diagnostics.has_error();
     }
-
-    [[nodiscard]] const std::vector<ExpressionTypeInfo> &expression_types() const noexcept {
-        return expression_types_;
-    }
-
-    [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
-    find_expression_type(SourceRange range, std::optional<SourceId> source_id = std::nullopt) const;
-
-    // Look up by stable AST node id. Preferred over the SourceRange-based
-    // overload when callers can carry the originating ast::ExprSyntax pointer
-    // because two expressions with overlapping ranges (e.g. a parent and a
-    // synthetic child) can be disambiguated. NodeIds are only unique within
-    // the source they were minted in, so callers in multi-source projects
-    // must pass the source id alongside.
-    [[nodiscard]] MaybeCRef<ExpressionTypeInfo>
-    find_expression_type_by_node(std::uint64_t node_id,
-                                 std::optional<SourceId> source_id = std::nullopt) const;
-
-  private:
-    friend class TypeCheckPass;
-
-    struct ExpressionTypeLookupKey {
-        std::size_t begin_offset{0};
-        std::size_t end_offset{0};
-        std::optional<SourceId> source_id;
-
-        [[nodiscard]] friend bool operator==(const ExpressionTypeLookupKey &lhs,
-                                             const ExpressionTypeLookupKey &rhs) noexcept = default;
-    };
-
-    struct ExpressionTypeLookupKeyHash {
-        [[nodiscard]] std::size_t operator()(const ExpressionTypeLookupKey &key) const noexcept;
-    };
-
-    struct ExpressionTypeNodeKey {
-        std::uint64_t node_id{0};
-        std::optional<SourceId> source_id;
-
-        [[nodiscard]] friend bool operator==(const ExpressionTypeNodeKey &lhs,
-                                             const ExpressionTypeNodeKey &rhs) noexcept = default;
-    };
-
-    struct ExpressionTypeNodeKeyHash {
-        [[nodiscard]] std::size_t operator()(const ExpressionTypeNodeKey &key) const noexcept;
-    };
-
-    void rebuild_expression_type_lookup_cache() const;
-    void ensure_expression_type_lookup_cache() const;
-    void invalidate_expression_type_lookup_cache() const noexcept;
-    [[nodiscard]] std::vector<ExpressionTypeInfo> &mutable_expression_types() noexcept;
-
-    std::vector<ExpressionTypeInfo> expression_types_;
-    mutable std::unordered_map<ExpressionTypeLookupKey, std::size_t, ExpressionTypeLookupKeyHash>
-        expression_type_lookup_cache_;
-    mutable std::unordered_map<ExpressionTypeNodeKey, std::size_t, ExpressionTypeNodeKeyHash>
-        expression_type_node_cache_;
-    mutable std::size_t expression_type_lookup_cache_size_{0};
-    mutable const ExpressionTypeInfo *expression_type_lookup_cache_data_{nullptr};
-    mutable bool expression_type_lookup_cache_valid_{false};
 };
 
 class TypeChecker {
   public:
     [[nodiscard]] TypeCheckResult check(const ast::Program &program,
                                         const ResolveResult &resolve_result) const;
+    [[nodiscard]] TypeCheckResult check(const ast::Program &program,
+                                        const ResolveResult &resolve_result,
+                                        TypeCheckOptions options) const;
+    [[nodiscard]] TypeCheckResult check(const ast::Program &program,
+                                        const ResolveResult &resolve_result,
+                                        TypeContext &types) const;
+    [[nodiscard]] TypeCheckResult check(const ast::Program &program,
+                                        const ResolveResult &resolve_result,
+                                        TypeContext &types,
+                                        TypeCheckOptions options) const;
     [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
                                         const ResolveResult &resolve_result) const;
+    [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
+                                        const ResolveResult &resolve_result,
+                                        TypeCheckOptions options) const;
+    [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
+                                        const ResolveResult &resolve_result,
+                                        TypeContext &types) const;
+    [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
+                                        const ResolveResult &resolve_result,
+                                        TypeContext &types,
+                                        TypeCheckOptions options) const;
 };
 
 void dump_type_environment(const TypeEnvironment &environment,
