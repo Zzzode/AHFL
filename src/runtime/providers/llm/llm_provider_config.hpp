@@ -14,6 +14,10 @@ struct LLMProviderConfig {
     bool json_mode = true; // 强制 JSON 输出
     int timeout_seconds = 30;
     int max_retries = 2;
+
+    // Tool calling settings
+    std::string tool_choice{"auto"}; // "auto", "none", or specific tool name
+    int max_tool_rounds{5};          // max tool call iterations before giving up
 };
 
 // 从 JSON 内容字符串加载配置，支持 ${ENV_VAR} 环境变量展开

@@ -3,9 +3,47 @@
 #include "runtime/engine/wire_transport_adapter.hpp"
 #include "runtime/engine/wire_value.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 
 namespace ahfl::runtime {
+
+namespace {
+
+[[nodiscard]] std::string percent_decode(const std::string &encoded) {
+    std::string decoded;
+    decoded.reserve(encoded.size());
+    for (std::size_t i = 0; i < encoded.size(); ++i) {
+        if (encoded[i] == '%' && i + 2 < encoded.size() &&
+            std::isxdigit(static_cast<unsigned char>(encoded[i + 1])) &&
+            std::isxdigit(static_cast<unsigned char>(encoded[i + 2]))) {
+            const auto hi = encoded[i + 1];
+            const auto lo = encoded[i + 2];
+            auto hex_digit = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return 0;
+            };
+            decoded += static_cast<char>((hex_digit(hi) << 4) | hex_digit(lo));
+            i += 2;
+        } else {
+            decoded += encoded[i];
+        }
+    }
+    return decoded;
+}
+
+[[nodiscard]] bool case_insensitive_equals(const std::string &a, const std::string &b) {
+    if (a.size() != b.size()) return false;
+    return std::equal(a.begin(), a.end(), b.begin(), [](char lhs, char rhs) {
+        return std::tolower(static_cast<unsigned char>(lhs)) ==
+               std::tolower(static_cast<unsigned char>(rhs));
+    });
+}
+
+} // namespace
 
 // ============================================================================
 // GrpcStatusCode helpers
@@ -100,6 +138,35 @@ GrpcStatusCode grpc_status_from_http_status(int http_code) {
         return GrpcStatusCode::FailedPrecondition;
     }
     return GrpcStatusCode::Internal;
+}
+
+// ============================================================================
+// gRPC header/trailer parsing
+// ============================================================================
+
+GrpcStatusCode
+parse_grpc_status_from_headers(const std::vector<std::pair<std::string, std::string>> &headers) {
+    for (const auto &[name, value] : headers) {
+        if (case_insensitive_equals(name, "grpc-status")) {
+            try {
+                const int code = std::stoi(value);
+                return static_cast<GrpcStatusCode>(code);
+            } catch (...) {
+                return GrpcStatusCode::Unknown;
+            }
+        }
+    }
+    return GrpcStatusCode::Ok;
+}
+
+std::string
+parse_grpc_message_from_headers(const std::vector<std::pair<std::string, std::string>> &headers) {
+    for (const auto &[name, value] : headers) {
+        if (case_insensitive_equals(name, "grpc-message")) {
+            return percent_decode(value);
+        }
+    }
+    return {};
 }
 
 // ============================================================================
