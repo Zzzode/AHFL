@@ -11,8 +11,10 @@
 #include <vector>
 
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/ir/types.hpp"
 #include "runtime/engine/capability_transport_adapter.hpp"
 #include "runtime/evaluator/value.hpp"
+#include "runtime/providers/secret/auth_provider.hpp"
 
 namespace ahfl::runtime {
 
@@ -125,6 +127,9 @@ struct HTTPCapabilityConfig {
     RetryConfig retry;
     TimeoutConfig timeout;
     CircuitBreakerConfig circuit_breaker;
+    std::optional<ahfl::secret::AuthConfig> auth;
+    std::shared_ptr<ahfl::secret::SecretManager> secret_manager;
+    std::shared_ptr<const ir::TypeRef> response_schema;
 };
 [[nodiscard]] CapabilityBinding make_http_capability(const std::string &name,
                                                      HTTPCapabilityConfig config);
@@ -141,6 +146,9 @@ struct GrpcJsonTranscodingCapabilityConfig {
     RetryConfig retry;
     TimeoutConfig timeout;
     CircuitBreakerConfig circuit_breaker;
+    std::optional<ahfl::secret::AuthConfig> auth;
+    std::shared_ptr<ahfl::secret::SecretManager> secret_manager;
+    std::shared_ptr<const ir::TypeRef> response_schema;
 };
 [[nodiscard]] CapabilityBinding
 make_grpc_json_transcoding_capability(const std::string &name,

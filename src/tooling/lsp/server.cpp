@@ -4,6 +4,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
+#include <cctype>
 #include <variant>
 
 namespace ahfl::lsp {
@@ -88,6 +89,8 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_document_symbol(req);
     } else if (req.method == "workspace/symbol") {
         handle_workspace_symbol(req);
+    } else if (req.method == "textDocument/signatureHelp") {
+        handle_signature_help(req);
     } else {
         // Method not found
         JsonRpcResponse resp;
@@ -902,6 +905,237 @@ void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
     JsonRpcResponse resp;
     resp.id = req.id;
     resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_signature_help(const JsonRpcRequest &req) {
+    if (!req.params) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    const auto *td = req.params->get("textDocument");
+    const auto *pos_val = req.params->get("position");
+    if (td == nullptr || pos_val == nullptr) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    auto id = parse_text_document_identifier(*td);
+    auto pos = parse_position(*pos_val);
+    const auto *doc = store_.get(id.uri);
+
+    if (doc == nullptr) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    const auto &text = doc->text;
+
+    // Convert 0-based LSP position to offset in text
+    std::size_t offset = 0;
+    {
+        uint32_t line = 0;
+        for (std::size_t i = 0; i < text.size(); ++i) {
+            if (line == pos.line) {
+                offset = i + pos.character;
+                break;
+            }
+            if (text[i] == '\n') {
+                ++line;
+            }
+        }
+        if (line < pos.line) {
+            offset = text.size();
+        }
+    }
+
+    // Scan backwards from cursor to find the nearest unmatched '('
+    int paren_depth = 0;
+    std::size_t open_paren_pos = std::string::npos;
+    for (std::size_t i = offset; i > 0; --i) {
+        char c = text[i - 1];
+        if (c == ')') {
+            ++paren_depth;
+        } else if (c == '(') {
+            if (paren_depth == 0) {
+                open_paren_pos = i - 1;
+                break;
+            }
+            --paren_depth;
+        }
+    }
+
+    if (open_paren_pos == std::string::npos) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    // Extract the identifier before the '(' — skip whitespace, then read identifier chars
+    std::string callable_name;
+    {
+        std::size_t idx = open_paren_pos;
+        // Skip whitespace before '('
+        while (idx > 0 && (text[idx - 1] == ' ' || text[idx - 1] == '\t')) {
+            --idx;
+        }
+        // Read identifier characters backwards
+        std::size_t end_idx = idx;
+        while (idx > 0 && (std::isalnum(static_cast<unsigned char>(text[idx - 1])) ||
+                           text[idx - 1] == '_')) {
+            --idx;
+        }
+        callable_name = text.substr(idx, end_idx - idx);
+    }
+
+    if (callable_name.empty()) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    // Count commas between open_paren_pos and cursor to determine active_parameter
+    int active_parameter = 0;
+    {
+        int depth = 0;
+        for (std::size_t i = open_paren_pos + 1; i < offset && i < text.size(); ++i) {
+            char c = text[i];
+            if (c == '(') {
+                ++depth;
+            } else if (c == ')') {
+                --depth;
+            } else if (c == ',' && depth == 0) {
+                ++active_parameter;
+            }
+        }
+    }
+
+    // Parse and resolve to look up the callable
+    Frontend frontend;
+    auto parse_result = frontend.parse_text(doc->uri, doc->text);
+    if (!parse_result.program) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    Resolver resolver;
+    auto resolve_result = resolver.resolve(*parse_result.program);
+
+    // Try to find the callable as a capability or predicate in the AST
+    const ast::CapabilityDecl *cap_decl = nullptr;
+    const ast::PredicateDecl *pred_decl = nullptr;
+
+    auto cap_sym = resolve_result.symbol_table.find_local(
+        SymbolNamespace::Capabilities, callable_name);
+    if (cap_sym.has_value()) {
+        for (const auto &decl : parse_result.program->declarations) {
+            if (auto *cap = dynamic_cast<ast::CapabilityDecl *>(decl.get())) {
+                if (cap->name == callable_name) {
+                    cap_decl = cap;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (cap_decl == nullptr) {
+        auto pred_sym = resolve_result.symbol_table.find_local(
+            SymbolNamespace::Predicates, callable_name);
+        if (pred_sym.has_value()) {
+            for (const auto &decl : parse_result.program->declarations) {
+                if (auto *pred = dynamic_cast<ast::PredicateDecl *>(decl.get())) {
+                    if (pred->name == callable_name) {
+                        pred_decl = pred;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (cap_decl == nullptr && pred_decl == nullptr) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = json::JsonValue::make_null();
+        transport_.send_response(resp);
+        return;
+    }
+
+    // Build SignatureHelp from the found declaration
+    SignatureHelp help;
+    help.active_signature = 0;
+    help.active_parameter = active_parameter;
+
+    SignatureInformation sig_info;
+    if (cap_decl != nullptr) {
+        std::string label = cap_decl->name + "(";
+        for (std::size_t i = 0; i < cap_decl->params.size(); ++i) {
+            if (i > 0) {
+                label += ", ";
+            }
+            const auto &p = *cap_decl->params[i];
+            std::string type_name = p.type ? p.type->spelling() : "?";
+            label += p.name + ": " + type_name;
+        }
+        label += ")";
+        if (cap_decl->return_type) {
+            label += " -> " + cap_decl->return_type->spelling();
+        }
+        sig_info.label = std::move(label);
+        sig_info.documentation = "capability " + cap_decl->name;
+
+        for (const auto &p : cap_decl->params) {
+            ParameterInformation pi;
+            std::string type_name = p->type ? p->type->spelling() : "?";
+            pi.label = p->name + ": " + type_name;
+            pi.documentation = type_name;
+            sig_info.parameters.push_back(std::move(pi));
+        }
+    } else {
+        std::string label = pred_decl->name + "(";
+        for (std::size_t i = 0; i < pred_decl->params.size(); ++i) {
+            if (i > 0) {
+                label += ", ";
+            }
+            const auto &p = *pred_decl->params[i];
+            std::string type_name = p.type ? p.type->spelling() : "?";
+            label += p.name + ": " + type_name;
+        }
+        label += ")";
+        sig_info.label = std::move(label);
+        sig_info.documentation = "predicate " + pred_decl->name;
+
+        for (const auto &p : pred_decl->params) {
+            ParameterInformation pi;
+            std::string type_name = p->type ? p->type->spelling() : "?";
+            pi.label = p->name + ": " + type_name;
+            pi.documentation = type_name;
+            sig_info.parameters.push_back(std::move(pi));
+        }
+    }
+
+    help.signatures.push_back(std::move(sig_info));
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = serialize_signature_help(help);
     transport_.send_response(resp);
 }
 

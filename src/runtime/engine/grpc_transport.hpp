@@ -65,11 +65,25 @@ struct GrpcJsonTranscodingResponse {
     GrpcStatusCode status_code{GrpcStatusCode::Unknown};
     std::string body;
     std::string error_message;
+    std::vector<std::pair<std::string, std::string>> response_metadata;
+    std::vector<std::pair<std::string, std::string>> trailers;
 
     [[nodiscard]] bool is_ok() const {
         return status_code == GrpcStatusCode::Ok;
     }
 };
+
+/// Parse the gRPC status code from response headers/trailers.
+/// Looks for the "grpc-status" header (case-insensitive) and parses its value as an integer.
+/// Returns GrpcStatusCode::Ok if the header is not found.
+[[nodiscard]] GrpcStatusCode
+parse_grpc_status_from_headers(const std::vector<std::pair<std::string, std::string>> &headers);
+
+/// Parse the gRPC error message from response headers/trailers.
+/// Looks for the "grpc-message" header (case-insensitive) and returns its percent-decoded value.
+/// Returns an empty string if the header is not found.
+[[nodiscard]] std::string
+parse_grpc_message_from_headers(const std::vector<std::pair<std::string, std::string>> &headers);
 
 /// Execute an HTTP/2 JSON-transcoding call.
 [[nodiscard]] GrpcJsonTranscodingResponse

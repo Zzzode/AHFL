@@ -14,11 +14,14 @@ add_library(ahfl_runtime_engine STATIC
     wire_capability.cpp
     wire_value.cpp
     wire_transport_adapter.cpp
+    response_schema_validator.cpp
 )
 
 target_link_libraries(ahfl_runtime_engine
     PUBLIC
         ahfl_runtime_evaluator
+        ahfl_runtime_provider_secret
+        ahfl_compiler_ir
     PRIVATE
         ahfl_base_support
         ahfl_base_json
