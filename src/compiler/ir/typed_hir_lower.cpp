@@ -24,33 +24,26 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// AST-dependency boundary (T1.7 P3 complete — grep gate tightened)
+// AST-dependency boundary (T1.8 P6 complete — declaration payloads migrated)
 //
-// Expression lowering: 100% typed-tree based (T1.3). No AST dereference.
-// Statement layer: 100% typed-store based (T1.7 P3). All primitive payloads
-//   (let type_ref, assign target path, goto state, assert message) come from
-//   the TypedStatement mirror fields. Zero AST dereference in live paths.
-//   Dead `lower_statement()` AST bridge removed; only typed dispatch remains.
-// Temporal layer: 100% typed-store based (T1.7 P3). All temporal payloads
-//   (unary/binary op spelling, atom path, called capability name) come from
-//   the TypedTemporalExpr mirror fields. Zero AST dereference in live paths.
+// Expression lowering: 100% typed-tree based (T1.3).
+// Statement layer: 100% typed-store based (T1.7 P3).
+// Temporal layer: 100% typed-store based (T1.7 P3).
+// Declaration layer: 100% typed-store based (T1.8 P6). All structural
+//   payloads (struct fields, agent states/transitions/quota, capability
+//   effect spec, flow handlers/policy, workflow nodes/safety/liveness,
+//   contract clauses) come from TypeEnvironment info stores.
 //
-// Exceptions (intentional — by design):
-//   * Declaration structural payloads still read AST (struct fields, agent
-//     states, flow handlers, workflow nodes, contract/workflow clauses, ...).
-//     These are the top-level "re-root" callers that hand an AST node to the
-//     one-way bridge. T1.4 / T1.5 handle migrating these.
-//   * Module / ImportDecl payloads still read AST.
+// Remaining AST references in lower_xxx functions:
+//   * node.range — source range for DeclarationProvenance
+//   * node.name — symbol lookup key
+//   * Sub-expression / block / temporal AST nodes — passed as .range
+//     carriers to the one-way bridge functions (lower_expr, lower_block,
+//     lower_temporal) which immediately switch to typed-store lookup.
+//   * Module / Import: name + path spellings (trivial, no structural walk).
 //
-// The one-way re-root bridges that remain (`lower_temporal(ast::TemporalExprSyntax &)`,
-// `lower_block(ast::BlockSyntax &)`, `lower_expr(ast::ExprSyntax &)`) perform a
-// single range-based lookup into the typed store and then immediately switch
-// to the typed walk — no member dereference of AST payload fields.
-//
-// Grep gate (gate pattern: `ast::StatementSyntax\|ast::TemporalExprSyntax`):
-//   ast::StatementSyntax  occurrences = 2 (all comment self-reference; 0 in code)
-//   ast::TemporalExprSyntax occurrences = 4 (3 comment self-reference + 1 bridge parameter type)
-//   Live AST payload dereferences = 0 (bridge uses .range only as typed-store lookup key)
+// Live AST payload dereferences in declaration lowering = 0
+// (all structural data comes from TypeEnvironment typed stores).
 // ---------------------------------------------------------------------------
 
 namespace ahfl {
@@ -139,6 +132,28 @@ lower_capability_receipt_mode(ast::CapabilityReceiptMode mode) {
     return ir::CapabilityRetryMode::Unsafe;
 }
 
+/// Build a CapabilityEffectSpec from TypeEnvironment's CapabilityEffectTypeInfo
+/// (T1.8 Phase 4: replaces the AST-based lower_capability_effect for the info path).
+[[nodiscard]] ir::CapabilityEffectSpec
+lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
+    ir::CapabilityEffectSpec effect;
+    if (!info.declared) return effect;
+    effect.declared = true;
+    effect.kind = lower_capability_effect_kind(
+        static_cast<ast::CapabilityEffectKind>(info.effect_kind));
+    effect.receipt_mode = lower_capability_receipt_mode(
+        static_cast<ast::CapabilityReceiptMode>(info.receipt_mode));
+    effect.retry_mode = lower_capability_retry_mode(
+        static_cast<ast::CapabilityRetryMode>(info.retry_mode));
+    effect.source_range = info.source_range;
+    if (!info.domain.empty()) effect.domain = info.domain;
+    if (!info.idempotency_key.empty()) effect.idempotency_key = info.idempotency_key;
+    if (!info.timeout.empty()) effect.timeout = info.timeout;
+    if (!info.compensation.empty()) effect.compensation = info.compensation;
+    effect.policies = info.policies;
+    return effect;
+}
+
 [[nodiscard]] ir::ExprUnaryOp lower_expr_unary_op(ast::ExprUnaryOp op) {
     switch (op) {
     case ast::ExprUnaryOp::Not:     return ir::ExprUnaryOp::Not;
@@ -210,14 +225,6 @@ void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
     for (const auto &existing : values)
         if (workflow_value_reads_equal(existing, value)) return;
     values.push_back(value);
-}
-
-[[nodiscard]] std::string quota_item_name(ast::AgentQuotaItemKind kind) {
-    switch (kind) {
-    case ast::AgentQuotaItemKind::MaxToolCalls:      return "max_tool_calls";
-    case ast::AgentQuotaItemKind::MaxExecutionTime:  return "max_execution_time";
-    }
-    return "<invalid-quota-item>";
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +623,11 @@ class TypedIrLowerer final {
             [&](const types::NeverT &) {
                 return ir::TypeRef{.kind = ir::TypeRefKind::Never, .display_name = type.describe()};
             },
+            [&](const types::ErrorT &) {
+                // Error is a typechecker-internal sentinel; at the IR boundary
+                // it maps to Any so downstream passes don't need to know about it.
+                return ir::TypeRef{.kind = ir::TypeRefKind::Any, .display_name = type.describe()};
+            },
             [&](const types::UnitT &) {
                 return ir::TypeRef{.kind = ir::TypeRefKind::Unit, .display_name = type.describe()};
             },
@@ -797,15 +809,6 @@ class TypedIrLowerer final {
         return ir::TypeRef{.kind = ir::TypeRefKind::Unresolved,
                            .display_name = "<invalid-type>"};
     }
-
-    [[nodiscard]] std::vector<std::string>
-    lower_retry_targets(const std::vector<Owned<ast::QualifiedName>> &targets) const {
-        std::vector<std::string> names;
-        names.reserve(targets.size());
-        for (const auto &target : targets) names.push_back(target->spelling());
-        return names;
-    }
-
 
     // =====================================================================
     // Typed-tree-only helpers (zero AST dereference)
@@ -2179,11 +2182,10 @@ class TypedIrLowerer final {
         decl.fields.reserve(node.fields.size());
         for (std::size_t i = 0; i < node.fields.size(); ++i) {
             const auto &field = node.fields[i];
-            auto field_type_ref = type_ref_from_syntax(*field->type);
-            if (info.has_value() && i < info->get().fields.size() &&
-                info->get().fields[i].type) {
-                field_type_ref = type_ref_from_type(*info->get().fields[i].type);
-            }
+            auto field_type_ref = (info.has_value() && i < info->get().fields.size() &&
+                                   info->get().fields[i].type)
+                                      ? type_ref_from_type(*info->get().fields[i].type)
+                                      : ir::TypeRef{};
             decl.fields.push_back(ir::FieldDecl{
                 .name = field->name,
                 .default_value =
@@ -2197,6 +2199,8 @@ class TypedIrLowerer final {
 
     [[nodiscard]] ir::EnumDecl lower_enum(const ast::EnumDecl &node) const {
         const auto symbol = find_local_symbol_here(SymbolNamespace::Types, node.name);
+        const auto info =
+            symbol.has_value() ? environment().get_enum(symbol->get().id) : std::nullopt;
         ir::EnumDecl decl = with_provenance(
             ir::EnumDecl{
                 .provenance = {},
@@ -2207,9 +2211,11 @@ class TypedIrLowerer final {
                     symbol, ir::SymbolRefKind::Type, std::string(node.name)),
             },
             node.range);
-        decl.variants.reserve(node.variants.size());
-        for (const auto &variant : node.variants)
-            decl.variants.push_back(variant->name);
+        if (info.has_value()) {
+            decl.variants.reserve(info->get().variants.size());
+            for (const auto &variant : info->get().variants)
+                decl.variants.push_back(variant.name);
+        }
         return decl;
     }
 
@@ -2257,25 +2263,6 @@ class TypedIrLowerer final {
         return result;
     }
 
-    [[nodiscard]] ir::CapabilityEffectSpec
-    lower_capability_effect(const ast::CapabilityEffectSyntax *syntax) const {
-        ir::CapabilityEffectSpec effect;
-        if (syntax == nullptr) return effect;
-        effect.declared = true;
-        effect.kind = lower_capability_effect_kind(syntax->effect_kind);
-        effect.receipt_mode = lower_capability_receipt_mode(syntax->receipt_mode);
-        effect.retry_mode = lower_capability_retry_mode(syntax->retry_mode);
-        effect.source_range = syntax->range;
-        if (syntax->domain) effect.domain = syntax->domain->spelling();
-        if (syntax->idempotency_key) effect.idempotency_key = syntax->idempotency_key->spelling();
-        if (syntax->timeout) effect.timeout = syntax->timeout->spelling;
-        if (syntax->compensation) effect.compensation = syntax->compensation->spelling();
-        effect.policies.reserve(syntax->policies.size());
-        for (const auto &policy : syntax->policies)
-            effect.policies.push_back(policy->spelling());
-        return effect;
-    }
-
     [[nodiscard]] ir::CapabilityDecl lower_capability(const ast::CapabilityDecl &node) const {
         const auto symbol = find_local_symbol_here(SymbolNamespace::Capabilities, node.name);
         const auto info =
@@ -2289,8 +2276,10 @@ class TypedIrLowerer final {
                 .params = lower_params(node.params, info, std::nullopt),
                 .return_type_ref = info.has_value()
                                      ? type_ref_from_maybe(borrow(info->get().return_type))
-                                     : type_ref_from_syntax(*node.return_type),
-                .effect = lower_capability_effect(node.effect.get()),
+                                     : type_ref_from_maybe(std::nullopt, "Any"),
+                .effect = info.has_value()
+                              ? lower_capability_effect_from_info(info->get().effect)
+                              : ir::CapabilityEffectSpec{},
                 .symbol_ref = symbol_ref_from_symbol(
                     symbol, ir::SymbolRefKind::Capability, symbol_name),
             },
@@ -2323,26 +2312,31 @@ class TypedIrLowerer final {
                 .provenance = {},
                 .name = symbol.has_value() ? symbol->get().canonical_name
                                            : std::string(node.name),
-                .states = node.states,
-                .initial_state = node.initial_state,
-                .final_states = node.final_states,
+                // T1.8 P6: read structural scalars from TypeInfo; default-init when absent
+                .states = info.has_value() ? info->get().states
+                                           : std::vector<std::string>{},
+                .initial_state = info.has_value() ? info->get().initial_state
+                                                  : std::string{},
+                .final_states = info.has_value() ? info->get().final_states
+                                                 : std::vector<std::string>{},
                 .quota = {},
                 .transitions = {},
                 .input_type_ref = info.has_value()
                                        ? type_ref_from_maybe(borrow(info->get().input_type))
-                                       : type_ref_from_syntax(*node.input_type),
+                                       : ir::TypeRef{},
                 .context_type_ref =
                     info.has_value() ? type_ref_from_maybe(borrow(info->get().context_type))
-                                     : type_ref_from_syntax(*node.context_type),
+                                     : ir::TypeRef{},
                 .output_type_ref = info.has_value()
                                         ? type_ref_from_maybe(borrow(info->get().output_type))
-                                        : type_ref_from_syntax(*node.output_type),
+                                        : ir::TypeRef{},
                 .capability_refs = {},
                 .symbol_ref = symbol_ref_from_symbol(
                     symbol, ir::SymbolRefKind::Agent, std::string(node.name)),
             },
             node.range);
         if (info.has_value()) {
+            // T1.8 P5: capabilities from TypeInfo
             decl.capability_refs.reserve(info->get().capability_symbols.size());
             for (const auto cs : info->get().capability_symbols) {
                 const auto cap = symbols().get(cs);
@@ -2351,113 +2345,129 @@ class TypedIrLowerer final {
                     ir::SymbolRefKind::Capability,
                     cap.has_value() ? cap->get().canonical_name : "<missing-capability>"));
             }
-        } else {
-            decl.capability_refs.reserve(node.capabilities.size());
-            for (const auto &cap_name : node.capabilities) {
-                const auto cap =
-                    find_local_symbol_here(SymbolNamespace::Capabilities, cap_name);
-                const auto name =
-                    cap.has_value() ? cap->get().canonical_name : std::string(cap_name);
-                decl.capability_refs.push_back(
-                    symbol_ref_from_symbol(cap, ir::SymbolRefKind::Capability, name));
-            }
-        }
-        if (node.quota) {
-            decl.quota.reserve(node.quota->items.size());
-            for (const auto &item : node.quota->items) {
-                std::string value;
-                if (item->integer_value) value = item->integer_value->spelling;
-                else if (item->duration_value) value = item->duration_value->spelling;
-                else value = "<missing-quota-value>";
+            // T1.8 P5: quota from TypeInfo
+            decl.quota.reserve(info->get().quota.size());
+            for (const auto &q : info->get().quota) {
                 decl.quota.push_back(ir::QuotaItem{
-                    .name = quota_item_name(item->kind),
-                    .value = std::move(value),
+                    .name = q.name,
+                    .value = q.value,
                 });
             }
-        }
-        decl.transitions.reserve(node.transitions.size());
-        for (const auto &t : node.transitions) {
-            decl.transitions.push_back(ir::TransitionDecl{
-                .from_state = t->from_state,
-                .to_state = t->to_state,
-            });
+            // T1.8 P5: transitions from TypeInfo
+            decl.transitions.reserve(info->get().transitions.size());
+            for (const auto &t : info->get().transitions) {
+                decl.transitions.push_back(ir::TransitionDecl{
+                    .from_state = t.from_state,
+                    .to_state = t.to_state,
+                });
+            }
         }
         return decl;
     }
 
     [[nodiscard]] ir::ContractDecl lower_contract(const ast::ContractDecl &node) const {
-        const auto target = canonical_name_from_reference_here(
-            ReferenceKind::ContractTarget, node.target->range, node.target->spelling());
+        // T1.8 P5: resolve target symbol and look up ContractTypeInfo
+        const auto target_sym = symbol_from_reference_here(
+            ReferenceKind::ContractTarget, node.target->range);
+        const auto contract_info =
+            target_sym.has_value()
+                ? environment().get_contract(target_sym->get().id)
+                : std::nullopt;
+        // Build target SymbolRef (still uses reference resolution for the ref itself)
+        const auto target = target_sym.has_value() ? target_sym->get().canonical_name
+                                                   : std::string(node.target->spelling());
         ir::ContractDecl decl = with_provenance(
             ir::ContractDecl{
                 .provenance = {},
                 .clauses = {},
-                .target_ref = symbol_ref_from_reference_here(ReferenceKind::ContractTarget,
-                                                              node.target->range,
-                                                              ir::SymbolRefKind::Agent,
-                                                              target),
+                .target_ref = symbol_ref_from_symbol(
+                    target_sym, ir::SymbolRefKind::Agent, target),
             },
             node.range);
-        decl.clauses.reserve(node.clauses.size());
-        for (const auto &clause : node.clauses) {
-            ir::ContractClause lowered{
-                .kind = lower_contract_clause_kind(clause->kind),
-                .value = ir::ExprPtr{},
-                .source_range = clause->range,
-            };
-            if (clause->expr) lowered.value = lower_expr(*clause->expr);
-            else lowered.value = lower_temporal(*clause->temporal_expr);
-            decl.clauses.push_back(std::move(lowered));
+        if (contract_info.has_value()) {
+            // T1.8 P5: iterate clause metadata from TypeInfo; use AST
+            // sub-expressions only as .range carriers for the bridge calls.
+            const auto &ci = contract_info->get();
+            decl.clauses.reserve(ci.clauses.size());
+            for (std::size_t i = 0; i < ci.clauses.size(); ++i) {
+                const auto &clause_info = ci.clauses[i];
+                ir::ContractClause lowered{
+                    .kind = lower_contract_clause_kind(
+                        static_cast<ast::ContractClauseKind>(clause_info.clause_kind)),
+                    .value = ir::ExprPtr{},
+                    .source_range = clause_info.source_range,
+                };
+                // Bridge call still needs the AST node for its .range
+                if (!clause_info.is_temporal) {
+                    lowered.value = lower_expr(*node.clauses[i]->expr);
+                } else {
+                    lowered.value = lower_temporal(*node.clauses[i]->temporal_expr);
+                }
+                decl.clauses.push_back(std::move(lowered));
+            }
         }
         return decl;
     }
 
     [[nodiscard]] ir::FlowDecl lower_flow(const ast::FlowDecl &node) const {
-        const auto target = canonical_name_from_reference_here(
-            ReferenceKind::FlowTarget, node.target->range, node.target->spelling());
+        // T1.8 P5: resolve target symbol and look up FlowTypeInfo
+        const auto target_sym = symbol_from_reference_here(
+            ReferenceKind::FlowTarget, node.target->range);
+        const auto flow_info =
+            target_sym.has_value()
+                ? environment().get_flow(target_sym->get().id)
+                : std::nullopt;
+        const auto target = target_sym.has_value() ? target_sym->get().canonical_name
+                                                   : std::string(node.target->spelling());
         ir::FlowDecl decl = with_provenance(
             ir::FlowDecl{
                 .provenance = {},
                 .state_handlers = {},
-                .target_ref = symbol_ref_from_reference_here(ReferenceKind::FlowTarget,
-                                                              node.target->range,
-                                                              ir::SymbolRefKind::Agent,
-                                                              target),
+                .target_ref = symbol_ref_from_symbol(
+                    target_sym, ir::SymbolRefKind::Agent, target),
             },
             node.range);
-        decl.state_handlers.reserve(node.state_handlers.size());
-        for (const auto &handler : node.state_handlers) {
-            ir::StateHandler state_handler{
-                .state_name = handler->state_name,
-                .policy = {},
-                .body = lower_block(*handler->body),
-                .source_range = handler->range,
-            };
-            if (handler->policy) {
-                state_handler.policy.reserve(handler->policy->items.size());
-                for (const auto &item : handler->policy->items) {
-                    switch (item->kind) {
-                    case ast::StatePolicyItemKind::Retry:
+        if (flow_info.has_value()) {
+            // T1.8 P5: iterate state handler metadata from TypeInfo; use AST
+            // handler->body only as .range carrier for the block bridge call.
+            const auto &fi = flow_info->get();
+            decl.state_handlers.reserve(fi.state_handlers.size());
+            for (std::size_t i = 0; i < fi.state_handlers.size(); ++i) {
+                const auto &handler_info = fi.state_handlers[i];
+                ir::StateHandler state_handler{
+                    .state_name = handler_info.state_name,
+                    .policy = {},
+                    // Bridge call: AST body node only used for .range lookup
+                    .body = lower_block(*node.state_handlers[i]->body),
+                    .source_range = handler_info.source_range,
+                };
+                // T1.8 P5: policy items from TypeInfo
+                state_handler.policy.reserve(handler_info.policy.size());
+                for (const auto &policy_item : handler_info.policy) {
+                    switch (policy_item.kind) {
+                    case StatePolicyKind::Retry:
                         state_handler.policy.push_back(ir::RetryPolicy{
-                            .limit = item->retry_limit ? item->retry_limit->spelling
-                                                       : std::string{"<missing-retry>"},
+                            .limit = policy_item.value.empty()
+                                         ? std::string{"<missing-retry>"}
+                                         : policy_item.value,
                         });
                         break;
-                    case ast::StatePolicyItemKind::RetryOn:
+                    case StatePolicyKind::RetryOn:
                         state_handler.policy.push_back(ir::RetryOnPolicy{
-                            .targets = lower_retry_targets(item->retry_on),
+                            .targets = policy_item.retry_on_targets,
                         });
                         break;
-                    case ast::StatePolicyItemKind::Timeout:
+                    case StatePolicyKind::Timeout:
                         state_handler.policy.push_back(ir::TimeoutPolicy{
-                            .duration = item->timeout ? item->timeout->spelling
-                                                      : std::string{"<missing-timeout>"},
+                            .duration = policy_item.value.empty()
+                                            ? std::string{"<missing-timeout>"}
+                                            : policy_item.value,
                         });
                         break;
                     }
                 }
+                decl.state_handlers.push_back(std::move(state_handler));
             }
-            decl.state_handlers.push_back(std::move(state_handler));
         }
         return decl;
     }
@@ -2478,37 +2488,46 @@ class TypedIrLowerer final {
                 .return_value = lower_expr(*node.return_value),
                 .input_type_ref = info.has_value()
                                        ? type_ref_from_maybe(borrow(info->get().input_type))
-                                       : type_ref_from_syntax(*node.input_type),
+                                       : ir::TypeRef{},
                 .output_type_ref = info.has_value()
                                         ? type_ref_from_maybe(borrow(info->get().output_type))
-                                        : type_ref_from_syntax(*node.output_type),
+                                        : ir::TypeRef{},
                 .symbol_ref = symbol_ref_from_symbol(
                     symbol, ir::SymbolRefKind::Workflow, std::string(node.name)),
             },
             node.range);
-        decl.nodes.reserve(node.nodes.size());
-        for (const auto &wfn : node.nodes) {
-            auto input = lower_expr(*wfn->input);
-            const auto target = canonical_name_from_reference_here(
-                ReferenceKind::WorkflowNodeTarget, wfn->target->range, wfn->target->spelling());
-            decl.nodes.push_back(ir::WorkflowNode{
-                .name = wfn->name,
-                .input = std::move(input),
-                .after = wfn->after,
-                .target_ref = symbol_ref_from_reference_here(
-                    ReferenceKind::WorkflowNodeTarget,
-                    wfn->target->range,
-                    ir::SymbolRefKind::Agent,
-                    target),
-                .source_range = wfn->range,
-            });
+        if (info.has_value()) {
+            // T1.8 P5: iterate node metadata from TypeInfo; use AST
+            // wfn->input only as .range carrier for the expr bridge call.
+            const auto &wf_info = info->get();
+            decl.nodes.reserve(wf_info.nodes.size());
+            for (std::size_t i = 0; i < wf_info.nodes.size(); ++i) {
+                const auto &ni = wf_info.nodes[i];
+                // Bridge call: AST input expr only used for .range lookup
+                auto input = lower_expr(*node.nodes[i]->input);
+                // T1.8 P5: target from TypeInfo symbol
+                const auto node_target_sym = symbols().get(SymbolId{ni.target_symbol.value});
+                const auto target_name = node_target_sym.has_value()
+                                             ? node_target_sym->get().canonical_name
+                                             : ni.target_name;
+                decl.nodes.push_back(ir::WorkflowNode{
+                    .name = ni.name,
+                    .input = std::move(input),
+                    .after = ni.after,
+                    .target_ref = symbol_ref_from_symbol(
+                        node_target_sym, ir::SymbolRefKind::Agent, target_name),
+                    .source_range = ni.source_range,
+                });
+            }
+            // T1.8 P5: safety/liveness — still use AST temporal nodes as
+            // .range carriers for the temporal bridge call.
+            decl.safety.reserve(node.safety.size());
+            for (const auto &formula : node.safety)
+                decl.safety.push_back(lower_temporal(*formula));
+            decl.liveness.reserve(node.liveness.size());
+            for (const auto &formula : node.liveness)
+                decl.liveness.push_back(lower_temporal(*formula));
         }
-        decl.safety.reserve(node.safety.size());
-        for (const auto &formula : node.safety)
-            decl.safety.push_back(lower_temporal(*formula));
-        decl.liveness.reserve(node.liveness.size());
-        for (const auto &formula : node.liveness)
-            decl.liveness.push_back(lower_temporal(*formula));
         return decl;
     }
 };

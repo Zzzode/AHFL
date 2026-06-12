@@ -81,9 +81,9 @@ bool SmvPrinter::agent_has_contract(const ir::AgentDecl &agent) const {
     });
 }
 
-std::unordered_map<std::string, WorkflowNodeInfo>
+std::unordered_map<std::string, SmvWorkflowNodeInfo>
 SmvPrinter::build_workflow_node_map(const ir::WorkflowDecl &workflow) const {
-    std::unordered_map<std::string, WorkflowNodeInfo> nodes;
+    std::unordered_map<std::string, SmvWorkflowNodeInfo> nodes;
 
     for (const auto &node : workflow.nodes) {
         const auto agent = find_agent(ir::symbol_canonical_name(node.target_ref));
@@ -92,7 +92,7 @@ SmvPrinter::build_workflow_node_map(const ir::WorkflowDecl &workflow) const {
         }
 
         nodes.emplace(node.name,
-                      WorkflowNodeInfo{
+                      SmvWorkflowNodeInfo{
                           .node = std::cref(node),
                           .agent = std::cref(agent->get()),
                       });
