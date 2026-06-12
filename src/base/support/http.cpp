@@ -25,6 +25,7 @@ namespace {
     curl_request.body = request.body;
     curl_request.timeout_seconds = request.timeout_seconds;
     curl_request.http_version = to_curl_http_version(request.version);
+    curl_request.capture_headers = request.capture_headers;
     return curl_request;
 }
 
@@ -35,6 +36,7 @@ namespace {
         .body = response.body,
         .error = response.error,
         .timed_out = response.timed_out,
+        .response_headers = response.response_headers,
     };
 }
 
