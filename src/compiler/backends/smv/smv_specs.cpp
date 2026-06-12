@@ -87,7 +87,7 @@ void SmvPrinter::collect_specs() {
 
 void SmvPrinter::collect_workflow_control_specs(
     const ir::WorkflowDecl &workflow,
-    const std::unordered_map<std::string, WorkflowNodeInfo> &node_map) {
+    const std::unordered_map<std::string, SmvWorkflowNodeInfo> &node_map) {
     for (const auto &node : workflow.nodes) {
         const auto target = node_map.find(node.name);
         if (target == node_map.end()) {

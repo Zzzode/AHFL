@@ -25,7 +25,7 @@
 
 namespace ahfl {
 
-struct WorkflowNodeInfo {
+struct SmvWorkflowNodeInfo {
     std::reference_wrapper<const ir::WorkflowNode> node;
     std::reference_wrapper<const ir::AgentDecl> agent;
 };
@@ -56,7 +56,7 @@ class SmvPrinter final {
     void index_observations(const ir::Program &program);
     [[nodiscard]] MaybeCRef<ir::AgentDecl> find_agent(std::string_view canonical_name) const;
     [[nodiscard]] bool agent_has_contract(const ir::AgentDecl &agent) const;
-    [[nodiscard]] std::unordered_map<std::string, WorkflowNodeInfo>
+    [[nodiscard]] std::unordered_map<std::string, SmvWorkflowNodeInfo>
     build_workflow_node_map(const ir::WorkflowDecl &workflow) const;
     [[nodiscard]] MaybeCRef<ir::FlowDecl> find_flow(std::string_view canonical_name) const;
     [[nodiscard]] MaybeCRef<ir::CapabilityDecl>
@@ -121,7 +121,7 @@ class SmvPrinter final {
     void collect_specs();
     void collect_workflow_control_specs(
         const ir::WorkflowDecl &workflow,
-        const std::unordered_map<std::string, WorkflowNodeInfo> &node_map);
+        const std::unordered_map<std::string, SmvWorkflowNodeInfo> &node_map);
     void add_effect_obligation_spec(const ir::WorkflowDecl &workflow,
                                     const ir::WorkflowNode &node,
                                     std::string_view called_target,
