@@ -300,6 +300,81 @@ void test_serialize_value_for_grpc_json_transcoding() {
     check(result_bool.find("true") != std::string::npos, "serialize_value.bool");
 }
 
+// ============================================================================
+// Test 15: parse_grpc_status_from_headers - finds grpc-status
+// ============================================================================
+
+void test_parse_grpc_status_found() {
+    std::vector<std::pair<std::string, std::string>> headers = {
+        {"content-type", "application/grpc"},
+        {"grpc-status", "7"},
+        {"grpc-message", "permission denied"},
+    };
+    auto status = parse_grpc_status_from_headers(headers);
+    check(status == GrpcStatusCode::PermissionDenied, "parse_status.found_7");
+}
+
+// ============================================================================
+// Test 16: parse_grpc_status_from_headers - missing header returns Ok
+// ============================================================================
+
+void test_parse_grpc_status_missing() {
+    std::vector<std::pair<std::string, std::string>> headers = {
+        {"content-type", "application/grpc"},
+    };
+    auto status = parse_grpc_status_from_headers(headers);
+    check(status == GrpcStatusCode::Ok, "parse_status.missing_returns_ok");
+}
+
+// ============================================================================
+// Test 17: parse_grpc_status_from_headers - case insensitive
+// ============================================================================
+
+void test_parse_grpc_status_case_insensitive() {
+    std::vector<std::pair<std::string, std::string>> headers = {
+        {"Grpc-Status", "14"},
+    };
+    auto status = parse_grpc_status_from_headers(headers);
+    check(status == GrpcStatusCode::Unavailable, "parse_status.case_insensitive");
+}
+
+// ============================================================================
+// Test 18: parse_grpc_message_from_headers - basic
+// ============================================================================
+
+void test_parse_grpc_message_basic() {
+    std::vector<std::pair<std::string, std::string>> headers = {
+        {"grpc-status", "3"},
+        {"grpc-message", "bad request"},
+    };
+    auto msg = parse_grpc_message_from_headers(headers);
+    check(msg == "bad request", "parse_message.basic");
+}
+
+// ============================================================================
+// Test 19: parse_grpc_message_from_headers - percent encoded
+// ============================================================================
+
+void test_parse_grpc_message_percent_encoded() {
+    std::vector<std::pair<std::string, std::string>> headers = {
+        {"grpc-message", "hello%20world%21"},
+    };
+    auto msg = parse_grpc_message_from_headers(headers);
+    check(msg == "hello world!", "parse_message.percent_decoded");
+}
+
+// ============================================================================
+// Test 20: parse_grpc_message_from_headers - missing returns empty
+// ============================================================================
+
+void test_parse_grpc_message_missing() {
+    std::vector<std::pair<std::string, std::string>> headers = {
+        {"grpc-status", "2"},
+    };
+    auto msg = parse_grpc_message_from_headers(headers);
+    check(msg.empty(), "parse_message.missing_empty");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -317,6 +392,12 @@ int main() {
     test_build_curl_command_metadata();
     test_build_curl_command_empty_body();
     test_serialize_value_for_grpc_json_transcoding();
+    test_parse_grpc_status_found();
+    test_parse_grpc_status_missing();
+    test_parse_grpc_status_case_insensitive();
+    test_parse_grpc_message_basic();
+    test_parse_grpc_message_percent_encoded();
+    test_parse_grpc_message_missing();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
