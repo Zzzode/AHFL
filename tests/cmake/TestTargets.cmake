@@ -269,6 +269,15 @@ target_link_libraries(ahfl_capability_bridge_tests
 )
 ahfl_apply_project_warnings(ahfl_capability_bridge_tests)
 
+add_executable(ahfl_response_schema_validator_tests
+    unit/runtime/engine/response_schema_validator.cpp
+)
+target_link_libraries(ahfl_response_schema_validator_tests
+    PRIVATE
+        ahfl_runtime_engine
+)
+ahfl_apply_project_warnings(ahfl_response_schema_validator_tests)
+
 add_executable(ahfl_e2e_workflow_tests
     unit/runtime/engine/e2e_workflow.cpp
 )
@@ -691,6 +700,7 @@ foreach(_tgt
     ahfl_agent_runtime_tests
     ahfl_workflow_runtime_tests
     ahfl_capability_bridge_tests
+    ahfl_response_schema_validator_tests
     ahfl_e2e_workflow_tests
     ahfl_runtime_provider_llm_tests
     ahfl_value_json_tests

@@ -103,6 +103,15 @@ std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapab
         obj->set("workspaceSymbolProvider", json::JsonValue::make_bool(true));
     }
 
+    if (caps.signature_help_provider) {
+        auto sig = json::JsonValue::make_object();
+        auto triggers = json::JsonValue::make_array();
+        triggers->push(json::JsonValue::make_string("("));
+        triggers->push(json::JsonValue::make_string(","));
+        sig->set("triggerCharacters", std::move(triggers));
+        obj->set("signatureHelpProvider", std::move(sig));
+    }
+
     return obj;
 }
 
@@ -141,6 +150,41 @@ std::unique_ptr<json::JsonValue> serialize_workspace_edit(const WorkspaceEdit &e
         changes->set(uri, std::move(arr));
     }
     obj->set("changes", std::move(changes));
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue> serialize_parameter_information(const ParameterInformation &param) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("label", json::JsonValue::make_string(param.label));
+    if (!param.documentation.empty()) {
+        obj->set("documentation", json::JsonValue::make_string(param.documentation));
+    }
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue> serialize_signature_information(const SignatureInformation &sig) {
+    auto obj = json::JsonValue::make_object();
+    obj->set("label", json::JsonValue::make_string(sig.label));
+    if (!sig.documentation.empty()) {
+        obj->set("documentation", json::JsonValue::make_string(sig.documentation));
+    }
+    auto params = json::JsonValue::make_array();
+    for (const auto &p : sig.parameters) {
+        params->push(serialize_parameter_information(p));
+    }
+    obj->set("parameters", std::move(params));
+    return obj;
+}
+
+std::unique_ptr<json::JsonValue> serialize_signature_help(const SignatureHelp &help) {
+    auto obj = json::JsonValue::make_object();
+    auto sigs = json::JsonValue::make_array();
+    for (const auto &s : help.signatures) {
+        sigs->push(serialize_signature_information(s));
+    }
+    obj->set("signatures", std::move(sigs));
+    obj->set("activeSignature", json::JsonValue::make_int(static_cast<int64_t>(help.active_signature)));
+    obj->set("activeParameter", json::JsonValue::make_int(static_cast<int64_t>(help.active_parameter)));
     return obj;
 }
 

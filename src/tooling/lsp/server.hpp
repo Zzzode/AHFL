@@ -35,6 +35,7 @@ private:
     void handle_rename(const JsonRpcRequest &req);
     void handle_document_symbol(const JsonRpcRequest &req);
     void handle_workspace_symbol(const JsonRpcRequest &req);
+    void handle_signature_help(const JsonRpcRequest &req);
 
     void handle_initialized();
     void handle_did_open(const json::JsonValue &params);

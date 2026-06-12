@@ -20,6 +20,7 @@ struct HttpRequest {
     std::optional<std::string> body;
     int timeout_seconds{30};
     HttpVersion version{HttpVersion::Default};
+    bool capture_headers{false};
 };
 
 struct HttpResponse {
@@ -28,6 +29,7 @@ struct HttpResponse {
     std::string body;
     std::string error;
     bool timed_out{false};
+    std::vector<std::pair<std::string, std::string>> response_headers;
 
     [[nodiscard]] bool is_success() const {
         return status_code >= 200 && status_code < 300;
