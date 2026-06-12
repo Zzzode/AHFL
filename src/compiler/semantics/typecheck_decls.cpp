@@ -168,6 +168,8 @@ void TypeCheckPass::build_type_environment() {
     build_predicate_types();
     build_agent_types();
     build_workflow_types();
+    build_flow_types();
+    build_contract_types();
 
     for (auto &decl : result_.typed_program.declarations) {
         if (const auto type = result_.environment.get_const_type(decl.symbol); type.has_value()) {
@@ -283,6 +285,25 @@ void TypeCheckPass::build_capability_types() {
             }
 
             info.return_type = resolve_type(*decl.get().return_type);
+
+            // Fill effect spec for T1.8 typed-store lowering.
+            if (decl.get().effect) {
+                const auto &eff = *decl.get().effect;
+                info.effect.declared = true;
+                info.effect.effect_kind = static_cast<int>(eff.effect_kind);
+                info.effect.receipt_mode = static_cast<int>(eff.receipt_mode);
+                info.effect.retry_mode = static_cast<int>(eff.retry_mode);
+                info.effect.source_range = eff.range;
+                if (eff.domain) info.effect.domain = eff.domain->spelling();
+                if (eff.idempotency_key)
+                    info.effect.idempotency_key = eff.idempotency_key->spelling();
+                if (eff.timeout) info.effect.timeout = eff.timeout->spelling;
+                if (eff.compensation) info.effect.compensation = eff.compensation->spelling();
+                info.effect.policies.reserve(eff.policies.size());
+                for (const auto &policy : eff.policies)
+                    info.effect.policies.push_back(policy->spelling());
+            }
+
             result_.environment.capabilities_.emplace(id, std::move(info));
         });
     }
@@ -362,6 +383,43 @@ void TypeCheckPass::build_agent_types() {
                 info.capability_symbols.push_back(capability_symbol->get().id);
             }
 
+            // Fill structural payloads for T1.8 typed-store lowering.
+            info.states = decl.get().states;
+            info.initial_state = decl.get().initial_state;
+            info.final_states = decl.get().final_states;
+
+            info.transitions.reserve(decl.get().transitions.size());
+            for (const auto &t : decl.get().transitions) {
+                info.transitions.push_back(AgentTransitionInfo{
+                    .from_state = t->from_state,
+                    .to_state = t->to_state,
+                });
+            }
+
+            if (decl.get().quota) {
+                info.quota.reserve(decl.get().quota->items.size());
+                for (const auto &item : decl.get().quota->items) {
+                    std::string value;
+                    if (item->integer_value)
+                        value = item->integer_value->spelling;
+                    else if (item->duration_value)
+                        value = item->duration_value->spelling;
+                    else
+                        value = "<missing-quota-value>";
+                    std::string name;
+                    switch (item->kind) {
+                    case ast::AgentQuotaItemKind::MaxToolCalls:
+                        name = "max_tool_calls";
+                        break;
+                    case ast::AgentQuotaItemKind::MaxExecutionTime:
+                        name = "max_execution_time";
+                        break;
+                    }
+                    info.quota.push_back(
+                        AgentQuotaInfo{.name = std::move(name), .value = std::move(value)});
+                }
+            }
+
             result_.environment.agents_.emplace(id, std::move(info));
 
             // Pre-compute agent context struct set for O(1) is_agent_context_struct queries.
@@ -402,8 +460,176 @@ void TypeCheckPass::build_workflow_types() {
                            decl.get().output_type->range);
             }
 
+            // T1.8 Phase 2: populate node/temporal data.
+            info.nodes.reserve(decl.get().nodes.size());
+            for (const auto &node : decl.get().nodes) {
+                WorkflowNodeInfo node_info{
+                    .name = node->name,
+                    .target_name = node->target->spelling(),
+                    .after = node->after,
+                    .source_range = node->range,
+                    .input_expr_range = node->input->range,
+                    .target_range = node->target->range,
+                };
+                const auto target =
+                    find_reference_here(ReferenceKind::WorkflowNodeTarget, node->target->range);
+                if (target.has_value()) {
+                    node_info.target_symbol = target->get().target;
+                }
+                info.nodes.push_back(std::move(node_info));
+            }
+
+            info.safety_ranges.reserve(decl.get().safety.size());
+            for (const auto &formula : decl.get().safety) {
+                info.safety_ranges.push_back(formula->range);
+            }
+
+            info.liveness_ranges.reserve(decl.get().liveness.size());
+            for (const auto &formula : decl.get().liveness) {
+                info.liveness_ranges.push_back(formula->range);
+            }
+
+            if (decl.get().return_value) {
+                info.return_value_range = decl.get().return_value->range;
+            }
+
             result_.environment.workflows_.emplace(id, std::move(info));
         });
+    }
+}
+
+void TypeCheckPass::build_flow_types() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            build_flow_types_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    build_flow_types_in_program(require(program_, "typecheck program must exist"));
+}
+
+void TypeCheckPass::build_flow_types_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        if (declaration->kind != ast::NodeKind::FlowDecl) {
+            continue;
+        }
+
+        const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
+        const auto target = find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
+        if (!target.has_value()) {
+            continue;
+        }
+
+        FlowTypeInfo info{
+            .symbol = target->get().target,
+            .target_name = decl.target->spelling(),
+            .target_symbol = target->get().target,
+            .target_range = decl.target->range,
+            .state_handlers = {},
+            .declaration_range = decl.range,
+        };
+
+        for (const auto &handler : decl.state_handlers) {
+            FlowStateHandlerInfo handler_info{
+                .state_name = handler->state_name,
+                .policy = {},
+                .body_range = handler->body->range,
+                .source_range = handler->range,
+            };
+
+            if (handler->policy) {
+                handler_info.policy.reserve(handler->policy->items.size());
+                for (const auto &item : handler->policy->items) {
+                    StatePolicyItemInfo policy_item{};
+                    switch (item->kind) {
+                    case ast::StatePolicyItemKind::Retry:
+                        policy_item.kind = StatePolicyKind::Retry;
+                        if (item->retry_limit) {
+                            policy_item.value = item->retry_limit->spelling;
+                        }
+                        break;
+                    case ast::StatePolicyItemKind::RetryOn:
+                        policy_item.kind = StatePolicyKind::RetryOn;
+                        for (const auto &retry_target : item->retry_on) {
+                            policy_item.retry_on_targets.push_back(retry_target->spelling());
+                        }
+                        break;
+                    case ast::StatePolicyItemKind::Timeout:
+                        policy_item.kind = StatePolicyKind::Timeout;
+                        if (item->timeout) {
+                            policy_item.value = item->timeout->spelling;
+                        }
+                        break;
+                    }
+                    handler_info.policy.push_back(std::move(policy_item));
+                }
+            }
+
+            info.state_handlers.push_back(std::move(handler_info));
+        }
+
+        result_.environment.flows_.emplace(target->get().target.value, std::move(info));
+    }
+}
+
+void TypeCheckPass::build_contract_types() {
+    if (graph_ != nullptr) {
+        for (const auto &source : graph_->sources) {
+            enter_source(source);
+            build_contract_types_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            leave_source();
+        }
+        return;
+    }
+
+    build_contract_types_in_program(require(program_, "typecheck program must exist"));
+}
+
+void TypeCheckPass::build_contract_types_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        if (declaration->kind != ast::NodeKind::ContractDecl) {
+            continue;
+        }
+
+        const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
+        const auto target = find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
+        if (!target.has_value()) {
+            continue;
+        }
+
+        ContractTypeInfo info{
+            .symbol = target->get().target,
+            .target_name = decl.target->spelling(),
+            .target_symbol = target->get().target,
+            .target_range = decl.target->range,
+            .clauses = {},
+            .declaration_range = decl.range,
+        };
+
+        for (const auto &clause : decl.clauses) {
+            const bool is_temporal =
+                (!clause->expr && static_cast<bool>(clause->temporal_expr));
+            SourceRange expr_range;
+            if (is_temporal) {
+                expr_range = clause->temporal_expr->range;
+            } else if (clause->expr) {
+                expr_range = clause->expr->range;
+            }
+            ContractClauseInfo clause_info{
+                .clause_kind = static_cast<int>(clause->kind),
+                .is_temporal = is_temporal,
+                .expr_range = expr_range,
+                .source_range = clause->range,
+            };
+            info.clauses.push_back(std::move(clause_info));
+        }
+
+        result_.environment.contracts_.emplace(target->get().target.value, std::move(info));
     }
 }
 
