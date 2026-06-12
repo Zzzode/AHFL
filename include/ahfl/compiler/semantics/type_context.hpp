@@ -22,6 +22,7 @@ class TypeContext {
     ~TypeContext() = default;
 
     [[nodiscard]] TypePtr make(TypeKind kind);
+    [[nodiscard]] TypePtr error_type();
     [[nodiscard]] TypePtr string();
     [[nodiscard]] TypePtr bounded_string(std::int64_t minimum, std::int64_t maximum);
     [[nodiscard]] TypePtr decimal(std::int64_t scale);

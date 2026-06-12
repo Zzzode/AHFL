@@ -1,5 +1,6 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 
+#include <set>
 #include <sstream>
 
 namespace ahfl {
@@ -72,6 +73,29 @@ std::vector<std::string> RelationTrace::format_notes(std::size_t max_notes) cons
 }
 
 namespace {
+
+// ---- Cycle detection (occurs check) ----------------------------------------
+//
+// The relational traversals recurse into composite types (Optional, List, Set,
+// Map).  While the current type system has no way to form a true recursive
+// type (Struct/Enum payloads carry only names, not field pointers), deep or
+// adversarial nesting can still overflow the stack, and future type-system
+// extensions may introduce recursive type aliases.
+//
+// We protect every recursive call with a visited-set check keyed by the pair
+// of raw type pointers.  Because types are hash-consed, pointer identity is
+// equivalent to type identity, so a repeat of the same (lhs, rhs) pair means
+// we have re-entered the same sub-problem — a cycle.  We treat cycles
+// coinductively: a re-entrant query is answered as true ("assume it holds"),
+// which matches the greatest-fixed-point semantics of recursive types.
+
+using TypePairSet = std::set<std::pair<const Type *, const Type *>>;
+
+// Insert an ordered pair into the visited set.  Returns false if the pair
+// was already present (cycle detected), true if it was freshly inserted.
+static bool visited_insert(TypePairSet &visited, const Type *a, const Type *b) {
+    return visited.insert({a, b}).second;
+}
 
 std::string_view relation_name(std::string_view rel) noexcept {
     if (rel.empty()) {
@@ -194,7 +218,8 @@ TypeConstraintNode make_composite_node(TypeConstraintNode::Kind kind,
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
-                     const std::string &path);
+                     const std::string &path,
+                     TypePairSet *visited);
 
 bool equivalent_leaf(const Type &lhs,
                      const Type &rhs,
@@ -223,19 +248,27 @@ bool equivalent_pairwise(const Type &lhs_a,
                          TypeRelationContext *ctx,
                          const std::string &base,
                          std::string_view seg_a,
-                         std::string_view seg_b) {
-    const bool ok_a = equivalent_impl(lhs_a, rhs_a, ctx, join_path(base, seg_a));
-    const bool ok_b = equivalent_impl(lhs_b, rhs_b, ctx, join_path(base, seg_b));
+                         std::string_view seg_b,
+                         TypePairSet *visited) {
+    const bool ok_a = equivalent_impl(lhs_a, rhs_a, ctx, join_path(base, seg_a), visited);
+    const bool ok_b = equivalent_impl(lhs_b, rhs_b, ctx, join_path(base, seg_b), visited);
     return ok_a && ok_b;
 }
 
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
-                     const std::string &path) {
+                     const std::string &path,
+                     TypePairSet *visited) {
     // Pointer identity short-circuit.
     if (&lhs == &rhs) {
         return equivalent_leaf(lhs, rhs, ctx, path, true);
+    }
+
+    // Cycle detection (occurs check): if we've already started comparing
+    // this pair, assume success (greatest fixed point / coinductive rule).
+    if (visited != nullptr && !visited_insert(*visited, &lhs, &rhs)) {
+        return equivalent_leaf(lhs, rhs, ctx, join_path(path, "cycle"), true);
     }
 
     if (lhs.payload.index() != rhs.payload.index()) {
@@ -243,16 +276,39 @@ bool equivalent_impl(const Type &lhs,
     }
 
     return lhs.visit(types::Overloads{
-        [&](const types::AnyT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::NeverT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::UnitT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::BoolT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::IntT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::FloatT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::StringT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::UUIDT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::TimestampT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
-        [&](const types::DurationT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::AnyT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::NeverT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::ErrorT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::UnitT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::BoolT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::IntT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::FloatT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::StringT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::UUIDT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::TimestampT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
+        [&](const types::DurationT &) {
+            return equivalent_leaf(lhs, rhs, ctx, path, true);
+        },
         [&](const types::BoundedStringT &l) {
             const auto *r = rhs.get_if<types::BoundedStringT>();
             bool eq = r != nullptr && l.minimum == r->minimum && l.maximum == r->maximum;
@@ -328,27 +384,33 @@ bool equivalent_impl(const Type &lhs,
             if (r == nullptr || l.inner == nullptr || r->inner == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_impl(*l.inner, *r->inner, ctx, join_path(path, "optional.inner"));
+            FrameGuard guard(ctx, make_composite_node(
+                                      TypeConstraintNode::Kind::And,
+                                      path, lhs, rhs));
+            return equivalent_impl(*l.inner, *r->inner, ctx,
+                                   join_path(path, "optional.inner"), visited);
         },
         [&](const types::ListT &l) {
             const auto *r = rhs.get_if<types::ListT>();
             if (r == nullptr || l.element == nullptr || r->element == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_impl(*l.element, *r->element, ctx, join_path(path, "list.element"));
+            FrameGuard guard(ctx, make_composite_node(
+                                      TypeConstraintNode::Kind::And,
+                                      path, lhs, rhs));
+            return equivalent_impl(*l.element, *r->element, ctx,
+                                   join_path(path, "list.element"), visited);
         },
         [&](const types::SetT &l) {
             const auto *r = rhs.get_if<types::SetT>();
             if (r == nullptr || l.element == nullptr || r->element == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_impl(*l.element, *r->element, ctx, join_path(path, "set.element"));
+            FrameGuard guard(ctx, make_composite_node(
+                                      TypeConstraintNode::Kind::And,
+                                      path, lhs, rhs));
+            return equivalent_impl(*l.element, *r->element, ctx,
+                                   join_path(path, "set.element"), visited);
         },
         [&](const types::MapT &l) {
             const auto *r = rhs.get_if<types::MapT>();
@@ -356,10 +418,11 @@ bool equivalent_impl(const Type &lhs,
                 r->value == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_pairwise(
-                *l.key, *r->key, *l.value, *r->value, ctx, path, "map.key", "map.value");
+            FrameGuard guard(ctx, make_composite_node(
+                                      TypeConstraintNode::Kind::And,
+                                      path, lhs, rhs));
+            return equivalent_pairwise(*l.key, *r->key, *l.value, *r->value,
+                                       ctx, path, "map.key", "map.value", visited);
         },
     });
 }
@@ -369,7 +432,8 @@ bool equivalent_impl(const Type &lhs,
 bool subtype_impl(const Type &source,
                   const Type &target,
                   TypeRelationContext *ctx,
-                  const std::string &path);
+                  const std::string &path,
+                  TypePairSet *visited);
 
 bool subtype_leaf(const Type &source,
                   const Type &target,
@@ -394,10 +458,11 @@ bool subtype_leaf(const Type &source,
 bool subtype_impl(const Type &source,
                   const Type &target,
                   TypeRelationContext *ctx,
-                  const std::string &path) {
-    // Disjunction: subtype can succeed either via equivalence (first branch)
-    // or via any of the specific BoundedString relaxations (remaining
-    // branches). Model this as an Or node when the skeleton is enabled.
+                  const std::string &path,
+                  TypePairSet *visited) {
+    // Disjunction: subtype can succeed via equivalence, via top/bottom type
+    // rules, via structural covariance, or via any of the specific
+    // relaxations. Model this as an Or node when the skeleton is enabled.
     FrameGuard or_guard(nullptr, TypeConstraintNode{});
     TypeConstraintNode or_node;
     or_node.kind = TypeConstraintNode::Kind::Or;
@@ -406,8 +471,39 @@ bool subtype_impl(const Type &source,
     or_node.right_describe = target.describe();
     FrameGuard real_guard(ctx, std::move(or_node));
 
-    // Branch 1: equivalence.
-    const bool eq = equivalent_impl(source, target, ctx, join_path(path, "equiv"));
+    // Pointer identity short-circuit.
+    if (&source == &target) {
+        return subtype_leaf(source, target, ctx, join_path(path, "identical"), true);
+    }
+
+    // Cycle detection (occurs check): if we've already started this pair,
+    // assume success (greatest fixed point / coinductive rule).
+    if (visited != nullptr && !visited_insert(*visited, &source, &target)) {
+        return subtype_leaf(source, target, ctx, join_path(path, "cycle"), true);
+    }
+
+    // Error propagation: Error is both top-and-bottom for error recovery — it is
+    // compatible with every type in both directions so a single error doesn't
+    // cascade into dozens of spurious secondary diagnostics.
+    if (source.holds<types::ErrorT>() || target.holds<types::ErrorT>()) {
+        return subtype_leaf(source, target, ctx, join_path(path, "error"), true);
+    }
+
+    // Any is the top type: every type is a subtype of Any.
+    if (target.holds<types::AnyT>()) {
+        return subtype_leaf(source, target, ctx, join_path(path, "any-top"), true);
+    }
+
+    // Never is the bottom type: Never is a subtype of every type.
+    if (source.holds<types::NeverT>()) {
+        return subtype_leaf(source, target, ctx, join_path(path, "never-bottom"), true);
+    }
+
+    // Branch 1: equivalence.  Use a separate visited set for the equivalence
+    // sub-query — cycle detection is per-relation, not cross-relation.
+    TypePairSet equiv_visited;
+    const bool eq = equivalent_impl(source, target, ctx, join_path(path, "equiv"),
+                                    &equiv_visited);
     if (eq) {
         return true;
     }
@@ -489,10 +585,9 @@ bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext 
         ctx.push_node(std::move(top));
     }
 
-    const bool result = equivalent_impl(lhs,
-                                        rhs,
-                                        wants_ctx ? &ctx : nullptr,
-                                        /*path=*/"");
+    TypePairSet visited;
+    const bool result = equivalent_impl(lhs, rhs, wants_ctx ? &ctx : nullptr,
+                                        /*path=*/"", &visited);
 
     if (wants_ctx && ctx.options().emit_constraint_skeleton) {
         // pop the synthetic top-level And frame (it aggregates children).
@@ -523,10 +618,9 @@ bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &
         ctx.push_node(std::move(top));
     }
 
-    const bool result = subtype_impl(source,
-                                     target,
-                                     wants_ctx ? &ctx : nullptr,
-                                     /*path=*/"");
+    TypePairSet visited;
+    const bool result = subtype_impl(source, target, wants_ctx ? &ctx : nullptr,
+                                     /*path=*/"", &visited);
 
     if (wants_ctx && ctx.options().emit_constraint_skeleton) {
         ctx.pop_node();
@@ -558,7 +652,8 @@ bool is_assignable_to(const Type &source, const Type &target, TypeRelationContex
     }
 
     TypeRelationContext *maybe_ctx = wants_ctx ? &ctx : nullptr;
-    const bool result = subtype_impl(source, target, maybe_ctx, /*path=*/"");
+    TypePairSet visited;
+    const bool result = subtype_impl(source, target, maybe_ctx, /*path=*/"", &visited);
 
     // Record an Assignable kind at the top level so consumers of the flat
     // trace can see which relation was actually requested at the API

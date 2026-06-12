@@ -14,6 +14,7 @@ enum class TypeKind {
     // Checker-internal helper kinds. These are not source-level AHFL types.
     Any,
     Never,
+    Error,
 
     // Source-level primitive kinds.
     Unit,
@@ -61,6 +62,7 @@ namespace types {
 
 struct AnyT {};
 struct NeverT {};
+struct ErrorT {};
 struct UnitT {};
 struct BoolT {};
 struct IntT {};
@@ -100,6 +102,7 @@ struct MapT {
 
 using Payload = std::variant<AnyT,
                              NeverT,
+                             ErrorT,
                              UnitT,
                              BoolT,
                              IntT,
@@ -162,6 +165,7 @@ struct Type {
         return visit(types::Overloads{
             [](const types::AnyT &) { return std::string{"Any"}; },
             [](const types::NeverT &) { return std::string{"Never"}; },
+            [](const types::ErrorT &) { return std::string{"<error>"}; },
             [](const types::UnitT &) { return std::string{"Unit"}; },
             [](const types::BoolT &) { return std::string{"Bool"}; },
             [](const types::IntT &) { return std::string{"Int"}; },

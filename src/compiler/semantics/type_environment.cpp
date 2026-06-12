@@ -52,6 +52,16 @@ template <typename T>
 } // namespace
 
 MaybeCRef<StructFieldInfo> StructTypeInfo::find_field(std::string_view name) const {
+    // Use the hash index when available; fall back to linear scan for
+    // callers that build a StructTypeInfo without calling rebuild_field_index().
+    if (!field_index_.empty()) {
+        const auto iter = field_index_.find(std::string(name));
+        if (iter != field_index_.end() && iter->second < fields.size()) {
+            return std::cref(fields[iter->second]);
+        }
+        return std::nullopt;
+    }
+
     for (const auto &field : fields) {
         if (field.name == name) {
             return std::cref(field);
@@ -61,7 +71,21 @@ MaybeCRef<StructFieldInfo> StructTypeInfo::find_field(std::string_view name) con
     return std::nullopt;
 }
 
+void StructTypeInfo::rebuild_field_index() {
+    field_index_.clear();
+    field_index_.reserve(fields.size());
+    for (std::size_t i = 0; i < fields.size(); ++i) {
+        field_index_.emplace(fields[i].name, i);
+    }
+}
+
 bool EnumTypeInfo::has_variant(std::string_view name) const noexcept {
+    // Use the hash set when available; fall back to linear scan for
+    // callers that build an EnumTypeInfo without calling rebuild_variant_index().
+    if (!variant_set_.empty()) {
+        return variant_set_.count(std::string(name)) > 0;
+    }
+
     for (const auto &variant : variants) {
         if (variant.name == name) {
             return true;
@@ -69,6 +93,14 @@ bool EnumTypeInfo::has_variant(std::string_view name) const noexcept {
     }
 
     return false;
+}
+
+void EnumTypeInfo::rebuild_variant_index() {
+    variant_set_.clear();
+    variant_set_.reserve(variants.size());
+    for (const auto &v : variants) {
+        variant_set_.insert(v.name);
+    }
 }
 
 MaybeCRef<Type> TypeEnvironment::get_const_type(SymbolId id) const {
@@ -160,6 +192,14 @@ MaybeCRef<AgentTypeInfo> TypeEnvironment::get_agent(SymbolId id) const {
 
 MaybeCRef<WorkflowTypeInfo> TypeEnvironment::get_workflow(SymbolId id) const {
     return get_from_map(workflows_, id);
+}
+
+MaybeCRef<FlowTypeInfo> TypeEnvironment::get_flow(SymbolId id) const {
+    return get_from_map(flows_, id);
+}
+
+MaybeCRef<ContractTypeInfo> TypeEnvironment::get_contract(SymbolId id) const {
+    return get_from_map(contracts_, id);
 }
 
 bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
@@ -308,11 +348,13 @@ std::optional<std::uint64_t> TypeEnvironment::signature_fingerprint(SymbolId id)
 }
 
 void TypeEnvironment::index_struct(std::size_t id, StructTypeInfo info) {
+    info.rebuild_field_index();
     struct_name_index_.insert_or_assign(info.canonical_name, id);
     structs_.insert_or_assign(id, std::move(info));
 }
 
 void TypeEnvironment::index_enum(std::size_t id, EnumTypeInfo info) {
+    info.rebuild_variant_index();
     enum_name_index_.insert_or_assign(info.canonical_name, id);
     enums_.insert_or_assign(id, std::move(info));
 }

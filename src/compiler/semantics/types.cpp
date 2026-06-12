@@ -73,6 +73,8 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
         return types::AnyT{};
     case TypeKind::Never:
         return types::NeverT{};
+    case TypeKind::Error:
+        return types::ErrorT{};
     case TypeKind::Unit:
         return types::UnitT{};
     case TypeKind::Bool:
@@ -123,6 +125,10 @@ TypePtr TypeContext::make(TypeKind kind) {
         .second = nullptr,
         .nominal_symbol = std::nullopt,
     });
+}
+
+TypePtr TypeContext::error_type() {
+    return make(TypeKind::Error);
 }
 
 TypePtr TypeContext::string() {
