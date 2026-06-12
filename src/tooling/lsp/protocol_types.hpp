@@ -103,6 +103,7 @@ struct ServerCapabilities {
     bool rename_provider{true};
     bool document_symbol_provider{true};
     bool workspace_symbol_provider{true};
+    bool signature_help_provider{true};
 };
 
 // ---------- Symbol Information ----------
@@ -135,6 +136,25 @@ struct SymbolInformation {
     Location location;
 };
 
+// ---------- Signature Help ----------
+
+struct ParameterInformation {
+    std::string label;
+    std::string documentation;
+};
+
+struct SignatureInformation {
+    std::string label;
+    std::string documentation;
+    std::vector<ParameterInformation> parameters;
+};
+
+struct SignatureHelp {
+    std::vector<SignatureInformation> signatures;
+    int active_signature{0};
+    int active_parameter{0};
+};
+
 // ---------- Text Edits ----------
 
 struct TextEdit {
@@ -162,6 +182,9 @@ serialize_server_capabilities(const ServerCapabilities &caps);
 serialize_symbol_information(const SymbolInformation &sym);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_text_edit(const TextEdit &edit);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_workspace_edit(const WorkspaceEdit &edit);
+[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_parameter_information(const ParameterInformation &param);
+[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_signature_information(const SignatureInformation &sig);
+[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_signature_help(const SignatureHelp &help);
 
 // ---------- Deserialization helpers ----------
 

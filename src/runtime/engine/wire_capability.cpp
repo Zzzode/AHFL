@@ -1,6 +1,8 @@
 #include "runtime/engine/capability_bridge.hpp"
 
 #include "runtime/engine/connection_pool.hpp"
+#include "runtime/engine/grpc_transport.hpp"
+#include "runtime/engine/response_schema_validator.hpp"
 #include "runtime/engine/wire_value.hpp"
 
 #include <memory>
@@ -96,6 +98,14 @@ execute_http_capability_call(const HTTPCapabilityConfig &config,
         request.headers["Content-Type"] = "application/json";
     }
 
+    // Resolve authentication and merge headers into the request.
+    if (config.auth.has_value() && config.secret_manager) {
+        auto resolved = ahfl::secret::resolve_auth(*config.auth, *config.secret_manager);
+        for (auto &[key, value] : resolved.headers) {
+            request.headers.insert_or_assign(std::move(key), std::move(value));
+        }
+    }
+
     const auto response = transport.execute_http(request);
 
     if (response.is_timeout()) {
@@ -125,7 +135,20 @@ execute_http_capability_call(const HTTPCapabilityConfig &config,
         };
     }
 
-    return value_from_wire_response_body(response.body, config.response_format);
+    auto result = value_from_wire_response_body(response.body, config.response_format);
+    if (result.status == CapabilityCallStatus::Success && result.value.has_value() &&
+        config.response_schema) {
+        auto validation = validate_value_against_schema(*result.value, *config.response_schema);
+        if (!validation.valid) {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Error,
+                .value = std::nullopt,
+                .error_message = "response schema validation failed: " + validation.error,
+                .attempts = 1,
+            };
+        }
+    }
+    return result;
 }
 
 struct ParsedGrpcJsonTranscodingEndpoint {
@@ -192,7 +215,29 @@ execute_grpc_json_transcoding_capability_call(const GrpcJsonTranscodingCapabilit
     request.serialized_body = serialize_args_for_grpc_json_transcoding(args);
     request.timeout = std::chrono::duration_cast<std::chrono::seconds>(config.timeout.deadline);
 
-    const auto response = transport.execute_grpc_json_transcoding(request);
+    // Resolve authentication and merge headers into request metadata.
+    if (config.auth.has_value() && config.secret_manager) {
+        auto resolved = ahfl::secret::resolve_auth(*config.auth, *config.secret_manager);
+        for (auto &[key, value] : resolved.headers) {
+            request.metadata.emplace_back(std::move(key), std::move(value));
+        }
+    }
+
+    auto response = transport.execute_grpc_json_transcoding(request);
+
+    // If trailers carry an explicit grpc-status, it takes precedence over the
+    // HTTP-derived status code. This is the standard gRPC over HTTP/2 mechanism
+    // for communicating application-level errors.
+    if (!response.trailers.empty()) {
+        const auto trailer_status = parse_grpc_status_from_headers(response.trailers);
+        if (trailer_status != GrpcStatusCode::Ok) {
+            response.status_code = trailer_status;
+            auto trailer_message = parse_grpc_message_from_headers(response.trailers);
+            if (!trailer_message.empty()) {
+                response.error_message = std::move(trailer_message);
+            }
+        }
+    }
 
     if (response.status_code == GrpcStatusCode::DeadlineExceeded) {
         return CapabilityCallResult{
@@ -212,7 +257,20 @@ execute_grpc_json_transcoding_capability_call(const GrpcJsonTranscodingCapabilit
         };
     }
 
-    return value_from_wire_response_body(response.body, config.response_format);
+    auto result = value_from_wire_response_body(response.body, config.response_format);
+    if (result.status == CapabilityCallStatus::Success && result.value.has_value() &&
+        config.response_schema) {
+        auto validation = validate_value_against_schema(*result.value, *config.response_schema);
+        if (!validation.valid) {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Error,
+                .value = std::nullopt,
+                .error_message = "response schema validation failed: " + validation.error,
+                .attempts = 1,
+            };
+        }
+    }
+    return result;
 }
 
 } // namespace

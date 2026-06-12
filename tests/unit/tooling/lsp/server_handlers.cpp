@@ -118,6 +118,72 @@ void test_rename_returns_workspace_edit() {
     check(output.find("\"id\"") != std::string::npos, "rename.has_response");
 }
 
+void test_signature_help_capability() {
+    // Source with a capability declaration and a flow that calls it.
+    // The cursor will be placed after the comma in: OrderQuery(input.order_id,
+    std::string source =
+        "struct OrderInfo {\n"
+        "    order_id: String;\n"
+        "    user_id: String;\n"
+        "}\n"
+        "\n"
+        "capability get_data(name: String, count: Int) -> OrderInfo;\n"
+        "\n"
+        "predicate valid(id: String);\n";
+
+    // Position cursor at line 5 (the capability decl line), simulating a call:
+    // We test using a modified source with a call expression.
+    // For the test we'll place cursor where the user would have typed: get_data(name,
+    // Line 5 is "capability get_data(name: String, count: Int) -> OrderInfo;"
+    // We want to test signatureHelp as if cursor is inside get_data(x, |)
+    // Use a source that includes an actual call in a flow.
+    std::string source2 =
+        "struct OrderInfo {\n"
+        "    order_id: String;\n"
+        "}\n"
+        "\n"
+        "capability get_data(name: String, count: Int) -> OrderInfo;\n"
+        "\n"
+        "agent TestAgent {\n"
+        "    input: OrderInfo;\n"
+        "    context: OrderInfo;\n"
+        "    output: OrderInfo;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [get_data];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for TestAgent {\n"
+        "    state Init {\n"
+        "        let x = get_data(input.order_id, );\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n";
+
+    // Cursor at line 19, after the comma in "get_data(input.order_id, )"
+    // line 19 = "        let x = get_data(input.order_id, );"
+    //            chars:   01234567890123456789012345678901234567890123
+    //                                                    ^39=','  ^41=')'
+    // Place cursor at character 40 (the space between ',' and ')')
+    std::string params2 =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":19,"character":40}})";
+    std::string output2 = run_handler_request(source2, "textDocument/signatureHelp", params2);
+
+    // Response should contain the signature with "get_data"
+    check(output2.find("get_data") != std::string::npos,
+          "signatureHelp.contains_callable_name");
+    // Should contain parameter info
+    check(output2.find("name") != std::string::npos,
+          "signatureHelp.contains_param_name");
+    check(output2.find("String") != std::string::npos,
+          "signatureHelp.contains_param_type");
+    // activeParameter should be 1 (after the first comma)
+    check(output2.find("\"activeParameter\":1") != std::string::npos,
+          "signatureHelp.active_parameter_is_1");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -125,6 +191,7 @@ int main() {
     test_workspace_symbol_filters();
     test_references_returns_locations();
     test_rename_returns_workspace_edit();
+    test_signature_help_capability();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
