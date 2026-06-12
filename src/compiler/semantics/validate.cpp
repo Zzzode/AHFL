@@ -24,7 +24,7 @@ struct ControlFlowSummary {
 };
 
 [[nodiscard]] bool is_error_type(const Type &type) noexcept {
-    return type.holds<types::AnyT>() || type.holds<types::NeverT>();
+    return type.holds<types::ErrorT>();
 }
 
 [[nodiscard]] bool is_bool_type(const Type &type) noexcept {

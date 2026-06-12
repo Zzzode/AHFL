@@ -561,6 +561,11 @@ class IrLowerer final {
             [&](const types::NeverT &) {
                 return empty_type_ref(ir::TypeRefKind::Never, type.describe());
             },
+            [&](const types::ErrorT &) {
+                // Error is a typechecker-internal sentinel; at the IR boundary
+                // it maps to Any so downstream passes don't need to know about it.
+                return ir::TypeRef{.kind = ir::TypeRefKind::Any, .display_name = type.describe()};
+            },
             [&](const types::UnitT &) {
                 return empty_type_ref(ir::TypeRefKind::Unit, type.describe());
             },

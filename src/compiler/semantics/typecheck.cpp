@@ -697,14 +697,14 @@ TypePtr TypeCheckPass::resolve_type(const ast::TypeSyntax &type) {
         return map_type(resolve_type(*type.first), resolve_type(*type.second));
     }
 
-    return make_any_type();
+    return make_error_type();
 }
 
 TypePtr TypeCheckPass::resolve_named_type(const ast::QualifiedName &name) {
     const auto reference = find_reference_here(ReferenceKind::TypeName, name.range);
     if (!reference.has_value()) {
         error_here("unable to resolve type '" + name.spelling() + "'", name.range);
-        return make_any_type();
+        return make_error_type();
     }
 
     return resolve_type_symbol(reference->get().target, name.range);
@@ -714,7 +714,7 @@ TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     const auto symbol = symbol_of(id);
     if (!symbol.has_value()) {
         error_here("resolved type symbol is missing", use_range);
-        return make_any_type();
+        return make_error_type();
     }
 
     switch (symbol->get().kind) {
@@ -730,33 +730,33 @@ TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
         error_here("symbol '" + symbol->get().canonical_name + "' does not name a type", use_range);
-        return make_any_type();
+        return make_error_type();
     }
 
-    return make_any_type();
+    return make_error_type();
 }
 
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
     if (const auto cached = resolved_alias_types_.find(id.value);
         cached != resolved_alias_types_.end()) {
-        return cached->second ? cached->second->clone() : make_any_type();
+        return cached->second ? cached->second->clone() : make_error_type();
     }
 
     if (!active_aliases_.insert(id.value).second) {
         error_here("type alias cycle reached during type resolution", use_range);
-        return make_any_type();
+        return make_error_type();
     }
 
     const auto alias_decl = alias_decl_of(id);
     if (!alias_decl.has_value()) {
         active_aliases_.erase(id.value);
         error_here("type alias declaration is missing", use_range);
-        return make_any_type();
+        return make_error_type();
     }
 
     auto resolved =
         with_symbol_context(id, [&]() { return resolve_type(*alias_decl->get().aliased_type); });
-    resolved_alias_types_.emplace(id.value, resolved ? resolved->clone() : make_any_type());
+    resolved_alias_types_.emplace(id.value, resolved ? resolved->clone() : make_error_type());
     active_aliases_.erase(id.value);
     return resolved;
 }
@@ -766,7 +766,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     if (auto *typed_expr = result_.typed_program.find_expr(expr.node_id, current_source_id_);
         typed_expr != nullptr) {
         // Update in place when both the AST identity and the source agree.
-        typed_expr->type = typed.type ? typed.type->clone() : make_any_type();
+        typed_expr->type = typed.type ? typed.type->clone() : make_error_type();
         typed_expr->effect = typed.effect;
         typed_expr->is_pure = typed.is_pure;
         typed_expr->resolved_symbol =
@@ -795,7 +795,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         if (auto *typed_expr =
                 result_.typed_program.find_expr_by_range(expr.range, current_source_id_);
             typed_expr != nullptr) {
-            typed_expr->type = typed.type ? typed.type->clone() : make_any_type();
+            typed_expr->type = typed.type ? typed.type->clone() : make_error_type();
             typed_expr->effect = typed.effect;
             typed_expr->is_pure = typed.is_pure;
             typed_expr->bool_value = expr.bool_value;
@@ -812,7 +812,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .range = expr.range,
         .source_id = current_source_id_,
         .node_id = expr.node_id,
-        .type = typed.type ? typed.type->clone() : make_any_type(),
+        .type = typed.type ? typed.type->clone() : make_error_type(),
         .effect = typed.effect,
         .is_pure = typed.is_pure,
         .resolved_symbol = resolved_symbol_for(expr, resolve_result_, current_source_id_),
@@ -1047,7 +1047,7 @@ TypedValue TypeCheckPass::error_typed(bool is_pure) const {
 
 TypedValue TypeCheckPass::error_typed_effect(ExprEffect effect) const {
     return TypedValue{
-        .type = make_any_type(),
+        .type = make_error_type(),
         .effect = effect,
         .is_pure = is_effect_pure(effect),
     };
@@ -1056,18 +1056,18 @@ TypedValue TypeCheckPass::error_typed_effect(ExprEffect effect) const {
 TypePtr
 TypeCheckPass::field_access(const Type &base_type, std::string_view field_name, SourceRange range) {
     if (is_error_type(base_type)) {
-        return make_any_type();
+        return make_error_type();
     }
 
     if (!base_type.holds<types::StructT>()) {
         error_here("member access requires a struct value, got " + base_type.describe(), range);
-        return make_any_type();
+        return make_error_type();
     }
 
     const auto struct_info = result_.environment.get_struct(base_type);
     if (!struct_info.has_value()) {
         error_here("unknown struct type '" + base_type.describe() + "'", range);
-        return make_any_type();
+        return make_error_type();
     }
 
     const auto field = struct_info->get().find_field(field_name);
@@ -1083,10 +1083,10 @@ TypeCheckPass::field_access(const Type &base_type, std::string_view field_name, 
             message += "; did you mean '" + *suggestion + "'?";
         }
         error_here(std::move(message), range);
-        return make_any_type();
+        return make_error_type();
     }
 
-    return field->get().type ? field->get().type->clone() : make_any_type();
+    return field->get().type ? field->get().type->clone() : make_error_type();
 }
 
 TypedValue TypeCheckPass::check_expr(const ast::ExprSyntax &expr,
@@ -1176,7 +1176,7 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
                 return pass.typed_effect(expected_type->get().clone(), inner.effect);
             }
             return pass.typed_effect(
-                pass.optional_type(inner.type ? inner.type->clone() : pass.make_any_type()),
+                pass.optional_type(inner.type ? inner.type->clone() : pass.make_error_type()),
                 inner.effect);
         }
         TypedValue visit_path(const ast::ExprSyntax &e) const {
@@ -1378,7 +1378,7 @@ TypedValue TypeCheckPass::check_call(const ast::ExprSyntax &expr, const ValueCon
         }
 
         return typed_effect(capability->get().return_type ? capability->get().return_type->clone()
-                                                          : make_any_type(),
+                                                          : make_error_type(),
                             ExprEffect::CapabilityCall);
     }
 
@@ -1512,7 +1512,7 @@ TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
         }
 
         error_here("cannot infer type of empty list literal", expr.range);
-        return typed(list_type(make_any_type()));
+        return typed(list_type(make_error_type()));
     }
 
     auto element_type = clone_or_any(element_expected);
@@ -1526,7 +1526,7 @@ TypedValue TypeCheckPass::check_list_literal(const ast::ExprSyntax &expr,
         effect = join_effects(effect, value.effect);
 
         if (!have_element_type) {
-            element_type = value.type ? value.type->clone() : make_any_type();
+            element_type = value.type ? value.type->clone() : make_error_type();
             have_element_type = true;
             continue;
         }
@@ -1562,7 +1562,7 @@ TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
         }
 
         error_here("cannot infer type of empty set literal", expr.range);
-        return typed(set_type(make_any_type()));
+        return typed(set_type(make_error_type()));
     }
 
     auto element_type = clone_or_any(element_expected);
@@ -1576,7 +1576,7 @@ TypedValue TypeCheckPass::check_set_literal(const ast::ExprSyntax &expr,
         effect = join_effects(effect, value.effect);
 
         if (!have_element_type) {
-            element_type = value.type ? value.type->clone() : make_any_type();
+            element_type = value.type ? value.type->clone() : make_error_type();
             have_element_type = true;
             continue;
         }
@@ -1616,7 +1616,7 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
         }
 
         error_here("cannot infer type of empty map literal", expr.range);
-        return typed(map_type(make_any_type(), make_any_type()));
+        return typed(map_type(make_error_type(), make_error_type()));
     }
 
     auto key_type = clone_or_any(key_expected);
@@ -1635,7 +1635,7 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
         effect = join_effects(effect, join_effects(key.effect, value.effect));
 
         if (!have_key_type) {
-            key_type = key.type ? key.type->clone() : make_any_type();
+            key_type = key.type ? key.type->clone() : make_error_type();
             have_key_type = true;
         } else {
             if (key_expectation.has_value()) {
@@ -1647,7 +1647,7 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
         }
 
         if (!have_value_type) {
-            value_type = value.type ? value.type->clone() : make_any_type();
+            value_type = value.type ? value.type->clone() : make_error_type();
             have_value_type = true;
         } else {
             if (value_expectation.has_value()) {
@@ -1678,7 +1678,8 @@ TypedValue TypeCheckPass::check_unary_expr(const ast::ExprSyntax &expr,
                            operand.type->describe(),
                        expr.range);
         }
-        return typed_effect(operand.type ? operand.type->clone() : make_any_type(), operand.effect);
+        return typed_effect(operand.type ? operand.type->clone() : make_error_type(),
+                            operand.effect);
     }
 
     return error_typed_effect(operand.effect);
@@ -1714,11 +1715,48 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
                is_subtype_of(*lhs.type, *rhs.type) || is_subtype_of(*rhs.type, *lhs.type);
     };
 
-    const auto decimal_same_scale = [&]() {
-        const auto *lhs_decimal = lhs.type->get_if<types::DecimalT>();
-        const auto *rhs_decimal = rhs.type->get_if<types::DecimalT>();
-        return lhs_decimal != nullptr && rhs_decimal != nullptr &&
-               lhs_decimal->scale == rhs_decimal->scale;
+    // Returns the promoted result type for a numeric binary operation, or
+    // nullptr if the operands are not arithmetically compatible.
+    // Promotion rules (from narrowest to widest):
+    //   Int + Float = Float
+    //   Int + Decimal(s) = Decimal(s)
+    //   Float + Decimal = not supported (precision loss)
+    const auto promote_numeric = [&]() -> TypePtr {
+        if (is_error_type(*lhs.type) || is_error_type(*rhs.type)) {
+            return make_error_type();
+        }
+
+        const bool lhs_int = lhs.type->holds<types::IntT>();
+        const bool rhs_int = rhs.type->holds<types::IntT>();
+        const bool lhs_float = lhs.type->holds<types::FloatT>();
+        const bool rhs_float = rhs.type->holds<types::FloatT>();
+        const auto *lhs_dec = lhs.type->get_if<types::DecimalT>();
+        const auto *rhs_dec = rhs.type->get_if<types::DecimalT>();
+
+        // Both Int.
+        if (lhs_int && rhs_int) {
+            return make_type(TypeKind::Int);
+        }
+        // Both Float.
+        if (lhs_float && rhs_float) {
+            return make_type(TypeKind::Float);
+        }
+        // Int + Float -> Float (numeric widening).
+        if ((lhs_int && rhs_float) || (lhs_float && rhs_int)) {
+            return make_type(TypeKind::Float);
+        }
+        // Both Decimal, same scale.
+        if (lhs_dec != nullptr && rhs_dec != nullptr && lhs_dec->scale == rhs_dec->scale) {
+            return lhs.type->clone();
+        }
+        // Decimal + Int -> Decimal (Int is scaled to match).
+        if (lhs_dec != nullptr && rhs_int) {
+            return lhs.type->clone();
+        }
+        if (rhs_dec != nullptr && lhs_int) {
+            return rhs.type->clone();
+        }
+        return nullptr;
     };
 
     switch (expr.binary_op) {
@@ -1747,16 +1785,8 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
             return typed_effect(string_type(), effect);
         }
 
-        if (decimal_same_scale()) {
-            return typed_effect(lhs.type->clone(), effect);
-        }
-
-        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
-            return typed_effect(make_type(TypeKind::Int), effect);
-        }
-
-        if (lhs.type->holds<types::FloatT>() && rhs.type->holds<types::FloatT>()) {
-            return typed_effect(make_type(TypeKind::Float), effect);
+        if (const auto result = promote_numeric(); result != nullptr) {
+            return typed_effect(result, effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
@@ -1766,16 +1796,8 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         }
         return error_typed_effect(effect);
     case ast::ExprBinaryOp::Subtract:
-        if (decimal_same_scale()) {
-            return typed_effect(lhs.type->clone(), effect);
-        }
-
-        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
-            return typed_effect(make_type(TypeKind::Int), effect);
-        }
-
-        if (lhs.type->holds<types::FloatT>() && rhs.type->holds<types::FloatT>()) {
-            return typed_effect(make_type(TypeKind::Float), effect);
+        if (const auto result = promote_numeric(); result != nullptr) {
+            return typed_effect(result, effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
@@ -1786,12 +1808,8 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         return error_typed_effect(effect);
     case ast::ExprBinaryOp::Multiply:
     case ast::ExprBinaryOp::Divide:
-        if (lhs.type->holds<types::IntT>() && rhs.type->holds<types::IntT>()) {
-            return typed_effect(make_type(TypeKind::Int), effect);
-        }
-
-        if (lhs.type->holds<types::FloatT>() && rhs.type->holds<types::FloatT>()) {
-            return typed_effect(make_type(TypeKind::Float), effect);
+        if (const auto result = promote_numeric(); result != nullptr) {
+            return typed_effect(result, effect);
         }
 
         if (!is_error_type(*lhs.type) && !is_error_type(*rhs.type)) {
@@ -2189,7 +2207,7 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
         return_context.bindings.emplace("input",
                                         clone_or_any(std::cref(*workflow_info->get().input_type)));
         for (const auto &[name, type] : all_node_outputs) {
-            return_context.bindings.emplace(name, type ? type->clone() : make_any_type());
+            return_context.bindings.emplace(name, type ? type->clone() : make_error_type());
         }
 
         for (const auto &formula : decl.safety) {
@@ -2345,10 +2363,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
 
         if (expected.has_value()) {
             context.bindings[statement.let_stmt->name] =
-                annotated_type ? annotated_type->clone() : make_any_type();
+                annotated_type ? annotated_type->clone() : make_error_type();
         } else {
             context.bindings[statement.let_stmt->name] =
-                initializer.type ? initializer.type->clone() : make_any_type();
+                initializer.type ? initializer.type->clone() : make_error_type();
         }
 
         // Determine the let type-ref strategy and (optional) spelling string.
@@ -2393,7 +2411,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                       .members = statement.assign_stmt->target->members});
             const auto target = check_path(*statement.assign_stmt->target, context);
             const auto expectation = TypeExpectation{
-                .expected = target.type ? target.type->clone() : make_any_type(),
+                .expected = target.type ? target.type->clone() : make_error_type(),
                 .origin_kind = TypeExpectationOriginKind::AssignmentTarget,
                 .origin_range = statement.assign_stmt->target->range,
                 .description =

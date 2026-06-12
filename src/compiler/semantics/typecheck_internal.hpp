@@ -74,7 +74,7 @@ struct ValueContext {
 }
 
 [[nodiscard]] inline bool is_error_type(const Type &type) noexcept {
-    return type.holds<types::AnyT>() || type.holds<types::NeverT>();
+    return type.holds<types::ErrorT>();
 }
 
 [[nodiscard]] inline bool is_bool_type(const Type &type) noexcept {
@@ -222,6 +222,10 @@ class TypeCheckPass final {
     void build_predicate_types();
     void build_agent_types();
     void build_workflow_types();
+    void build_flow_types();
+    void build_flow_types_in_program(const ast::Program &program);
+    void build_contract_types();
+    void build_contract_types_in_program(const ast::Program &program);
 
     // Declaration-level checks (typecheck_decls.cpp).
     void check_const_initializers_in_program(const ast::Program &program);
@@ -353,15 +357,10 @@ class TypeCheckPass final {
 
     [[nodiscard]] TypePtr
     field_access(const Type &base_type, std::string_view field_name, SourceRange range);
-    [[nodiscard]] TypePtr make_any_type() const {
-        return types_->make(TypeKind::Any);
-    }
-    [[nodiscard]] TypePtr make_type(TypeKind kind) const {
-        return types_->make(kind);
-    }
-    [[nodiscard]] TypePtr string_type() const {
-        return types_->string();
-    }
+    [[nodiscard]] TypePtr make_any_type() const { return types_->make(TypeKind::Any); }
+    [[nodiscard]] TypePtr make_error_type() const { return types_->error_type(); }
+    [[nodiscard]] TypePtr make_type(TypeKind kind) const { return types_->make(kind); }
+    [[nodiscard]] TypePtr string_type() const { return types_->string(); }
     [[nodiscard]] TypePtr bounded_string_type(std::int64_t minimum, std::int64_t maximum) const {
         return types_->bounded_string(minimum, maximum);
     }
