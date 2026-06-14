@@ -34,6 +34,16 @@ std::unique_ptr<json::JsonValue> serialize_diagnostic(const LspDiagnostic &diag)
     if (!diag.code.empty()) {
         obj->set("code", json::JsonValue::make_string(diag.code));
     }
+    if (!diag.related_information.empty()) {
+        auto related = json::JsonValue::make_array();
+        for (const auto &item : diag.related_information) {
+            auto related_item = json::JsonValue::make_object();
+            related_item->set("location", serialize_location(item.location));
+            related_item->set("message", json::JsonValue::make_string(item.message));
+            related->push(std::move(related_item));
+        }
+        obj->set("relatedInformation", std::move(related));
+    }
     return obj;
 }
 
@@ -121,6 +131,13 @@ std::unique_ptr<json::JsonValue> serialize_document_symbol(const DocumentSymbol 
     obj->set("kind", json::JsonValue::make_int(static_cast<int64_t>(sym.kind)));
     obj->set("range", serialize_range(sym.range));
     obj->set("selectionRange", serialize_range(sym.selection_range));
+    if (!sym.children.empty()) {
+        auto children = json::JsonValue::make_array();
+        for (const auto &child : sym.children) {
+            children->push(serialize_document_symbol(child));
+        }
+        obj->set("children", std::move(children));
+    }
     return obj;
 }
 
@@ -153,7 +170,8 @@ std::unique_ptr<json::JsonValue> serialize_workspace_edit(const WorkspaceEdit &e
     return obj;
 }
 
-std::unique_ptr<json::JsonValue> serialize_parameter_information(const ParameterInformation &param) {
+std::unique_ptr<json::JsonValue>
+serialize_parameter_information(const ParameterInformation &param) {
     auto obj = json::JsonValue::make_object();
     obj->set("label", json::JsonValue::make_string(param.label));
     if (!param.documentation.empty()) {
@@ -183,8 +201,10 @@ std::unique_ptr<json::JsonValue> serialize_signature_help(const SignatureHelp &h
         sigs->push(serialize_signature_information(s));
     }
     obj->set("signatures", std::move(sigs));
-    obj->set("activeSignature", json::JsonValue::make_int(static_cast<int64_t>(help.active_signature)));
-    obj->set("activeParameter", json::JsonValue::make_int(static_cast<int64_t>(help.active_parameter)));
+    obj->set("activeSignature",
+             json::JsonValue::make_int(static_cast<int64_t>(help.active_signature)));
+    obj->set("activeParameter",
+             json::JsonValue::make_int(static_cast<int64_t>(help.active_parameter)));
     return obj;
 }
 

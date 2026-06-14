@@ -2,7 +2,9 @@
 
 #include <istream>
 #include <ostream>
+#include <string_view>
 
+#include "tooling/lsp/analysis_service.hpp"
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/json_rpc.hpp"
 
@@ -19,8 +21,10 @@ class LspServer {
   private:
     JsonRpcTransport transport_;
     DocumentStore store_;
+    AnalysisService analysis_;
     bool initialized_{false};
     bool shutdown_requested_{false};
+    bool trace_enabled_{false};
 
     // Request handlers
     void handle_request(const JsonRpcRequest &req);
@@ -45,6 +49,7 @@ class LspServer {
 
     // Analysis
     void publish_diagnostics(const std::string &uri);
+    void trace(std::string_view message) const;
 };
 
 } // namespace ahfl::lsp
