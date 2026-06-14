@@ -2078,6 +2078,7 @@ ahfl_label_tests(
         ahfl.bench.compile_time
         ahfl.bench.memory_usage
         ahfl.bench.smv_size
+        ahfl.bench.ir_pipeline
 )
 
 ahfl_label_tests(
