@@ -1939,6 +1939,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.58 v0.58-lsp
     TESTS
         ahfl.lsp.json_rpc_all
+        ahfl.lsp.process_smoke
 )
 
 ahfl_label_tests(

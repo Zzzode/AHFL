@@ -28,12 +28,16 @@ bool test_read_request() {
     JsonRpcTransport transport(in, out);
 
     auto msg = transport.read_message();
-    if (!msg.has_value()) return false;
+    if (!msg.has_value())
+        return false;
 
     auto *req = std::get_if<JsonRpcRequest>(&*msg);
-    if (!req) return false;
-    if (req->method != "initialize") return false;
-    if (req->id.empty()) return false;
+    if (!req)
+        return false;
+    if (req->method != "initialize")
+        return false;
+    if (req->id.empty())
+        return false;
 
     return true;
 }
@@ -47,11 +51,14 @@ bool test_read_notification() {
     JsonRpcTransport transport(in, out);
 
     auto msg = transport.read_message();
-    if (!msg.has_value()) return false;
+    if (!msg.has_value())
+        return false;
 
     auto *notif = std::get_if<JsonRpcNotification>(&*msg);
-    if (!notif) return false;
-    if (notif->method != "initialized") return false;
+    if (!notif)
+        return false;
+    if (notif->method != "initialized")
+        return false;
 
     return true;
 }
@@ -70,13 +77,16 @@ bool test_send_response_content_length() {
 
     std::string output = out.str();
     // Output should start with Content-Length header
-    if (output.find("Content-Length: ") != 0) return false;
+    if (output.find("Content-Length: ") != 0)
+        return false;
     // Should contain \r\n\r\n separator
-    if (output.find("\r\n\r\n") == std::string::npos) return false;
+    if (output.find("\r\n\r\n") == std::string::npos)
+        return false;
     // The body part should contain the id
     auto body_start = output.find("\r\n\r\n") + 4;
     std::string body = output.substr(body_start);
-    if (body.find("42") == std::string::npos) return false;
+    if (body.find("42") == std::string::npos)
+        return false;
 
     return true;
 }
@@ -87,9 +97,22 @@ bool test_empty_stream_returns_nullopt() {
     JsonRpcTransport transport(in, out);
 
     auto msg = transport.read_message();
-    if (msg.has_value()) return false;
+    if (msg.has_value())
+        return false;
 
     return true;
+}
+
+bool test_malformed_json_returns_nullopt_without_throwing() {
+    std::string body = R"({"jsonrpc":"2.0","id":1,"method":)";
+    std::string frame = make_frame(body);
+
+    std::istringstream in(frame);
+    std::ostringstream out;
+    JsonRpcTransport transport(in, out);
+
+    auto msg = transport.read_message();
+    return !msg.has_value();
 }
 
 } // namespace
@@ -107,6 +130,8 @@ int main() {
     run(test_read_notification, "test_read_notification");
     run(test_send_response_content_length, "test_send_response_content_length");
     run(test_empty_stream_returns_nullopt, "test_empty_stream_returns_nullopt");
+    run(test_malformed_json_returns_nullopt_without_throwing,
+        "test_malformed_json_returns_nullopt_without_throwing");
 
     if (failures > 0) {
         std::cerr << failures << " test(s) failed\n";
