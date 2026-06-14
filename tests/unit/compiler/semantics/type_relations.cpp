@@ -27,7 +27,7 @@ TEST_CASE("type relations preserve bounded string subtyping") {
     CHECK_FALSE(ahfl::is_subtype_of(*bounded, *narrower));
 }
 
-TEST_CASE("type relations keep collection element types invariant") {
+TEST_CASE("type relations support covariant container element types") {
     auto &tc = ahfl::TypeContext::global();
     const auto list_bounded = tc.list(bounded_string_type(2, 8));
     const auto list_string = tc.list(string_type());
@@ -36,12 +36,18 @@ TEST_CASE("type relations keep collection element types invariant") {
     const auto optional_bounded = tc.optional(bounded_string_type(2, 8));
     const auto optional_string = tc.optional(string_type());
 
-    CHECK_FALSE(ahfl::is_subtype_of(*list_bounded, *list_string));
-    CHECK_FALSE(ahfl::is_subtype_of(*set_bounded, *set_string));
-    CHECK_FALSE(ahfl::is_subtype_of(*optional_bounded, *optional_string));
+    // Container covariance: List<A> <: List<B> if A <: B (same for Set, Optional)
+    CHECK(ahfl::is_subtype_of(*list_bounded, *list_string));
+    CHECK(ahfl::is_subtype_of(*set_bounded, *set_string));
+    CHECK(ahfl::is_subtype_of(*optional_bounded, *optional_string));
+
+    // Reverse direction should not hold (String is NOT <: BoundedString)
+    CHECK_FALSE(ahfl::is_subtype_of(*list_string, *list_bounded));
+    CHECK_FALSE(ahfl::is_subtype_of(*set_string, *set_bounded));
+    CHECK_FALSE(ahfl::is_subtype_of(*optional_string, *optional_bounded));
 }
 
-TEST_CASE("type relations keep map key and value types invariant") {
+TEST_CASE("type relations keep map keys invariant but values covariant") {
     auto &tc = ahfl::TypeContext::global();
     const auto bounded_to_int =
         tc.map(bounded_string_type(2, 8), tc.make(ahfl::TypeKind::Int));
@@ -52,17 +58,29 @@ TEST_CASE("type relations keep map key and value types invariant") {
     const auto string_to_string =
         tc.map(string_type(), string_type());
 
+    // Map keys are invariant: BoundedString != String at the key position.
     CHECK_FALSE(ahfl::is_subtype_of(*bounded_to_int, *string_to_int));
-    CHECK_FALSE(ahfl::is_subtype_of(*string_to_bounded, *string_to_string));
+    // Map values are covariant: BoundedString <: String, so Map<String,BS> <: Map<String,String>.
+    CHECK(ahfl::is_subtype_of(*string_to_bounded, *string_to_string));
+    // Reverse direction for values should not hold.
+    CHECK_FALSE(ahfl::is_subtype_of(*string_to_string, *string_to_bounded));
 }
 
-TEST_CASE("type relations keep decimal scales exact") {
+TEST_CASE("type relations support decimal scale promotion") {
     auto &tc = ahfl::TypeContext::global();
     const auto decimal_2 = tc.decimal(2);
     const auto decimal_4 = tc.decimal(4);
+    const auto i32 = tc.make(ahfl::TypeKind::Int);
 
-    CHECK_FALSE(ahfl::is_subtype_of(*decimal_2, *decimal_4));
-    CHECK_FALSE(ahfl::is_assignable_to(*decimal_2, *decimal_4));
+    // Decimal(2) <: Decimal(4) since wider scale (4) accepts narrower (2).
+    CHECK(ahfl::is_subtype_of(*decimal_2, *decimal_4));
+    CHECK(ahfl::is_assignable_to(*decimal_2, *decimal_4));
+    // Reverse should not hold: Decimal(4) is NOT <: Decimal(2).
+    CHECK_FALSE(ahfl::is_subtype_of(*decimal_4, *decimal_2));
+    CHECK_FALSE(ahfl::is_assignable_to(*decimal_4, *decimal_2));
+    // Int <: Decimal (numeric promotion).
+    CHECK(ahfl::is_subtype_of(*i32, *decimal_2));
+    CHECK(ahfl::is_subtype_of(*i32, *decimal_4));
 }
 
 TEST_CASE("nominal types prefer symbol identity over display names") {

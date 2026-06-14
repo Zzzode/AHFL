@@ -28,7 +28,7 @@ enum class BackendKind {
 };
 
 [[nodiscard]] EmitResult emit_backend(BackendKind kind,
-                                      const ir::Program &program,
+                                      ir::Program &program,
                                       std::ostream &out,
                                       const handoff::PackageMetadata *package_metadata = nullptr);
 

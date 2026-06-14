@@ -25,6 +25,17 @@ target_link_libraries(ahfl_bench_smv_size
 )
 ahfl_apply_project_warnings(ahfl_bench_smv_size)
 
+add_executable(ahfl_bench_ir_pipeline
+    bench/ir_pipeline.cpp
+)
+target_link_libraries(ahfl_bench_ir_pipeline
+    PRIVATE
+        ahfl_compiler_ir_opt
+)
+target_include_directories(ahfl_bench_ir_pipeline PRIVATE ${PROJECT_SOURCE_DIR}/src)
+ahfl_apply_project_warnings(ahfl_bench_ir_pipeline)
+
 add_test(NAME ahfl.bench.compile_time COMMAND $<TARGET_FILE:ahfl_bench_compile_time>)
 add_test(NAME ahfl.bench.memory_usage COMMAND $<TARGET_FILE:ahfl_bench_memory_usage>)
 add_test(NAME ahfl.bench.smv_size COMMAND $<TARGET_FILE:ahfl_bench_smv_size>)
+add_test(NAME ahfl.bench.ir_pipeline COMMAND $<TARGET_FILE:ahfl_bench_ir_pipeline>)

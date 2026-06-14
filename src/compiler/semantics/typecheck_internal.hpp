@@ -7,6 +7,8 @@
 // LLVM/Clang Sema's split between SemaDecl/SemaExpr/SemaStmt while keeping
 // state on a single class.
 
+#include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
@@ -17,8 +19,6 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
-#include "ahfl/base/support/source.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +49,7 @@ struct TypedValue {
     TypePtr type;
     ExprEffect effect{ExprEffect::Pure};
     bool is_pure{true};
+    std::optional<AssignTargetRootKind> path_root_kind;
 };
 
 enum class ConstEvalKind {
@@ -174,6 +175,7 @@ class TypeCheckPass final {
     const SourceUnit *current_source_{nullptr};
     std::optional<SourceId> current_source_id_;
     std::string current_module_name_;
+    std::unordered_map<std::size_t, const SourceUnit *> source_units_by_id_;
 
     // After the most recent check_statement call completes, holds the index
     // of the TypedStatement that was just appended to
@@ -261,6 +263,7 @@ class TypeCheckPass final {
 
     void enter_source(const SourceUnit &source);
     void leave_source();
+    void build_source_unit_index();
     [[nodiscard]] MaybeCRef<SourceUnit> source_unit_for(SourceId id) const;
     template <typename Fn> decltype(auto) with_symbol_context(SymbolId id, Fn &&fn);
     [[nodiscard]] MaybeCRef<Symbol> find_local_here(SymbolNamespace name_space,
@@ -357,14 +360,24 @@ class TypeCheckPass final {
 
     [[nodiscard]] TypePtr
     field_access(const Type &base_type, std::string_view field_name, SourceRange range);
-    [[nodiscard]] TypePtr make_any_type() const { return types_->make(TypeKind::Any); }
-    [[nodiscard]] TypePtr make_error_type() const { return types_->error_type(); }
-    [[nodiscard]] TypePtr make_type(TypeKind kind) const { return types_->make(kind); }
-    [[nodiscard]] TypePtr string_type() const { return types_->string(); }
+    [[nodiscard]] TypePtr make_any_type() const {
+        return types_->make(TypeKind::Any);
+    }
+    [[nodiscard]] TypePtr make_error_type() const {
+        return types_->error_type();
+    }
+    [[nodiscard]] TypePtr make_type(TypeKind kind) const {
+        return types_->make(kind);
+    }
+    [[nodiscard]] TypePtr string_type() const {
+        return types_->string();
+    }
     [[nodiscard]] TypePtr bounded_string_type(std::int64_t minimum, std::int64_t maximum) const {
         return types_->bounded_string(minimum, maximum);
     }
-    [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const { return types_->decimal(scale); }
+    [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const {
+        return types_->decimal(scale);
+    }
     [[nodiscard]] TypePtr struct_type(std::string canonical_name) const {
         return types_->struct_type(std::move(canonical_name));
     }
@@ -377,11 +390,21 @@ class TypeCheckPass final {
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, SymbolId symbol) const {
         return types_->enum_type(std::move(canonical_name), symbol);
     }
+    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
+                                            std::string variant_name,
+                                            std::optional<SymbolId> symbol) const {
+        return types_->enum_variant_type(
+            std::move(canonical_name), std::move(variant_name), symbol);
+    }
     [[nodiscard]] TypePtr optional_type(TypePtr value_type) const {
         return types_->optional(value_type);
     }
-    [[nodiscard]] TypePtr list_type(TypePtr element_type) const { return types_->list(element_type); }
-    [[nodiscard]] TypePtr set_type(TypePtr element_type) const { return types_->set(element_type); }
+    [[nodiscard]] TypePtr list_type(TypePtr element_type) const {
+        return types_->list(element_type);
+    }
+    [[nodiscard]] TypePtr set_type(TypePtr element_type) const {
+        return types_->set(element_type);
+    }
     [[nodiscard]] TypePtr map_type(TypePtr key_type, TypePtr value_type) const {
         return types_->map(key_type, value_type);
     }
@@ -389,6 +412,8 @@ class TypeCheckPass final {
     [[nodiscard]] TypedValue typed_effect(TypePtr type, ExprEffect effect) const;
     [[nodiscard]] TypedValue error_typed(bool is_pure = true) const;
     [[nodiscard]] TypedValue error_typed_effect(ExprEffect effect) const;
+    [[nodiscard]] TypePtr
+    apply_flow_narrowing(TypePtr type, const Place &place, const FlowFacts &facts) const;
 
     // Helpers moved from the global internal namespace (Del-L2 cleanup).
     [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const {

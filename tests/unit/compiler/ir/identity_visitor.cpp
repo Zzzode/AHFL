@@ -4,27 +4,29 @@
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
+#include "ahfl/compiler/ir/verify.hpp"
 #include "ahfl/compiler/ir/visitor.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
+#include <algorithm>
+#include <cstdint>
+#include <sstream>
 #include <string>
+#include <variant>
 
 namespace {
 
-[[nodiscard]] ahfl::Owned<ahfl::ir::Expr> make_call_expr(std::string callee) {
-    return ahfl::make_owned<ahfl::ir::Expr>(ahfl::ir::Expr{
-        .node =
-            ahfl::ir::CallExpr{
-                .callee = std::move(callee),
-                .arguments = {},
-            },
-        .source_range = {},
+[[nodiscard]] ahfl::ir::ExprRef make_call_expr(ahfl::ir::ExprArena &arena, std::string callee) {
+    return arena.make(ahfl::ir::CallExpr{
+        .callee = std::move(callee),
+        .arguments = {},
     });
 }
 
@@ -54,6 +56,58 @@ class RenameCallRewriter final : public ahfl::ir::ProgramRewriter {
         return true;
     }
 };
+
+class RenameTemporalCalledRewriter final : public ahfl::ir::ProgramRewriter {
+  private:
+    bool on_temporal_expr(ahfl::ir::TemporalExpr &expr) override {
+        auto *called = std::get_if<ahfl::ir::CalledTemporalExpr>(&expr.node);
+        if (called == nullptr || called->capability == "pkg::NewCall") {
+            return false;
+        }
+
+        called->capability = "pkg::NewCall";
+        return true;
+    }
+};
+
+[[nodiscard]] ahfl::ir::TypeRef unit_type() {
+    return ahfl::ir::TypeRef{
+        .kind = ahfl::ir::TypeRefKind::Unit,
+        .display_name = "Unit",
+    };
+}
+
+[[nodiscard]] ahfl::ir::TypeRef bool_type() {
+    return ahfl::ir::TypeRef{
+        .kind = ahfl::ir::TypeRefKind::Bool,
+        .display_name = "Bool",
+    };
+}
+
+[[nodiscard]] bool has_ir_diagnostic_containing(const ahfl::ir::VerificationResult &result,
+                                                ahfl::ir::VerificationSeverity severity,
+                                                const std::string &needle) {
+    for (const auto &diagnostic : result.diagnostics) {
+        if (diagnostic.severity == severity &&
+            diagnostic.message.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool contains_string(const std::vector<std::string> &values,
+                                   const std::string &needle) {
+    return std::find(values.begin(), values.end(), needle) != values.end();
+}
+
+[[nodiscard]] bool has_formal_observation_symbol(const ahfl::ir::Program &program,
+                                                 const std::string &needle) {
+    const auto &observations = ahfl::ir::formal_observations(program);
+    return std::any_of(observations.begin(), observations.end(), [&](const auto &observation) {
+        return observation.symbol.find(needle) != std::string::npos;
+    });
+}
 
 } // namespace
 
@@ -137,13 +191,14 @@ TEST_CASE("ProgramIndex and handoff lowering use SymbolRef canonical names") {
 }
 
 TEST_CASE("IR visitor and rewriter traverse workflow node inputs") {
+    ahfl::ir::Program program;
     ahfl::ir::WorkflowDecl workflow{
         .provenance = {},
         .name = "pkg::Workflow",
         .nodes = {},
         .safety = {},
         .liveness = {},
-        .return_value = make_call_expr("ReturnCall"),
+        .return_value = make_call_expr(program.expr_arena, "ReturnCall"),
         .input_type_ref =
             ahfl::ir::TypeRef{
                 .kind = ahfl::ir::TypeRefKind::Unit,
@@ -158,7 +213,7 @@ TEST_CASE("IR visitor and rewriter traverse workflow node inputs") {
     };
     workflow.nodes.push_back(ahfl::ir::WorkflowNode{
         .name = "run",
-        .input = make_call_expr("LocalCall"),
+        .input = make_call_expr(program.expr_arena, "LocalCall"),
         .after = {},
         .target_ref =
             ahfl::ir::SymbolRef{
@@ -170,7 +225,6 @@ TEST_CASE("IR visitor and rewriter traverse workflow node inputs") {
         .source_range = {},
     });
 
-    ahfl::ir::Program program;
     program.declarations.push_back(std::move(workflow));
 
     CountingVisitor visitor;
@@ -186,6 +240,93 @@ TEST_CASE("IR visitor and rewriter traverse workflow node inputs") {
     const auto *node_call = std::get_if<ahfl::ir::CallExpr>(&rewritten->nodes.front().input->node);
     REQUIRE(node_call != nullptr);
     CHECK(node_call->callee == "pkg::CanonicalCall");
+}
+
+TEST_CASE("IR mutation safety refreshes flow summaries after expression rewrite") {
+    ahfl::ir::Program program;
+    const auto call = make_call_expr(program.expr_arena, "pkg::OldCall");
+    call->id = 42;
+    call->source_range = ahfl::SourceRange{.begin_offset = 10, .end_offset = 20};
+    call->resolved_type = bool_type();
+
+    auto stmt = ahfl::make_owned<ahfl::ir::Statement>(ahfl::ir::Statement{
+        .node = ahfl::ir::ExprStatement{.expr = call},
+        .source_range = {},
+        .id = 0,
+    });
+
+    ahfl::ir::StateHandler handler;
+    handler.state_name = "Init";
+    handler.body.statements.push_back(std::move(stmt));
+
+    ahfl::ir::FlowDecl flow;
+    flow.state_handlers.push_back(std::move(handler));
+    program.declarations.push_back(std::move(flow));
+
+    ahfl::ir::recompute_derived_analyses(program);
+    const auto *flow_before = std::get_if<ahfl::ir::FlowDecl>(&program.declarations.front());
+    REQUIRE(flow_before != nullptr);
+    const auto *summary_before = ahfl::ir::find_state_handler_summary(
+        program, *flow_before, flow_before->state_handlers.front());
+    REQUIRE(summary_before != nullptr);
+    CHECK(contains_string(summary_before->called_targets, "pkg::OldCall"));
+
+    RenameCallRewriter rewriter;
+    CHECK(rewriter.rewrite(program));
+    ahfl::ir::mark_derived_analyses_stale(program);
+    ahfl::ir::ensure_derived_analyses(program);
+
+    const auto *flow_after = std::get_if<ahfl::ir::FlowDecl>(&program.declarations.front());
+    REQUIRE(flow_after != nullptr);
+    const auto *summary_after = ahfl::ir::find_state_handler_summary(
+        program, *flow_after, flow_after->state_handlers.front());
+    REQUIRE(summary_after != nullptr);
+    CHECK_FALSE(contains_string(summary_after->called_targets, "pkg::OldCall"));
+    CHECK(contains_string(summary_after->called_targets, "pkg::CanonicalCall"));
+    CHECK_FALSE(ahfl::ir::verify_ir_program(program).has_errors());
+
+    std::ostringstream json;
+    ahfl::print_program_ir_json(program, json);
+    const auto json_text = json.str();
+    CHECK(json_text.find("\"id\": 42") != std::string::npos);
+    CHECK(json_text.find("\"source_range\"") != std::string::npos);
+    CHECK(json_text.find("\"resolved_type\"") != std::string::npos);
+    CHECK(json_text.find("\"kind\": \"bool\"") != std::string::npos);
+}
+
+TEST_CASE("IR mutation safety refreshes formal observations after temporal rewrite") {
+    auto temporal = ahfl::make_owned<ahfl::ir::TemporalExpr>(ahfl::ir::TemporalExpr{
+        .node = ahfl::ir::CalledTemporalExpr{.capability = "pkg::OldCall"},
+        .source_range = {},
+    });
+
+    ahfl::ir::ContractDecl contract;
+    contract.target_ref = ahfl::ir::SymbolRef{
+        .kind = ahfl::ir::SymbolRefKind::Agent,
+        .canonical_name = "pkg::Agent",
+        .local_name = "Agent",
+        .module_name = "pkg",
+    };
+    contract.clauses.push_back(ahfl::ir::ContractClause{
+        .kind = ahfl::ir::ContractClauseKind::Requires,
+        .value = std::variant<ahfl::ir::ExprRef, ahfl::ir::TemporalExprPtr>{std::move(temporal)},
+        .source_range = {},
+    });
+
+    ahfl::ir::Program program;
+    program.declarations.push_back(std::move(contract));
+
+    ahfl::ir::recompute_derived_analyses(program);
+    CHECK(has_formal_observation_symbol(program, "OldCall"));
+
+    RenameTemporalCalledRewriter rewriter;
+    CHECK(rewriter.rewrite(program));
+    ahfl::ir::mark_derived_analyses_stale(program);
+    ahfl::ir::ensure_derived_analyses(program);
+
+    CHECK_FALSE(has_formal_observation_symbol(program, "OldCall"));
+    CHECK(has_formal_observation_symbol(program, "NewCall"));
+    CHECK_FALSE(ahfl::ir::verify_ir_program(program).has_errors());
 }
 
 TEST_CASE("Typed HIR lowering matches AST lowering for checked programs") {
@@ -234,10 +375,45 @@ flow for HirAgent {
     REQUIRE_FALSE(type_result.has_errors());
 
     const auto ast_ir = ahfl::lower_program_ir(*parse_result.program, resolve_result, type_result);
-    const auto typed_ir = ahfl::lower_typed_program(type_result.typed_program);
+    const auto typed_ir =
+        ahfl::lower_typed_program(type_result.typed_program, *parse_result.program);
+    CHECK_FALSE(ahfl::ir::verify_ir_program(typed_ir).has_errors());
 
     CHECK(typed_ir.declarations.size() == ast_ir.declarations.size());
     REQUIRE_FALSE(typed_ir.declarations.empty());
+
+    std::uint32_t expected_decl_id = 0;
+    for (const auto &decl : typed_ir.declarations) {
+        std::visit([&](const auto &value) { CHECK(value.provenance.id == expected_decl_id); },
+                   decl);
+        ++expected_decl_id;
+    }
+
+    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&typed_ir.declarations.back());
+    REQUIRE(flow != nullptr);
+    REQUIRE(flow->state_handlers.size() == 1);
+    const auto &statements = flow->state_handlers.front().body.statements;
+    REQUIRE(statements.size() == 2);
+    CHECK(statements[0]->id == 0);
+    CHECK(statements[1]->id == 1);
+
+    const auto *let_stmt = std::get_if<ahfl::ir::LetStatement>(&statements[0]->node);
+    REQUIRE(let_stmt != nullptr);
+    REQUIRE(let_stmt->initializer);
+    CHECK(let_stmt->initializer.index < typed_ir.expr_arena.size());
+    CHECK(&typed_ir.expr_arena.get(let_stmt->initializer.index) == let_stmt->initializer.get());
+
+    const auto *return_stmt = std::get_if<ahfl::ir::ReturnStatement>(&statements[1]->node);
+    REQUIRE(return_stmt != nullptr);
+    REQUIRE(return_stmt->value);
+    CHECK(return_stmt->value.index < typed_ir.expr_arena.size());
+    CHECK(&typed_ir.expr_arena.get(return_stmt->value.index) == return_stmt->value.get());
+
+    REQUIRE(typed_ir.all_exprs().size() >= 2);
+    for (std::uint32_t index = 0; index < typed_ir.all_exprs().size(); ++index) {
+        REQUIRE(typed_ir.all_exprs()[index] != nullptr);
+        CHECK(typed_ir.all_exprs()[index]->id == index);
+    }
 }
 
 TEST_CASE("IR lowering prefers Typed HIR expression types for inferred let bindings") {
@@ -357,7 +533,6 @@ flow for DetachedHirAgent {
     REQUIRE_FALSE(type_result.has_errors());
 
     auto detached = type_result.typed_program;
-    detached.type_check_result = nullptr;
     ahfl::TypedExpr *struct_literal = nullptr;
     for (auto &expr : detached.expressions) {
         if (expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral && expr.type != nullptr &&
@@ -373,7 +548,7 @@ flow for DetachedHirAgent {
     struct_literal->node_id = 0;
     struct_literal->type = ahfl::TypeContext::global().make(ahfl::TypeKind::Int);
 
-    const auto lowered = ahfl::lower_typed_program(detached);
+    const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
     const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
     REQUIRE(flow != nullptr);
@@ -435,12 +610,11 @@ flow for MetadataCallAgent {
     const auto type_result = checker.check(*parse_result.program, resolve_result);
     REQUIRE_FALSE(type_result.has_errors());
 
-    const auto redirected_symbol = resolve_result.symbol_table.find_local(
-        ahfl::SymbolNamespace::Capabilities, "Redirected");
+    const auto redirected_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Capabilities, "Redirected");
     REQUIRE(redirected_symbol.has_value());
 
     auto detached = type_result.typed_program;
-    detached.type_check_result = nullptr;
     ahfl::TypedExpr *call = nullptr;
     for (auto &expr : detached.expressions) {
         if (expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Original") {
@@ -453,7 +627,7 @@ flow for MetadataCallAgent {
     call->semantic_name = "Redirected";
     call->call_target_kind = ahfl::TypedCallTargetKind::Capability;
 
-    const auto lowered = ahfl::lower_typed_program(detached);
+    const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
     const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
     REQUIRE(flow != nullptr);
@@ -517,12 +691,11 @@ flow for MetadataStructAgent {
     const auto type_result = checker.check(*parse_result.program, resolve_result);
     REQUIRE_FALSE(type_result.has_errors());
 
-    const auto redirected_symbol = resolve_result.symbol_table.find_local(
-        ahfl::SymbolNamespace::Types, "RedirectedResponse");
+    const auto redirected_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Types, "RedirectedResponse");
     REQUIRE(redirected_symbol.has_value());
 
     auto detached = type_result.typed_program;
-    detached.type_check_result = nullptr;
     ahfl::TypedExpr *struct_literal = nullptr;
     for (auto &expr : detached.expressions) {
         if (expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
@@ -535,7 +708,7 @@ flow for MetadataStructAgent {
     struct_literal->resolved_symbol = redirected_symbol->get().id;
     struct_literal->semantic_name = "RedirectedResponse";
 
-    const auto lowered = ahfl::lower_typed_program(detached);
+    const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
     const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
     REQUIRE(flow != nullptr);
@@ -546,8 +719,8 @@ flow for MetadataStructAgent {
         &flow->state_handlers.front().body.statements.front()->node);
     REQUIRE(return_statement != nullptr);
     REQUIRE(return_statement->value != nullptr);
-    const auto *return_literal = std::get_if<ahfl::ir::StructLiteralExpr>(
-        &return_statement->value->node);
+    const auto *return_literal =
+        std::get_if<ahfl::ir::StructLiteralExpr>(&return_statement->value->node);
     REQUIRE(return_literal != nullptr);
     CHECK(return_literal->type_name == "RedirectedResponse");
 }
@@ -594,7 +767,8 @@ flow for MetadataQualifiedValueAgent {
 )AHFL";
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("typed_hir_qualified_value_lowering.ahfl", source);
+    const auto parse_result =
+        frontend.parse_text("typed_hir_qualified_value_lowering.ahfl", source);
     REQUIRE_FALSE(parse_result.has_errors());
     REQUIRE(parse_result.program != nullptr);
 
@@ -606,12 +780,11 @@ flow for MetadataQualifiedValueAgent {
     const auto type_result = checker.check(*parse_result.program, resolve_result);
     REQUIRE_FALSE(type_result.has_errors());
 
-    const auto redirected_symbol = resolve_result.symbol_table.find_local(
-        ahfl::SymbolNamespace::Types, "RedirectedStatus");
+    const auto redirected_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Types, "RedirectedStatus");
     REQUIRE(redirected_symbol.has_value());
 
     auto detached = type_result.typed_program;
-    detached.type_check_result = nullptr;
     ahfl::TypedExpr *qualified_value = nullptr;
     for (auto &expr : detached.expressions) {
         if (expr.kind == ahfl::ast::ExprSyntaxKind::QualifiedValue &&
@@ -624,7 +797,7 @@ flow for MetadataQualifiedValueAgent {
     qualified_value->resolved_symbol = redirected_symbol->get().id;
     qualified_value->semantic_name = "RedirectedStatus::Forwarded";
 
-    const auto lowered = ahfl::lower_typed_program(detached);
+    const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
     const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
     REQUIRE(flow != nullptr);
@@ -635,13 +808,262 @@ flow for MetadataQualifiedValueAgent {
         &flow->state_handlers.front().body.statements.front()->node);
     REQUIRE(return_statement != nullptr);
     REQUIRE(return_statement->value != nullptr);
-    const auto *return_literal = std::get_if<ahfl::ir::StructLiteralExpr>(
-        &return_statement->value->node);
+    const auto *return_literal =
+        std::get_if<ahfl::ir::StructLiteralExpr>(&return_statement->value->node);
     REQUIRE(return_literal != nullptr);
     REQUIRE(return_literal->fields.size() == 1);
     REQUIRE(return_literal->fields.front().value != nullptr);
-    const auto *return_value = std::get_if<ahfl::ir::QualifiedValueExpr>(
-        &return_literal->fields.front().value->node);
+    const auto *return_value =
+        std::get_if<ahfl::ir::QualifiedValueExpr>(&return_literal->fields.front().value->node);
     REQUIRE(return_value != nullptr);
     CHECK(return_value->value == "RedirectedStatus::Forwarded");
+}
+
+TEST_CASE("Semantic IR verifier accepts lowered checked programs") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent VerifyAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for VerifyAgent {
+    state Done {
+        let reply = Response { value: input.value };
+        return reply;
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("verify_ir_program.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto ir = ahfl::lower_program_ir(*parse_result.program, resolve_result, type_result);
+    const auto result = ahfl::ir::verify_ir_program(ir);
+    CHECK_FALSE(result.has_errors());
+}
+
+TEST_CASE("Semantic IR path root kinds print and serialize distinctly") {
+    ahfl::ir::Program program;
+
+    const auto add_path_const = [&](std::string name,
+                                    ahfl::ir::PathRootKind root_kind,
+                                    std::string root_name) {
+        ahfl::ir::Path path;
+        path.root_kind = root_kind;
+        path.root_name = std::move(root_name);
+        path.members = {"value"};
+
+        auto expr = program.expr_arena.make(ahfl::ir::PathExpr{.path = std::move(path)},
+                                            {},
+                                            bool_type(),
+                                            static_cast<std::uint32_t>(program.expr_arena.size()));
+        program.declarations.push_back(ahfl::ir::ConstDecl{
+            .provenance = {},
+            .name = std::move(name),
+            .value = expr,
+            .type_ref = bool_type(),
+            .symbol_ref = {},
+        });
+    };
+
+    add_path_const("input_path", ahfl::ir::PathRootKind::Input, "input");
+    add_path_const("context_path", ahfl::ir::PathRootKind::Context, "ctx");
+    add_path_const("output_path", ahfl::ir::PathRootKind::Output, "output");
+    add_path_const("state_path", ahfl::ir::PathRootKind::State, "state");
+    add_path_const("local_path", ahfl::ir::PathRootKind::Local, "reply");
+    add_path_const("identifier_path", ahfl::ir::PathRootKind::Identifier, "node");
+
+    std::ostringstream json;
+    ahfl::print_program_ir_json(program, json);
+    const auto json_text = json.str();
+
+    CHECK(json_text.find("\"root_kind\": \"input\"") != std::string::npos);
+    CHECK(json_text.find("\"root_kind\": \"context\"") != std::string::npos);
+    CHECK(json_text.find("\"root_kind\": \"output\"") != std::string::npos);
+    CHECK(json_text.find("\"root_kind\": \"state\"") != std::string::npos);
+    CHECK(json_text.find("\"root_kind\": \"local\"") != std::string::npos);
+    CHECK(json_text.find("\"root_kind\": \"identifier\"") != std::string::npos);
+
+    std::ostringstream text;
+    ahfl::print_program_ir(program, text);
+    const auto ir_text = text.str();
+
+    CHECK(ir_text.find("input.value") != std::string::npos);
+    CHECK(ir_text.find("ctx.value") != std::string::npos);
+    CHECK(ir_text.find("output.value") != std::string::npos);
+    CHECK(ir_text.find("state.value") != std::string::npos);
+    CHECK(ir_text.find("reply.value") != std::string::npos);
+    CHECK(ir_text.find("node.value") != std::string::npos);
+}
+
+TEST_CASE("Semantic IR verifier rejects expression refs outside the arena") {
+    ahfl::ir::Program program;
+    auto expr = program.expr_arena.make(ahfl::ir::BoolLiteralExpr{.value = true}, {}, bool_type());
+    expr.index = 99;
+
+    program.declarations.push_back(ahfl::ir::ConstDecl{
+        .provenance = {},
+        .name = "BROKEN",
+        .value = expr,
+        .type_ref = bool_type(),
+        .symbol_ref = {},
+    });
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "expression reference index is out of range"));
+}
+
+TEST_CASE("Semantic IR verifier rejects malformed TypeRef children") {
+    ahfl::ir::TypeRef optional_without_element;
+    optional_without_element.kind = ahfl::ir::TypeRefKind::Optional;
+    optional_without_element.display_name = "Optional";
+
+    ahfl::ir::Program program;
+    program.declarations.push_back(ahfl::ir::AgentDecl{
+        .provenance = {},
+        .name = "BadAgent",
+        .states = {},
+        .initial_state = {},
+        .final_states = {},
+        .quota = {},
+        .transitions = {},
+        .input_type_ref = std::move(optional_without_element),
+        .context_type_ref = unit_type(),
+        .output_type_ref = unit_type(),
+        .capability_refs = {},
+        .symbol_ref = {},
+    });
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result, ahfl::ir::VerificationSeverity::Error, "type is missing its element type"));
+}
+
+TEST_CASE("Semantic IR verifier rejects duplicate statement ids") {
+    auto first = ahfl::make_owned<ahfl::ir::Statement>(ahfl::ir::Statement{
+        .node = ahfl::ir::GotoStatement{.target_state = "Done"},
+        .source_range = {},
+        .id = 7,
+    });
+    auto second = ahfl::make_owned<ahfl::ir::Statement>(ahfl::ir::Statement{
+        .node = ahfl::ir::GotoStatement{.target_state = "Done"},
+        .source_range = {},
+        .id = 7,
+    });
+
+    ahfl::ir::StateHandler handler;
+    handler.state_name = "Init";
+    handler.body.statements.push_back(std::move(first));
+    handler.body.statements.push_back(std::move(second));
+
+    ahfl::ir::FlowDecl flow;
+    flow.state_handlers.push_back(std::move(handler));
+
+    ahfl::ir::Program program;
+    program.declarations.push_back(std::move(flow));
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result, ahfl::ir::VerificationSeverity::Error, "duplicate statement id"));
+}
+
+TEST_CASE("Semantic IR verifier rejects null temporal child pointers") {
+    auto temporal = ahfl::make_owned<ahfl::ir::TemporalExpr>(ahfl::ir::TemporalExpr{
+        .node =
+            ahfl::ir::TemporalUnaryExpr{
+                .op = ahfl::ir::TemporalUnaryOp::Always,
+                .operand = nullptr,
+            },
+        .source_range = {},
+    });
+
+    ahfl::ir::ContractDecl contract;
+    contract.clauses.push_back(ahfl::ir::ContractClause{
+        .kind = ahfl::ir::ContractClauseKind::Requires,
+        .value = std::variant<ahfl::ir::ExprRef, ahfl::ir::TemporalExprPtr>{std::move(temporal)},
+        .source_range = {},
+    });
+
+    ahfl::ir::Program program;
+    program.declarations.push_back(std::move(contract));
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result, ahfl::ir::VerificationSeverity::Error, "temporal expression pointer is null"));
+}
+
+TEST_CASE("Semantic IR verifier rejects analyzed programs with stale analysis bundle") {
+    ahfl::ir::StateHandler handler;
+    handler.state_name = "Init";
+
+    ahfl::ir::FlowDecl flow;
+    flow.state_handlers.push_back(std::move(handler));
+
+    ahfl::ir::Program program;
+    program.phase = ahfl::ir::ProgramPhase::Analyzed;
+    program.declarations.push_back(std::move(flow));
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result, ahfl::ir::VerificationSeverity::Error, "missing state handler summaries"));
+}
+
+TEST_CASE("Semantic IR verifier rejects marked stale analysis revision") {
+    ahfl::ir::StateHandler handler;
+    handler.state_name = "Init";
+
+    ahfl::ir::FlowDecl flow;
+    flow.state_handlers.push_back(std::move(handler));
+
+    ahfl::ir::Program program;
+    program.declarations.push_back(std::move(flow));
+    ahfl::ir::recompute_derived_analyses(program);
+    REQUIRE(ahfl::ir::has_fresh_derived_analyses(program));
+
+    ahfl::ir::mark_derived_analyses_stale(program);
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result, ahfl::ir::VerificationSeverity::Error, "derived analyses are stale"));
 }

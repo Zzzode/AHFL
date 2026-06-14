@@ -993,6 +993,50 @@ class ResolverPass final {
 
 } // namespace detail
 
+ResolveResult::ResolveResult(const ResolveResult &other)
+    : symbol_table(other.symbol_table),
+      diagnostics(other.diagnostics),
+      references_(other.references_),
+      imports_(other.imports_) {
+    invalidate_reference_lookup_cache();
+}
+
+ResolveResult &ResolveResult::operator=(const ResolveResult &other) {
+    if (this == &other) {
+        return *this;
+    }
+
+    symbol_table = other.symbol_table;
+    diagnostics = other.diagnostics;
+    references_ = other.references_;
+    imports_ = other.imports_;
+    invalidate_reference_lookup_cache();
+    return *this;
+}
+
+ResolveResult::ResolveResult(ResolveResult &&other) noexcept
+    : symbol_table(std::move(other.symbol_table)),
+      diagnostics(std::move(other.diagnostics)),
+      references_(std::move(other.references_)),
+      imports_(std::move(other.imports_)) {
+    invalidate_reference_lookup_cache();
+    other.invalidate_reference_lookup_cache();
+}
+
+ResolveResult &ResolveResult::operator=(ResolveResult &&other) noexcept {
+    if (this == &other) {
+        return *this;
+    }
+
+    symbol_table = std::move(other.symbol_table);
+    diagnostics = std::move(other.diagnostics);
+    references_ = std::move(other.references_);
+    imports_ = std::move(other.imports_);
+    invalidate_reference_lookup_cache();
+    other.invalidate_reference_lookup_cache();
+    return *this;
+}
+
 MaybeCRef<Symbol> SymbolTable::get(SymbolId id) const {
     if (id.value >= symbols_.size()) {
         return std::nullopt;

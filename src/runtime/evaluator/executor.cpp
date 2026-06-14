@@ -73,7 +73,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
             } else if constexpr (std::is_same_v<T, ir::AssignStatement>) {
                 // 仅允许赋值到 ctx.field 路径
                 const auto &path = node.target;
-                if (path.root_kind != ir::PathRootKind::Identifier || path.root_name != "ctx") {
+                if (path.root_kind != ir::PathRootKind::Context) {
                     return make_exec_error(
                         "assignment target must be a ctx field (e.g. ctx.field)");
                 }

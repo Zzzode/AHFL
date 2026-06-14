@@ -29,6 +29,15 @@ void check(bool condition, const std::string &test_name) {
     }
 }
 
+ExprArena &test_expr_arena() {
+    static ExprArena arena;
+    return arena;
+}
+
+ExprRef make_expr_ptr(ExprNode node) {
+    return test_expr_arena().make(std::move(node));
+}
+
 class FakeCapabilityTransport final : public CapabilityTransportAdapter {
   public:
     HttpResponse http_response;
@@ -505,9 +514,7 @@ void test_eval_with_capability_call() {
     call.callee = "my_capability";
 
     // 添加一个字符串参数
-    auto arg = std::make_unique<Expr>();
-    arg->node = StringLiteralExpr{"hello"};
-    call.arguments.push_back(std::move(arg));
+    call.arguments.push_back(make_expr_ptr(StringLiteralExpr{"hello"}));
     expr.node = std::move(call);
 
     // 设置 registry
@@ -551,11 +558,9 @@ void test_eval_with_capability_call() {
     Expr nested_expr;
     CallExpr outer_call;
     outer_call.callee = "outer_cap";
-    auto inner_expr = std::make_unique<Expr>();
     CallExpr inner_call;
     inner_call.callee = "inner_cap";
-    inner_expr->node = std::move(inner_call);
-    outer_call.arguments.push_back(std::move(inner_expr));
+    outer_call.arguments.push_back(make_expr_ptr(std::move(inner_call)));
     nested_expr.node = std::move(outer_call);
 
     auto nested_result = eval_expr_with_capabilities(nested_expr, eval_ctx, registry.as_invoker());
@@ -570,14 +575,10 @@ void test_eval_with_capability_call() {
     Expr binary_expr;
     BinaryExpr equality;
     equality.op = ExprBinaryOp::Equal;
-    auto equality_lhs = std::make_unique<Expr>();
     CallExpr ready_call;
     ready_call.callee = "is_ready";
-    equality_lhs->node = std::move(ready_call);
-    auto equality_rhs = std::make_unique<Expr>();
-    equality_rhs->node = BoolLiteralExpr{true};
-    equality.lhs = std::move(equality_lhs);
-    equality.rhs = std::move(equality_rhs);
+    equality.lhs = make_expr_ptr(std::move(ready_call));
+    equality.rhs = make_expr_ptr(BoolLiteralExpr{true});
     binary_expr.node = std::move(equality);
 
     auto binary_result = eval_expr_with_capabilities(binary_expr, eval_ctx, registry.as_invoker());
@@ -587,11 +588,9 @@ void test_eval_with_capability_call() {
 
     Expr optional_expr;
     SomeExpr optional;
-    auto optional_value = std::make_unique<Expr>();
     CallExpr optional_call;
     optional_call.callee = "inner_cap";
-    optional_value->node = std::move(optional_call);
-    optional.value = std::move(optional_value);
+    optional.value = make_expr_ptr(std::move(optional_call));
     optional_expr.node = std::move(optional);
 
     auto optional_result =
@@ -607,13 +606,11 @@ void test_eval_with_capability_call() {
     Expr struct_expr;
     StructLiteralExpr literal;
     literal.type_name = "CapabilityResult";
-    auto field_value = std::make_unique<Expr>();
     CallExpr field_call;
     field_call.callee = "inner_cap";
-    field_value->node = std::move(field_call);
     literal.fields.push_back(StructFieldInit{
         .name = "value",
-        .value = std::move(field_value),
+        .value = make_expr_ptr(std::move(field_call)),
     });
     struct_expr.node = std::move(literal);
 

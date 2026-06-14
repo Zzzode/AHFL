@@ -62,7 +62,8 @@
         "kind": "agent",
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
-        "module_name": "lib::agents"
+        "module_name": "lib::agents",
+        "id": 8
       },
       "state_handlers": [
         {
@@ -128,9 +129,15 @@
                 },
                 "value": {
                   "kind": "struct_literal",
+                  "id": 1,
                   "source_range": {
                     "begin_offset": 182,
                     "end_offset": 246
+                  },
+                  "resolved_type": {
+                    "kind": "struct",
+                    "display_name": "lib::types::Response",
+                    "canonical_name": "lib::types::Response"
                   },
                   "type_name": "lib::types::ResponseAlias",
                   "fields": [
@@ -138,9 +145,14 @@
                       "name": "value",
                       "value": {
                         "kind": "path",
+                        "id": 0,
                         "source_range": {
                           "begin_offset": 224,
                           "end_offset": 235
+                        },
+                        "resolved_type": {
+                          "kind": "string",
+                          "display_name": "String"
                         },
                         "path": {
                           "root_kind": "input",
@@ -174,7 +186,8 @@
         "kind": "workflow",
         "canonical_name": "app::main::ValueFlowWorkflow",
         "local_name": "ValueFlowWorkflow",
-        "module_name": "app::main"
+        "module_name": "app::main",
+        "id": 0
       },
       "input_type": "lib::types::Request",
       "input_type_ref": {
@@ -200,13 +213,20 @@
             "kind": "agent",
             "canonical_name": "lib::agents::AliasAgent",
             "local_name": "AliasAgent",
-            "module_name": "lib::agents"
+            "module_name": "lib::agents",
+            "id": 8
           },
           "input": {
             "kind": "path",
+            "id": 4,
             "source_range": {
               "begin_offset": 388,
               "end_offset": 393
+            },
+            "resolved_type": {
+              "kind": "struct",
+              "display_name": "lib::types::Request",
+              "canonical_name": "lib::types::Request"
             },
             "path": {
               "root_kind": "input",
@@ -236,13 +256,20 @@
             "kind": "agent",
             "canonical_name": "lib::agents::AliasAgent",
             "local_name": "AliasAgent",
-            "module_name": "lib::agents"
+            "module_name": "lib::agents",
+            "id": 8
           },
           "input": {
             "kind": "struct_literal",
+            "id": 6,
             "source_range": {
               "begin_offset": 432,
               "end_offset": 474
+            },
+            "resolved_type": {
+              "kind": "struct",
+              "display_name": "lib::types::Request",
+              "canonical_name": "lib::types::Request"
             },
             "type_name": "lib::types::RequestAlias",
             "fields": [
@@ -250,9 +277,14 @@
                 "name": "value",
                 "value": {
                   "kind": "path",
+                  "id": 5,
                   "source_range": {
                     "begin_offset": 461,
                     "end_offset": 472
+                  },
+                  "resolved_type": {
+                    "kind": "string",
+                    "display_name": "String"
                   },
                   "path": {
                     "root_kind": "identifier",
@@ -296,9 +328,15 @@
       },
       "return_value": {
         "kind": "struct_literal",
+        "id": 3,
         "source_range": {
           "begin_offset": 504,
           "end_offset": 548
+        },
+        "resolved_type": {
+          "kind": "struct",
+          "display_name": "lib::types::Response",
+          "canonical_name": "lib::types::Response"
         },
         "type_name": "lib::types::ResponseAlias",
         "fields": [
@@ -306,9 +344,14 @@
             "name": "value",
             "value": {
               "kind": "path",
+              "id": 2,
               "source_range": {
                 "begin_offset": 534,
                 "end_offset": 546
+              },
+              "resolved_type": {
+                "kind": "string",
+                "display_name": "String"
               },
               "path": {
                 "root_kind": "identifier",
@@ -349,7 +392,8 @@
         "kind": "type",
         "canonical_name": "lib::types::Request",
         "local_name": "Request",
-        "module_name": "lib::types"
+        "module_name": "lib::types",
+        "id": 1
       },
       "fields": [
         {
@@ -382,7 +426,8 @@
         "kind": "type",
         "canonical_name": "lib::types::Context",
         "local_name": "Context",
-        "module_name": "lib::types"
+        "module_name": "lib::types",
+        "id": 2
       },
       "fields": [
         {
@@ -398,9 +443,14 @@
           },
           "default_value": {
             "kind": "string_literal",
+            "id": 7,
             "source_range": {
               "begin_offset": 96,
               "end_offset": 105
+            },
+            "resolved_type": {
+              "kind": "string",
+              "display_name": "String"
             },
             "spelling": "\"pending\""
           }
@@ -422,7 +472,8 @@
         "kind": "type",
         "canonical_name": "lib::types::Response",
         "local_name": "Response",
-        "module_name": "lib::types"
+        "module_name": "lib::types",
+        "id": 3
       },
       "fields": [
         {
@@ -455,13 +506,18 @@
         "kind": "type",
         "canonical_name": "lib::types::RequestAlias",
         "local_name": "RequestAlias",
-        "module_name": "lib::types"
+        "module_name": "lib::types",
+        "id": 4
       },
       "aliased_type": "lib::types::Request",
       "aliased_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Request",
-        "canonical_name": "lib::types::Request"
+        "canonical_name": "lib::types::Request",
+        "source_range": {
+          "begin_offset": 170,
+          "end_offset": 177
+        }
       }
     },
     {
@@ -479,13 +535,18 @@
         "kind": "type",
         "canonical_name": "lib::types::ContextAlias",
         "local_name": "ContextAlias",
-        "module_name": "lib::types"
+        "module_name": "lib::types",
+        "id": 5
       },
       "aliased_type": "lib::types::Context",
       "aliased_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Context",
-        "canonical_name": "lib::types::Context"
+        "canonical_name": "lib::types::Context",
+        "source_range": {
+          "begin_offset": 199,
+          "end_offset": 206
+        }
       }
     },
     {
@@ -503,13 +564,18 @@
         "kind": "type",
         "canonical_name": "lib::types::ResponseAlias",
         "local_name": "ResponseAlias",
-        "module_name": "lib::types"
+        "module_name": "lib::types",
+        "id": 6
       },
       "aliased_type": "lib::types::Response",
       "aliased_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Response",
-        "canonical_name": "lib::types::Response"
+        "canonical_name": "lib::types::Response",
+        "source_range": {
+          "begin_offset": 229,
+          "end_offset": 237
+        }
       }
     },
     {
@@ -552,7 +618,8 @@
         "kind": "capability",
         "canonical_name": "lib::agents::Echo",
         "local_name": "Echo",
-        "module_name": "lib::agents"
+        "module_name": "lib::agents",
+        "id": 7
       },
       "params": [
         {
@@ -591,7 +658,8 @@
         "kind": "agent",
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
-        "module_name": "lib::agents"
+        "module_name": "lib::agents",
+        "id": 8
       },
       "input_type": "lib::types::Request",
       "input_type_ref": {
@@ -627,7 +695,8 @@
           "kind": "capability",
           "canonical_name": "lib::agents::Echo",
           "local_name": "Echo",
-          "module_name": "lib::agents"
+          "module_name": "lib::agents",
+          "id": 7
         }
       ],
       "quota": [],

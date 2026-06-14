@@ -29,14 +29,14 @@ using internal::BindingMap;
 using internal::CallContext;
 using internal::ConstEvalKind;
 using internal::ConstEvalResult;
-using internal::TypedValue;
-using internal::ValueContext;
 using internal::find_binding;
 using internal::find_decl_ref;
 using internal::is_bool_type;
 using internal::is_error_type;
 using internal::is_numeric_type;
 using internal::same_range;
+using internal::TypedValue;
+using internal::ValueContext;
 
 namespace {
 
@@ -70,15 +70,11 @@ void append_typed_child(std::vector<TypedExprChild> &children,
 
     std::uint32_t child_index = UINT32_MAX;
     if (child->node_id != 0) {
-        // Linear scan: expressions.size() is typically O(thousands) and this
-        // runs once per AST edge; pointer-difference alternative is unsafe
-        // because the vector may reallocate between insertion and resolution,
-        // so we compare by identity fields instead.
-        for (std::size_t i = 0; i < program.expressions.size(); ++i) {
-            if (program.expressions[i].node_id == child->node_id &&
-                program.expressions[i].source_id == source_id) {
-                child_index = static_cast<std::uint32_t>(i);
-                break;
+        if (const TypedExpr *typed = program.find_expr(child->node_id, source_id);
+            typed != nullptr && !program.expressions.empty()) {
+            const auto offset = typed - program.expressions.data();
+            if (offset >= 0 && static_cast<std::size_t>(offset) < program.expressions.size()) {
+                child_index = static_cast<std::uint32_t>(offset);
             }
         }
     }
@@ -102,16 +98,16 @@ void append_typed_child(std::vector<TypedExprChild> &children,
     });
 }
 
-[[nodiscard]] std::vector<TypedExprChild>
-typed_children_for(const ast::ExprSyntax &expr,
-                   const TypedProgram &program,
-                   const ResolveResult &resolve_result,
-                   const TypeEnvironment &environment,
-                   std::optional<SourceId> source_id) {
+[[nodiscard]] std::vector<TypedExprChild> typed_children_for(const ast::ExprSyntax &expr,
+                                                             const TypedProgram &program,
+                                                             const ResolveResult &resolve_result,
+                                                             const TypeEnvironment &environment,
+                                                             std::optional<SourceId> source_id) {
     std::vector<TypedExprChild> children;
     switch (expr.kind) {
     case ast::ExprSyntaxKind::Some:
-        append_typed_child(children, program, expr.first.get(), source_id, TypedExprChildRole::Operand);
+        append_typed_child(
+            children, program, expr.first.get(), source_id, TypedExprChildRole::Operand);
         break;
     case ast::ExprSyntaxKind::Call: {
         std::vector<std::string> parameter_names;
@@ -125,7 +121,8 @@ typed_children_for(const ast::ExprSyntax &expr,
                     for (const auto &param : capability->get().params) {
                         parameter_names.push_back(param.name);
                     }
-                } else if (const auto predicate = environment.get_predicate(reference->get().target);
+                } else if (const auto predicate =
+                               environment.get_predicate(reference->get().target);
                            predicate.has_value()) {
                     parameter_names.reserve(predicate->get().params.size());
                     for (const auto &param : predicate->get().params) {
@@ -171,7 +168,8 @@ typed_children_for(const ast::ExprSyntax &expr,
         }
         break;
     case ast::ExprSyntaxKind::Unary:
-        append_typed_child(children, program, expr.first.get(), source_id, TypedExprChildRole::Operand);
+        append_typed_child(
+            children, program, expr.first.get(), source_id, TypedExprChildRole::Operand);
         break;
     case ast::ExprSyntaxKind::Binary:
         append_typed_child(
@@ -180,14 +178,18 @@ typed_children_for(const ast::ExprSyntax &expr,
             children, program, expr.second.get(), source_id, TypedExprChildRole::RightOperand);
         break;
     case ast::ExprSyntaxKind::MemberAccess:
-        append_typed_child(children, program, expr.first.get(), source_id, TypedExprChildRole::Base);
+        append_typed_child(
+            children, program, expr.first.get(), source_id, TypedExprChildRole::Base);
         break;
     case ast::ExprSyntaxKind::IndexAccess:
-        append_typed_child(children, program, expr.first.get(), source_id, TypedExprChildRole::Base);
-        append_typed_child(children, program, expr.second.get(), source_id, TypedExprChildRole::Index);
+        append_typed_child(
+            children, program, expr.first.get(), source_id, TypedExprChildRole::Base);
+        append_typed_child(
+            children, program, expr.second.get(), source_id, TypedExprChildRole::Index);
         break;
     case ast::ExprSyntaxKind::Group:
-        append_typed_child(children, program, expr.first.get(), source_id, TypedExprChildRole::Grouped);
+        append_typed_child(
+            children, program, expr.first.get(), source_id, TypedExprChildRole::Grouped);
         break;
     case ast::ExprSyntaxKind::BoolLiteral:
     case ast::ExprSyntaxKind::IntegerLiteral:
@@ -230,6 +232,19 @@ typed_children_for(const ast::ExprSyntax &expr,
     return spelling;
 }
 
+[[nodiscard]] std::string_view local_nominal_name(std::string_view canonical_name) noexcept {
+    const auto pos = canonical_name.rfind("::");
+    if (pos == std::string_view::npos) {
+        return canonical_name;
+    }
+    return canonical_name.substr(pos + 2);
+}
+
+[[nodiscard]] bool enum_fact_matches(const types::EnumT &enum_type, const TypeFact &fact) noexcept {
+    return fact.enum_name == enum_type.canonical_name ||
+           fact.enum_name == local_nominal_name(enum_type.canonical_name);
+}
+
 // Map an AST PathSyntax root_kind + root_name to AssignTargetRootKind.
 // The simple enum mapping is: ast PathRootKind directly maps for Input/Output;
 // for Identifier we further classify by the well-known root names that AHFL
@@ -238,11 +253,41 @@ typed_children_for(const ast::ExprSyntax &expr,
 [[nodiscard]] AssignTargetRootKind
 assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     switch (path.root_kind) {
-    case ast::PathRootKind::Input:  return AssignTargetRootKind::Input;
-    case ast::PathRootKind::Output: return AssignTargetRootKind::Output;
+    case ast::PathRootKind::Input:
+        return AssignTargetRootKind::Input;
+    case ast::PathRootKind::Output:
+        return AssignTargetRootKind::Output;
     case ast::PathRootKind::Identifier:
-        if (path.root_name == "ctx")   return AssignTargetRootKind::Context;
-        if (path.root_name == "state") return AssignTargetRootKind::State;
+        if (path.root_name == "ctx")
+            return AssignTargetRootKind::Context;
+        if (path.root_name == "state")
+            return AssignTargetRootKind::State;
+        return AssignTargetRootKind::Identifier;
+    }
+    return AssignTargetRootKind::Identifier;
+}
+
+[[nodiscard]] AssignTargetRootKind expr_path_root_kind_of(const ast::PathSyntax &path,
+                                                          const ValueContext &context) {
+    switch (path.root_kind) {
+    case ast::PathRootKind::Input:
+        return AssignTargetRootKind::Input;
+    case ast::PathRootKind::Output:
+        return AssignTargetRootKind::Output;
+    case ast::PathRootKind::Identifier:
+        if (path.root_name == "ctx") {
+            return AssignTargetRootKind::Context;
+        }
+        if (path.root_name == "state") {
+            return AssignTargetRootKind::State;
+        }
+        if (context.call_context == CallContext::Workflow) {
+            return AssignTargetRootKind::Identifier;
+        }
+        if (context.call_context == CallContext::Flow &&
+            find_binding(context.bindings, path.root_name).has_value()) {
+            return AssignTargetRootKind::Local;
+        }
         return AssignTargetRootKind::Identifier;
     }
     return AssignTargetRootKind::Identifier;
@@ -314,8 +359,9 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         return expr.first ? expr_spelling(*expr.first) : "<group>";
     case ast::ExprSyntaxKind::Binary:
         if (expr.first && expr.second) {
-            return expr_spelling(*expr.first) + " " + std::string(binary_op_spelling(expr.binary_op)) +
-                   " " + expr_spelling(*expr.second);
+            return expr_spelling(*expr.first) + " " +
+                   std::string(binary_op_spelling(expr.binary_op)) + " " +
+                   expr_spelling(*expr.second);
         }
         return "<binary>";
     default:
@@ -324,10 +370,9 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     return "condition";
 }
 
-[[nodiscard]] std::optional<SymbolId>
-resolved_symbol_for(const ast::ExprSyntax &expr,
-                    const ResolveResult &resolve_result,
-                    std::optional<SourceId> source_id) {
+[[nodiscard]] std::optional<SymbolId> resolved_symbol_for(const ast::ExprSyntax &expr,
+                                                          const ResolveResult &resolve_result,
+                                                          std::optional<SourceId> source_id) {
     switch (expr.kind) {
     case ast::ExprSyntaxKind::Call:
         if (expr.qualified_name != nullptr) {
@@ -472,8 +517,7 @@ resolved_symbol_for(const ast::ExprSyntax &expr,
     if (expr.kind != ast::ExprSyntaxKind::Binary) {
         return false;
     }
-    return expr.binary_op == op ||
-           (expr.first != nullptr && contains_binary_op(*expr.first, op)) ||
+    return expr.binary_op == op || (expr.first != nullptr && contains_binary_op(*expr.first, op)) ||
            (expr.second != nullptr && contains_binary_op(*expr.second, op));
 }
 
@@ -483,6 +527,10 @@ resolved_symbol_for(const ast::ExprSyntax &expr,
         return "none";
     case TypeFactKind::IsNotNone:
         return "non-none";
+    case TypeFactKind::IsVariant:
+        return "variant";
+    case TypeFactKind::IsNotVariant:
+        return "not-variant";
     }
     return "unknown";
 }
@@ -507,8 +555,8 @@ resolved_symbol_for(const ast::ExprSyntax &expr,
     return "expected schema '" + target.describe() + "' from " + source + " declared here";
 }
 
-[[nodiscard]] std::optional<TypeExpectation>
-derive_expectation(const TypeExpectation *parent, TypePtr expected) {
+[[nodiscard]] std::optional<TypeExpectation> derive_expectation(const TypeExpectation *parent,
+                                                                TypePtr expected) {
     if (parent == nullptr || expected == nullptr) {
         return std::nullopt;
     }
@@ -518,6 +566,14 @@ derive_expectation(const TypeExpectation *parent, TypePtr expected) {
         .origin_range = parent->origin_range,
         .description = parent->description,
     };
+}
+
+void copy_resolver_snapshot_to_typed_program(const ResolveResult &resolve_result,
+                                             TypedProgram &typed_program) {
+    typed_program.symbols = resolve_result.symbol_table.symbols();
+    typed_program.references = resolve_result.references();
+    typed_program.imports = resolve_result.imports();
+    typed_program.rebuild_resolver_indices();
 }
 
 } // namespace
@@ -530,10 +586,8 @@ TypeCheckResult TypeCheckPass::run() {
     // a fully-typechecked program produces an empty trace, hiding the fact
     // that the relation machinery ran at all.
     relations_.include_success_steps(options_.trace_type_relations);
-    result_.typed_program.ast_program = program_;
-    result_.typed_program.source_graph = graph_;
-    result_.typed_program.resolve_result = &resolve_result_;
-    result_.typed_program.type_check_result = &result_;
+    build_source_unit_index();
+    copy_resolver_snapshot_to_typed_program(resolve_result_, result_.typed_program);
     index_declarations();
     build_type_environment();
     check_agent_context_defaults();
@@ -544,6 +598,17 @@ TypeCheckResult TypeCheckPass::run() {
     check_workflows();
     result_.relation_trace = relations_.trace();
     return std::move(result_);
+}
+
+void TypeCheckPass::build_source_unit_index() {
+    source_units_by_id_.clear();
+    if (graph_ == nullptr) {
+        return;
+    }
+    source_units_by_id_.reserve(graph_->sources.size());
+    for (const auto &source : graph_->sources) {
+        source_units_by_id_.emplace(source.id.value, &source);
+    }
 }
 
 void TypeCheckPass::enter_source(const SourceUnit &source) {
@@ -563,10 +628,9 @@ MaybeCRef<SourceUnit> TypeCheckPass::source_unit_for(SourceId id) const {
         return std::nullopt;
     }
 
-    for (const auto &source : graph_->sources) {
-        if (source.id == id) {
-            return std::cref(source);
-        }
+    if (const auto found = source_units_by_id_.find(id.value);
+        found != source_units_by_id_.end() && found->second != nullptr) {
+        return std::cref(*found->second);
     }
 
     return std::nullopt;
@@ -770,13 +834,12 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         typed_expr->call_target_kind =
             call_target_kind_for(expr, resolve_result_, current_source_id_);
         typed_expr->path_root = path_payload.has_value() ? path_payload->root : std::string{};
-        typed_expr->member_path = path_payload.has_value() ? path_payload->members
-                                                           : std::vector<std::string>{};
-        typed_expr->children = typed_children_for(expr,
-                                                  result_.typed_program,
-                                                  resolve_result_,
-                                                  result_.environment,
-                                                  current_source_id_);
+        typed_expr->path_root_kind =
+            typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
+        typed_expr->member_path =
+            path_payload.has_value() ? path_payload->members : std::vector<std::string>{};
+        typed_expr->children = typed_children_for(
+            expr, result_.typed_program, resolve_result_, result_.environment, current_source_id_);
         // Primitive payload mirrors so typed-tree consumers never need to
         // reach back into the AST for operator/literal/member-name details.
         typed_expr->bool_value = expr.bool_value;
@@ -801,6 +864,8 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->binary_op = expr.binary_op;
             typed_expr->literal_spelling = literal_spelling_for(expr);
             typed_expr->member_name = expr.name;
+            typed_expr->path_root_kind =
+                typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
             return;
         }
     }
@@ -817,8 +882,9 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .semantic_name = semantic_name_for(expr),
         .call_target_kind = call_target_kind_for(expr, resolve_result_, current_source_id_),
         .path_root = path_payload.has_value() ? path_payload->root : std::string{},
-        .member_path = path_payload.has_value() ? path_payload->members
-                                                : std::vector<std::string>{},
+        .path_root_kind = typed.path_root_kind.value_or(AssignTargetRootKind::Identifier),
+        .member_path =
+            path_payload.has_value() ? path_payload->members : std::vector<std::string>{},
         .children = typed_children_for(
             expr, result_.typed_program, resolve_result_, result_.environment, current_source_id_),
         .bool_value = expr.bool_value,
@@ -827,6 +893,17 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .literal_spelling = literal_spelling_for(expr),
         .member_name = expr.name,
     });
+    if (expr.node_id != 0) {
+        const auto index = static_cast<std::uint32_t>(result_.typed_program.expressions.size() - 1);
+        result_.typed_program.expr_index_.insert_or_assign(
+            TypedProgram::ExprIndexKey{
+                .node_id = expr.node_id,
+                .source_id_value =
+                    current_source_id_.has_value() ? current_source_id_->value : std::size_t{0},
+                .has_source_id = current_source_id_.has_value(),
+            },
+            index);
+    }
 }
 
 bool TypeCheckPass::check_assignable(const Type &source,
@@ -918,16 +995,17 @@ bool TypeCheckPass::check_exact_schema_boundary(const Type &source,
                                                 SourceRange range,
                                                 std::optional<SourceRange> expected_origin) {
     if (expected_origin.has_value()) {
-        return check_exact_schema_boundary(source,
-                                           target,
-                                           boundary,
-                                           range,
-                                           TypeExpectation{
-                                               .expected = target.clone(),
-                                               .origin_kind = TypeExpectationOriginKind::SchemaBoundary,
-                                               .origin_range = *expected_origin,
-                                               .description = std::string(to_string(boundary)),
-                                           });
+        return check_exact_schema_boundary(
+            source,
+            target,
+            boundary,
+            range,
+            TypeExpectation{
+                .expected = target.clone(),
+                .origin_kind = TypeExpectationOriginKind::SchemaBoundary,
+                .origin_range = *expected_origin,
+                .description = std::string(to_string(boundary)),
+            });
     }
 
     if (is_error_type(source) || is_error_type(target)) {
@@ -999,10 +1077,10 @@ ConstEvalResult TypeCheckPass::check_const_expr(const ast::ExprSyntax &expr,
 
     const auto syntax_result = classify_const_expr_syntax(expr);
     if (!syntax_result.is_const) {
-        typecheck_error_here(error_codes::typecheck::ConstExprRequired,
-                             messages::typecheck::ConstExprRequired.format_with(context_label,
-                                                                                syntax_result.reason),
-                             expr.range);
+        typecheck_error_here(
+            error_codes::typecheck::ConstExprRequired,
+            messages::typecheck::ConstExprRequired.format_with(context_label, syntax_result.reason),
+            expr.range);
         return ConstEvalResult{
             .kind = ConstEvalKind::NotConst,
             .typed_value = std::move(value),
@@ -1012,8 +1090,7 @@ ConstEvalResult TypeCheckPass::check_const_expr(const ast::ExprSyntax &expr,
     if (!value.is_pure) {
         typecheck_error_here(error_codes::typecheck::ConstExprRequired,
                              messages::typecheck::ConstExprRequired.format_with(
-                                 context_label,
-                                 "expression has runtime effects"),
+                                 context_label, "expression has runtime effects"),
                              expr.range);
         return ConstEvalResult{
             .kind = ConstEvalKind::NotConst,
@@ -1087,6 +1164,73 @@ TypeCheckPass::field_access(const Type &base_type, std::string_view field_name, 
     return field->get().type ? field->get().type->clone() : make_error_type();
 }
 
+TypePtr TypeCheckPass::apply_flow_narrowing(TypePtr type,
+                                            const Place &place,
+                                            const FlowFacts &facts) const {
+    if (type == nullptr) {
+        return type;
+    }
+
+    if (facts.has_fact(place, TypeFactKind::IsNotNone)) {
+        if (const auto *optional = type->get_if<types::OptionalT>();
+            optional != nullptr && optional->inner != nullptr) {
+            type = optional->inner->clone();
+        }
+    }
+
+    const auto *enum_type = type->get_if<types::EnumT>();
+    if (enum_type == nullptr) {
+        return type;
+    }
+
+    const TypeFact *positive_variant = nullptr;
+    std::vector<std::string> excluded_variants;
+    facts.for_each([&](const TypeFact &fact) {
+        if (!(fact.place == place) || !enum_fact_matches(*enum_type, fact)) {
+            return;
+        }
+        if (fact.kind == TypeFactKind::IsVariant) {
+            positive_variant = &fact;
+            return;
+        }
+        if (fact.kind == TypeFactKind::IsNotVariant) {
+            excluded_variants.push_back(fact.variant_name);
+        }
+    });
+
+    const auto enum_info = result_.environment.get_enum(*type);
+    const auto variant_exists = [&](std::string_view variant_name) {
+        return !enum_info.has_value() || enum_info->get().has_variant(variant_name);
+    };
+
+    if (positive_variant != nullptr && variant_exists(positive_variant->variant_name)) {
+        return enum_variant_type(
+            enum_type->canonical_name, positive_variant->variant_name, enum_type->symbol);
+    }
+
+    if (!enum_info.has_value() || excluded_variants.empty()) {
+        return type;
+    }
+
+    const EnumVariantInfo *remaining = nullptr;
+    for (const auto &variant : enum_info->get().variants) {
+        if (std::find(excluded_variants.begin(), excluded_variants.end(), variant.name) !=
+            excluded_variants.end()) {
+            continue;
+        }
+        if (remaining != nullptr) {
+            return type;
+        }
+        remaining = &variant;
+    }
+
+    if (remaining != nullptr) {
+        return enum_variant_type(enum_type->canonical_name, remaining->name, enum_type->symbol);
+    }
+
+    return type;
+}
+
 TypedValue TypeCheckPass::check_expr(const ast::ExprSyntax &expr,
                                      const ValueContext &context,
                                      MaybeCRef<Type> expected_type) {
@@ -1140,8 +1284,7 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return pass.typed(pass.make_type(TypeKind::Duration));
         }
         TypedValue visit_none_literal(const ast::ExprSyntax &e) const {
-            if (expected_type.has_value() &&
-                expected_type->get().holds<types::OptionalT>()) {
+            if (expected_type.has_value() && expected_type->get().holds<types::OptionalT>()) {
                 return pass.typed(expected_type->get().clone());
             }
             pass.error_here("cannot infer type of 'none' without an expected Optional<T> context",
@@ -1170,10 +1313,8 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
                 return pass.typed_effect(expected_type->get().clone(), inner.effect);
             }
             if (inner_expected.has_value()) {
-                (void)pass.check_assignable(*inner.type,
-                                            inner_expected->get(),
-                                            e.first->range,
-                                            "optional payload");
+                (void)pass.check_assignable(
+                    *inner.type, inner_expected->get(), e.first->range, "optional payload");
                 return pass.typed_effect(expected_type->get().clone(), inner.effect);
             }
             return pass.typed_effect(
@@ -1220,10 +1361,13 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return pass.check_expr(*e.first, context, expected_type);
         }
         // Fallback for the unreachable default branch in visit_expr_syntax.
-        TypedValue visit_unknown(const ast::ExprSyntax &) const { return pass.error_typed(); }
+        TypedValue visit_unknown(const ast::ExprSyntax &) const {
+            return pass.error_typed();
+        }
     };
 
-    return internal::visit_expr_syntax(expr, ExprChecker{*this, context, expected_type, expectation});
+    return internal::visit_expr_syntax(expr,
+                                       ExprChecker{*this, context, expected_type, expectation});
 }
 
 TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueContext &context) {
@@ -1240,16 +1384,14 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
         traversed_members.push_back(member);
     }
 
-    if (context.flow_facts.has_fact(
-            Place{.root = path.root_name, .members = std::move(traversed_members)},
-            TypeFactKind::IsNotNone)) {
-        if (const auto *optional = current->get_if<types::OptionalT>();
-            optional != nullptr && optional->inner != nullptr) {
-            current = optional->inner->clone();
-        }
-    }
+    current =
+        apply_flow_narrowing(current,
+                             Place{.root = path.root_name, .members = std::move(traversed_members)},
+                             context.flow_facts);
 
-    return typed(std::move(current));
+    auto value = typed(std::move(current));
+    value.path_root_kind = expr_path_root_kind_of(path, context);
+    return value;
 }
 
 TypedValue TypeCheckPass::check_qualified_value(const ast::ExprSyntax &expr) {
@@ -1459,8 +1601,8 @@ TypedValue TypeCheckPass::check_struct_literal(const ast::ExprSyntax &expr,
             for (const auto &candidate : struct_info->get().fields) {
                 candidates.push_back(candidate.name);
             }
-            auto message = "unknown field '" + field_init->field_name + "' in struct literal for '" +
-                           struct_type->describe() + "'";
+            auto message = "unknown field '" + field_init->field_name +
+                           "' in struct literal for '" + struct_type->describe() + "'";
             if (const auto suggestion = suggest_name(field_init->field_name, candidates);
                 suggestion.has_value()) {
                 message += "; did you mean '" + *suggestion + "'?";
@@ -1624,8 +1766,9 @@ TypedValue TypeCheckPass::check_map_literal(const ast::ExprSyntax &expr,
     ExprEffect effect = ExprEffect::Pure;
 
     for (const auto &entry : expr.map_entries) {
-        const auto key = key_expectation.has_value() ? check_expr(*entry->key, context, *key_expectation)
-                                                     : check_expr(*entry->key, context, key_expected);
+        const auto key = key_expectation.has_value()
+                             ? check_expr(*entry->key, context, *key_expectation)
+                             : check_expr(*entry->key, context, key_expected);
         const auto value = value_expectation.has_value()
                                ? check_expr(*entry->value, context, *value_expectation)
                                : check_expr(*entry->value, context, value_expected);
@@ -1689,12 +1832,10 @@ TypedValue TypeCheckPass::check_binary_expr(const ast::ExprSyntax &expr,
         expr.first && expr.second &&
         (expr.first->kind == ast::ExprSyntaxKind::NoneLiteral ||
          expr.second->kind == ast::ExprSyntaxKind::NoneLiteral)) {
-        const auto &none_operand = expr.first->kind == ast::ExprSyntaxKind::NoneLiteral
-                                      ? *expr.first
-                                      : *expr.second;
-        const auto &value_operand = expr.first->kind == ast::ExprSyntaxKind::NoneLiteral
-                                       ? *expr.second
-                                       : *expr.first;
+        const auto &none_operand =
+            expr.first->kind == ast::ExprSyntaxKind::NoneLiteral ? *expr.first : *expr.second;
+        const auto &value_operand =
+            expr.first->kind == ast::ExprSyntaxKind::NoneLiteral ? *expr.second : *expr.first;
         const auto value = check_expr(value_operand, context);
         const auto none = check_expr(none_operand, context, std::cref(*value.type));
         const auto effect = join_effects(value.effect, none.effect);
@@ -1835,12 +1976,8 @@ TypedValue TypeCheckPass::check_member_access(const ast::ExprSyntax &expr,
                                               const ValueContext &context) {
     const auto base = check_expr(*expr.first, context);
     auto member_type = field_access(*base.type, expr.name, expr.range);
-    if (const auto place = place_of_expr(expr);
-        place.has_value() && context.flow_facts.has_fact(*place, TypeFactKind::IsNotNone)) {
-        if (const auto *optional = member_type->get_if<types::OptionalT>();
-            optional != nullptr && optional->inner != nullptr) {
-            member_type = optional->inner->clone();
-        }
+    if (const auto place = place_of_expr(expr); place.has_value()) {
+        member_type = apply_flow_narrowing(member_type, *place, context.flow_facts);
     }
     return typed_effect(member_type, base.effect);
 }
@@ -1903,12 +2040,18 @@ void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
         // Record the ContractDecl in the typed HIR program declarations
         // so passers downstream (lowering, rewrite, analysis) can iterate
         // the full top-level surface model without re-entering the AST.
-        result_.typed_program.declarations.push_back(TypedDecl{
+        TypedDecl typed_decl{
             .kind = ast::NodeKind::ContractDecl,
+            .symbol = target->get().target,
             .range = declaration->range,
             .source_id = current_source_id_,
             .associated_agent_symbol = target->get().target,
-        });
+        };
+        if (const auto contract_info = result_.environment.get_contract(target->get().target);
+            contract_info.has_value()) {
+            typed_decl.payload = contract_info->get();
+        }
+        result_.typed_program.declarations.push_back(std::move(typed_decl));
 
         for (const auto &clause : decl.clauses) {
             if (!clause->expr && clause->temporal_expr) {
@@ -1953,9 +2096,8 @@ void TypeCheckPass::check_contracts() {
     check_contracts_in_program(require(program_, "typecheck program must exist"));
 }
 
-std::uint32_t
-TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
-                                             const ValueContext &context) {
+std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
+                                                           const ValueContext &context) {
     TypedTemporalExpr te;
     te.range = expr.range;
     te.source_id = current_source_id_;
@@ -2095,12 +2237,18 @@ void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
         // Record the FlowDecl in the typed HIR program declarations so
         // downstream passes can enumerate all agent-associated top-level
         // constructs without walking the AST.
-        result_.typed_program.declarations.push_back(TypedDecl{
+        TypedDecl typed_decl{
             .kind = ast::NodeKind::FlowDecl,
+            .symbol = target->get().target,
             .range = declaration->range,
             .source_id = current_source_id_,
             .associated_agent_symbol = target->get().target,
-        });
+        };
+        if (const auto flow_info = result_.environment.get_flow(target->get().target);
+            flow_info.has_value()) {
+            typed_decl.payload = flow_info->get();
+        }
+        result_.typed_program.declarations.push_back(std::move(typed_decl));
 
         for (const auto &handler : decl.state_handlers) {
             ValueContext context;
@@ -2284,8 +2432,8 @@ void TypeCheckPass::check_block(const ast::BlockSyntax &block,
     const auto my_block_idx = result_.typed_program.blocks.size() - 1;
 
     for (const auto &statement : block.statements) {
-        check_statement(*statement, context, expected_return_type, state_name,
-                        expected_return_origin);
+        check_statement(
+            *statement, context, expected_return_type, state_name, expected_return_origin);
         if (last_written_statement_index_.has_value()) {
             result_.typed_program.blocks[my_block_idx].statement_indexes.push_back(
                 static_cast<std::uint32_t>(*last_written_statement_index_));
@@ -2320,9 +2468,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 .expected = expected->get().clone(),
                 .origin_kind = TypeExpectationOriginKind::Annotation,
                 .origin_range = statement.let_stmt->type->range,
-                .description =
-                    "declared type '" + statement.let_stmt->type->spelling() + "' on let '" +
-                    statement.let_stmt->name + "'",
+                .description = "declared type '" + statement.let_stmt->type->spelling() +
+                               "' on let '" + statement.let_stmt->name + "'",
             };
             (void)check_assignable(*initializer.type,
                                    expected->get(),
@@ -2345,8 +2492,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             Diagnostic diagnostic{
                 .severity = DiagnosticSeverity::Warning,
                 .message = "let binding '" + statement.let_stmt->name +
-                           "' shadows an existing binding of type '" +
-                           previous->get().describe() + "'",
+                           "' shadows an existing binding of type '" + previous->get().describe() +
+                           "'",
                 .code = error_codes::typecheck::ShadowedBinding.full_code(),
                 .range = statement.let_stmt->range,
                 .source_name = std::nullopt,
@@ -2406,9 +2553,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                  "assignment target must be rooted at writable 'ctx'",
                                  statement.assign_stmt->target->range);
         } else {
-            context.flow_facts.invalidate(
-                Place{.root = statement.assign_stmt->target->root_name,
-                      .members = statement.assign_stmt->target->members});
+            context.flow_facts.invalidate(Place{.root = statement.assign_stmt->target->root_name,
+                                                .members = statement.assign_stmt->target->members});
             const auto target = check_path(*statement.assign_stmt->target, context);
             const auto expectation = TypeExpectation{
                 .expected = target.type ? target.type->clone() : make_error_type(),
@@ -2429,11 +2575,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .kind = TypedStmtKind::Assign,
             .range = statement.range,
             .source_id = current_source_id_,
-            .children_expr_index =
-                statement.assign_stmt->value
-                    ? std::vector<std::uint32_t>{resolve_payload_expr_index(
-                          *statement.assign_stmt->value)}
-                    : std::vector<std::uint32_t>{UINT32_MAX},
+            .children_expr_index = statement.assign_stmt->value
+                                       ? std::vector<std::uint32_t>{resolve_payload_expr_index(
+                                             *statement.assign_stmt->value)}
+                                       : std::vector<std::uint32_t>{UINT32_MAX},
             .target_name = path_spelling(*statement.assign_stmt->target),
             .assign_target_root_kind = assign_target_root_kind_of(*statement.assign_stmt->target),
         });
@@ -2461,22 +2606,20 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                          statement.if_stmt->condition->range))
                                                    : expr_spelling(*statement.if_stmt->condition);
             bool emitted_explanation = false;
-            for (const auto &fact : condition_facts.when_true.facts) {
+            condition_facts.when_true.for_each([&](const TypeFact &fact) {
                 note_here("narrowing: condition '" + condition_text + "' narrows '" +
                               place_spelling(fact.place) + "' to " +
-                              std::string(narrowed_fact_description(fact.kind)) +
-                              " on then branch",
+                              std::string(narrowed_fact_description(fact.kind)) + " on then branch",
                           fact.origin);
                 emitted_explanation = true;
-            }
-            for (const auto &fact : condition_facts.when_false.facts) {
+            });
+            condition_facts.when_false.for_each([&](const TypeFact &fact) {
                 note_here("narrowing: condition '" + condition_text + "' narrows '" +
                               place_spelling(fact.place) + "' to " +
-                              std::string(narrowed_fact_description(fact.kind)) +
-                              " on else branch",
+                              std::string(narrowed_fact_description(fact.kind)) + " on else branch",
                           fact.origin);
                 emitted_explanation = true;
-            }
+            });
             if (!emitted_explanation) {
                 if (contains_binary_op(*statement.if_stmt->condition, ast::ExprBinaryOp::Or)) {
                     note_here("narrowing: condition '" + condition_text +
@@ -2499,7 +2642,10 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .current_agent = context.current_agent,
         };
         then_context.flow_facts.merge_from(condition_facts.when_true);
-        check_block(*statement.if_stmt->then_block, then_context, expected_return_type, state_name,
+        check_block(*statement.if_stmt->then_block,
+                    then_context,
+                    expected_return_type,
+                    state_name,
                     expected_return_origin);
 
         if (statement.if_stmt->else_block) {
@@ -2510,8 +2656,11 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 .current_agent = context.current_agent,
             };
             else_context.flow_facts.merge_from(condition_facts.when_false);
-            check_block(*statement.if_stmt->else_block, else_context, expected_return_type,
-                        state_name, expected_return_origin);
+            check_block(*statement.if_stmt->else_block,
+                        else_context,
+                        expected_return_type,
+                        state_name,
+                        expected_return_origin);
         }
 
         result_.typed_program.statements.push_back(TypedStatement{
@@ -2532,9 +2681,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         // typed-record field mirrors it directly so lowering never needs to
         // reach back into the AST. The empty-string fallback in
         // typed_hir_lower.cpp is now dead code (kept for T1.7 backward compat).
-        const std::string target_state = statement.goto_stmt
-                                             ? statement.goto_stmt->target_state
-                                             : std::string{};
+        const std::string target_state =
+            statement.goto_stmt ? statement.goto_stmt->target_state : std::string{};
         result_.typed_program.statements.push_back(TypedStatement{
             .kind = TypedStmtKind::Goto,
             .range = statement.range,

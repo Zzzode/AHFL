@@ -30,11 +30,16 @@ void check(bool condition, const std::string &test_name) {
 
 // Helper: make IR Expr from ExprNode
 Expr make_expr(ExprNode node) {
-    return Expr{std::move(node), {}};
+    return Expr{std::move(node), {}, {}};
 }
 
-ExprPtr make_expr_ptr(ExprNode node) {
-    return std::make_unique<Expr>(Expr{std::move(node), {}});
+ExprArena &test_expr_arena() {
+    static ExprArena arena;
+    return arena;
+}
+
+ExprRef make_expr_ptr(ExprNode node) {
+    return test_expr_arena().make(std::move(node));
 }
 
 // ============================================================================
@@ -367,7 +372,7 @@ void test_struct_literal() {
 
 void test_list_literal() {
     EvalContext ctx;
-    std::vector<ExprPtr> items;
+    std::vector<ExprRef> items;
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"1"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"2"}));
     items.push_back(make_expr_ptr(IntegerLiteralExpr{"3"}));
@@ -479,15 +484,6 @@ void test_qualified_value() {
           "qualified_value.value");
 }
 
-void test_group_expr() {
-    EvalContext ctx;
-    auto expr = make_expr(GroupExpr{make_expr_ptr(IntegerLiteralExpr{"99"})});
-    auto result = eval_expr(expr, ctx);
-    check(!result.has_errors(), "group_expr.no_error");
-    auto *iv = std::get_if<IntValue>(&result.value.node);
-    check(iv != nullptr && iv->value == 99, "group_expr.value");
-}
-
 // ============================================================================
 // Error Cases
 // ============================================================================
@@ -556,7 +552,6 @@ int main(int argc, char *argv[]) {
     test_index_out_of_bounds();
     test_some_expr();
     test_qualified_value();
-    test_group_expr();
     test_call_expr_error();
     test_print_value();
 
