@@ -35,7 +35,7 @@ lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor);
 
 [[nodiscard]] std::optional<int>
 emit_core_backend(std::optional<CommandKind> effective_command,
-                  const ahfl::ir::Program &program,
+                  ahfl::ir::Program &program,
                   const ahfl::ResolveResult &resolve_result,
                   const ahfl::TypeCheckResult &type_check_result,
                   const ahfl::handoff::PackageMetadata *package_metadata,
@@ -55,7 +55,7 @@ emit_core_backend(std::optional<CommandKind> effective_command,
         return std::nullopt;
     }
 
-    const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+    auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
     return emit_core_backend(
         effective_command, ir_program, resolve_result, type_check_result, package_metadata, out);
 }

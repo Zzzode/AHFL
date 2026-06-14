@@ -40,6 +40,7 @@ add_executable(ahflc
 target_link_libraries(ahflc
     PRIVATE
         ahfl_compiler
+        ahfl_compiler_ir_opt
         ahfl_runtime
         ahfl_tooling_package
         ahfl_cli_command_catalog

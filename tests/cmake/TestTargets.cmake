@@ -35,6 +35,16 @@ target_link_libraries(ahfl_compiler_ir_tests
 )
 ahfl_apply_project_warnings(ahfl_compiler_ir_tests)
 
+add_executable(ahfl_compiler_ir_opt_tests
+    unit/compiler/ir/opt_ir.cpp
+)
+target_link_libraries(ahfl_compiler_ir_opt_tests
+    PRIVATE
+        ahfl_compiler_ir_opt
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_compiler_ir_opt_tests)
+
 add_executable(ahfl_compiler_handoff_package_tests
     unit/compiler/handoff/package_model.cpp
 )
@@ -740,6 +750,7 @@ foreach(_tgt
     ahfl_tooling_package_tests
     ahfl_property_lowering_tests
     ahfl_property_smv_tests
+    ahfl_compiler_ir_opt_tests
 )
     target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/src)
     target_include_directories(${_tgt} PRIVATE ${PROJECT_SOURCE_DIR}/tests)

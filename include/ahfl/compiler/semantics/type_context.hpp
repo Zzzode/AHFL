@@ -34,6 +34,14 @@ class TypeContext {
     [[nodiscard]] TypePtr enum_type(std::string canonical_name);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, SymbolId symbol);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, std::optional<SymbolId> symbol);
+    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
+                                            std::string variant_name);
+    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
+                                            std::string variant_name,
+                                            SymbolId symbol);
+    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
+                                            std::string variant_name,
+                                            std::optional<SymbolId> symbol);
 
     [[nodiscard]] TypePtr optional(TypePtr value_type);
     [[nodiscard]] TypePtr list(TypePtr element_type);
@@ -46,6 +54,7 @@ class TypeContext {
     struct TypeKey {
         TypeKind kind{TypeKind::Any};
         std::string name;
+        std::string variant_name;
         std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
         std::optional<std::int64_t> decimal_scale;
         const Type *first{nullptr};

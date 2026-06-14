@@ -1,11 +1,30 @@
 #pragma once
 
+#include <span>
 #include <string_view>
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
 
 namespace ahfl::ir {
+
+enum class DerivedAnalysisKind {
+    StateHandlerSummaries,
+    WorkflowExprSummaries,
+    FormalObservations,
+};
+
+[[nodiscard]] std::span<const DerivedAnalysisKind> all_derived_analysis_kinds() noexcept;
+[[nodiscard]] std::vector<DerivedAnalysisKind> all_derived_analysis_kinds_vector();
+
+void mark_derived_analyses_stale(Program &program);
+[[nodiscard]] bool has_fresh_derived_analyses(
+    const Program &program,
+    std::span<const DerivedAnalysisKind> required = all_derived_analysis_kinds()) noexcept;
+void ensure_derived_analyses(
+    Program &program,
+    std::span<const DerivedAnalysisKind> required = all_derived_analysis_kinds(),
+    ProgramPhase phase = ProgramPhase::Analyzed);
 
 [[nodiscard]] const StateHandler::Summary *find_state_handler_summary(const Program &program,
                                                                       const FlowDecl &flow,

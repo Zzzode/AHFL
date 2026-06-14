@@ -1,5 +1,6 @@
 #include "ahfl/compiler/backends/registry.hpp"
 #include "ahfl/compiler/backends/driver.hpp"
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 
 #include <cstdio>
@@ -88,6 +89,10 @@ int main() {
     std::ostringstream out;
     auto result = ahfl::emit_backend(ahfl::BackendKind::Ir, program, out, nullptr);
     check(result.has_value(), "emit_backend succeeds for registered backend");
+    check(program.phase == ahfl::ir::ProgramPhase::Analyzed,
+          "emit_backend promotes lowered IR to analyzed phase before emission");
+    check(ahfl::ir::has_fresh_derived_analyses(program),
+          "emit_backend ensures fresh derived analyses before emission");
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return pass_count == test_count ? 0 : 1;

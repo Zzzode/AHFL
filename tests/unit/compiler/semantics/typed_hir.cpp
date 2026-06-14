@@ -20,6 +20,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "ahfl/compiler/semantics/typed_hir_serialization.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -29,6 +30,7 @@
 #include <string>
 #include <thread>
 #include <unordered_set>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -55,7 +57,8 @@ struct TypedHIRFixture {
         if (resolve.has_errors()) {
             std::ostringstream ss;
             resolve.diagnostics.render(ss);
-            std::fprintf(stderr, "=== RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+            std::fprintf(
+                stderr, "=== RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
         }
         REQUIRE_FALSE(resolve.has_errors());
 
@@ -64,7 +67,8 @@ struct TypedHIRFixture {
         if (result.has_errors()) {
             std::ostringstream ss;
             result.diagnostics.render(ss);
-            std::fprintf(stderr, "=== TYPECHECK DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+            std::fprintf(
+                stderr, "=== TYPECHECK DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
         }
         REQUIRE_FALSE(result.has_errors());
         return result;
@@ -96,6 +100,15 @@ ahfl::SourceRange range_of(const std::string &haystack, const std::string &needl
 bool has_kind(const std::vector<ahfl::TypedExpr> &exprs, ahfl::ast::ExprSyntaxKind kind) {
     return std::any_of(
         exprs.begin(), exprs.end(), [kind](const ahfl::TypedExpr &e) { return e.kind == kind; });
+}
+
+[[nodiscard]] std::string
+replace_first(std::string text, const std::string &needle, const std::string &replacement) {
+    const auto pos = text.find(needle);
+    if (pos != std::string::npos) {
+        text.replace(pos, needle.size(), replacement);
+    }
+    return text;
 }
 
 const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
@@ -326,7 +339,8 @@ workflow W {
 
     using K = ahfl::ast::NodeKind;
     std::unordered_set<K> seen;
-    for (const auto &d : decls) seen.insert(d.kind);
+    for (const auto &d : decls)
+        seen.insert(d.kind);
 
     // Nominal / independent declarations always recorded.
     CHECK(seen.contains(K::StructDecl));
@@ -402,7 +416,8 @@ flow for Guard {
     // Find ContractDecl entries. There must be exactly one for `Guard`.
     std::size_t contract_count = 0;
     for (const auto &d : decls) {
-        if (d.kind != K::ContractDecl) continue;
+        if (d.kind != K::ContractDecl)
+            continue;
         ++contract_count;
         REQUIRE(d.associated_agent_symbol.has_value());
         CHECK(*d.associated_agent_symbol == agent_symbol);
@@ -412,8 +427,7 @@ flow for Guard {
     CHECK(contract_count == 1);
 }
 
-TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "T1.5 TypedProgram records FlowDecl with agent association") {
+TEST_CASE_FIXTURE(TypedHIRFixture, "T1.5 TypedProgram records FlowDecl with agent association") {
     const std::string source = R"AHFL(
 struct Req { v: String; }
 struct Resp { v: String; }
@@ -448,7 +462,8 @@ flow for Runner {
     // Find FlowDecl entries.
     std::size_t flow_count = 0;
     for (const auto &d : decls) {
-        if (d.kind != K::FlowDecl) continue;
+        if (d.kind != K::FlowDecl)
+            continue;
         ++flow_count;
         REQUIRE(d.associated_agent_symbol.has_value());
         CHECK(*d.associated_agent_symbol == agent_symbol);
@@ -484,22 +499,277 @@ flow for A {
     REQUIRE_FALSE(tc.has_errors());
 
     const auto via_ast = ahfl::lower_program_ir(*parse.program, resolve, tc);
-    const auto via_typed = ahfl::lower_typed_program(tc.typed_program);
+    const auto via_typed = ahfl::lower_typed_program(tc.typed_program, *parse.program);
+    const auto via_detached = ahfl::lower_typed_program(tc.typed_program);
 
     // Declaration count must match.
     CHECK(via_ast.declarations.size() == via_typed.declarations.size());
+    CHECK(via_ast.declarations.size() == via_detached.declarations.size());
     REQUIRE_FALSE(via_ast.declarations.empty());
 
     // Full structural equivalence via canonical JSON rendering.
-    std::ostringstream ast_json, typed_json;
+    std::ostringstream ast_json, typed_json, detached_json;
     ahfl::print_program_ir_json(via_ast, ast_json);
     ahfl::print_program_ir_json(via_typed, typed_json);
+    ahfl::print_program_ir_json(via_detached, detached_json);
     const std::string ast_fp = ast_json.str();
     const std::string typed_fp = typed_json.str();
+    const std::string detached_fp = detached_json.str();
 
     REQUIRE(ast_fp.size() > 0);
     REQUIRE(typed_fp.size() > 0);
+    REQUIRE(detached_fp.size() > 0);
     CHECK(ast_fp == typed_fp);
+    CHECK(ast_fp == detached_fp);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "B3 TypedProgram JSON snapshot round-trips and rebuilds lookup indices") {
+    const std::string source = R"AHFL(
+module typed::snapshot;
+
+type Label = String;
+const DefaultCode: Int = 200;
+
+struct Req { v: String; token: Optional<String> = none; }
+struct Ctx { v: String = ""; count: Int = 0; }
+struct Resp { v: String; code: Int = 200; }
+enum Priority { Low, High }
+
+capability Work(x: String) -> Resp;
+predicate Safe(s: String) -> Bool;
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Work];
+    transition Init -> Done;
+}
+
+contract for Worker {
+    requires: Safe(input.v);
+    ensures: true;
+}
+
+flow for Worker {
+    state Init {
+        let greeting: String = input.v;
+        ctx.v = greeting;
+        assert(Safe(ctx.v));
+        goto Done;
+    }
+    state Done {
+        return Resp { v: ctx.v, code: 200 };
+    }
+}
+
+workflow RunWorker {
+    input: Req; output: Resp;
+    node run: Worker(input);
+    safety: always completed(run);
+    return: run;
+}
+)AHFL";
+
+    const auto tc = check(source);
+    const auto snapshot = ahfl::serialize_typed_program_json(tc.typed_program);
+    REQUIRE(snapshot.find("AHFL_TYPED_HIR_V1") != std::string::npos);
+
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+
+    CHECK(restored->declarations.size() == tc.typed_program.declarations.size());
+    CHECK(restored->expressions.size() == tc.typed_program.expressions.size());
+    CHECK(restored->blocks.size() == tc.typed_program.blocks.size());
+    CHECK(restored->statements.size() == tc.typed_program.statements.size());
+    CHECK(restored->temporal_exprs.size() == tc.typed_program.temporal_exprs.size());
+    CHECK(restored->symbols.size() == tc.typed_program.symbols.size());
+    CHECK(restored->references.size() == tc.typed_program.references.size());
+
+    const auto module_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::ModuleDecl &&
+                                std::holds_alternative<ahfl::ModuleDeclInfo>(decl.payload);
+                     });
+    REQUIRE(module_it != restored->declarations.end());
+    const auto *module_info = std::get_if<ahfl::ModuleDeclInfo>(&module_it->payload);
+    REQUIRE(module_info != nullptr);
+    CHECK(module_info->name == "typed::snapshot");
+
+    const auto const_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::ConstDecl &&
+                                std::holds_alternative<ahfl::ConstDeclInfo>(decl.payload);
+                     });
+    REQUIRE(const_it != restored->declarations.end());
+    const auto *const_info = std::get_if<ahfl::ConstDeclInfo>(&const_it->payload);
+    REQUIRE(const_info != nullptr);
+    CHECK(const_info->local_name == "DefaultCode");
+    REQUIRE(const_info->type != nullptr);
+    CHECK(const_info->type->describe() == "Int");
+
+    const auto alias_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::TypeAliasDecl &&
+                                std::holds_alternative<ahfl::TypeAliasDeclInfo>(decl.payload);
+                     });
+    REQUIRE(alias_it != restored->declarations.end());
+    const auto *alias_info = std::get_if<ahfl::TypeAliasDeclInfo>(&alias_it->payload);
+    REQUIRE(alias_info != nullptr);
+    CHECK(alias_info->local_name == "Label");
+    REQUIRE(alias_info->aliased_type != nullptr);
+    CHECK(alias_info->aliased_type->describe() == "String");
+
+    auto worker_symbol =
+        restored->find_local_symbol(ahfl::SymbolNamespace::Agents, "Worker", "typed::snapshot");
+    REQUIRE(worker_symbol.has_value());
+    CHECK(worker_symbol->get().local_name == "Worker");
+
+    REQUIRE_FALSE(restored->references.empty());
+    const auto &reference = restored->references.front();
+    auto restored_reference =
+        restored->find_reference(reference.kind, reference.range, reference.source_id);
+    REQUIRE(restored_reference.has_value());
+    CHECK(restored_reference->get().target == reference.target);
+
+    const auto expr_it =
+        std::find_if(restored->expressions.begin(),
+                     restored->expressions.end(),
+                     [](const ahfl::TypedExpr &expr) {
+                         return expr.node_id != 0 && expr.type != nullptr && !expr.children.empty();
+                     });
+    REQUIRE(expr_it != restored->expressions.end());
+    const auto *indexed_expr = restored->find_expr(expr_it->node_id, expr_it->source_id);
+    REQUIRE(indexed_expr != nullptr);
+    CHECK(indexed_expr->type->describe() == expr_it->type->describe());
+    CHECK(ahfl::resolve_child(*restored, expr_it->children.front()) != nullptr);
+
+    const auto struct_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::StructDecl &&
+                                std::holds_alternative<ahfl::StructTypeInfo>(decl.payload);
+                     });
+    REQUIRE(struct_it != restored->declarations.end());
+    const auto *struct_info = std::get_if<ahfl::StructTypeInfo>(&struct_it->payload);
+    REQUIRE(struct_info != nullptr);
+    auto field = struct_info->find_field("v");
+    REQUIRE(field.has_value());
+    CHECK(field->get().type != nullptr);
+    auto defaulted_field = struct_info->find_field("token");
+    REQUIRE(defaulted_field.has_value());
+    CHECK(defaulted_field->get().has_default);
+    CHECK(defaulted_field->get().default_value_range.end_offset >
+          defaulted_field->get().default_value_range.begin_offset);
+
+    const auto contract_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::ContractDecl &&
+                                std::holds_alternative<ahfl::ContractTypeInfo>(decl.payload);
+                     });
+    REQUIRE(contract_it != restored->declarations.end());
+    const auto *contract_info = std::get_if<ahfl::ContractTypeInfo>(&contract_it->payload);
+    REQUIRE(contract_info != nullptr);
+    CHECK(contract_info->target_name == "Worker");
+    CHECK(contract_info->clauses.size() == 2);
+
+    const auto flow_it =
+        std::find_if(restored->declarations.begin(),
+                     restored->declarations.end(),
+                     [](const ahfl::TypedDecl &decl) {
+                         return decl.kind == ahfl::ast::NodeKind::FlowDecl &&
+                                std::holds_alternative<ahfl::FlowTypeInfo>(decl.payload);
+                     });
+    REQUIRE(flow_it != restored->declarations.end());
+    const auto *flow_info = std::get_if<ahfl::FlowTypeInfo>(&flow_it->payload);
+    REQUIRE(flow_info != nullptr);
+    CHECK(flow_info->target_name == "Worker");
+    CHECK(flow_info->state_handlers.size() == 2);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "B3 TypedProgram cache envelope validates metadata before reuse") {
+    const std::string source = R"AHFL(
+module typed::cache;
+
+struct Req { v: String; }
+struct Ctx { v: String = ""; }
+struct Resp { v: String; }
+
+agent Worker {
+    input: Req;
+    context: Ctx;
+    output: Resp;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for Worker {
+    state Done {
+        return Resp { v: input.v };
+    }
+}
+)AHFL";
+
+    const auto tc = check(source);
+    const ahfl::TypedProgramCacheMetadata metadata{
+        .schema_version = std::string(ahfl::kTypedProgramCacheSchemaVersion),
+        .source_graph_revision = "graph-rev-1",
+        .source_content_hash = "content-hash-1",
+        .resolver_snapshot_version = "resolver-v1",
+    };
+
+    const auto cache = ahfl::serialize_typed_program_cache_json(tc.typed_program, metadata);
+    REQUIRE(cache.find("AHFL_TYPED_HIR_CACHE_V1") != std::string::npos);
+    REQUIRE(cache.find("graph-rev-1") != std::string::npos);
+    REQUIRE(cache.find("content-hash-1") != std::string::npos);
+    REQUIRE(cache.find("resolver-v1") != std::string::npos);
+
+    auto hit = ahfl::load_typed_program_cache_json(cache, metadata);
+    REQUIRE(hit.status == ahfl::TypedProgramCacheLoadStatus::Hit);
+    REQUIRE(hit.program.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*hit.program) ==
+          ahfl::serialize_typed_program_json(tc.typed_program));
+
+    auto schema_mismatch = ahfl::load_typed_program_cache_json(
+        replace_first(cache, "AHFL_TYPED_HIR_CACHE_V1", "AHFL_TYPED_HIR_CACHE_V0"), metadata);
+    CHECK(schema_mismatch.status == ahfl::TypedProgramCacheLoadStatus::SchemaMismatch);
+    CHECK_FALSE(schema_mismatch.program.has_value());
+
+    auto source_mismatch = metadata;
+    source_mismatch.source_graph_revision = "graph-rev-2";
+    CHECK(ahfl::load_typed_program_cache_json(cache, source_mismatch).status ==
+          ahfl::TypedProgramCacheLoadStatus::SourceRevisionMismatch);
+
+    auto content_mismatch = metadata;
+    content_mismatch.source_content_hash = "content-hash-2";
+    CHECK(ahfl::load_typed_program_cache_json(cache, content_mismatch).status ==
+          ahfl::TypedProgramCacheLoadStatus::SourceContentHashMismatch);
+
+    auto resolver_mismatch = metadata;
+    resolver_mismatch.resolver_snapshot_version = "resolver-v2";
+    CHECK(ahfl::load_typed_program_cache_json(cache, resolver_mismatch).status ==
+          ahfl::TypedProgramCacheLoadStatus::ResolverSnapshotMismatch);
+
+    auto invalid = ahfl::load_typed_program_cache_json("{", metadata);
+    CHECK(invalid.status == ahfl::TypedProgramCacheLoadStatus::InvalidPayload);
+    CHECK_FALSE(invalid.program.has_value());
 }
 
 // ============================================================================
@@ -523,8 +793,7 @@ TEST_CASE("T5.4 same-shape types get identical pointers in one context") {
     CHECK(tc.optional(s) == tc.optional(s));
     CHECK(tc.list(s) == tc.list(s));
     CHECK(tc.set(s) == tc.set(s));
-    CHECK(tc.map(s, tc.make(ahfl::TypeKind::Int)) ==
-          tc.map(s, tc.make(ahfl::TypeKind::Int)));
+    CHECK(tc.map(s, tc.make(ahfl::TypeKind::Int)) == tc.map(s, tc.make(ahfl::TypeKind::Int)));
 }
 
 TEST_CASE("T5.4 two independent contexts: different pointers, structural eq") {
@@ -572,13 +841,19 @@ TEST_CASE("T5.4 multi-thread intern of same-shape is stable and crash-free") {
             auto &tc = ahfl::TypeContext::global();
             const auto *a = tc.string();
             const auto *b = tc.string();
-            if (a != b || a == nullptr) { errors.fetch_add(1); return; }
+            if (a != b || a == nullptr) {
+                errors.fetch_add(1);
+                return;
+            }
 
-            const auto *c = tc.map(tc.list(tc.optional(tc.make(ahfl::TypeKind::Int))),
-                                   tc.decimal(4));
-            const auto *d = tc.map(tc.list(tc.optional(tc.make(ahfl::TypeKind::Int))),
-                                   tc.decimal(4));
-            if (c != d || c == nullptr) { errors.fetch_add(1); return; }
+            const auto *c =
+                tc.map(tc.list(tc.optional(tc.make(ahfl::TypeKind::Int))), tc.decimal(4));
+            const auto *d =
+                tc.map(tc.list(tc.optional(tc.make(ahfl::TypeKind::Int))), tc.decimal(4));
+            if (c != d || c == nullptr) {
+                errors.fetch_add(1);
+                return;
+            }
         }
     };
 
@@ -587,7 +862,8 @@ TEST_CASE("T5.4 multi-thread intern of same-shape is stable and crash-free") {
     for (int t = 0; t < kThreads; ++t) {
         futures.push_back(std::async(std::launch::async, worker, t));
     }
-    for (auto &f : futures) f.get();
+    for (auto &f : futures)
+        f.get();
 
     CHECK(errors.load() == 0);
 }
@@ -609,25 +885,31 @@ flow for A {
 )AHFL";
 
     constexpr int kThreads = 6;
-    ahfl::Frontend frontend;
-
-    const auto parse = frontend.parse_text("per_thread.ahfl", source);
-    REQUIRE_FALSE(parse.has_errors());
-    ahfl::Resolver resolver;
-    const auto resolve_shared = resolver.resolve(*parse.program);
-    REQUIRE_FALSE(resolve_shared.has_errors());
-
     auto worker = [&](int tid) -> std::string {
+        ahfl::Frontend local_frontend;
+        const auto parse = local_frontend.parse_text("per_thread.ahfl", source);
+        if (parse.has_errors() || parse.program == nullptr)
+            return "PARSE_ERROR";
+
+        ahfl::Resolver resolver;
+        const auto resolve = resolver.resolve(*parse.program);
+        if (resolve.has_errors())
+            return "RESOLVE_ERROR";
+
         ahfl::TypeContext local_types;
         ahfl::TypeChecker checker;
-        auto tc = checker.check(*parse.program, resolve_shared, local_types);
-        if (tc.has_errors()) return "ERROR";
+        auto tc = checker.check(*parse.program, resolve, local_types);
+        if (tc.has_errors())
+            return "ERROR";
         std::vector<std::string> names;
-        for (const auto &[id, s] : tc.environment.structs()) (void)id, names.push_back(s.canonical_name);
-        for (const auto &[id, c] : tc.environment.capabilities()) (void)id, names.push_back(c.canonical_name);
+        for (const auto &[id, s] : tc.environment.structs())
+            (void)id, names.push_back(s.canonical_name);
+        for (const auto &[id, c] : tc.environment.capabilities())
+            (void)id, names.push_back(c.canonical_name);
         std::sort(names.begin(), names.end());
         std::string fp;
-        for (auto &n : names) fp += n + "|";
+        for (auto &n : names)
+            fp += n + "|";
         // Sanity: local string type must not alias global string type.
         auto &global = ahfl::TypeContext::global();
         if (static_cast<const void *>(local_types.string()) ==
@@ -645,7 +927,8 @@ flow for A {
 
     std::vector<std::string> results;
     results.reserve(kThreads);
-    for (auto &f : futures) results.push_back(f.get());
+    for (auto &f : futures)
+        results.push_back(f.get());
     REQUIRE(results.size() == kThreads);
 
     for (int t = 1; t < kThreads; ++t) {
@@ -663,8 +946,7 @@ flow for A {
 // (not the raw AST decl list) and preserves T1.2 equivalence.
 // ============================================================================
 
-TEST_CASE_FIXTURE(TypedHIRFixture,
-                  "T1.4 decl iteration walks typed tree and covers all kinds") {
+TEST_CASE_FIXTURE(TypedHIRFixture, "T1.4 decl iteration walks typed tree and covers all kinds") {
     // Source with multiple agents, multiple structs, a contract, a flow, an
     // enum, a type alias, a const, a capability, a predicate, and a workflow:
     // exercises the full TypedDecl kind set so we can assert coverage.
@@ -739,7 +1021,8 @@ workflow DoJob {
     const auto &decls = tc.typed_program.declarations;
     using K = ahfl::ast::NodeKind;
     std::unordered_set<K> seen;
-    for (const auto &d : decls) seen.insert(d.kind);
+    for (const auto &d : decls)
+        seen.insert(d.kind);
 
     // Kind coverage: all nominal kinds + contract + flow.
     CHECK(seen.contains(K::StructDecl));
@@ -758,13 +1041,20 @@ workflow DoJob {
     std::size_t struct_count = 0, agent_count = 0, contract_count = 0;
     std::size_t flow_count = 0, const_count = 0, cap_count = 0, pred_count = 0;
     for (const auto &d : decls) {
-        if (d.kind == K::StructDecl) ++struct_count;
-        if (d.kind == K::AgentDecl) ++agent_count;
-        if (d.kind == K::ContractDecl) ++contract_count;
-        if (d.kind == K::FlowDecl) ++flow_count;
-        if (d.kind == K::ConstDecl) ++const_count;
-        if (d.kind == K::CapabilityDecl) ++cap_count;
-        if (d.kind == K::PredicateDecl) ++pred_count;
+        if (d.kind == K::StructDecl)
+            ++struct_count;
+        if (d.kind == K::AgentDecl)
+            ++agent_count;
+        if (d.kind == K::ContractDecl)
+            ++contract_count;
+        if (d.kind == K::FlowDecl)
+            ++flow_count;
+        if (d.kind == K::ConstDecl)
+            ++const_count;
+        if (d.kind == K::CapabilityDecl)
+            ++cap_count;
+        if (d.kind == K::PredicateDecl)
+            ++pred_count;
     }
     CHECK(struct_count == 3);
     CHECK(agent_count == 2);
@@ -775,26 +1065,33 @@ workflow DoJob {
     CHECK(pred_count == 2);
 
     // Single-program mode: source_id on each TypedDecl must be empty.
-    for (const auto &d : decls) CHECK_FALSE(d.source_id.has_value());
+    for (const auto &d : decls)
+        CHECK_FALSE(d.source_id.has_value());
 
     // T1.2 equivalence: typed-tree lowering and AST-tree lowering must
     // produce byte-identical IR even when the declaration iteration path
     // changed to walk TypedProgram.declarations.
     const auto via_ast = ahfl::lower_program_ir(*parse.program, resolve, tc);
-    const auto via_typed = ahfl::lower_typed_program(tc.typed_program);
+    const auto via_typed = ahfl::lower_typed_program(tc.typed_program, *parse.program);
+    const auto via_detached = ahfl::lower_typed_program(tc.typed_program);
 
     CHECK(via_ast.declarations.size() == via_typed.declarations.size());
+    CHECK(via_ast.declarations.size() == via_detached.declarations.size());
     REQUIRE_FALSE(via_ast.declarations.empty());
 
-    std::ostringstream ast_json, typed_json;
+    std::ostringstream ast_json, typed_json, detached_json;
     ahfl::print_program_ir_json(via_ast, ast_json);
     ahfl::print_program_ir_json(via_typed, typed_json);
+    ahfl::print_program_ir_json(via_detached, detached_json);
     const std::string ast_fp = ast_json.str();
     const std::string typed_fp = typed_json.str();
+    const std::string detached_fp = detached_json.str();
 
     REQUIRE_FALSE(ast_fp.empty());
     REQUIRE_FALSE(typed_fp.empty());
+    REQUIRE_FALSE(detached_fp.empty());
     CHECK(ast_fp == typed_fp);
+    CHECK(ast_fp == detached_fp);
 }
 
 // ============================================================================
@@ -827,7 +1124,8 @@ static std::size_t count_ast_statements(const ahfl::ast::BlockSyntax &block) {
 static std::size_t total_flow_statement_count(const ahfl::ast::Program &program) {
     std::size_t total = 0;
     for (const auto &decl : program.declarations) {
-        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) continue;
+        if (decl->kind != ahfl::ast::NodeKind::FlowDecl)
+            continue;
         const auto *flow = static_cast<const ahfl::ast::FlowDecl *>(decl.get());
         for (const auto &handler : flow->state_handlers) {
             if (handler->body) {
@@ -933,7 +1231,8 @@ flow for Worker {
     // appear in the flat store for the 7 kinds we explicitly used.
     using K = ahfl::TypedStmtKind;
     std::unordered_set<K> seen_kinds;
-    for (const auto &s : tc.typed_program.statements) seen_kinds.insert(s.kind);
+    for (const auto &s : tc.typed_program.statements)
+        seen_kinds.insert(s.kind);
     CHECK(seen_kinds.contains(K::Let));
     CHECK(seen_kinds.contains(K::Assign));
     CHECK(seen_kinds.contains(K::If));
@@ -1021,8 +1320,8 @@ flow for Worker {
             }
             // (1) index must be in range.
             if (idx >= exprs.size()) {
-                FAIL_CHECK("children_expr_index[" << idx << "] out of range ["
-                                                  << exprs.size() << "]");
+                FAIL_CHECK("children_expr_index[" << idx << "] out of range [" << exprs.size()
+                                                  << "]");
                 continue;
             }
             // (2) resolved TypedExpr must have a resolved type pointer.
@@ -1044,7 +1343,6 @@ flow for Worker {
     // typed TypedExpr entry. For the source above, Goto is the only
     // statement that never has a payload (UINT32_MAX); every other kind
     // carries at least one.
-    const auto ratio = static_cast<double>(valid_slots) /
-                       static_cast<double>(total_slots);
+    const auto ratio = static_cast<double>(valid_slots) / static_cast<double>(total_slots);
     CHECK(ratio >= 0.60);
 }

@@ -112,6 +112,62 @@ ahfl_add_output_test(
 )
 
 ahfl_add_output_test(
+    ahflc.emit_opt_ir.expr_temporal
+    "emit opt-ir"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir_json.expr_temporal
+    "emit opt-ir-json"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir.json"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir_optimized.expr_temporal
+    "emit opt-ir -O"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir.optimized"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir_json_optimized.expr_temporal
+    "emit opt-ir-json -O"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_expr_temporal.opt-ir.optimized.json"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir.flow_workflow_semantics
+    "emit opt-ir"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.opt-ir"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir_json.flow_workflow_semantics
+    "emit opt-ir-json"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.opt-ir.json"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir_optimized.flow_workflow_semantics
+    "emit opt-ir -O"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.opt-ir.optimized"
+)
+
+ahfl_add_output_test(
+    ahflc.emit_opt_ir_json_optimized.flow_workflow_semantics
+    "emit opt-ir-json -O"
+    "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+    "${AHFL_TESTS_DIR}/golden/ir/ok_flow_workflow_semantics.opt-ir.optimized.json"
+)
+
+ahfl_add_output_test(
     ahflc.emit_smv.alias_const
     "emit smv"
     "${AHFL_TESTS_DIR}/golden/ir/ok_alias_const.ahfl"

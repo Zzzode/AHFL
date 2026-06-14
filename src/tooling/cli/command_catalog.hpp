@@ -20,6 +20,8 @@ enum class CommandKind {
     DumpProject,
     EmitIr,
     EmitIrJson,
+    EmitOptIr,
+    EmitOptIrJson,
     EmitNativeJson,
     EmitExecutionPlan,
     EmitExecutionJournal,

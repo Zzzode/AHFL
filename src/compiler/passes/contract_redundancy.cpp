@@ -24,9 +24,9 @@ bool clauses_structurally_equal(const ir::ContractClause &a, const ir::ContractC
     }
     // For a deeper structural comparison we'd need recursive equality on Expr trees.
     // For now, compare by pointer identity (catches exact duplicates from copy).
-    if (std::holds_alternative<ir::ExprPtr>(a.value) &&
-        std::holds_alternative<ir::ExprPtr>(b.value)) {
-        return std::get<ir::ExprPtr>(a.value).get() == std::get<ir::ExprPtr>(b.value).get();
+    if (std::holds_alternative<ir::ExprRef>(a.value) &&
+        std::holds_alternative<ir::ExprRef>(b.value)) {
+        return std::get<ir::ExprRef>(a.value).get() == std::get<ir::ExprRef>(b.value).get();
     }
     if (std::holds_alternative<ir::TemporalExprPtr>(a.value) &&
         std::holds_alternative<ir::TemporalExprPtr>(b.value)) {
