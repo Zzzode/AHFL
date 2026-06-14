@@ -486,6 +486,7 @@ EnumName
 1. `String(min, max)` 是 `String` 的 refinement 形式
 2. `StructName` 与 `EnumName` 指代用户声明的具名类型
 3. `type alias` 在类型检查阶段按别名透明处理，但它本身不是新的底层值类型
+4. AHFL Core V0.1 没有 `readonly` 修饰符或 readonly 容器语法；容器 variance 是类型关系规则，不是源码类型构造子
 
 编译器实现还可以维护少量**内部辅助类型**，例如：
 
@@ -557,7 +558,14 @@ type A = B
 1. `String(m1, n1) <: String(m2, n2)`，当且仅当 `m2 <= m1` 且 `n1 <= n2`
 2. `String(m, n) <: String`
 
-除此之外，不存在其他隐式子类型关系。
+除此之外，还允许下列容器子类型关系：
+
+1. `Optional<A> <: Optional<B>`，当且仅当 `A <: B`
+2. `List<A> <: List<B>`，当且仅当 `A <: B`
+3. `Set<A> <: Set<B>`，当且仅当 `A <: B`
+4. `Map<K1, V1> <: Map<K2, V2>`，当且仅当 `K1` 与 `K2` 等价，且 `V1 <: V2`
+
+其他隐式子类型关系不存在。
 
 特别地：
 
@@ -565,7 +573,8 @@ type A = B
 2. `Decimal(p)` 不是 `Float` 的子类型
 3. `Decimal(p1)` 不是 `Decimal(p2)` 的子类型
 4. `T` 不是 `Optional<T>` 的子类型
-5. `List<T>`、`Set<T>`、`Map<K, V>` 在 V0.1 中一律按**不变**处理
+5. `Map<K, V>` 的 key 位置保持不变；不能因为 `K1 <: K2` 就推出 `Map<K1, V> <: Map<K2, V>`
+6. `readonly` 不是保留关键字，用户程序不得书写 `readonly List<T>`、`Readonly<T>` 或等价语法；若未来引入，需要单独修订本规范、grammar、AST、Typed HIR、typechecker 与 IR 表达
 
 ### 4.4 结构体与枚举
 

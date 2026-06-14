@@ -2083,6 +2083,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-docs
+    TESTS
+        ahfl.docs.ir_sync_gate
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-package
     TESTS
         ahfl.package.package_all
