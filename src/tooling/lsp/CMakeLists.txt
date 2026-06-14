@@ -1,4 +1,5 @@
 add_library(ahfl_tooling_lsp STATIC
+    analysis_service.cpp
     json_rpc.cpp
     protocol_types.cpp
     document_store.cpp
