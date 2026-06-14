@@ -3940,8 +3940,16 @@ add_test(NAME ahfl.semantics.type_relations_all
     COMMAND $<TARGET_FILE:ahfl_semantics_type_relations_tests>
 )
 
+add_test(NAME ahfl.semantics.typed_hir_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_typed_hir_tests>
+)
+
 add_test(NAME ahfl.semantics.effects_all
     COMMAND $<TARGET_FILE:ahfl_semantics_effects_tests>
+)
+
+add_test(NAME ahfl.semantics.flow_condition_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_flow_condition_tests>
 )
 
 add_test(NAME ahfl.llm_provider.streaming_all
@@ -4058,4 +4066,8 @@ add_test(NAME ahfl.property.lowering_equiv
 
 add_test(NAME ahfl.property.smv_syntax
     COMMAND $<TARGET_FILE:ahfl_property_smv_tests>
+)
+
+add_test(NAME ahfl.ir.opt.lower_and_passes
+    COMMAND $<TARGET_FILE:ahfl_compiler_ir_opt_tests>
 )
