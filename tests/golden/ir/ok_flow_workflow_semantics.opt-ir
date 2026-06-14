@@ -1,0 +1,113 @@
+opt_program source_version=ahfl.ir.v1
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[1040,1055)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[1059,1075)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::1 kind=running reason="temporal atom is not a pure expression fragment" source=[1102,1116)
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::liveness::0 kind=completed reason="temporal atom is not a pure expression fragment" source=[1170,1193)
+function flow::formal::flow_workflow::ReviewAgent::Init args=3 return=unresolved source=[541,675) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request)
+    %1 ctx type=struct(formal::flow_workflow::Context)
+    %2 output type=struct(formal::flow_workflow::Response)
+    %3 _tmp0 temp type=bool(Bool) source=[565,587)
+    %4 _tmp1 temp type=bool(Bool) source=[565,587)
+    %5 _tmp2 temp type=string(String) source=[602,617)
+    %6 _tmp3 temp type=string(String) source=[647,659)
+  blocks:
+  bb0 entry:
+    stmt assign %3 = field field=allow_fast_track operands=[local(%0)] type=bool(Bool) source=[565,587)
+    stmt assign %4 = use operands=[local(%3)] type=bool(Bool) source=[565,587)
+    term switch_bool cond=%4 then=bb1 else=bb2 source=[562,669)
+  bb1 if.then:
+    stmt assign %5 = use operands=[constant("FastTrack")] type=string(String) source=[602,617)
+    term return value=%5 source=[602,617)
+  bb2 if.else:
+    stmt assign %6 = use operands=[constant("Review")] type=string(String) source=[647,659)
+    term return value=%6 source=[647,659)
+  bb3 if.merge:
+    term return source=[541,675)
+  bb4 after.goto:
+    term goto target=bb3 source=[562,669)
+  bb5 after.goto:
+    term goto target=bb3 source=[562,669)
+}
+function flow::formal::flow_workflow::ReviewAgent::FastTrack args=3 return=unresolved source=[681,723) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request)
+    %1 ctx type=struct(formal::flow_workflow::Context)
+    %2 output type=struct(formal::flow_workflow::Response)
+    %3 _tmp0 temp type=string(String) source=[707,717)
+  blocks:
+  bb0 entry:
+    stmt assign %3 = use operands=[constant("Done")] type=string(String) source=[707,717)
+    term return value=%3 source=[707,717)
+  bb1 after.goto:
+    term return source=[681,723)
+}
+function flow::formal::flow_workflow::ReviewAgent::Review args=3 return=unresolved source=[729,768) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request)
+    %1 ctx type=struct(formal::flow_workflow::Context)
+    %2 output type=struct(formal::flow_workflow::Response)
+    %3 _tmp0 temp type=string(String) source=[752,762)
+  blocks:
+  bb0 entry:
+    stmt assign %3 = use operands=[constant("Done")] type=string(String) source=[752,762)
+    term return value=%3 source=[752,762)
+  bb1 after.goto:
+    term return source=[729,768)
+}
+function flow::formal::flow_workflow::ReviewAgent::Done args=3 return=unresolved source=[774,855) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request)
+    %1 ctx type=struct(formal::flow_workflow::Context)
+    %2 output type=struct(formal::flow_workflow::Response)
+    %3 _tmp0 temp type=string(String) source=[830,837)
+    %4 _tmp1 temp type=struct(formal::flow_workflow::Response) source=[802,848)
+    %5 _tmp2 temp type=struct(formal::flow_workflow::Response) source=[795,849)
+  blocks:
+  bb0 entry:
+    stmt assign %3 = field field=tag operands=[local(%1)] type=string(String) source=[830,837)
+    stmt assign %4 = aggregate operands=[local(%3)] type=struct(formal::flow_workflow::Response) source=[802,848)
+    stmt assign %5 = use operands=[local(%4)] type=struct(formal::flow_workflow::Response) source=[795,849)
+    term return value=%5 source=[795,849)
+  bb1 after.return:
+    term return source=[774,855)
+}
+function workflow::formal::flow_workflow::ReviewWorkflow::node::first::input args=3 return=struct(formal::flow_workflow::Request) source=[932,963) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request) source=[956,961)
+    %1 first type=struct(formal::flow_workflow::Response)
+    %2 second type=struct(formal::flow_workflow::Response)
+  blocks:
+  bb0 entry:
+    term return value=%0 source=[956,961)
+}
+function workflow::formal::flow_workflow::ReviewWorkflow::node::second::input args=3 return=struct(formal::flow_workflow::Request) source=[968,1014) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request) source=[993,998)
+    %1 first type=struct(formal::flow_workflow::Response)
+    %2 second type=struct(formal::flow_workflow::Response)
+  blocks:
+  bb0 entry:
+    term return value=%0 source=[993,998)
+}
+function workflow::formal::flow_workflow::ReviewWorkflow::return args=3 return=struct(formal::flow_workflow::Response) source=[1208,1214) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request)
+    %1 first type=struct(formal::flow_workflow::Response)
+    %2 second type=struct(formal::flow_workflow::Response) source=[1208,1214)
+  blocks:
+  bb0 entry:
+    term return value=%2 source=[1208,1214)
+}
+function workflow::formal::flow_workflow::ReviewWorkflow::safety::1::embedded::0 args=3 return=bool(Bool) source=[1120,1142) {
+  locals:
+    %0 input type=struct(formal::flow_workflow::Request)
+    %1 first type=struct(formal::flow_workflow::Response)
+    %2 second type=struct(formal::flow_workflow::Response)
+    %3 _tmp0 temp type=bool(Bool) source=[1120,1142)
+  blocks:
+  bb0 entry:
+    stmt assign %3 = field field=allow_fast_track operands=[local(%0)] type=bool(Bool) source=[1120,1142)
+    term return value=%3 source=[1120,1142)
+}

@@ -27,9 +27,14 @@ void check(bool condition, const std::string &test_name) {
     }
 }
 
-// Helper: make IR ExprPtr
-ExprPtr make_expr_ptr(ExprNode node) {
-    return std::make_unique<Expr>(Expr{std::move(node), {}});
+// Helper: make IR ExprRef
+ExprArena &test_expr_arena() {
+    static ExprArena arena;
+    return arena;
+}
+
+ExprRef make_expr_ptr(ExprNode node) {
+    return test_expr_arena().make(std::move(node));
 }
 
 // Helper: make a Statement from StatementNode
@@ -84,7 +89,7 @@ void test_assign_ctx_field() {
     ctx.eval_ctx.set_ctx("result", make_string("old"));
     // ctx.result = "new"
     Path path;
-    path.root_kind = PathRootKind::Identifier;
+    path.root_kind = PathRootKind::Context;
     path.root_name = "ctx";
     path.members = {"result"};
     auto stmt = make_stmt(AssignStatement{path, make_expr_ptr(StringLiteralExpr{"new"})});
@@ -294,7 +299,7 @@ void test_nested_if_with_goto() {
 
     // 构造路径表达式 "flag"
     PathExpr path_expr;
-    path_expr.path.root_kind = PathRootKind::Identifier;
+    path_expr.path.root_kind = PathRootKind::Local;
     path_expr.path.root_name = "flag";
 
     auto stmt = make_stmt(IfStatement{make_expr_ptr(std::move(path_expr)),

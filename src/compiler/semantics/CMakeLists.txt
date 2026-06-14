@@ -8,6 +8,7 @@ add_library(ahfl_compiler_semantics STATIC
     type_relations.cpp
     type_expectation.cpp
     typed_hir.cpp
+    typed_hir_serialization.cpp
     types.cpp
     typecheck.cpp
     typecheck_decls.cpp

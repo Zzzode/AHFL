@@ -103,7 +103,7 @@ lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
 // ---------------------------------------------------------------------------
 
 std::optional<int> emit_core_backend(std::optional<CommandKind> effective_command,
-                                     const ahfl::ir::Program &program,
+                                     ahfl::ir::Program &program,
                                      const ahfl::ResolveResult &resolve_result,
                                      const ahfl::TypeCheckResult &type_check_result,
                                      const ahfl::handoff::PackageMetadata *package_metadata,

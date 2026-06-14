@@ -7,6 +7,7 @@
 
 #include <memory>
 #include <string_view>
+#include <vector>
 
 namespace {
 
@@ -38,6 +39,65 @@ class AlwaysModifyPass final : public Pass {
   public:
     [[nodiscard]] std::string_view name() const override {
         return "AlwaysModifyPass";
+    }
+    [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override {
+        return true;
+    }
+};
+
+class RequiresFormalObservationsPass final : public Pass {
+  public:
+    explicit RequiresFormalObservationsPass(bool &saw_fresh) : saw_fresh_(saw_fresh) {}
+
+    [[nodiscard]] std::string_view name() const override {
+        return "RequiresFormalObservationsPass";
+    }
+    [[nodiscard]] std::vector<ahfl::ir::DerivedAnalysisKind>
+    required_derived_analyses() const override {
+        return {ahfl::ir::DerivedAnalysisKind::FormalObservations};
+    }
+    [[nodiscard]] bool run(ahfl::ir::Program &program) override {
+        const auto required = required_derived_analyses();
+        saw_fresh_ = ahfl::ir::has_fresh_derived_analyses(program, required);
+        return false;
+    }
+
+  private:
+    bool &saw_fresh_;
+};
+
+struct CountingAnalysisResult final : AnalysisResult {
+    explicit CountingAnalysisResult(int count_value) : count(count_value) {}
+    int count{0};
+};
+
+class CountingAnalysisPass final : public AnalysisPass {
+  public:
+    explicit CountingAnalysisPass(int &run_count) : run_count_(run_count) {}
+
+    [[nodiscard]] std::string_view name() const override {
+        return "counting-analysis";
+    }
+    [[nodiscard]] std::unique_ptr<AnalysisResult>
+    run(const ahfl::ir::Program & /*program*/) override {
+        ++run_count_;
+        return std::make_unique<CountingAnalysisResult>(run_count_);
+    }
+
+  private:
+    int &run_count_;
+};
+
+class InvalidatesCountingAnalysisPass final : public Pass {
+  public:
+    [[nodiscard]] std::string_view name() const override {
+        return "InvalidatesCountingAnalysisPass";
+    }
+    [[nodiscard]] std::vector<std::string_view> required_analyses() const override {
+        return {"counting-analysis"};
+    }
+    [[nodiscard]] std::vector<std::string_view> invalidated_analyses() const override {
+        return {"counting-analysis"};
     }
     [[nodiscard]] bool run(ahfl::ir::Program & /*program*/) override {
         return true;
@@ -106,8 +166,44 @@ TEST_CASE("PassManager: modifying pass recomputes derived IR analyses") {
     auto result = pm.run(prog);
     CHECK(result.any_modified);
     CHECK(prog.phase == ahfl::ir::ProgramPhase::Optimized);
+    CHECK(prog.analysis_revision == 1);
+    CHECK(prog.analyses.source_program_revision == prog.analysis_revision);
+    CHECK(ahfl::ir::has_fresh_derived_analyses(prog));
     REQUIRE(ahfl::ir::formal_observations(prog).size() == 1);
     CHECK(ahfl::ir::formal_observations(prog)[0].symbol == "agent__pkg_Agent__called__pkg_Call");
+}
+
+TEST_CASE("PassManager: required derived analyses are fresh before pass runs") {
+    PassManager pm;
+    bool saw_fresh = false;
+    pm.add_pass(std::make_unique<RequiresFormalObservationsPass>(saw_fresh));
+
+    ahfl::ir::Program prog;
+    const std::vector required{ahfl::ir::DerivedAnalysisKind::FormalObservations};
+    CHECK_FALSE(ahfl::ir::has_fresh_derived_analyses(prog, required));
+
+    auto result = pm.run(prog);
+
+    CHECK_FALSE(result.any_modified);
+    CHECK(saw_fresh);
+    CHECK(prog.phase == ahfl::ir::ProgramPhase::Analyzed);
+    CHECK(ahfl::ir::has_fresh_derived_analyses(prog, required));
+}
+
+TEST_CASE("PassManager: modifying pass invalidates and reruns declared analyses") {
+    PassManager pm;
+    int run_count = 0;
+    pm.add_pass(std::make_unique<InvalidatesCountingAnalysisPass>());
+    pm.add_analysis(std::make_unique<CountingAnalysisPass>(run_count));
+
+    ahfl::ir::Program prog;
+    auto result = pm.run(prog);
+
+    CHECK(result.any_modified);
+    CHECK(run_count == 2);
+    REQUIRE(result.executed.size() == 2);
+    CHECK(result.executed[0] == "InvalidatesCountingAnalysisPass");
+    CHECK(result.executed[1] == "counting-analysis");
 }
 
 TEST_CASE("PassManager: default pipeline creation") {

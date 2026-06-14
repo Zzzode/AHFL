@@ -211,6 +211,10 @@ int main() {
           "emit-assurance-json maps to core assurance backend");
     check(ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::EmitNativeJson),
           "emit-native-json is a core backend command");
+    check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::EmitOptIr),
+          "emit-opt-ir is handled by the CLI opt pipeline");
+    check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::EmitOptIrJson),
+          "emit-opt-ir-json is handled by the CLI opt pipeline");
     check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::EmitRuntimeSession),
           "emit-runtime-session is not a core backend command");
     check(!ahfl::cli::is_core_backend_command(ahfl::cli::CommandKind::EmitDurableStoreImportReview),
@@ -296,6 +300,12 @@ int main() {
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "ir-json") ==
               ahfl::cli::CommandKind::EmitIrJson,
           "resolve: emit ir-json");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "opt-ir") ==
+              ahfl::cli::CommandKind::EmitOptIr,
+          "resolve: emit opt-ir");
+    check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "opt-ir-json") ==
+              ahfl::cli::CommandKind::EmitOptIrJson,
+          "resolve: emit opt-ir-json");
     check(ahfl::cli::resolve_subcommand(ahfl::cli::ActionGroup::Emit, "scheduler-snapshot") ==
               ahfl::cli::CommandKind::EmitSchedulerSnapshot,
           "resolve: emit scheduler-snapshot");
@@ -408,6 +418,10 @@ int main() {
     // command_short_name — roundtrip validation
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitIr) == "ir",
           "short_name: EmitIr -> ir");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitOptIr) == "opt-ir",
+          "short_name: EmitOptIr -> opt-ir");
+    check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitOptIrJson) == "opt-ir-json",
+          "short_name: EmitOptIrJson -> opt-ir-json");
     check(ahfl::cli::command_short_name(ahfl::cli::CommandKind::EmitDurableStoreImportRequest) ==
               "store/request",
           "short_name: EmitDurableStoreImportRequest -> store/request");

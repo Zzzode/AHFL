@@ -59,7 +59,7 @@ ASSIGN
 -- contract formal::bounded_data_semantics::BoundedAgent ensures[1]
 LTLSPEC G (((agent__formal_bounded_data_semantics_BoundedAgent__state = Done)) -> (((1 + 1) = 2)))
 -- contract formal::bounded_data_semantics::BoundedAgent invariant[2]
-LTLSPEC G ((TRUE & ((2 > 1))))
+LTLSPEC G ((TRUE & (2 > 1)))
 -- workflow formal::bounded_data_semantics::BoundedWorkflow node run lifecycle[completed_final]
 LTLSPEC G (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__completed -> (workflow__formal_bounded_data_semantics_BoundedWorkflow__node__run__state = Done))
 -- workflow formal::bounded_data_semantics::BoundedWorkflow node run recovery[failed_enters_recovering]

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cassert>
+#include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <variant>
@@ -27,7 +30,53 @@ struct Path {
 // ----------------------------------------------------------------------------
 
 struct Expr;
-using ExprPtr = Owned<Expr>;
+
+/// Stable handle for an arena-owned expression node.
+///
+/// The index is the durable identity used by Program::expr_arena; the cached
+/// pointer keeps existing recursive IR algorithms cheap and avoids threading
+/// arena lookups through every visitor/printer/evaluator call site.
+struct ExprRef {
+    using Index = std::uint32_t;
+    static constexpr Index kInvalid = UINT32_MAX;
+
+    Expr *ptr{nullptr};
+    Index index{kInvalid};
+
+    ExprRef() = default;
+    ExprRef(Expr &expr, Index expr_index) noexcept : ptr(&expr), index(expr_index) {}
+    ExprRef(std::nullptr_t) noexcept {}
+    ExprRef &operator=(std::nullptr_t) noexcept {
+        ptr = nullptr;
+        index = kInvalid;
+        return *this;
+    }
+
+    [[nodiscard]] bool has_value() const noexcept { return ptr != nullptr; }
+    [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
+    [[nodiscard]] Expr *get() const noexcept { return ptr; }
+    [[nodiscard]] Expr &operator*() const noexcept {
+        assert(ptr != nullptr);
+        return *ptr;
+    }
+    [[nodiscard]] Expr *operator->() const noexcept {
+        assert(ptr != nullptr);
+        return ptr;
+    }
+
+    [[nodiscard]] friend bool operator==(const ExprRef &ref, std::nullptr_t) noexcept {
+        return ref.ptr == nullptr;
+    }
+    [[nodiscard]] friend bool operator==(std::nullptr_t, const ExprRef &ref) noexcept {
+        return ref.ptr == nullptr;
+    }
+    [[nodiscard]] friend bool operator!=(const ExprRef &ref, std::nullptr_t) noexcept {
+        return ref.ptr != nullptr;
+    }
+    [[nodiscard]] friend bool operator!=(std::nullptr_t, const ExprRef &ref) noexcept {
+        return ref.ptr != nullptr;
+    }
+};
 
 struct TemporalExpr;
 using TemporalExprPtr = Owned<TemporalExpr>;
@@ -72,7 +121,7 @@ struct DurationLiteralExpr {
 
 /// some 表达式: some(expr)
 struct SomeExpr {
-    ExprPtr value;
+    ExprRef value;
 };
 
 /// 路径表达式: input.field, ctx.field, node_name.field
@@ -88,13 +137,13 @@ struct QualifiedValueExpr {
 /// 函数调用表达式: capability_name(arg1, arg2, ...)
 struct CallExpr {
     std::string callee;             // 被调函数名（capability 名称）
-    std::vector<ExprPtr> arguments; // 实参列表
+    std::vector<ExprRef> arguments; // 实参列表
 };
 
 /// 结构体字段初始化
 struct StructFieldInit {
     std::string name; // 字段名
-    ExprPtr value;    // 初始化表达式
+    ExprRef value;    // 初始化表达式
 };
 
 /// 结构体字面量: TypeName { field1: val1, field2: val2 }
@@ -105,18 +154,18 @@ struct StructLiteralExpr {
 
 /// 列表字面量: [a, b, c]
 struct ListLiteralExpr {
-    std::vector<ExprPtr> items;
+    std::vector<ExprRef> items;
 };
 
 /// 集合字面量: {a, b, c}
 struct SetLiteralExpr {
-    std::vector<ExprPtr> items;
+    std::vector<ExprRef> items;
 };
 
 /// Map 键值对
 struct MapEntryExpr {
-    ExprPtr key;
-    ExprPtr value;
+    ExprRef key;
+    ExprRef value;
 };
 
 /// Map 字面量: {k1: v1, k2: v2}
@@ -127,34 +176,29 @@ struct MapLiteralExpr {
 /// 一元表达式: !expr, -expr
 struct UnaryExpr {
     ExprUnaryOp op{ExprUnaryOp::Not};
-    ExprPtr operand;
+    ExprRef operand;
 };
 
 /// 二元表达式: a + b, a == b
 struct BinaryExpr {
     ExprBinaryOp op{ExprBinaryOp::Implies};
-    ExprPtr lhs;
-    ExprPtr rhs;
+    ExprRef lhs;
+    ExprRef rhs;
 };
 
 /// 成员访问表达式: expr.member
 struct MemberAccessExpr {
-    ExprPtr base;       // 基对象
+    ExprRef base;       // 基对象
     std::string member; // 成员名
 };
 
 /// 索引访问表达式: expr[index]
 struct IndexAccessExpr {
-    ExprPtr base;  // 基对象
-    ExprPtr index; // 索引表达式
+    ExprRef base;  // 基对象
+    ExprRef index; // 索引表达式
 };
 
-/// 括号分组表达式: (expr)
-struct GroupExpr {
-    ExprPtr expr;
-};
-
-/// 表达式节点（20 种 variant）
+/// 表达式节点（19 种 variant）
 using ExprNode = std::variant<NoneLiteralExpr,
                               BoolLiteralExpr,
                               IntegerLiteralExpr,
@@ -173,13 +217,14 @@ using ExprNode = std::variant<NoneLiteralExpr,
                               UnaryExpr,
                               BinaryExpr,
                               MemberAccessExpr,
-                              IndexAccessExpr,
-                              GroupExpr>;
+                              IndexAccessExpr>;
 
 /// 表达式包装结构
 struct Expr {
     ExprNode node;
     SourceRangeOpt source_range;
+    TypeRef resolved_type; // Populated during lowering; kind=Unresolved if unavailable
+    std::uint32_t id{0};  // Monotonic node ID assigned during lowering (E-2)
 };
 
 // ----------------------------------------------------------------------------
@@ -188,7 +233,7 @@ struct Expr {
 
 /// 嵌入普通表达式
 struct EmbeddedTemporalExpr {
-    ExprPtr expr;
+    ExprRef expr;
 };
 
 /// called(capability_name) — 某个 capability 被调用过
@@ -254,18 +299,18 @@ struct Block {
 struct LetStatement {
     std::string name;    // 变量名
     TypeRef type_ref;    // 绑定类型
-    ExprPtr initializer; // 初始化表达式
+    ExprRef initializer; // 初始化表达式
 };
 
 /// 赋值语句: target = value;
 struct AssignStatement {
     Path target;   // 赋值目标路径
-    ExprPtr value; // 赋值表达式
+    ExprRef value; // 赋值表达式
 };
 
 /// 条件语句: if (condition) { then } else { else }
 struct IfStatement {
-    ExprPtr condition;       // 条件表达式
+    ExprRef condition;       // 条件表达式
     Owned<Block> then_block; // then 分支
     Owned<Block> else_block; // else 分支（可选）
 };
@@ -277,17 +322,17 @@ struct GotoStatement {
 
 /// 返回语句: return expr;
 struct ReturnStatement {
-    ExprPtr value; // 返回值表达式
+    ExprRef value; // 返回值表达式
 };
 
 /// 断言语句: assert(condition);
 struct AssertStatement {
-    ExprPtr condition; // 断言条件
+    ExprRef condition; // 断言条件
 };
 
 /// 表达式语句 (如 capability 调用): expr;
 struct ExprStatement {
-    ExprPtr expr;
+    ExprRef expr;
 };
 
 /// 语句节点（7 种 variant）
@@ -303,6 +348,7 @@ using StatementNode = std::variant<LetStatement,
 struct Statement {
     StatementNode node;
     SourceRangeOpt source_range;
+    std::uint32_t id{0}; // Monotonic statement ID assigned during lowering
 };
 
 } // namespace ahfl::ir

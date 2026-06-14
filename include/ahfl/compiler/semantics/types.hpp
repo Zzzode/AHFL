@@ -31,6 +31,7 @@ enum class TypeKind {
     // Source-level nominal kinds.
     Struct,
     Enum,
+    EnumVariant,
 
     // Source-level composite kinds.
     Optional,
@@ -86,6 +87,11 @@ struct EnumT {
     std::string canonical_name;
     std::optional<SymbolId> symbol;
 };
+struct EnumVariantT {
+    std::string canonical_name;
+    std::optional<SymbolId> symbol;
+    std::string variant_name;
+};
 struct OptionalT {
     TypePtr inner{nullptr};
 };
@@ -115,6 +121,7 @@ using Payload = std::variant<AnyT,
                              DecimalT,
                              StructT,
                              EnumT,
+                             EnumVariantT,
                              OptionalT,
                              ListT,
                              SetT,
@@ -186,6 +193,9 @@ struct Type {
             },
             [](const types::StructT &value) { return value.canonical_name; },
             [](const types::EnumT &value) { return value.canonical_name; },
+            [](const types::EnumVariantT &value) {
+                return value.canonical_name + "::" + value.variant_name;
+            },
             [](const types::OptionalT &value) {
                 return "Optional<" + (value.inner ? value.inner->describe() : std::string{"Any"}) +
                        ">";
