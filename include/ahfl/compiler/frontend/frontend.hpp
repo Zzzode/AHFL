@@ -7,10 +7,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/frontend/ast.hpp"
 
 namespace ahfl {
 
@@ -58,6 +58,10 @@ struct SourceGraph {
 struct ProjectInput {
     std::vector<std::filesystem::path> entry_files;
     std::vector<std::filesystem::path> search_roots;
+    // Normalized absolute path string -> unsaved document text. LSP and other
+    // project-aware tooling use this to overlay open editor buffers while
+    // reusing the canonical SourceGraph loader.
+    std::unordered_map<std::string, std::string> source_overlays;
 };
 
 struct ProjectDescriptor {

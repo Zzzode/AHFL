@@ -4,12 +4,13 @@ import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-lan
 let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-    // LSP server configuration
-    const serverCommand = vscode.workspace.getConfiguration('ahfl').get<string>('serverPath', 'ahflc');
+    const config = vscode.workspace.getConfiguration('ahfl');
+    const serverCommand = config.get<string>('serverPath', 'ahfl-lsp');
+    const serverArgs = config.get<string[]>('serverArgs', []);
     
     const serverOptions: ServerOptions = {
         command: serverCommand,
-        args: ['lsp'],
+        args: serverArgs,
     };
 
     const clientOptions: LanguageClientOptions = {

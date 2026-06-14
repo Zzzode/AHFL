@@ -1111,7 +1111,13 @@ ProjectParseResult Frontend::parse_project(const ProjectInput &input) const {
         }
 
         in_progress_paths.insert(path_key);
-        auto parse_result = parse_file(path);
+        auto parse_result = [&]() {
+            const auto overlay = input.source_overlays.find(path_key);
+            if (overlay != input.source_overlays.end()) {
+                return parse_text(display_path(path), overlay->second);
+            }
+            return parse_file(path);
+        }();
         result.diagnostics.append_from_source(parse_result.diagnostics, parse_result.source);
 
         std::optional<SourceId> loaded_id;

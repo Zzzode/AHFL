@@ -1,26 +1,113 @@
 #include "tooling/lsp/server.hpp"
 
-#include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/semantics/resolver.hpp"
-#include "ahfl/compiler/semantics/typecheck.hpp"
+#include "ahfl/compiler/semantics/declaration_info.hpp"
+#include "ahfl/compiler/semantics/types.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <iostream>
+#include <optional>
+#include <string_view>
+#include <unordered_set>
 #include <variant>
 
 namespace ahfl::lsp {
 
 namespace {
 
-/// AHFL keywords for completion.
-constexpr std::string_view kKeywords[] = {
-    "agent",    "workflow", "flow",       "contract",  "capability", "predicate",
-    "struct",   "enum",    "const",      "import",    "module",     "state",
-    "handler",  "on",      "emit",       "transition","always",     "eventually",
-    "until",    "implies", "requires",   "ensures",   "invariant",  "after",
-    "true",     "false",   "if",         "else",      "match",      "return",
+constexpr std::string_view kTopLevelKeywords[] = {
+    "module",
+    "import",
+    "struct",
+    "enum",
+    "type",
+    "const",
+    "capability",
+    "predicate",
+    "agent",
+    "contract",
+    "flow",
+    "workflow",
 };
 
-LspSymbolKind to_lsp_symbol_kind(SymbolKind kind) {
+constexpr std::string_view kExpressionKeywords[] = {
+    "true",
+    "false",
+    "none",
+    "some",
+    "if",
+    "else",
+    "match",
+    "return",
+    "called",
+    "running",
+    "completed",
+    "in_state",
+    "always",
+    "eventually",
+};
+
+constexpr std::string_view kAllKeywords[] = {
+    "agent",   "workflow", "flow",     "contract",   "capability", "predicate",
+    "struct",  "enum",     "const",    "import",     "module",     "state",
+    "handler", "on",       "emit",     "transition", "always",     "eventually",
+    "until",   "implies",  "requires", "ensures",    "invariant",  "after",
+    "true",    "false",    "if",       "else",       "match",      "return",
+};
+
+[[nodiscard]] bool is_keyword(std::string_view text) {
+    return std::find(std::begin(kAllKeywords), std::end(kAllKeywords), text) !=
+           std::end(kAllKeywords);
+}
+
+[[nodiscard]] bool is_identifier(std::string_view text) {
+    if (text.empty()) {
+        return false;
+    }
+    const auto first = static_cast<unsigned char>(text.front());
+    if (std::isalpha(first) == 0 && text.front() != '_') {
+        return false;
+    }
+    return std::all_of(text.begin() + 1, text.end(), [](char ch) {
+        const auto value = static_cast<unsigned char>(ch);
+        return std::isalnum(value) != 0 || ch == '_';
+    });
+}
+
+[[nodiscard]] bool contains(SourceRange range, std::size_t offset) noexcept {
+    return range.begin_offset <= offset && offset <= range.end_offset;
+}
+
+[[nodiscard]] bool same_source(std::optional<SourceId> lhs, std::optional<SourceId> rhs) noexcept {
+    if (lhs.has_value() != rhs.has_value()) {
+        return false;
+    }
+    return !lhs.has_value() || *lhs == *rhs;
+}
+
+[[nodiscard]] Position to_lsp_position(const SourceFile &source, std::size_t offset) {
+    const auto pos = source.locate(offset);
+    return Position{
+        .line = static_cast<std::uint32_t>(pos.line > 0 ? pos.line - 1 : 0),
+        .character = static_cast<std::uint32_t>(pos.column > 0 ? pos.column - 1 : 0),
+    };
+}
+
+[[nodiscard]] Range to_lsp_range(const SourceFile &source, SourceRange range) {
+    const auto begin = std::min(range.begin_offset, source.content.size());
+    const auto end = std::max(begin, std::min(range.end_offset, source.content.size()));
+    return Range{
+        .start = to_lsp_position(source, begin),
+        .end = to_lsp_position(source, end),
+    };
+}
+
+[[nodiscard]] std::size_t offset_at(const SourceFile &source, Position pos) {
+    return source.offset_of(pos.line + 1, pos.character + 1);
+}
+
+[[nodiscard]] LspSymbolKind to_lsp_symbol_kind(SymbolKind kind) {
     switch (kind) {
     case SymbolKind::Struct:
         return LspSymbolKind::Struct;
@@ -42,16 +129,580 @@ LspSymbolKind to_lsp_symbol_kind(SymbolKind kind) {
     return LspSymbolKind::Variable;
 }
 
+[[nodiscard]] CompletionItemKind to_completion_kind(SymbolKind kind) {
+    switch (kind) {
+    case SymbolKind::Struct:
+        return CompletionItemKind::Struct;
+    case SymbolKind::Enum:
+        return CompletionItemKind::Enum;
+    case SymbolKind::Capability:
+        return CompletionItemKind::Interface;
+    case SymbolKind::Predicate:
+        return CompletionItemKind::Function;
+    case SymbolKind::Const:
+        return CompletionItemKind::Constant;
+    case SymbolKind::Agent:
+    case SymbolKind::Workflow:
+    case SymbolKind::TypeAlias:
+        return CompletionItemKind::Variable;
+    }
+    return CompletionItemKind::Text;
+}
+
+[[nodiscard]] std::string symbol_detail(SymbolKind kind) {
+    switch (kind) {
+    case SymbolKind::Struct:
+        return "struct";
+    case SymbolKind::Enum:
+        return "enum";
+    case SymbolKind::TypeAlias:
+        return "type alias";
+    case SymbolKind::Const:
+        return "const";
+    case SymbolKind::Capability:
+        return "capability";
+    case SymbolKind::Predicate:
+        return "predicate";
+    case SymbolKind::Agent:
+        return "agent";
+    case SymbolKind::Workflow:
+        return "workflow";
+    }
+    return {};
+}
+
+[[nodiscard]] const LspSourceSnapshot *symbol_source(const LspAnalysisSnapshot &snapshot,
+                                                     const Symbol &symbol,
+                                                     const LspSourceSnapshot &fallback) {
+    if (symbol.source_id.has_value()) {
+        if (const auto *source = snapshot.source_for_id(*symbol.source_id); source != nullptr) {
+            return source;
+        }
+    }
+    return &fallback;
+}
+
+[[nodiscard]] const LspSourceSnapshot *reference_source(const LspAnalysisSnapshot &snapshot,
+                                                        const ResolvedReference &reference,
+                                                        const LspSourceSnapshot &fallback) {
+    if (reference.source_id.has_value()) {
+        if (const auto *source = snapshot.source_for_id(*reference.source_id); source != nullptr) {
+            return source;
+        }
+    }
+    return &fallback;
+}
+
+[[nodiscard]] std::optional<Location> symbol_location(const LspAnalysisSnapshot &snapshot,
+                                                      const Symbol &symbol,
+                                                      const LspSourceSnapshot &fallback) {
+    const auto *source = symbol_source(snapshot, symbol, fallback);
+    if (source == nullptr || source->source == nullptr) {
+        return std::nullopt;
+    }
+    return Location{
+        .uri = source->uri,
+        .range = to_lsp_range(*source->source, symbol.declaration_range),
+    };
+}
+
+[[nodiscard]] std::optional<Location> reference_location(const LspAnalysisSnapshot &snapshot,
+                                                         const ResolvedReference &reference,
+                                                         const LspSourceSnapshot &fallback) {
+    const auto *source = reference_source(snapshot, reference, fallback);
+    if (source == nullptr || source->source == nullptr) {
+        return std::nullopt;
+    }
+    return Location{
+        .uri = source->uri,
+        .range = to_lsp_range(*source->source, reference.range),
+    };
+}
+
+[[nodiscard]] std::optional<SymbolId> symbol_at(const LspAnalysisSnapshot &snapshot,
+                                                const LspSourceSnapshot &source,
+                                                std::size_t offset) {
+    for (const auto &reference : snapshot.resolve_result.references()) {
+        if (same_source(reference.source_id, source.source_id) &&
+            contains(reference.range, offset)) {
+            return reference.target;
+        }
+    }
+
+    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+        if (same_source(symbol.source_id, source.source_id) &&
+            contains(symbol.declaration_range, offset)) {
+            return symbol.id;
+        }
+    }
+
+    return std::nullopt;
+}
+
+void send_null(JsonRpcTransport &transport, const std::string &id) {
+    JsonRpcResponse resp;
+    resp.id = id;
+    resp.result = json::JsonValue::make_null();
+    transport.send_response(resp);
+}
+
+void send_empty_array(JsonRpcTransport &transport, const std::string &id) {
+    JsonRpcResponse resp;
+    resp.id = id;
+    resp.result = json::JsonValue::make_array();
+    transport.send_response(resp);
+}
+
+void send_invalid_params(JsonRpcTransport &transport, const std::string &id, std::string message) {
+    JsonRpcResponse resp;
+    resp.id = id;
+    resp.error = JsonRpcError{kInvalidParams, std::move(message)};
+    transport.send_response(resp);
+}
+
+[[nodiscard]] bool text_document_id(const json::JsonValue &params, std::string &uri) {
+    const auto *td = params.get("textDocument");
+    if (td == nullptr) {
+        return false;
+    }
+    uri = parse_text_document_identifier(*td).uri;
+    return !uri.empty();
+}
+
+[[nodiscard]] bool
+text_document_position(const json::JsonValue &params, std::string &uri, Position &position) {
+    const auto *td = params.get("textDocument");
+    const auto *pos_val = params.get("position");
+    if (td == nullptr || pos_val == nullptr) {
+        return false;
+    }
+    uri = parse_text_document_identifier(*td).uri;
+    position = parse_position(*pos_val);
+    return !uri.empty();
+}
+
+[[nodiscard]] std::string read_string_field(const json::JsonValue &params, std::string_view name) {
+    const auto *field = params.get(name);
+    if (field == nullptr) {
+        return {};
+    }
+    const auto value = field->as_string();
+    return value.has_value() ? std::string(*value) : std::string{};
+}
+
+[[nodiscard]] std::vector<std::filesystem::path>
+workspace_roots_from_initialize(const json::JsonValue *params) {
+    std::vector<std::filesystem::path> roots;
+    if (params == nullptr) {
+        return roots;
+    }
+
+    const auto append_root_uri = [&](const json::JsonValue *value) {
+        if (value == nullptr) {
+            return;
+        }
+        const auto uri = value->as_string();
+        if (!uri.has_value()) {
+            return;
+        }
+        if (auto path = AnalysisService::path_from_uri(*uri); path.has_value()) {
+            roots.push_back(*path);
+        }
+    };
+
+    append_root_uri(params->get("rootUri"));
+
+    if (const auto *root_path = params->get("rootPath"); root_path != nullptr) {
+        const auto path = root_path->as_string();
+        if (path.has_value() && !path->empty()) {
+            roots.emplace_back(std::string(*path));
+        }
+    }
+
+    if (const auto *folders = params->get("workspaceFolders");
+        folders != nullptr && folders->is_array()) {
+        for (const auto &folder : folders->array_items) {
+            append_root_uri(folder->get("uri"));
+        }
+    }
+
+    return roots;
+}
+
+void push_keyword_completion(std::vector<CompletionItem> &items, std::string_view keyword) {
+    CompletionItem item;
+    item.label = std::string(keyword);
+    item.kind = CompletionItemKind::Keyword;
+    items.push_back(std::move(item));
+}
+
+void push_symbol_completion(std::vector<CompletionItem> &items, const Symbol &symbol) {
+    CompletionItem item;
+    item.label = symbol.local_name;
+    item.kind = to_completion_kind(symbol.kind);
+    item.detail = symbol_detail(symbol.kind);
+    items.push_back(std::move(item));
+}
+
+[[nodiscard]] bool looks_like_type_position(const SourceFile &source, std::size_t offset) {
+    const auto &text = source.content;
+    if (offset > text.size()) {
+        offset = text.size();
+    }
+    while (offset > 0 && std::isspace(static_cast<unsigned char>(text[offset - 1])) != 0) {
+        --offset;
+    }
+    if (offset == 0) {
+        return false;
+    }
+    if (text[offset - 1] == ':') {
+        auto word_end = offset - 1;
+        while (word_end > 0 && std::isspace(static_cast<unsigned char>(text[word_end - 1])) != 0) {
+            --word_end;
+        }
+        auto word_begin = word_end;
+        while (word_begin > 0) {
+            const auto ch = static_cast<unsigned char>(text[word_begin - 1]);
+            if (std::isalnum(ch) == 0 && text[word_begin - 1] != '_') {
+                break;
+            }
+            --word_begin;
+        }
+        const auto label = std::string_view{text}.substr(word_begin, word_end - word_begin);
+        if (label == "return" || label == "safety" || label == "liveness") {
+            return false;
+        }
+        return true;
+    }
+    return offset >= 2 && text[offset - 2] == '-' && text[offset - 1] == '>';
+}
+
+[[nodiscard]] std::optional<std::string> member_root_before_cursor(const SourceFile &source,
+                                                                   std::size_t offset) {
+    const auto &text = source.content;
+    if (offset > text.size()) {
+        offset = text.size();
+    }
+    while (offset > 0 && std::isspace(static_cast<unsigned char>(text[offset - 1])) != 0) {
+        --offset;
+    }
+    if (offset == 0 || text[offset - 1] != '.') {
+        return std::nullopt;
+    }
+
+    auto end = offset - 1;
+    while (end > 0 && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+        --end;
+    }
+    auto begin = end;
+    while (begin > 0) {
+        const auto ch = static_cast<unsigned char>(text[begin - 1]);
+        if (std::isalnum(ch) == 0 && text[begin - 1] != '_') {
+            break;
+        }
+        --begin;
+    }
+    if (begin == end) {
+        return std::nullopt;
+    }
+    return text.substr(begin, end - begin);
+}
+
+[[nodiscard]] const FlowTypeInfo *
+flow_at(const TypeEnvironment &environment, std::optional<SourceId> source_id, std::size_t offset) {
+    for (const auto &[_, flow] : environment.flows()) {
+        (void)_;
+        if (!contains(flow.declaration_range, offset)) {
+            continue;
+        }
+        (void)source_id;
+        return &flow;
+    }
+    return nullptr;
+}
+
+[[nodiscard]] const WorkflowTypeInfo *workflow_at(const TypeEnvironment &environment,
+                                                  std::size_t offset) {
+    for (const auto &[_, workflow] : environment.workflows()) {
+        (void)_;
+        if (contains(workflow.declaration_range, offset) ||
+            contains(workflow.return_value_range, offset)) {
+            return &workflow;
+        }
+        for (const auto &node : workflow.nodes) {
+            if (contains(node.source_range, offset) || contains(node.input_expr_range, offset) ||
+                contains(node.target_range, offset)) {
+                return &workflow;
+            }
+        }
+        for (const auto &range : workflow.safety_ranges) {
+            if (contains(range, offset)) {
+                return &workflow;
+            }
+        }
+        for (const auto &range : workflow.liveness_ranges) {
+            if (contains(range, offset)) {
+                return &workflow;
+            }
+        }
+    }
+    return nullptr;
+}
+
+void push_struct_field_completions(std::vector<CompletionItem> &items,
+                                   const TypeEnvironment &environment,
+                                   TypePtr type) {
+    if (type == nullptr) {
+        return;
+    }
+    const auto struct_info = environment.get_struct(*type);
+    if (!struct_info.has_value()) {
+        return;
+    }
+    for (const auto &field : struct_info->get().fields) {
+        CompletionItem item;
+        item.label = field.name;
+        item.kind = CompletionItemKind::Variable;
+        item.detail = field.type ? field.type->describe() : "field";
+        items.push_back(std::move(item));
+    }
+}
+
+void push_member_completions(std::vector<CompletionItem> &items,
+                             const LspAnalysisSnapshot &snapshot,
+                             const LspSourceSnapshot &source,
+                             std::size_t offset,
+                             std::string_view root_name) {
+    if (!snapshot.type_check_result) {
+        return;
+    }
+
+    const auto &environment = snapshot.type_check_result->environment;
+    const auto *flow = flow_at(environment, source.source_id, offset);
+    if (flow == nullptr) {
+        return;
+    }
+    const auto agent = environment.get_agent(flow->target_symbol);
+    if (!agent.has_value()) {
+        return;
+    }
+
+    if (root_name == "input") {
+        push_struct_field_completions(items, environment, agent->get().input_type);
+    } else if (root_name == "context" || root_name == "ctx") {
+        push_struct_field_completions(items, environment, agent->get().context_type);
+    } else if (root_name == "output") {
+        push_struct_field_completions(items, environment, agent->get().output_type);
+    }
+}
+
+void push_state_completions(std::vector<CompletionItem> &items,
+                            const LspAnalysisSnapshot &snapshot,
+                            const LspSourceSnapshot &source,
+                            std::size_t offset) {
+    if (!snapshot.type_check_result) {
+        return;
+    }
+    const auto &environment = snapshot.type_check_result->environment;
+    const auto *flow = flow_at(environment, source.source_id, offset);
+    if (flow == nullptr) {
+        return;
+    }
+    const auto agent = environment.get_agent(flow->target_symbol);
+    if (!agent.has_value()) {
+        return;
+    }
+    for (const auto &state : agent->get().states) {
+        CompletionItem item;
+        item.label = state;
+        item.kind = CompletionItemKind::Variable;
+        item.detail = "agent state";
+        items.push_back(std::move(item));
+    }
+}
+
+void push_workflow_node_completions(std::vector<CompletionItem> &items,
+                                    const LspAnalysisSnapshot &snapshot,
+                                    std::size_t offset) {
+    if (!snapshot.type_check_result) {
+        return;
+    }
+    const auto *workflow = workflow_at(snapshot.type_check_result->environment, offset);
+    if (workflow == nullptr) {
+        return;
+    }
+    for (const auto &node : workflow->nodes) {
+        CompletionItem item;
+        item.label = node.name;
+        item.kind = CompletionItemKind::Variable;
+        item.detail = "workflow node";
+        items.push_back(std::move(item));
+    }
+}
+
+void push_enum_variant_completions(std::vector<CompletionItem> &items,
+                                   const TypeEnvironment &environment) {
+    for (const auto &[_, enum_info] : environment.enums()) {
+        (void)_;
+        for (const auto &variant : enum_info.variants) {
+            CompletionItem item;
+            item.label = enum_info.canonical_name + "::" + variant.name;
+            item.kind = CompletionItemKind::Enum;
+            item.detail = "enum variant";
+            items.push_back(std::move(item));
+        }
+    }
+}
+
+[[nodiscard]] std::string callable_signature(const CapabilityTypeInfo &capability) {
+    std::string label = capability.canonical_name + "(";
+    for (std::size_t index = 0; index < capability.params.size(); ++index) {
+        if (index > 0) {
+            label += ", ";
+        }
+        const auto &param = capability.params[index];
+        label += param.name + ": " + (param.type ? param.type->describe() : "?");
+    }
+    label += ")";
+    if (capability.return_type != nullptr) {
+        label += " -> " + capability.return_type->describe();
+    }
+    return label;
+}
+
+[[nodiscard]] std::string callable_signature(const PredicateTypeInfo &predicate) {
+    std::string label = predicate.canonical_name + "(";
+    for (std::size_t index = 0; index < predicate.params.size(); ++index) {
+        if (index > 0) {
+            label += ", ";
+        }
+        const auto &param = predicate.params[index];
+        label += param.name + ": " + (param.type ? param.type->describe() : "?");
+    }
+    label += ")";
+    return label;
+}
+
+template <typename CallableInfo>
+void fill_signature_parameters(SignatureInformation &signature, const CallableInfo &callable) {
+    for (const auto &param : callable.params) {
+        ParameterInformation info;
+        info.label = param.name + ": " + (param.type ? param.type->describe() : "?");
+        info.documentation = param.type ? param.type->describe() : "?";
+        signature.parameters.push_back(std::move(info));
+    }
+}
+
+[[nodiscard]] std::optional<std::pair<std::string, int>>
+call_context_before_cursor(const SourceFile &source, std::size_t offset) {
+    const auto &text = source.content;
+    if (offset > text.size()) {
+        offset = text.size();
+    }
+
+    int paren_depth = 0;
+    std::size_t open_paren = std::string::npos;
+    for (std::size_t index = offset; index > 0; --index) {
+        const char ch = text[index - 1];
+        if (ch == ')') {
+            ++paren_depth;
+        } else if (ch == '(') {
+            if (paren_depth == 0) {
+                open_paren = index - 1;
+                break;
+            }
+            --paren_depth;
+        }
+    }
+    if (open_paren == std::string::npos) {
+        return std::nullopt;
+    }
+
+    auto ident_end = open_paren;
+    while (ident_end > 0 && std::isspace(static_cast<unsigned char>(text[ident_end - 1])) != 0) {
+        --ident_end;
+    }
+    auto ident_begin = ident_end;
+    while (ident_begin > 0) {
+        const auto ch = static_cast<unsigned char>(text[ident_begin - 1]);
+        if (std::isalnum(ch) == 0 && text[ident_begin - 1] != '_') {
+            break;
+        }
+        --ident_begin;
+    }
+    if (ident_begin == ident_end) {
+        return std::nullopt;
+    }
+
+    int active_parameter = 0;
+    int nested_depth = 0;
+    for (std::size_t index = open_paren + 1; index < offset && index < text.size(); ++index) {
+        const char ch = text[index];
+        if (ch == '(') {
+            ++nested_depth;
+        } else if (ch == ')') {
+            --nested_depth;
+        } else if (ch == ',' && nested_depth == 0) {
+            ++active_parameter;
+        }
+    }
+
+    return std::pair{text.substr(ident_begin, ident_end - ident_begin), active_parameter};
+}
+
+void append_symbol_children(DocumentSymbol &symbol,
+                            const LspAnalysisSnapshot &snapshot,
+                            const Symbol &semantic_symbol,
+                            const LspSourceSnapshot &source) {
+    if (!snapshot.type_check_result) {
+        return;
+    }
+    const auto &environment = snapshot.type_check_result->environment;
+
+    if (semantic_symbol.kind == SymbolKind::Agent) {
+        const auto agent = environment.get_agent(semantic_symbol.id);
+        if (!agent.has_value()) {
+            return;
+        }
+        for (const auto &state : agent->get().states) {
+            DocumentSymbol child;
+            child.name = state;
+            child.kind = LspSymbolKind::Property;
+            child.range = symbol.range;
+            child.selection_range = symbol.selection_range;
+            symbol.children.push_back(std::move(child));
+        }
+        return;
+    }
+
+    if (semantic_symbol.kind == SymbolKind::Workflow) {
+        const auto workflow = environment.get_workflow(semantic_symbol.id);
+        if (!workflow.has_value()) {
+            return;
+        }
+        for (const auto &node : workflow->get().nodes) {
+            DocumentSymbol child;
+            child.name = node.name;
+            child.kind = LspSymbolKind::Function;
+            child.range = to_lsp_range(*source.source, node.source_range);
+            child.selection_range = child.range;
+            symbol.children.push_back(std::move(child));
+        }
+        return;
+    }
+}
+
 } // anonymous namespace
 
 LspServer::LspServer(std::istream &in, std::ostream &out)
-    : transport_(in, out) {}
+    : transport_(in, out), analysis_(store_),
+      trace_enabled_(std::getenv("AHFL_LSP_TRACE") != nullptr) {}
 
 void LspServer::run() {
     while (true) {
         auto msg = transport_.read_message();
         if (!msg.has_value()) {
-            break; // EOF
+            break;
         }
 
         std::visit(
@@ -72,6 +723,7 @@ void LspServer::run() {
 }
 
 void LspServer::handle_request(const JsonRpcRequest &req) {
+    trace("request " + req.method);
     if (req.method == "initialize") {
         handle_initialize(req);
     } else if (req.method == "shutdown") {
@@ -93,7 +745,6 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
     } else if (req.method == "textDocument/signatureHelp") {
         handle_signature_help(req);
     } else {
-        // Method not found
         JsonRpcResponse resp;
         resp.id = req.id;
         resp.error = JsonRpcError{kMethodNotFound, "Method not found: " + req.method};
@@ -102,6 +753,7 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
 }
 
 void LspServer::handle_notification(const JsonRpcNotification &notif) {
+    trace("notification " + notif.method);
     if (notif.method == "initialized") {
         handle_initialized();
     } else if (notif.method == "textDocument/didOpen") {
@@ -119,11 +771,11 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
     } else if (notif.method == "exit") {
         handle_exit();
     }
-    // Ignore unknown notifications per LSP spec
 }
 
 void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialized_ = true;
+    analysis_.set_workspace_roots(workspace_roots_from_initialize(req.params.get()));
 
     ServerCapabilities caps;
     auto result = json::JsonValue::make_object();
@@ -149,9 +801,7 @@ void LspServer::handle_shutdown(const JsonRpcRequest &req) {
     transport_.send_response(resp);
 }
 
-void LspServer::handle_initialized() {
-    // Nothing to do — server is ready
-}
+void LspServer::handle_initialized() {}
 
 void LspServer::handle_did_open(const json::JsonValue &params) {
     const auto *td = params.get("textDocument");
@@ -161,6 +811,7 @@ void LspServer::handle_did_open(const json::JsonValue &params) {
 
     auto item = parse_text_document_item(*td);
     store_.open(item);
+    analysis_.invalidate_all();
     publish_diagnostics(item.uri);
 }
 
@@ -170,25 +821,24 @@ void LspServer::handle_did_change(const json::JsonValue &params) {
         return;
     }
 
-    auto versioned = parse_versioned_text_document_identifier(*td);
-
+    const auto versioned = parse_versioned_text_document_identifier(*td);
     const auto *changes = params.get("contentChanges");
     if (changes == nullptr || !changes->is_array() || changes->array_items.empty()) {
         return;
     }
 
-    // Full document sync — take last content change
     const auto &last_change = *changes->array_items.back();
-    auto text_opt = last_change.get("text");
+    const auto *text_opt = last_change.get("text");
     if (text_opt == nullptr) {
         return;
     }
-    auto text_sv = text_opt->as_string();
-    if (!text_sv.has_value()) {
+    const auto text = text_opt->as_string();
+    if (!text.has_value()) {
         return;
     }
 
-    store_.change(versioned.uri, versioned.version, std::string(*text_sv));
+    store_.change(versioned.uri, versioned.version, std::string(*text));
+    analysis_.invalidate_all();
     publish_diagnostics(versioned.uri);
 }
 
@@ -198,10 +848,10 @@ void LspServer::handle_did_close(const json::JsonValue &params) {
         return;
     }
 
-    auto id = parse_text_document_identifier(*td);
+    const auto id = parse_text_document_identifier(*td);
     store_.close(id.uri);
+    analysis_.invalidate_all();
 
-    // Clear diagnostics for closed file
     auto diag_params = json::JsonValue::make_object();
     diag_params->set("uri", json::JsonValue::make_string(id.uri));
     diag_params->set("diagnostics", json::JsonValue::make_array());
@@ -212,65 +862,84 @@ void LspServer::handle_exit() {
     shutdown_requested_ = true;
 }
 
+void LspServer::publish_diagnostics(const std::string &uri) {
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *document = store_.get(uri);
+    if (snapshot == nullptr || document == nullptr) {
+        return;
+    }
+
+    auto params = json::JsonValue::make_object();
+    params->set("uri", json::JsonValue::make_string(uri));
+    params->set("version", json::JsonValue::make_int(document->version));
+
+    auto diagnostics = json::JsonValue::make_array();
+    const auto lsp_diagnostics = snapshot->diagnostics_for_uri(uri);
+    for (const auto &diagnostic : lsp_diagnostics) {
+        diagnostics->push(serialize_diagnostic(diagnostic));
+    }
+    params->set("diagnostics", std::move(diagnostics));
+
+    trace("publishDiagnostics " + uri + " count=" + std::to_string(lsp_diagnostics.size()));
+    transport_.send_notification("textDocument/publishDiagnostics", std::move(params));
+}
+
+void LspServer::trace(std::string_view message) const {
+    if (!trace_enabled_) {
+        return;
+    }
+    std::clog << "[ahfl-lsp] " << message << '\n';
+}
+
 void LspServer::handle_completion(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto offset = offset_at(*source->source, position);
     std::vector<CompletionItem> items;
 
-    // Keyword completions
-    for (auto kw : kKeywords) {
-        CompletionItem item;
-        item.label = std::string(kw);
-        item.kind = CompletionItemKind::Keyword;
-        items.push_back(std::move(item));
-    }
-
-    // Symbol completions from current document
-    if (req.params) {
-        const auto *td = req.params->get("textDocument");
-        if (td != nullptr) {
-            auto id = parse_text_document_identifier(*td);
-            const auto *doc = store_.get(id.uri);
-            if (doc != nullptr) {
-                Frontend frontend;
-                auto parse_result = frontend.parse_text(doc->uri, doc->text);
-                if (!parse_result.has_errors()) {
-                    Resolver resolver;
-                    auto resolve_result = resolver.resolve(*parse_result.program);
-                    for (const auto &sym : resolve_result.symbol_table.symbols()) {
-                        CompletionItem ci;
-                        ci.label = sym.local_name;
-                        switch (sym.kind) {
-                        case SymbolKind::Struct:
-                            ci.kind = CompletionItemKind::Struct;
-                            ci.detail = "struct";
-                            break;
-                        case SymbolKind::Enum:
-                            ci.kind = CompletionItemKind::Enum;
-                            ci.detail = "enum";
-                            break;
-                        case SymbolKind::Capability:
-                            ci.kind = CompletionItemKind::Interface;
-                            ci.detail = "capability";
-                            break;
-                        case SymbolKind::Agent:
-                            ci.kind = CompletionItemKind::Function;
-                            ci.detail = "agent";
-                            break;
-                        case SymbolKind::Predicate:
-                            ci.kind = CompletionItemKind::Function;
-                            ci.detail = "predicate";
-                            break;
-                        default:
-                            ci.kind = CompletionItemKind::Variable;
-                            break;
-                        }
-                        items.push_back(std::move(ci));
-                    }
-                }
+    if (const auto root = member_root_before_cursor(*source->source, offset); root.has_value()) {
+        push_member_completions(items, *snapshot, *source, offset, *root);
+    } else if (looks_like_type_position(*source->source, offset)) {
+        for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+            if (symbol.kind == SymbolKind::Struct || symbol.kind == SymbolKind::Enum ||
+                symbol.kind == SymbolKind::TypeAlias) {
+                push_symbol_completion(items, symbol);
             }
         }
+    } else {
+        for (const auto keyword : kTopLevelKeywords) {
+            push_keyword_completion(items, keyword);
+        }
+        for (const auto keyword : kExpressionKeywords) {
+            push_keyword_completion(items, keyword);
+        }
+        for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+            push_symbol_completion(items, symbol);
+        }
+        if (snapshot->type_check_result) {
+            push_enum_variant_completions(items, snapshot->type_check_result->environment);
+        }
+        push_state_completions(items, *snapshot, *source, offset);
+        push_workflow_node_completions(items, *snapshot, offset);
     }
 
-    // Build response array
     auto result = json::JsonValue::make_array();
     for (const auto &item : items) {
         result->push(serialize_completion_item(item));
@@ -284,374 +953,156 @@ void LspServer::handle_completion(const JsonRpcRequest &req) {
 
 void LspServer::handle_definition(const JsonRpcRequest &req) {
     if (!req.params) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+        send_null(transport_, req.id);
         return;
     }
 
-    const auto *td = req.params->get("textDocument");
-    const auto *pos_val = req.params->get("position");
-    if (td == nullptr || pos_val == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
         return;
     }
 
-    auto id = parse_text_document_identifier(*td);
-    auto pos = parse_position(*pos_val);
-    const auto *doc = store_.get(id.uri);
-
-    if (doc == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
         return;
     }
 
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-    if (parse_result.has_errors()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
+    if (!target.has_value()) {
+        send_null(transport_, req.id);
         return;
     }
 
-    Resolver resolver;
-    auto resolve_result = resolver.resolve(*parse_result.program);
-
-    // Convert LSP position (0-based) to offset
-    auto offset = parse_result.source.offset_of(pos.line + 1, pos.character + 1);
-
-    // Find a reference at this offset
-    for (const auto &ref : resolve_result.references()) {
-        if (ref.range.begin_offset <= offset && offset <= ref.range.end_offset) {
-            // Found a reference — get target symbol's declaration range
-            auto sym_opt = resolve_result.symbol_table.get(ref.target);
-            if (sym_opt.has_value()) {
-                const auto &sym = sym_opt.value().get();
-                auto start_pos = parse_result.source.locate(sym.declaration_range.begin_offset);
-                auto end_pos = parse_result.source.locate(sym.declaration_range.end_offset);
-
-                Location loc;
-                loc.uri = doc->uri;
-                loc.range.start = {static_cast<uint32_t>(start_pos.line - 1),
-                                   static_cast<uint32_t>(start_pos.column - 1)};
-                loc.range.end = {static_cast<uint32_t>(end_pos.line - 1),
-                                 static_cast<uint32_t>(end_pos.column - 1)};
-
-                JsonRpcResponse resp;
-                resp.id = req.id;
-                resp.result = serialize_location(loc);
-                transport_.send_response(resp);
-                return;
-            }
-        }
+    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    if (!symbol.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+    const auto location = symbol_location(*snapshot, symbol->get(), *source);
+    if (!location.has_value()) {
+        send_null(transport_, req.id);
+        return;
     }
 
     JsonRpcResponse resp;
     resp.id = req.id;
-    resp.result = json::JsonValue::make_null();
+    resp.result = serialize_location(*location);
     transport_.send_response(resp);
 }
 
 void LspServer::handle_hover(const JsonRpcRequest &req) {
     if (!req.params) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+        send_null(transport_, req.id);
         return;
     }
 
-    const auto *td = req.params->get("textDocument");
-    const auto *pos_val = req.params->get("position");
-    if (td == nullptr || pos_val == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
         return;
     }
 
-    auto id = parse_text_document_identifier(*td);
-    auto pos = parse_position(*pos_val);
-    const auto *doc = store_.get(id.uri);
-
-    if (doc == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
         return;
     }
 
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-    if (parse_result.has_errors()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
-        return;
-    }
-
-    Resolver resolver;
-    auto resolve_result = resolver.resolve(*parse_result.program);
-
-    TypeChecker checker;
-    auto tc_result = checker.check(*parse_result.program, resolve_result);
-
-    // Convert LSP position to offset
-    auto offset = parse_result.source.offset_of(pos.line + 1, pos.character + 1);
-
-    // Try to find expression type at this offset
-    const auto *hover_expr = tc_result.typed_program.find_expr_containing(offset, std::nullopt);
-    if (hover_expr != nullptr && hover_expr->type != nullptr) {
-        Hover hover;
-        hover.contents = "```\n" + hover_expr->type->describe() + "\n```";
-
-        auto start_pos = parse_result.source.locate(hover_expr->range.begin_offset);
-        auto end_pos = parse_result.source.locate(hover_expr->range.end_offset);
-        hover.range = Range{
-            {static_cast<uint32_t>(start_pos.line - 1),
-             static_cast<uint32_t>(start_pos.column - 1)},
-            {static_cast<uint32_t>(end_pos.line - 1),
-             static_cast<uint32_t>(end_pos.column - 1)},
-        };
-
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = serialize_hover(hover);
-        transport_.send_response(resp);
-        return;
-    }
-
-    // Fallback: check if hovering over a symbol reference
-    for (const auto &ref : resolve_result.references()) {
-        if (ref.range.begin_offset <= offset && offset <= ref.range.end_offset) {
-            auto sym_opt = resolve_result.symbol_table.get(ref.target);
-            if (sym_opt.has_value()) {
-                const auto &sym = sym_opt.value().get();
-                Hover hover;
-                hover.contents = "**" + sym.local_name + "** (" + sym.canonical_name + ")";
-
-                auto start_pos = parse_result.source.locate(ref.range.begin_offset);
-                auto end_pos = parse_result.source.locate(ref.range.end_offset);
-                hover.range = Range{
-                    {static_cast<uint32_t>(start_pos.line - 1),
-                     static_cast<uint32_t>(start_pos.column - 1)},
-                    {static_cast<uint32_t>(end_pos.line - 1),
-                     static_cast<uint32_t>(end_pos.column - 1)},
-                };
-
-                JsonRpcResponse resp;
-                resp.id = req.id;
-                resp.result = serialize_hover(hover);
-                transport_.send_response(resp);
-                return;
+    const auto offset = offset_at(*source->source, position);
+    if (const auto *typed = snapshot->typed_program(); typed != nullptr) {
+        const auto *expr = typed->find_expr_containing(offset, source->source_id);
+        if (expr != nullptr && expr->type != nullptr) {
+            Hover hover;
+            hover.contents = "```\n" + expr->type->describe() + "\n```";
+            if (!expr->semantic_name.empty()) {
+                hover.contents += "\n\n" + expr->semantic_name;
             }
+            hover.range = to_lsp_range(*source->source, expr->range);
+
+            JsonRpcResponse resp;
+            resp.id = req.id;
+            resp.result = serialize_hover(hover);
+            transport_.send_response(resp);
+            return;
         }
     }
+
+    const auto target = symbol_at(*snapshot, *source, offset);
+    if (!target.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    if (!symbol.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    Hover hover;
+    hover.contents = "**" + symbol->get().local_name + "** (" + symbol_detail(symbol->get().kind) +
+                     ")\n\n`" + symbol->get().canonical_name + "`";
+    hover.range = to_lsp_range(*source->source, symbol->get().declaration_range);
 
     JsonRpcResponse resp;
     resp.id = req.id;
-    resp.result = json::JsonValue::make_null();
+    resp.result = serialize_hover(hover);
     transport_.send_response(resp);
-}
-
-void LspServer::publish_diagnostics(const std::string &uri) {
-    const auto *doc = store_.get(uri);
-    if (doc == nullptr) {
-        return;
-    }
-
-    std::vector<LspDiagnostic> lsp_diags;
-
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-
-    auto collect = [&](const DiagnosticBag &bag) {
-        for (const auto &d : bag.entries()) {
-            LspDiagnostic ld;
-            ld.message = d.message;
-            if (d.code.has_value()) {
-                ld.code = *d.code;
-            }
-
-            switch (d.severity) {
-            case ahfl::DiagnosticSeverity::Error:
-                ld.severity = DiagnosticSeverity::Error;
-                break;
-            case ahfl::DiagnosticSeverity::Warning:
-                ld.severity = DiagnosticSeverity::Warning;
-                break;
-            case ahfl::DiagnosticSeverity::Note:
-                ld.severity = DiagnosticSeverity::Information;
-                break;
-            }
-
-            if (d.range.has_value()) {
-                auto start = parse_result.source.locate(d.range->begin_offset);
-                auto end = parse_result.source.locate(d.range->end_offset);
-                ld.range.start = {static_cast<uint32_t>(start.line - 1),
-                                  static_cast<uint32_t>(start.column - 1)};
-                ld.range.end = {static_cast<uint32_t>(end.line - 1),
-                                static_cast<uint32_t>(end.column - 1)};
-            }
-
-            lsp_diags.push_back(std::move(ld));
-        }
-    };
-
-    collect(parse_result.diagnostics);
-
-    if (!parse_result.has_errors()) {
-        Resolver resolver;
-        auto resolve_result = resolver.resolve(*parse_result.program);
-        collect(resolve_result.diagnostics);
-
-        if (!resolve_result.has_errors()) {
-            TypeChecker checker;
-            auto tc_result = checker.check(*parse_result.program, resolve_result);
-            collect(tc_result.diagnostics);
-        }
-    }
-
-    // Send notification
-    auto params = json::JsonValue::make_object();
-    params->set("uri", json::JsonValue::make_string(uri));
-
-    auto diag_array = json::JsonValue::make_array();
-    for (const auto &ld : lsp_diags) {
-        diag_array->push(serialize_diagnostic(ld));
-    }
-    params->set("diagnostics", std::move(diag_array));
-
-    transport_.send_notification("textDocument/publishDiagnostics", std::move(params));
 }
 
 void LspServer::handle_references(const JsonRpcRequest &req) {
     if (!req.params) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
+        send_empty_array(transport_, req.id);
         return;
     }
 
-    const auto *td = req.params->get("textDocument");
-    const auto *pos_val = req.params->get("position");
-    if (td == nullptr || pos_val == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_empty_array(transport_, req.id);
         return;
     }
 
-    auto id = parse_text_document_identifier(*td);
-    auto pos = parse_position(*pos_val);
-    const auto *doc = store_.get(id.uri);
-
-    if (doc == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_empty_array(transport_, req.id);
         return;
     }
 
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-    if (parse_result.has_errors()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
-        return;
-    }
-
-    Resolver resolver;
-    auto resolve_result = resolver.resolve(*parse_result.program);
-
-    auto offset = parse_result.source.offset_of(pos.line + 1, pos.character + 1);
-
-    // Find symbol at cursor
-    SymbolId target_id{};
-    bool found_target = false;
-
-    for (const auto &ref : resolve_result.references()) {
-        if (ref.range.begin_offset <= offset && offset <= ref.range.end_offset) {
-            target_id = ref.target;
-            found_target = true;
-            break;
-        }
-    }
-
-    // Also check if cursor is on a declaration
-    if (!found_target) {
-        for (const auto &sym : resolve_result.symbol_table.symbols()) {
-            if (sym.declaration_range.begin_offset <= offset &&
-                offset <= sym.declaration_range.end_offset) {
-                target_id = sym.id;
-                found_target = true;
-                break;
-            }
-        }
-    }
-
+    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
     auto result = json::JsonValue::make_array();
-
-    if (found_target) {
-        // Check includeDeclaration
+    if (target.has_value()) {
         bool include_declaration = false;
-        const auto *context = req.params->get("context");
-        if (context != nullptr) {
-            const auto *incl = context->get("includeDeclaration");
-            if (incl != nullptr) {
-                auto b = incl->as_bool();
-                if (b.has_value()) {
-                    include_declaration = *b;
+        if (const auto *context = req.params->get("context"); context != nullptr) {
+            if (const auto *include = context->get("includeDeclaration"); include != nullptr) {
+                if (const auto value = include->as_bool(); value.has_value()) {
+                    include_declaration = *value;
                 }
             }
         }
 
-        // Include declaration location
         if (include_declaration) {
-            auto sym_opt = resolve_result.symbol_table.get(target_id);
-            if (sym_opt.has_value()) {
-                const auto &sym = sym_opt.value().get();
-                auto start = parse_result.source.locate(sym.declaration_range.begin_offset);
-                auto end = parse_result.source.locate(sym.declaration_range.end_offset);
-                Location loc;
-                loc.uri = doc->uri;
-                loc.range.start = {static_cast<uint32_t>(start.line - 1),
-                                   static_cast<uint32_t>(start.column - 1)};
-                loc.range.end = {static_cast<uint32_t>(end.line - 1),
-                                 static_cast<uint32_t>(end.column - 1)};
-                result->push(serialize_location(loc));
+            const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+            if (symbol.has_value()) {
+                if (const auto location = symbol_location(*snapshot, symbol->get(), *source);
+                    location.has_value()) {
+                    result->push(serialize_location(*location));
+                }
             }
         }
 
-        // Collect all references to this symbol
-        for (const auto &ref : resolve_result.references()) {
-            if (ref.target == target_id) {
-                auto start = parse_result.source.locate(ref.range.begin_offset);
-                auto end = parse_result.source.locate(ref.range.end_offset);
-                Location loc;
-                loc.uri = doc->uri;
-                loc.range.start = {static_cast<uint32_t>(start.line - 1),
-                                   static_cast<uint32_t>(start.column - 1)};
-                loc.range.end = {static_cast<uint32_t>(end.line - 1),
-                                 static_cast<uint32_t>(end.column - 1)};
-                result->push(serialize_location(loc));
+        for (const auto &reference : snapshot->resolve_result.references()) {
+            if (reference.target == *target) {
+                if (const auto location = reference_location(*snapshot, reference, *source);
+                    location.has_value()) {
+                    result->push(serialize_location(*location));
+                }
             }
         }
     }
@@ -664,189 +1115,107 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
 
 void LspServer::handle_rename(const JsonRpcRequest &req) {
     if (!req.params) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+        send_null(transport_, req.id);
         return;
     }
 
-    const auto *td = req.params->get("textDocument");
-    const auto *pos_val = req.params->get("position");
-    const auto *new_name_val = req.params->get("newName");
-    if (td == nullptr || pos_val == nullptr || new_name_val == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
         return;
     }
 
-    auto new_name_sv = new_name_val->as_string();
-    if (!new_name_sv.has_value()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
-        return;
-    }
-    std::string new_name(*new_name_sv);
-
-    auto id = parse_text_document_identifier(*td);
-    auto pos = parse_position(*pos_val);
-    const auto *doc = store_.get(id.uri);
-
-    if (doc == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto new_name = read_string_field(*req.params, "newName");
+    if (!is_identifier(new_name) || is_keyword(new_name)) {
+        send_invalid_params(transport_, req.id, "newName must be a non-keyword AHFL identifier");
         return;
     }
 
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-    if (parse_result.has_errors()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
         return;
     }
 
-    Resolver resolver;
-    auto resolve_result = resolver.resolve(*parse_result.program);
-
-    auto offset = parse_result.source.offset_of(pos.line + 1, pos.character + 1);
-
-    // Find symbol at cursor
-    SymbolId target_id{};
-    bool found_target = false;
-
-    for (const auto &ref : resolve_result.references()) {
-        if (ref.range.begin_offset <= offset && offset <= ref.range.end_offset) {
-            target_id = ref.target;
-            found_target = true;
-            break;
-        }
+    const auto target = symbol_at(*snapshot, *source, offset_at(*source->source, position));
+    if (!target.has_value()) {
+        send_null(transport_, req.id);
+        return;
     }
 
-    if (!found_target) {
-        for (const auto &sym : resolve_result.symbol_table.symbols()) {
-            if (sym.declaration_range.begin_offset <= offset &&
-                offset <= sym.declaration_range.end_offset) {
-                target_id = sym.id;
-                found_target = true;
-                break;
+    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
+    if (!symbol.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    if (const auto conflict = snapshot->resolve_result.symbol_table.find_local(
+            symbol->get().name_space, new_name, symbol->get().module_name);
+        conflict.has_value() && !(conflict->get().id == symbol->get().id)) {
+        send_invalid_params(transport_, req.id, "rename would conflict with an existing symbol");
+        return;
+    }
+
+    WorkspaceEdit edit;
+    if (const auto declaration = symbol_location(*snapshot, symbol->get(), *source);
+        declaration.has_value()) {
+        edit.changes[declaration->uri].push_back(TextEdit{
+            .range = declaration->range,
+            .new_text = new_name,
+        });
+    }
+    for (const auto &reference : snapshot->resolve_result.references()) {
+        if (reference.target == *target) {
+            if (const auto location = reference_location(*snapshot, reference, *source);
+                location.has_value()) {
+                edit.changes[location->uri].push_back(TextEdit{
+                    .range = location->range,
+                    .new_text = new_name,
+                });
             }
-        }
-    }
-
-    if (!found_target) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
-        return;
-    }
-
-    WorkspaceEdit workspace_edit;
-    auto &edits = workspace_edit.changes[doc->uri];
-
-    // Add declaration rename
-    auto sym_opt = resolve_result.symbol_table.get(target_id);
-    if (sym_opt.has_value()) {
-        const auto &sym = sym_opt.value().get();
-        auto start = parse_result.source.locate(sym.declaration_range.begin_offset);
-        auto end = parse_result.source.locate(sym.declaration_range.end_offset);
-        TextEdit te;
-        te.range.start = {static_cast<uint32_t>(start.line - 1),
-                          static_cast<uint32_t>(start.column - 1)};
-        te.range.end = {static_cast<uint32_t>(end.line - 1),
-                        static_cast<uint32_t>(end.column - 1)};
-        te.new_text = new_name;
-        edits.push_back(std::move(te));
-    }
-
-    // Add reference renames
-    for (const auto &ref : resolve_result.references()) {
-        if (ref.target == target_id) {
-            auto start = parse_result.source.locate(ref.range.begin_offset);
-            auto end = parse_result.source.locate(ref.range.end_offset);
-            TextEdit te;
-            te.range.start = {static_cast<uint32_t>(start.line - 1),
-                              static_cast<uint32_t>(start.column - 1)};
-            te.range.end = {static_cast<uint32_t>(end.line - 1),
-                            static_cast<uint32_t>(end.column - 1)};
-            te.new_text = new_name;
-            edits.push_back(std::move(te));
         }
     }
 
     JsonRpcResponse resp;
     resp.id = req.id;
-    resp.result = serialize_workspace_edit(workspace_edit);
+    resp.result = serialize_workspace_edit(edit);
     transport_.send_response(resp);
 }
 
 void LspServer::handle_document_symbol(const JsonRpcRequest &req) {
     if (!req.params) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
+        send_empty_array(transport_, req.id);
         return;
     }
 
-    const auto *td = req.params->get("textDocument");
-    if (td == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
         return;
     }
 
-    auto id = parse_text_document_identifier(*td);
-    const auto *doc = store_.get(id.uri);
-
-    if (doc == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_empty_array(transport_, req.id);
         return;
     }
-
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-    if (parse_result.has_errors()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_array();
-        transport_.send_response(resp);
-        return;
-    }
-
-    Resolver resolver;
-    auto resolve_result = resolver.resolve(*parse_result.program);
 
     auto result = json::JsonValue::make_array();
+    for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+        if (!same_source(symbol.source_id, source->source_id)) {
+            continue;
+        }
 
-    for (const auto &sym : resolve_result.symbol_table.symbols()) {
-        auto start = parse_result.source.locate(sym.declaration_range.begin_offset);
-        auto end = parse_result.source.locate(sym.declaration_range.end_offset);
-
-        DocumentSymbol ds;
-        ds.name = sym.local_name;
-        ds.kind = to_lsp_symbol_kind(sym.kind);
-        ds.range.start = {static_cast<uint32_t>(start.line - 1),
-                          static_cast<uint32_t>(start.column - 1)};
-        ds.range.end = {static_cast<uint32_t>(end.line - 1),
-                        static_cast<uint32_t>(end.column - 1)};
-        ds.selection_range = ds.range;
-
-        result->push(serialize_document_symbol(ds));
+        DocumentSymbol doc_symbol;
+        doc_symbol.name = symbol.local_name;
+        doc_symbol.kind = to_lsp_symbol_kind(symbol.kind);
+        doc_symbol.range = to_lsp_range(*source->source, symbol.declaration_range);
+        doc_symbol.selection_range = doc_symbol.range;
+        append_symbol_children(doc_symbol, *snapshot, symbol, *source);
+        result->push(serialize_document_symbol(doc_symbol));
     }
 
     JsonRpcResponse resp;
@@ -858,51 +1227,41 @@ void LspServer::handle_document_symbol(const JsonRpcRequest &req) {
 void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
     std::string query;
     if (req.params) {
-        const auto *q = req.params->get("query");
-        if (q != nullptr) {
-            auto sv = q->as_string();
-            if (sv.has_value()) {
-                query = std::string(*sv);
-            }
-        }
+        query = read_string_field(*req.params, "query");
     }
 
     auto result = json::JsonValue::make_array();
-
-    for (const auto &uri : store_.all_uris()) {
-        const auto *doc = store_.get(uri);
-        if (doc == nullptr) {
+    std::unordered_set<std::string> emitted;
+    for (const auto *snapshot : analysis_.workspace_snapshots()) {
+        if (snapshot == nullptr) {
             continue;
         }
-
-        Frontend frontend;
-        auto parse_result = frontend.parse_text(doc->uri, doc->text);
-        if (parse_result.has_errors()) {
+        const auto *fallback = snapshot->source_for_uri(snapshot->requested_uri);
+        if (fallback == nullptr) {
             continue;
         }
-
-        Resolver resolver;
-        auto resolve_result = resolver.resolve(*parse_result.program);
-
-        for (const auto &sym : resolve_result.symbol_table.symbols()) {
-            // Filter by query (substring match)
-            if (!query.empty() && sym.local_name.find(query) == std::string::npos) {
+        for (const auto &symbol : snapshot->resolve_result.symbol_table.symbols()) {
+            if (!query.empty() && symbol.local_name.find(query) == std::string::npos &&
+                symbol.canonical_name.find(query) == std::string::npos) {
+                continue;
+            }
+            const auto location = symbol_location(*snapshot, symbol, *fallback);
+            if (!location.has_value()) {
                 continue;
             }
 
-            auto start = parse_result.source.locate(sym.declaration_range.begin_offset);
-            auto end = parse_result.source.locate(sym.declaration_range.end_offset);
+            const auto key = symbol.canonical_name + "@" + location->uri + ":" +
+                             std::to_string(location->range.start.line) + ":" +
+                             std::to_string(location->range.start.character);
+            if (!emitted.insert(key).second) {
+                continue;
+            }
 
-            SymbolInformation si;
-            si.name = sym.local_name;
-            si.kind = to_lsp_symbol_kind(sym.kind);
-            si.location.uri = doc->uri;
-            si.location.range.start = {static_cast<uint32_t>(start.line - 1),
-                                       static_cast<uint32_t>(start.column - 1)};
-            si.location.range.end = {static_cast<uint32_t>(end.line - 1),
-                                     static_cast<uint32_t>(end.column - 1)};
-
-            result->push(serialize_symbol_information(si));
+            SymbolInformation info;
+            info.name = symbol.local_name;
+            info.kind = to_lsp_symbol_kind(symbol.kind);
+            info.location = *location;
+            result->push(serialize_symbol_information(info));
         }
     }
 
@@ -914,228 +1273,70 @@ void LspServer::handle_workspace_symbol(const JsonRpcRequest &req) {
 
 void LspServer::handle_signature_help(const JsonRpcRequest &req) {
     if (!req.params) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+        send_null(transport_, req.id);
         return;
     }
 
-    const auto *td = req.params->get("textDocument");
-    const auto *pos_val = req.params->get("position");
-    if (td == nullptr || pos_val == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
         return;
     }
 
-    auto id = parse_text_document_identifier(*td);
-    auto pos = parse_position(*pos_val);
-    const auto *doc = store_.get(id.uri);
-
-    if (doc == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr ||
+        !snapshot->type_check_result) {
+        send_null(transport_, req.id);
         return;
     }
 
-    const auto &text = doc->text;
-
-    // Convert 0-based LSP position to offset in text
-    std::size_t offset = 0;
-    {
-        uint32_t line = 0;
-        for (std::size_t i = 0; i < text.size(); ++i) {
-            if (line == pos.line) {
-                offset = i + pos.character;
-                break;
-            }
-            if (text[i] == '\n') {
-                ++line;
-            }
-        }
-        if (line < pos.line) {
-            offset = text.size();
-        }
-    }
-
-    // Scan backwards from cursor to find the nearest unmatched '('
-    int paren_depth = 0;
-    std::size_t open_paren_pos = std::string::npos;
-    for (std::size_t i = offset; i > 0; --i) {
-        char c = text[i - 1];
-        if (c == ')') {
-            ++paren_depth;
-        } else if (c == '(') {
-            if (paren_depth == 0) {
-                open_paren_pos = i - 1;
-                break;
-            }
-            --paren_depth;
-        }
-    }
-
-    if (open_paren_pos == std::string::npos) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
+    const auto offset = offset_at(*source->source, position);
+    const auto context = call_context_before_cursor(*source->source, offset);
+    if (!context.has_value()) {
+        send_null(transport_, req.id);
         return;
     }
 
-    // Extract the identifier before the '(' — skip whitespace, then read identifier chars
-    std::string callable_name;
-    {
-        std::size_t idx = open_paren_pos;
-        // Skip whitespace before '('
-        while (idx > 0 && (text[idx - 1] == ' ' || text[idx - 1] == '\t')) {
-            --idx;
-        }
-        // Read identifier characters backwards
-        std::size_t end_idx = idx;
-        while (idx > 0 && (std::isalnum(static_cast<unsigned char>(text[idx - 1])) ||
-                           text[idx - 1] == '_')) {
-            --idx;
-        }
-        callable_name = text.substr(idx, end_idx - idx);
-    }
-
-    if (callable_name.empty()) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
-        return;
-    }
-
-    // Count commas between open_paren_pos and cursor to determine active_parameter
-    int active_parameter = 0;
-    {
-        int depth = 0;
-        for (std::size_t i = open_paren_pos + 1; i < offset && i < text.size(); ++i) {
-            char c = text[i];
-            if (c == '(') {
-                ++depth;
-            } else if (c == ')') {
-                --depth;
-            } else if (c == ',' && depth == 0) {
-                ++active_parameter;
-            }
-        }
-    }
-
-    // Parse and resolve to look up the callable
-    Frontend frontend;
-    auto parse_result = frontend.parse_text(doc->uri, doc->text);
-    if (!parse_result.program) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
-        return;
-    }
-
-    Resolver resolver;
-    auto resolve_result = resolver.resolve(*parse_result.program);
-
-    // Try to find the callable as a capability or predicate in the AST
-    const ast::CapabilityDecl *cap_decl = nullptr;
-    const ast::PredicateDecl *pred_decl = nullptr;
-
-    auto cap_sym = resolve_result.symbol_table.find_local(
-        SymbolNamespace::Capabilities, callable_name);
-    if (cap_sym.has_value()) {
-        for (const auto &decl : parse_result.program->declarations) {
-            if (auto *cap = dynamic_cast<ast::CapabilityDecl *>(decl.get())) {
-                if (cap->name == callable_name) {
-                    cap_decl = cap;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (cap_decl == nullptr) {
-        auto pred_sym = resolve_result.symbol_table.find_local(
-            SymbolNamespace::Predicates, callable_name);
-        if (pred_sym.has_value()) {
-            for (const auto &decl : parse_result.program->declarations) {
-                if (auto *pred = dynamic_cast<ast::PredicateDecl *>(decl.get())) {
-                    if (pred->name == callable_name) {
-                        pred_decl = pred;
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    if (cap_decl == nullptr && pred_decl == nullptr) {
-        JsonRpcResponse resp;
-        resp.id = req.id;
-        resp.result = json::JsonValue::make_null();
-        transport_.send_response(resp);
-        return;
-    }
-
-    // Build SignatureHelp from the found declaration
+    const auto &[callable_name, active_parameter] = *context;
+    const auto &environment = snapshot->type_check_result->environment;
     SignatureHelp help;
     help.active_signature = 0;
     help.active_parameter = active_parameter;
 
-    SignatureInformation sig_info;
-    if (cap_decl != nullptr) {
-        std::string label = cap_decl->name + "(";
-        for (std::size_t i = 0; i < cap_decl->params.size(); ++i) {
-            if (i > 0) {
-                label += ", ";
-            }
-            const auto &p = *cap_decl->params[i];
-            std::string type_name = p.type ? p.type->spelling() : "?";
-            label += p.name + ": " + type_name;
-        }
-        label += ")";
-        if (cap_decl->return_type) {
-            label += " -> " + cap_decl->return_type->spelling();
-        }
-        sig_info.label = std::move(label);
-        sig_info.documentation = "capability " + cap_decl->name;
-
-        for (const auto &p : cap_decl->params) {
-            ParameterInformation pi;
-            std::string type_name = p->type ? p->type->spelling() : "?";
-            pi.label = p->name + ": " + type_name;
-            pi.documentation = type_name;
-            sig_info.parameters.push_back(std::move(pi));
-        }
-    } else {
-        std::string label = pred_decl->name + "(";
-        for (std::size_t i = 0; i < pred_decl->params.size(); ++i) {
-            if (i > 0) {
-                label += ", ";
-            }
-            const auto &p = *pred_decl->params[i];
-            std::string type_name = p.type ? p.type->spelling() : "?";
-            label += p.name + ": " + type_name;
-        }
-        label += ")";
-        sig_info.label = std::move(label);
-        sig_info.documentation = "predicate " + pred_decl->name;
-
-        for (const auto &p : pred_decl->params) {
-            ParameterInformation pi;
-            std::string type_name = p->type ? p->type->spelling() : "?";
-            pi.label = p->name + ": " + type_name;
-            pi.documentation = type_name;
-            sig_info.parameters.push_back(std::move(pi));
+    if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
+            SymbolNamespace::Capabilities, callable_name);
+        symbol.has_value()) {
+        const auto capability = environment.get_capability(symbol->get().id);
+        if (capability.has_value()) {
+            SignatureInformation info;
+            info.label = callable_signature(capability->get());
+            info.documentation = "capability " + capability->get().canonical_name;
+            fill_signature_parameters(info, capability->get());
+            help.signatures.push_back(std::move(info));
         }
     }
 
-    help.signatures.push_back(std::move(sig_info));
+    if (help.signatures.empty()) {
+        if (const auto symbol = snapshot->resolve_result.symbol_table.find_local(
+                SymbolNamespace::Predicates, callable_name);
+            symbol.has_value()) {
+            const auto predicate = environment.get_predicate(symbol->get().id);
+            if (predicate.has_value()) {
+                SignatureInformation info;
+                info.label = callable_signature(predicate->get());
+                info.documentation = "predicate " + predicate->get().canonical_name;
+                fill_signature_parameters(info, predicate->get());
+                help.signatures.push_back(std::move(info));
+            }
+        }
+    }
+
+    if (help.signatures.empty()) {
+        send_null(transport_, req.id);
+        return;
+    }
 
     JsonRpcResponse resp;
     resp.id = req.id;

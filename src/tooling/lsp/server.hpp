@@ -2,7 +2,9 @@
 
 #include <istream>
 #include <ostream>
+#include <string_view>
 
+#include "tooling/lsp/analysis_service.hpp"
 #include "tooling/lsp/document_store.hpp"
 #include "tooling/lsp/json_rpc.hpp"
 
@@ -10,17 +12,19 @@ namespace ahfl::lsp {
 
 /// AHFL Language Server — handles LSP protocol over stdin/stdout.
 class LspServer {
-public:
+  public:
     LspServer(std::istream &in, std::ostream &out);
 
     /// Blocking event loop. Returns when the transport reaches EOF or receives exit.
     void run();
 
-private:
+  private:
     JsonRpcTransport transport_;
     DocumentStore store_;
+    AnalysisService analysis_;
     bool initialized_{false};
     bool shutdown_requested_{false};
+    bool trace_enabled_{false};
 
     // Request handlers
     void handle_request(const JsonRpcRequest &req);
@@ -45,6 +49,7 @@ private:
 
     // Analysis
     void publish_diagnostics(const std::string &uri);
+    void trace(std::string_view message) const;
 };
 
 } // namespace ahfl::lsp
