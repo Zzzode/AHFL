@@ -25,8 +25,9 @@
 2. project 输入统一支持 `<input.ahfl>`、`--search-root`、`--project`、`--workspace --project-name`。
 3. package authoring 仍通过独立 `--package <ahfl.package.json>` 输入进入 native package / review / runtime-adjacent artifact。
 4. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
-5. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
-6. 新增 CLI 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
+5. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
+6. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
+7. 新增 CLI 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
 
 ## 总览
 
@@ -50,6 +51,8 @@ ahflc dump-types <input-mode>
 ahflc dump-project <input-mode>
 ahflc emit-ir <input-mode>
 ahflc emit-ir-json <input-mode>
+ahflc emit-opt-ir <input-mode>
+ahflc emit-opt-ir-json <input-mode>
 ahflc emit-native-json [--package <ahfl.package.json>] <input-mode>
 ahflc emit-execution-plan [--package <ahfl.package.json>] <input-mode>
 ahflc emit-runtime-session --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
@@ -94,7 +97,7 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
 | `--dump-ast` | - | 输出 AST outline |
 | `--dump-types` | - | 输出类型环境 |
 | `--explain` | - | 启用结构化解释 |
-| `-O` / `--optimize` | - | 启用优化 passes |
+| `-O` / `--optimize` | - | 启用优化 passes；普通 backend 路径运行 Semantic IR passes，`emit opt-ir` / `emit opt-ir-json` 输出 Opt IR passes 后的结果 |
 
 ### V0.11 新增选项
 
@@ -102,6 +105,34 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
 |------|------|------|
 | `--show-hidden` | - | 在 help 中显示 Internal provider diagnostic artifact，并允许 `emit-provider-artifact` 解析 Internal artifact |
 | `--help` / `-h` | - | 显示用法帮助 (可组合 `--show-hidden` 查看完整清单) |
+
+## Optimization IR Artifact
+
+`emit opt-ir` / `emit-opt-ir` 是当前 Opt IR 的文本诊断入口；`emit opt-ir-json` / `emit-opt-ir-json` 是同一 Opt IR 模型的机器可读入口，输出 `AHFL_OPT_IR_V1` JSON artifact。二者都会在完成 parse、resolve、typecheck、validate、Typed HIR lowering 和 Semantic IR lowering 之后，把 `ir::Program` 降到 `ir::opt::OptProgram`。artifact 包含 OptFunction、local、basic block、statement、terminator、source range，以及无法降为 pure expression fragment 的 temporal atom `skipped_temporal` 记录。
+
+示例：
+
+```bash
+# 输出未运行 Opt IR passes 的 Opt IR
+ahflc emit opt-ir tests/golden/ir/ok_expr_temporal.ahfl
+
+# 先运行 Semantic IR passes，再输出 Opt IR passes 后的结果
+ahflc emit opt-ir -O tests/golden/ir/ok_expr_temporal.ahfl
+
+# 输出未运行 Opt IR passes 的 Opt IR JSON
+ahflc emit opt-ir-json tests/golden/ir/ok_expr_temporal.ahfl
+
+# 先运行 Semantic IR passes，再输出 Opt IR passes 后的 Opt IR JSON
+ahflc emit opt-ir-json -O tests/golden/ir/ok_expr_temporal.ahfl
+```
+
+当前边界：
+
+1. `emit opt-ir` 是 artifact dump，不是 core backend contract。
+2. 普通 `emit-ir`、`emit-ir-json`、SMV、native / execution / assurance 输出仍以 `ir::Program` 为输入。
+3. `-O` 在普通 backend 路径中不会把 Opt IR 回降到 Semantic IR，也不会改变 backend 消费类型。
+4. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
+5. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 Semantic IR 时，仍应使用 `emit-ir-json`。
 
 ## Provider Artifact 可见性
 
