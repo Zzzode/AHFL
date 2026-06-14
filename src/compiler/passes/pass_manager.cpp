@@ -82,6 +82,9 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
             continue;
         }
 
+        const auto required_derived = pass->required_derived_analyses();
+        ir::ensure_derived_analyses(program, required_derived);
+
         // Ensure required analyses are available
         for (auto req : pass->required_analyses()) {
             ensure_analysis(req, program);
@@ -95,7 +98,14 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
 
         if (modified) {
             result.any_modified = true;
-            ir::recompute_derived_analyses(program, ir::ProgramPhase::Optimized);
+            const auto invalidated_derived = pass->invalidated_derived_analyses();
+            if (!invalidated_derived.empty()) {
+                ir::mark_derived_analyses_stale(program);
+                ir::ensure_derived_analyses(
+                    program, invalidated_derived, ir::ProgramPhase::Optimized);
+            } else {
+                program.phase = ir::ProgramPhase::Optimized;
+            }
             // Invalidate analyses declared by this pass
             for (auto inv : pass->invalidated_analyses()) {
                 invalidate_analysis(inv);
@@ -105,6 +115,7 @@ PassManager::RunResult PassManager::run(ir::Program &program) {
     }
 
     // Run analysis passes (only those not yet computed)
+    ir::ensure_derived_analyses(program);
     for (std::size_t i = 0; i < analyses_.size(); ++i) {
         if (analysis_results_[i] == nullptr) {
             analysis_results_[i] = analyses_[i]->run(program);

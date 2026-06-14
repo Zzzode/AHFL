@@ -223,7 +223,7 @@ SmvPrinter::find_embedded_observation_expr(const ir::FormalObservationScope &sco
             }
 
             const auto &clause = contract.get().clauses[scope.clause_index];
-            if (const auto *expr = std::get_if<ir::ExprPtr>(&clause.value);
+            if (const auto *expr = std::get_if<ir::ExprRef>(&clause.value);
                 expr != nullptr && scope.atom_index == 0) {
                 return expr->get();
             }

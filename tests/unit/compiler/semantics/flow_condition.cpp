@@ -506,3 +506,368 @@ TEST_CASE("Reversed none comparison (none != x) narrows symmetrically") {
                       });
     CHECK(narrowed_tokens >= 1);
 }
+
+// ---------------------------------------------------------------------------
+// TC7: IsVariant fact extraction from `x == Enum::Variant` condition.
+// ---------------------------------------------------------------------------
+TEST_CASE("IsVariant fact extracted from enum equality condition") {
+    // Program with an enum type and a context field of that enum type.
+    const std::string source = R"AHFL(
+enum Priority {
+    Low,
+    High,
+}
+
+struct Request {
+    fallback: String;
+}
+
+struct Context {
+    level: Priority = Priority::Low;
+}
+
+struct Response {
+    value: String;
+}
+
+agent NarrowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for NarrowAgent {
+    state Done {
+        if ctx.level == Priority::High {
+            return Response { value: "high" };
+        } else {
+            return Response { value: "low" };
+        }
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("variant_facts.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    // Walk the AST to locate the if-condition.
+    const ahfl::ast::ExprSyntax *condition = nullptr;
+    for (const auto &decl : parse_result.program->declarations) {
+        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
+            continue;
+        }
+        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        if (flow == nullptr) {
+            continue;
+        }
+        for (const auto &handler : flow->state_handlers) {
+            if (!handler->body) {
+                continue;
+            }
+            for (const auto &stmt : handler->body->statements) {
+                if (stmt->kind != ahfl::ast::StatementSyntaxKind::If || !stmt->if_stmt) {
+                    continue;
+                }
+                condition = stmt->if_stmt->condition.get();
+            }
+        }
+    }
+    REQUIRE(condition != nullptr);
+
+    const auto facts = ahfl::extract_condition_facts(*condition);
+
+    const ahfl::Place level_place{.root = "ctx", .members = {"level"}};
+
+    // when_true should have an IsVariant fact for Priority::High.
+    CHECK(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsVariant));
+    CHECK(facts.when_true.has_variant_fact(level_place, "Priority", "High"));
+
+    // Negative checks: it's not an IsNone/IsNotNone fact.
+    CHECK_FALSE(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsNone));
+    CHECK_FALSE(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsNotNone));
+
+    // when_false should carry the exact complement.
+    CHECK_FALSE(facts.when_false.has_fact(level_place, ahfl::TypeFactKind::IsVariant));
+    CHECK(facts.when_false.has_fact(level_place, ahfl::TypeFactKind::IsNotVariant));
+    CHECK(facts.when_false.has_not_variant_fact(level_place, "Priority", "High"));
+}
+
+// ---------------------------------------------------------------------------
+// TC7b: IsNotVariant fact extraction from `x != Enum::Variant` condition.
+// ---------------------------------------------------------------------------
+TEST_CASE("IsNotVariant fact extracted from enum inequality condition") {
+    const std::string source = R"AHFL(
+enum Priority {
+    Low,
+    High,
+}
+
+struct Request {
+    fallback: String;
+}
+
+struct Context {
+    level: Priority = Priority::Low;
+}
+
+struct Response {
+    value: String;
+}
+
+agent NarrowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for NarrowAgent {
+    state Done {
+        if ctx.level != Priority::High {
+            return Response { value: "not-high" };
+        } else {
+            return Response { value: "high" };
+        }
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("variant_not_facts.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::ast::ExprSyntax *condition = nullptr;
+    for (const auto &decl : parse_result.program->declarations) {
+        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
+            continue;
+        }
+        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        if (flow == nullptr) {
+            continue;
+        }
+        for (const auto &handler : flow->state_handlers) {
+            if (!handler->body) {
+                continue;
+            }
+            for (const auto &stmt : handler->body->statements) {
+                if (stmt->kind != ahfl::ast::StatementSyntaxKind::If || !stmt->if_stmt) {
+                    continue;
+                }
+                condition = stmt->if_stmt->condition.get();
+            }
+        }
+    }
+    REQUIRE(condition != nullptr);
+
+    const auto facts = ahfl::extract_condition_facts(*condition);
+    const ahfl::Place level_place{.root = "ctx", .members = {"level"}};
+
+    CHECK(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsNotVariant));
+    CHECK(facts.when_true.has_not_variant_fact(level_place, "Priority", "High"));
+    CHECK_FALSE(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsVariant));
+    CHECK(facts.when_false.has_fact(level_place, ahfl::TypeFactKind::IsVariant));
+    CHECK(facts.when_false.has_variant_fact(level_place, "Priority", "High"));
+}
+
+// ---------------------------------------------------------------------------
+// TC7c: Enum equality narrows the place to an enum-variant singleton type.
+// ---------------------------------------------------------------------------
+TEST_CASE("Enum equality narrows then-branch expression to variant singleton type") {
+    const std::string source = R"AHFL(
+enum Priority {
+    Low,
+    High,
+}
+
+struct Request {
+    fallback: String;
+}
+
+struct Context {
+    level: Priority = Priority::Low;
+}
+
+struct Response {
+    value: Priority;
+}
+
+agent NarrowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for NarrowAgent {
+    state Done {
+        if ctx.level == Priority::High {
+            return Response { value: ctx.level };
+        } else {
+            return Response { value: Priority::Low };
+        }
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source(source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *then_use = find_expr_by_nth(source, result, "ctx.level", 2);
+    REQUIRE(then_use != nullptr);
+    REQUIRE(then_use->type != nullptr);
+
+    const auto *variant = then_use->type->get_if<ahfl::types::EnumVariantT>();
+    REQUIRE(variant != nullptr);
+    CHECK(variant->canonical_name == "Priority");
+    CHECK(variant->variant_name == "High");
+}
+
+// ---------------------------------------------------------------------------
+// TC7d: In a two-variant enum, `x != Enum::A` leaves exactly one variant.
+// ---------------------------------------------------------------------------
+TEST_CASE("Enum inequality narrows two-variant then branch to remaining singleton type") {
+    const std::string source = R"AHFL(
+enum Priority {
+    Low,
+    High,
+}
+
+struct Request {
+    fallback: String;
+}
+
+struct Context {
+    level: Priority = Priority::Low;
+}
+
+struct Response {
+    value: Priority;
+}
+
+agent NarrowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for NarrowAgent {
+    state Done {
+        if ctx.level != Priority::High {
+            return Response { value: ctx.level };
+        } else {
+            return Response { value: Priority::High };
+        }
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source(source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *then_use = find_expr_by_nth(source, result, "ctx.level", 2);
+    REQUIRE(then_use != nullptr);
+    REQUIRE(then_use->type != nullptr);
+
+    const auto *variant = then_use->type->get_if<ahfl::types::EnumVariantT>();
+    REQUIRE(variant != nullptr);
+    CHECK(variant->canonical_name == "Priority");
+    CHECK(variant->variant_name == "Low");
+}
+
+// ---------------------------------------------------------------------------
+// TC8: IsVariant fact with reversed operands: `Enum::Variant == x`.
+// ---------------------------------------------------------------------------
+TEST_CASE("IsVariant fact extracted with reversed operand order") {
+    const std::string source = R"AHFL(
+enum Priority {
+    Low,
+    High,
+}
+
+struct Request {
+    fallback: String;
+}
+
+struct Context {
+    level: Priority = Priority::Low;
+}
+
+struct Response {
+    value: String;
+}
+
+agent NarrowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for NarrowAgent {
+    state Done {
+        if Priority::Low == ctx.level {
+            return Response { value: "low" };
+        } else {
+            return Response { value: "high" };
+        }
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("variant_facts_rev.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    // Walk the AST to locate the if-condition.
+    const ahfl::ast::ExprSyntax *condition = nullptr;
+    for (const auto &decl : parse_result.program->declarations) {
+        if (decl->kind != ahfl::ast::NodeKind::FlowDecl) {
+            continue;
+        }
+        const auto *flow = dynamic_cast<const ahfl::ast::FlowDecl *>(decl.get());
+        if (flow == nullptr) {
+            continue;
+        }
+        for (const auto &handler : flow->state_handlers) {
+            if (!handler->body) {
+                continue;
+            }
+            for (const auto &stmt : handler->body->statements) {
+                if (stmt->kind != ahfl::ast::StatementSyntaxKind::If || !stmt->if_stmt) {
+                    continue;
+                }
+                condition = stmt->if_stmt->condition.get();
+            }
+        }
+    }
+    REQUIRE(condition != nullptr);
+
+    const auto facts = ahfl::extract_condition_facts(*condition);
+
+    const ahfl::Place level_place{.root = "ctx", .members = {"level"}};
+
+    // Reversed order should still produce the same IsVariant fact.
+    CHECK(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsVariant));
+    CHECK(facts.when_true.has_variant_fact(level_place, "Priority", "Low"));
+}

@@ -1,0 +1,1152 @@
+{
+  "format": "AHFL_OPT_IR_V1",
+  "source_program_version": "ahfl.ir.v1",
+  "skipped_temporal": [
+    {
+      "scope": "workflow::formal::flow_workflow::ReviewWorkflow::safety::0",
+      "kind": "running",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 1040,
+        "end": 1055
+      }
+    },
+    {
+      "scope": "workflow::formal::flow_workflow::ReviewWorkflow::safety::0",
+      "kind": "completed",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 1059,
+        "end": 1075
+      }
+    },
+    {
+      "scope": "workflow::formal::flow_workflow::ReviewWorkflow::safety::1",
+      "kind": "running",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 1102,
+        "end": 1116
+      }
+    },
+    {
+      "scope": "workflow::formal::flow_workflow::ReviewWorkflow::liveness::0",
+      "kind": "completed",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 1170,
+        "end": 1193
+      }
+    }
+  ],
+  "functions": [
+    {
+      "name": "flow::formal::flow_workflow::ReviewAgent::Init",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "unresolved",
+        "display_name": "",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 541,
+        "end": 675
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Context",
+            "canonical_name": "formal::flow_workflow::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 565,
+            "end": 587
+          }
+        },
+        {
+          "id": 4,
+          "name": "_tmp1",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 565,
+            "end": 587
+          }
+        },
+        {
+          "id": 5,
+          "name": "_tmp2",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 602,
+            "end": 617
+          }
+        },
+        {
+          "id": 6,
+          "name": "_tmp3",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 647,
+            "end": 659
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "allow_fast_track",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 0,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 565,
+                "end": 587
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "switch_bool",
+            "condition": 3,
+            "return_value": null,
+            "target": null,
+            "then_block": 1,
+            "else_block": 2,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 562,
+              "end": 669
+            }
+          }
+        },
+        {
+          "id": 1,
+          "label": "if.then",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 5,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "FastTrack"
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 602,
+                "end": 617
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 5,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 602,
+              "end": 617
+            }
+          }
+        },
+        {
+          "id": 2,
+          "label": "if.else",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 6,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "Review"
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 647,
+                "end": 659
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 6,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 647,
+              "end": 659
+            }
+          }
+        },
+        {
+          "id": 3,
+          "label": "if.merge",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 541,
+              "end": 675
+            }
+          }
+        },
+        {
+          "id": 4,
+          "label": "after.goto",
+          "statements": [],
+          "terminator": {
+            "kind": "goto",
+            "condition": null,
+            "return_value": null,
+            "target": 3,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 562,
+              "end": 669
+            }
+          }
+        },
+        {
+          "id": 5,
+          "label": "after.goto",
+          "statements": [],
+          "terminator": {
+            "kind": "goto",
+            "condition": null,
+            "return_value": null,
+            "target": 3,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 562,
+              "end": 669
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flow::formal::flow_workflow::ReviewAgent::FastTrack",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "unresolved",
+        "display_name": "",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 681,
+        "end": 723
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Context",
+            "canonical_name": "formal::flow_workflow::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 707,
+            "end": 717
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "Done"
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 707,
+                "end": 717
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 3,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 707,
+              "end": 717
+            }
+          }
+        },
+        {
+          "id": 1,
+          "label": "after.goto",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 681,
+              "end": 723
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flow::formal::flow_workflow::ReviewAgent::Review",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "unresolved",
+        "display_name": "",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 729,
+        "end": 768
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Context",
+            "canonical_name": "formal::flow_workflow::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 752,
+            "end": 762
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "Done"
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 752,
+                "end": 762
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 3,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 752,
+              "end": 762
+            }
+          }
+        },
+        {
+          "id": 1,
+          "label": "after.goto",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 729,
+              "end": 768
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flow::formal::flow_workflow::ReviewAgent::Done",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "unresolved",
+        "display_name": "",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 774,
+        "end": 855
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Context",
+            "canonical_name": "formal::flow_workflow::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 830,
+            "end": 837
+          }
+        },
+        {
+          "id": 4,
+          "name": "_tmp1",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 802,
+            "end": 848
+          }
+        },
+        {
+          "id": 5,
+          "name": "_tmp2",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 795,
+            "end": 849
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "tag",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 1,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 830,
+                "end": 837
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 4,
+              "rvalue": {
+                "kind": "aggregate",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 3,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "formal::flow_workflow::Response",
+                  "canonical_name": "formal::flow_workflow::Response"
+                }
+              },
+              "source_range": {
+                "begin": 802,
+                "end": 848
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 4,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 795,
+              "end": 849
+            }
+          }
+        },
+        {
+          "id": 1,
+          "label": "after.return",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 774,
+              "end": 855
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "workflow::formal::flow_workflow::ReviewWorkflow::node::first::input",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Request",
+        "canonical_name": "formal::flow_workflow::Request"
+      },
+      "source_range": {
+        "begin": 932,
+        "end": 963
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 956,
+            "end": 961
+          }
+        },
+        {
+          "id": 1,
+          "name": "first",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "second",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 0,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 956,
+              "end": 961
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "workflow::formal::flow_workflow::ReviewWorkflow::node::second::input",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Request",
+        "canonical_name": "formal::flow_workflow::Request"
+      },
+      "source_range": {
+        "begin": 968,
+        "end": 1014
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 993,
+            "end": 998
+          }
+        },
+        {
+          "id": 1,
+          "name": "first",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "second",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 0,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 993,
+              "end": 998
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "workflow::formal::flow_workflow::ReviewWorkflow::return",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "struct",
+        "display_name": "formal::flow_workflow::Response",
+        "canonical_name": "formal::flow_workflow::Response"
+      },
+      "source_range": {
+        "begin": 1208,
+        "end": 1214
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "first",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "second",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 1208,
+            "end": 1214
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 2,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1208,
+              "end": 1214
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "workflow::formal::flow_workflow::ReviewWorkflow::safety::1::embedded::0",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "bool",
+        "display_name": "Bool",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 1120,
+        "end": 1142
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Request",
+            "canonical_name": "formal::flow_workflow::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "first",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "second",
+          "type": {
+            "kind": "struct",
+            "display_name": "formal::flow_workflow::Response",
+            "canonical_name": "formal::flow_workflow::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1120,
+            "end": 1142
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "allow_fast_track",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 0,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1120,
+                "end": 1142
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 3,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1120,
+              "end": 1142
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

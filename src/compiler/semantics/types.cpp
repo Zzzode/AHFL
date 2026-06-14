@@ -29,6 +29,7 @@ namespace {
 std::size_t TypeContext::TypeKeyHash::operator()(const TypeKey &key) const noexcept {
     auto seed = std::hash<int>{}(static_cast<int>(key.kind));
     seed = hash_mix(seed, std::hash<std::string>{}(key.name));
+    seed = hash_mix(seed, std::hash<std::string>{}(key.variant_name));
     seed = hash_mix(seed, std::hash<bool>{}(key.string_bounds.has_value()));
     if (key.string_bounds.has_value()) {
         seed = hash_mix(seed, std::hash<std::int64_t>{}(key.string_bounds->first));
@@ -102,6 +103,12 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
         return types::StructT{.canonical_name = key.name, .symbol = key.nominal_symbol};
     case TypeKind::Enum:
         return types::EnumT{.canonical_name = key.name, .symbol = key.nominal_symbol};
+    case TypeKind::EnumVariant:
+        return types::EnumVariantT{
+            .canonical_name = key.name,
+            .symbol = key.nominal_symbol,
+            .variant_name = key.variant_name,
+        };
     case TypeKind::Optional:
         return types::OptionalT{.inner = key.first};
     case TypeKind::List:
@@ -119,6 +126,7 @@ TypePtr TypeContext::make(TypeKind kind) {
     return intern(TypeKey{
         .kind = kind,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = nullptr,
@@ -139,6 +147,7 @@ TypePtr TypeContext::bounded_string(std::int64_t minimum, std::int64_t maximum) 
     return intern(TypeKey{
         .kind = TypeKind::BoundedString,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::make_pair(minimum, maximum),
         .decimal_scale = std::nullopt,
         .first = nullptr,
@@ -151,6 +160,7 @@ TypePtr TypeContext::decimal(std::int64_t scale) {
     return intern(TypeKey{
         .kind = TypeKind::Decimal,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = scale,
         .first = nullptr,
@@ -171,6 +181,7 @@ TypePtr TypeContext::struct_type(std::string canonical_name, std::optional<Symbo
     return intern(TypeKey{
         .kind = TypeKind::Struct,
         .name = std::move(canonical_name),
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = nullptr,
@@ -191,6 +202,35 @@ TypePtr TypeContext::enum_type(std::string canonical_name, std::optional<SymbolI
     return intern(TypeKey{
         .kind = TypeKind::Enum,
         .name = std::move(canonical_name),
+        .variant_name = {},
+        .string_bounds = std::nullopt,
+        .decimal_scale = std::nullopt,
+        .first = nullptr,
+        .second = nullptr,
+        .nominal_symbol = symbol,
+    });
+}
+
+TypePtr TypeContext::enum_variant_type(std::string canonical_name,
+                                       std::string variant_name) {
+    return enum_variant_type(
+        std::move(canonical_name), std::move(variant_name), std::nullopt);
+}
+
+TypePtr TypeContext::enum_variant_type(std::string canonical_name,
+                                       std::string variant_name,
+                                       SymbolId symbol) {
+    return enum_variant_type(
+        std::move(canonical_name), std::move(variant_name), std::optional<SymbolId>{symbol});
+}
+
+TypePtr TypeContext::enum_variant_type(std::string canonical_name,
+                                       std::string variant_name,
+                                       std::optional<SymbolId> symbol) {
+    return intern(TypeKey{
+        .kind = TypeKind::EnumVariant,
+        .name = std::move(canonical_name),
+        .variant_name = std::move(variant_name),
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = nullptr,
@@ -203,6 +243,7 @@ TypePtr TypeContext::optional(TypePtr value_type) {
     return intern(TypeKey{
         .kind = TypeKind::Optional,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = value_type,
@@ -215,6 +256,7 @@ TypePtr TypeContext::list(TypePtr element_type) {
     return intern(TypeKey{
         .kind = TypeKind::List,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = element_type,
@@ -227,6 +269,7 @@ TypePtr TypeContext::set(TypePtr element_type) {
     return intern(TypeKey{
         .kind = TypeKind::Set,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = element_type,
@@ -239,6 +282,7 @@ TypePtr TypeContext::map(TypePtr key_type, TypePtr value_type) {
     return intern(TypeKey{
         .kind = TypeKind::Map,
         .name = {},
+        .variant_name = {},
         .string_bounds = std::nullopt,
         .decimal_scale = std::nullopt,
         .first = key_type,
