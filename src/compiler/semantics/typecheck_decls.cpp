@@ -24,6 +24,35 @@ using internal::ValueContext;
 void TypeCheckPass::index_program_declarations(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
         switch (declaration->kind) {
+        case ast::NodeKind::ModuleDecl: {
+            const auto &decl = static_cast<const ast::ModuleDecl &>(*declaration);
+            result_.typed_program.declarations.push_back(TypedDecl{
+                .kind = declaration->kind,
+                .symbol = {},
+                .range = declaration->range,
+                .source_id = current_source_id_,
+                .payload = ModuleDeclInfo{
+                    .name = decl.name ? decl.name->spelling() : std::string{},
+                    .declaration_range = declaration->range,
+                },
+            });
+            break;
+        }
+        case ast::NodeKind::ImportDecl: {
+            const auto &decl = static_cast<const ast::ImportDecl &>(*declaration);
+            result_.typed_program.declarations.push_back(TypedDecl{
+                .kind = declaration->kind,
+                .symbol = {},
+                .range = declaration->range,
+                .source_id = current_source_id_,
+                .payload = ImportDeclInfo{
+                    .target_module = decl.path ? decl.path->spelling() : std::string{},
+                    .alias = decl.alias,
+                    .declaration_range = declaration->range,
+                },
+            });
+            break;
+        }
         case ast::NodeKind::ConstDecl: {
             const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
             if (const auto symbol = find_local_here(SymbolNamespace::Consts, decl.name);
@@ -137,8 +166,6 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
             break;
         }
         case ast::NodeKind::Program:
-        case ast::NodeKind::ModuleDecl:
-        case ast::NodeKind::ImportDecl:
         case ast::NodeKind::ContractDecl:
         case ast::NodeKind::FlowDecl:
             break;
@@ -174,6 +201,79 @@ void TypeCheckPass::build_type_environment() {
     for (auto &decl : result_.typed_program.declarations) {
         if (const auto type = result_.environment.get_const_type(decl.symbol); type.has_value()) {
             decl.type = type->get().clone();
+        }
+
+        // Copy structural payloads out of TypeEnvironment so TypedProgram can
+        // be consumed without borrowing environment map storage.
+        switch (decl.kind) {
+        case ast::NodeKind::ConstDecl:
+            if (const auto ast_decl_iter = const_decls_.find(decl.symbol.value);
+                ast_decl_iter != const_decls_.end()) {
+                const auto &ast_decl = ast_decl_iter->second.get();
+                const auto symbol = symbol_of(decl.symbol);
+                decl.payload = ConstDeclInfo{
+                    .canonical_name = symbol.has_value() ? symbol->get().canonical_name
+                                                         : std::string(ast_decl.name),
+                    .local_name = ast_decl.name,
+                    .type = decl.type,
+                    .type_spelling = ast_decl.type ? ast_decl.type->spelling() : std::string{},
+                    .type_range = ast_decl.type ? ast_decl.type->range : SourceRange{},
+                    .value_range = ast_decl.value ? ast_decl.value->range : SourceRange{},
+                    .declaration_range = ast_decl.range,
+                };
+            }
+            break;
+        case ast::NodeKind::TypeAliasDecl:
+            if (const auto ast_decl = alias_decl_of(decl.symbol); ast_decl.has_value()) {
+                const auto &alias = ast_decl->get();
+                const auto symbol = symbol_of(decl.symbol);
+                decl.payload = TypeAliasDeclInfo{
+                    .symbol = decl.symbol,
+                    .canonical_name = symbol.has_value() ? symbol->get().canonical_name
+                                                         : std::string(alias.name),
+                    .local_name = alias.name,
+                    .aliased_type = alias.aliased_type ? resolve_type(*alias.aliased_type)
+                                                       : make_error_type(),
+                    .aliased_type_spelling =
+                        alias.aliased_type ? alias.aliased_type->spelling() : std::string{},
+                    .aliased_type_range =
+                        alias.aliased_type ? alias.aliased_type->range : SourceRange{},
+                    .declaration_range = alias.range,
+                };
+            }
+            break;
+        case ast::NodeKind::StructDecl:
+            if (auto info = result_.environment.get_struct(decl.symbol); info.has_value()) {
+                decl.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::EnumDecl:
+            if (auto info = result_.environment.get_enum(decl.symbol); info.has_value()) {
+                decl.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::CapabilityDecl:
+            if (auto info = result_.environment.get_capability(decl.symbol); info.has_value()) {
+                decl.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::PredicateDecl:
+            if (auto info = result_.environment.get_predicate(decl.symbol); info.has_value()) {
+                decl.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::AgentDecl:
+            if (auto info = result_.environment.get_agent(decl.symbol); info.has_value()) {
+                decl.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::WorkflowDecl:
+            if (auto info = result_.environment.get_workflow(decl.symbol); info.has_value()) {
+                decl.payload = info->get();
+            }
+            break;
+        default:
+            break;
         }
     }
 }
@@ -217,6 +317,8 @@ void TypeCheckPass::build_struct_types() {
                     .name = field->name,
                     .type = resolve_type(*field->type),
                     .has_default = static_cast<bool>(field->default_value),
+                    .default_value_range =
+                        field->default_value ? field->default_value->range : SourceRange{},
                     .declaration_range = field->range,
                 });
             }

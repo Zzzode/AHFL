@@ -5,6 +5,7 @@
 #include "base/support/overloaded.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <string>
 #include <variant>
@@ -13,6 +14,41 @@
 namespace ahfl::ir {
 
 namespace {
+
+constexpr std::array<DerivedAnalysisKind, 3> kAllDerivedAnalysisKinds{
+    DerivedAnalysisKind::StateHandlerSummaries,
+    DerivedAnalysisKind::WorkflowExprSummaries,
+    DerivedAnalysisKind::FormalObservations,
+};
+
+[[nodiscard]] bool requires_state_handler_summaries(const Program &program) {
+    return std::any_of(
+        program.declarations.begin(), program.declarations.end(), [](const auto &decl) {
+            const auto *flow = std::get_if<FlowDecl>(&decl);
+            return flow != nullptr && !flow->state_handlers.empty();
+        });
+}
+
+[[nodiscard]] bool requires_workflow_expr_summaries(const Program &program) {
+    return std::any_of(program.declarations.begin(),
+                       program.declarations.end(),
+                       [](const auto &decl) { return std::holds_alternative<WorkflowDecl>(decl); });
+}
+
+[[nodiscard]] bool has_required_analysis_entries(const Program &program,
+                                                 DerivedAnalysisKind kind) noexcept {
+    switch (kind) {
+    case DerivedAnalysisKind::StateHandlerSummaries:
+        return !requires_state_handler_summaries(program) ||
+               !program.analyses.state_handler_summaries.empty();
+    case DerivedAnalysisKind::WorkflowExprSummaries:
+        return !requires_workflow_expr_summaries(program) ||
+               !program.analyses.workflow_return_summaries.empty();
+    case DerivedAnalysisKind::FormalObservations:
+        return true;
+    }
+    return false;
+}
 
 [[nodiscard]] bool paths_equal(const Path &lhs, const Path &rhs) {
     return lhs.root_kind == rhs.root_kind && lhs.root_name == rhs.root_name &&
@@ -106,9 +142,6 @@ void collect_called_targets_from_expr(const Expr &expr, std::vector<std::string>
                    [&](const IndexAccessExpr &value) {
                        collect_called_targets_from_expr(*value.base, called_targets);
                        collect_called_targets_from_expr(*value.index, called_targets);
-                   },
-                   [&](const GroupExpr &value) {
-                       collect_called_targets_from_expr(*value.expr, called_targets);
                    },
                },
                expr.node);
@@ -290,9 +323,6 @@ void collect_workflow_value_reads(const Expr &expr,
                        collect_workflow_value_reads(*value.base, workflow_node_names, reads);
                        collect_workflow_value_reads(*value.index, workflow_node_names, reads);
                    },
-                   [&](const GroupExpr &value) {
-                       collect_workflow_value_reads(*value.expr, workflow_node_names, reads);
-                   },
                },
                expr.node);
 }
@@ -331,6 +361,35 @@ summarize_workflow_expr(const Expr &expr, const std::vector<std::string> &workfl
 }
 
 } // namespace
+
+std::span<const DerivedAnalysisKind> all_derived_analysis_kinds() noexcept {
+    return kAllDerivedAnalysisKinds;
+}
+
+std::vector<DerivedAnalysisKind> all_derived_analysis_kinds_vector() {
+    return std::vector<DerivedAnalysisKind>(kAllDerivedAnalysisKinds.begin(),
+                                            kAllDerivedAnalysisKinds.end());
+}
+
+void mark_derived_analyses_stale(Program &program) {
+    ++program.analysis_revision;
+}
+
+bool has_fresh_derived_analyses(const Program &program,
+                                std::span<const DerivedAnalysisKind> required) noexcept {
+    if (required.empty()) {
+        return true;
+    }
+    if (program.phase == ProgramPhase::Lowered) {
+        return false;
+    }
+    if (program.analyses.source_program_revision != program.analysis_revision) {
+        return false;
+    }
+    return std::all_of(required.begin(), required.end(), [&](DerivedAnalysisKind kind) {
+        return has_required_analysis_entries(program, kind);
+    });
+}
 
 const StateHandler::Summary *find_state_handler_summary(const Program &program,
                                                         const FlowDecl &flow,
@@ -441,7 +500,17 @@ void recompute_derived_analyses(Program &program, ProgramPhase phase) {
     recompute_state_handler_summaries(program);
     recompute_workflow_expr_summaries(program);
     recompute_formal_observations(program);
+    program.analyses.source_program_revision = program.analysis_revision;
     program.phase = phase;
+}
+
+void ensure_derived_analyses(Program &program,
+                             std::span<const DerivedAnalysisKind> required,
+                             ProgramPhase phase) {
+    if (has_fresh_derived_analyses(program, required)) {
+        return;
+    }
+    recompute_derived_analyses(program, phase);
 }
 
 } // namespace ahfl::ir

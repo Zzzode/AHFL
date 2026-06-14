@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "ahfl/compiler/ir/analysis.hpp"
+
 namespace ahfl::ir {
 struct Program;
 }
@@ -28,9 +30,22 @@ class Pass {
     [[nodiscard]] virtual bool run(ir::Program &program) = 0;
 
     /// Declare which analyses this pass requires (run before if missing).
-    [[nodiscard]] virtual std::vector<std::string_view> required_analyses() const { return {}; }
+    [[nodiscard]] virtual std::vector<std::string_view> required_analyses() const {
+        return {};
+    }
+    /// Declare which IR derived analyses must be fresh before this pass runs.
+    [[nodiscard]] virtual std::vector<ir::DerivedAnalysisKind> required_derived_analyses() const {
+        return {};
+    }
     /// Declare which analyses this pass invalidates (cleared after run).
-    [[nodiscard]] virtual std::vector<std::string_view> invalidated_analyses() const { return {}; }
+    [[nodiscard]] virtual std::vector<std::string_view> invalidated_analyses() const {
+        return {};
+    }
+    /// Declare which IR derived analyses this pass invalidates if it modifies the program.
+    [[nodiscard]] virtual std::vector<ir::DerivedAnalysisKind>
+    invalidated_derived_analyses() const {
+        return ir::all_derived_analysis_kinds_vector();
+    }
 };
 
 /// An analysis pass that inspects but does not modify the IR.

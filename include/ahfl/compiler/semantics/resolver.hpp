@@ -120,6 +120,12 @@ class SymbolTable {
 };
 
 struct ResolveResult {
+    ResolveResult() = default;
+    ResolveResult(const ResolveResult &other);
+    ResolveResult &operator=(const ResolveResult &other);
+    ResolveResult(ResolveResult &&other) noexcept;
+    ResolveResult &operator=(ResolveResult &&other) noexcept;
+
     SymbolTable symbol_table;
     DiagnosticBag diagnostics;
 

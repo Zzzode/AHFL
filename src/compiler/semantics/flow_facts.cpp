@@ -31,32 +31,64 @@ bool is_same_or_descendant(const Place &candidate, const Place &ancestor) noexce
 }
 
 void FlowFacts::add(TypeFact fact) {
-    const auto same_place_and_kind = [&](const TypeFact &existing) {
-        return existing.place == fact.place && existing.kind == fact.kind;
+    auto &bucket = facts_by_place_[fact.place];
+    const auto same_fact = [&](const TypeFact &existing) {
+        if (existing.kind != fact.kind) {
+            return false;
+        }
+        if (fact.kind == TypeFactKind::IsVariant ||
+            fact.kind == TypeFactKind::IsNotVariant) {
+            return existing.enum_name == fact.enum_name &&
+                   existing.variant_name == fact.variant_name;
+        }
+        return true;
     };
-    if (std::none_of(facts.begin(), facts.end(), same_place_and_kind)) {
-        facts.push_back(std::move(fact));
+    if (std::none_of(bucket.begin(), bucket.end(), same_fact)) {
+        bucket.push_back(std::move(fact));
     }
 }
 
 void FlowFacts::merge_from(const FlowFacts &other) {
-    for (const auto &fact : other.facts) {
-        add(fact);
-    }
+    other.for_each([this](const TypeFact &fact) { add(TypeFact{fact}); });
 }
 
 void FlowFacts::invalidate(const Place &place) {
-    facts.erase(std::remove_if(facts.begin(),
-                               facts.end(),
-                               [&](const TypeFact &fact) {
-                                   return is_same_or_descendant(fact.place, place);
-                               }),
-                facts.end());
+    std::erase_if(facts_by_place_, [&](const auto &entry) {
+        return is_same_or_descendant(entry.first, place);
+    });
 }
 
 bool FlowFacts::has_fact(const Place &place, TypeFactKind kind) const noexcept {
-    return std::any_of(facts.begin(), facts.end(), [&](const TypeFact &fact) {
-        return fact.place == place && fact.kind == kind;
+    auto it = facts_by_place_.find(place);
+    if (it == facts_by_place_.end()) {
+        return false;
+    }
+    return std::any_of(it->second.begin(), it->second.end(), [&](const TypeFact &fact) {
+        return fact.kind == kind;
+    });
+}
+
+bool FlowFacts::has_variant_fact(const Place &place, const std::string &enum_name,
+                                 const std::string &variant_name) const noexcept {
+    auto it = facts_by_place_.find(place);
+    if (it == facts_by_place_.end()) {
+        return false;
+    }
+    return std::any_of(it->second.begin(), it->second.end(), [&](const TypeFact &fact) {
+        return fact.kind == TypeFactKind::IsVariant && fact.enum_name == enum_name &&
+               fact.variant_name == variant_name;
+    });
+}
+
+bool FlowFacts::has_not_variant_fact(const Place &place, const std::string &enum_name,
+                                     const std::string &variant_name) const noexcept {
+    auto it = facts_by_place_.find(place);
+    if (it == facts_by_place_.end()) {
+        return false;
+    }
+    return std::any_of(it->second.begin(), it->second.end(), [&](const TypeFact &fact) {
+        return fact.kind == TypeFactKind::IsNotVariant && fact.enum_name == enum_name &&
+               fact.variant_name == variant_name;
     });
 }
 

@@ -6,6 +6,7 @@ add_library(ahfl_compiler_ir STATIC
     ir_json.cpp
     program_view.cpp
     typed_hir_lower.cpp
+    verify.cpp
     visitor.cpp
 )
 
@@ -17,3 +18,5 @@ target_link_libraries(ahfl_compiler_ir
 target_include_directories(ahfl_compiler_ir PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 ahfl_apply_project_warnings(ahfl_compiler_ir)
+
+add_subdirectory(opt)

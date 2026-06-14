@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -19,6 +20,7 @@ struct DeclarationProvenance {
     std::string module_name; // 所属模块名
     std::string source_path; // 源文件路径
     SourceRangeOpt source_range;
+    std::uint32_t id{0}; // Monotonic declaration ID assigned during lowering
 };
 
 // ----------------------------------------------------------------------------
@@ -42,7 +44,7 @@ struct ImportDecl {
 struct ConstDecl {
     DeclarationProvenance provenance;
     std::string name;
-    ExprPtr value;
+    ExprRef value;
     TypeRef type_ref;
     SymbolRef symbol_ref;
 };
@@ -58,7 +60,7 @@ struct TypeAliasDecl {
 /// 结构体字段声明
 struct FieldDecl {
     std::string name;
-    ExprPtr default_value; // 可选的默认值
+    ExprRef default_value; // 可选的默认值
     TypeRef type_ref;
     SourceRangeOpt source_range;
 };
@@ -172,7 +174,7 @@ struct AgentDecl {
 /// 契约子句
 struct ContractClause {
     ContractClauseKind kind{ContractClauseKind::Requires};
-    std::variant<ExprPtr, TemporalExprPtr> value; // 普通表达式或时序逻辑表达式
+    std::variant<ExprRef, TemporalExprPtr> value; // 普通表达式或时序逻辑表达式
     SourceRangeOpt source_range;
 };
 
@@ -249,7 +251,7 @@ struct WorkflowExprSummary {
 /// Workflow 节点: node name: AgentType(input_expr) [after [dep1, dep2]];
 struct WorkflowNode {
     std::string name;                  // 节点名称
-    ExprPtr input;                     // 传递给 agent 的输入表达式
+    ExprRef input;                     // 传递给 agent 的输入表达式
     std::vector<std::string> after;    // DAG 依赖（前置节点名列表）
     SymbolRef target_ref;
     SourceRangeOpt source_range;
@@ -262,7 +264,7 @@ struct WorkflowDecl {
     std::vector<WorkflowNode> nodes;       // DAG 节点列表
     std::vector<TemporalExprPtr> safety;   // 安全性属性
     std::vector<TemporalExprPtr> liveness; // 活性属性
-    ExprPtr return_value;                  // 最终返回值表达式
+    ExprRef return_value;                  // 最终返回值表达式
     TypeRef input_type_ref;
     TypeRef output_type_ref;
     SymbolRef symbol_ref;

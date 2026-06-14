@@ -379,6 +379,20 @@ bool equivalent_impl(const Type &lhs,
             }();
             return equivalent_leaf(lhs, rhs, ctx, path, eq);
         },
+        [&](const types::EnumVariantT &l) {
+            const auto *r = rhs.get_if<types::EnumVariantT>();
+            if (r == nullptr) {
+                return equivalent_leaf(lhs, rhs, ctx, path, false);
+            }
+            bool eq = [&] {
+                if (l.symbol.has_value() && r->symbol.has_value() && *l.symbol != *r->symbol) {
+                    return false;
+                }
+                return l.canonical_name == r->canonical_name &&
+                       l.variant_name == r->variant_name;
+            }();
+            return equivalent_leaf(lhs, rhs, ctx, path, eq);
+        },
         [&](const types::OptionalT &l) {
             const auto *r = rhs.get_if<types::OptionalT>();
             if (r == nullptr || l.inner == nullptr || r->inner == nullptr) {
@@ -509,6 +523,61 @@ bool subtype_impl(const Type &source,
         return true;
     }
 
+    if (const auto *variant = source.get_if<types::EnumVariantT>();
+        variant != nullptr && target.holds<types::EnumT>()) {
+        const auto *target_enum = target.get_if<types::EnumT>();
+        const bool same_enum = target_enum != nullptr && [&] {
+            if (variant->symbol.has_value() && target_enum->symbol.has_value()) {
+                return *variant->symbol == *target_enum->symbol;
+            }
+            return variant->canonical_name == target_enum->canonical_name;
+        }();
+        return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), same_enum);
+    }
+
+    // Container covariance: Optional<A> <: Optional<B> if A <: B
+    if (source.holds<types::OptionalT>() && target.holds<types::OptionalT>()) {
+        const auto *s = source.get_if<types::OptionalT>();
+        const auto *t = target.get_if<types::OptionalT>();
+        if (s != nullptr && t != nullptr && s->inner && t->inner) {
+            return subtype_impl(*s->inner, *t->inner, ctx,
+                                join_path(path, "optional.inner"), visited);
+        }
+    }
+    // List<A> <: List<B> if A <: B
+    if (source.holds<types::ListT>() && target.holds<types::ListT>()) {
+        const auto *s = source.get_if<types::ListT>();
+        const auto *t = target.get_if<types::ListT>();
+        if (s != nullptr && t != nullptr && s->element && t->element) {
+            return subtype_impl(*s->element, *t->element, ctx,
+                                join_path(path, "list.element"), visited);
+        }
+    }
+    // Set<A> <: Set<B> if A <: B
+    if (source.holds<types::SetT>() && target.holds<types::SetT>()) {
+        const auto *s = source.get_if<types::SetT>();
+        const auto *t = target.get_if<types::SetT>();
+        if (s != nullptr && t != nullptr && s->element && t->element) {
+            return subtype_impl(*s->element, *t->element, ctx,
+                                join_path(path, "set.element"), visited);
+        }
+    }
+    // Map<K1,V1> <: Map<K2,V2> if K1 equiv K2 AND V1 <: V2
+    if (source.holds<types::MapT>() && target.holds<types::MapT>()) {
+        const auto *s = source.get_if<types::MapT>();
+        const auto *t = target.get_if<types::MapT>();
+        if (s != nullptr && t != nullptr && s->key && t->key && s->value && t->value) {
+            TypePairSet key_equiv_visited;
+            if (!equivalent_impl(*s->key, *t->key, ctx,
+                                 join_path(path, "map.key"), &key_equiv_visited)) {
+                return subtype_leaf(source, target, ctx,
+                                    join_path(path, "map.key-mismatch"), false);
+            }
+            return subtype_impl(*s->value, *t->value, ctx,
+                                join_path(path, "map.value"), visited);
+        }
+    }
+
     // BoundedString <: String relaxation.
     const auto *src_bs = source.get_if<types::BoundedStringT>();
     const bool allow_bs =
@@ -533,6 +602,22 @@ bool subtype_impl(const Type &source,
         ctx == nullptr ? true : ctx->options().allow_numeric_widening;
     if (allow_numeric && source.holds<types::IntT>() && target.holds<types::FloatT>()) {
         return subtype_leaf(source, target, ctx, join_path(path, "numeric.widen"), true);
+    }
+
+    // Int <: Decimal (numeric promotion).
+    if (allow_numeric && source.holds<types::IntT>() && target.holds<types::DecimalT>()) {
+        return subtype_leaf(source, target, ctx,
+                            join_path(path, "numeric.int->decimal"), true);
+    }
+    // Decimal(s1) <: Decimal(s2) if s2 >= s1 (wider scale accepts narrower).
+    if (allow_numeric && source.holds<types::DecimalT>() && target.holds<types::DecimalT>()) {
+        const auto *s = source.get_if<types::DecimalT>();
+        const auto *t = target.get_if<types::DecimalT>();
+        if (s != nullptr && t != nullptr) {
+            const bool ok = t->scale >= s->scale;
+            return subtype_leaf(source, target, ctx,
+                                join_path(path, "numeric.decimal-widen"), ok);
+        }
     }
 
     return false;

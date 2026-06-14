@@ -2,9 +2,15 @@
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
+#include "ahfl/compiler/ir/verify.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
+#include "compiler/ir/opt/opt_json.hpp"
+#include "compiler/ir/opt/opt_lower.hpp"
+#include "compiler/ir/opt/opt_passes.hpp"
+#include "compiler/ir/opt/opt_print.hpp"
+#include "compiler/ir/opt/opt_verify.hpp"
 #include "compiler/passes/pass_manager.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/cli_analysis_helpers.hpp"
@@ -21,6 +27,96 @@
 #include <vector>
 
 namespace ahfl::cli {
+
+namespace {
+
+void run_requested_semantic_optimization_pipeline(ahfl::ir::Program &program) {
+    auto semantic_pipeline = ahfl::passes::create_default_pipeline();
+    static_cast<void>(semantic_pipeline->run(program));
+}
+
+void print_opt_verification_errors(const ahfl::ir::opt::VerificationResult &result,
+                                   std::ostream &err) {
+    for (const auto &diagnostic : result.diagnostics) {
+        if (diagnostic.severity != ahfl::ir::opt::VerificationSeverity::Error) {
+            continue;
+        }
+        err << "error: invalid Opt IR";
+        if (!diagnostic.function_name.empty()) {
+            err << " in " << diagnostic.function_name;
+        }
+        if (diagnostic.block_id.has_value()) {
+            err << " bb" << *diagnostic.block_id;
+        }
+        err << ": " << diagnostic.message << '\n';
+    }
+}
+
+void print_ir_verification_errors(const ahfl::ir::VerificationResult &result, std::ostream &err) {
+    for (const auto &diagnostic : result.diagnostics) {
+        if (diagnostic.severity != ahfl::ir::VerificationSeverity::Error) {
+            continue;
+        }
+        err << "error: invalid IR";
+        if (!diagnostic.path.empty()) {
+            err << " at " << diagnostic.path;
+        }
+        err << ": " << diagnostic.message << '\n';
+    }
+}
+
+template <typename InputT>
+std::optional<ahfl::ir::Program>
+lower_verified_ir_or_report(const InputT &input,
+                            const ahfl::ResolveResult &resolve_result,
+                            const ahfl::TypeCheckResult &type_check_result,
+                            std::ostream &err) {
+    auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+    const auto verification = ahfl::ir::verify_ir_program(ir_program);
+    if (verification.has_errors()) {
+        print_ir_verification_errors(verification, err);
+        return std::nullopt;
+    }
+    return ir_program;
+}
+
+bool verify_opt_ir_or_report(const ahfl::ir::opt::OptProgram &program, std::ostream &err) {
+    const auto verification = ahfl::ir::opt::verify_opt_program(program);
+    if (!verification.has_errors()) {
+        return true;
+    }
+    print_opt_verification_errors(verification, err);
+    return false;
+}
+
+bool emit_opt_ir_artifact(
+    ahfl::ir::Program &program, bool optimize, bool json, std::ostream &out, std::ostream &err) {
+    if (optimize) {
+        run_requested_semantic_optimization_pipeline(program);
+    }
+    auto opt_program = ahfl::ir::opt::lower_to_opt(program);
+    if (!verify_opt_ir_or_report(opt_program, err)) {
+        return false;
+    }
+    bool modified = false;
+    for (auto &function : opt_program.functions) {
+        if (optimize) {
+            modified = ahfl::ir::opt::optimize(function) || modified;
+        }
+    }
+    static_cast<void>(modified);
+    if (optimize && !verify_opt_ir_or_report(opt_program, err)) {
+        return false;
+    }
+    if (json) {
+        ahfl::ir::opt::print_opt_program_json(opt_program, out);
+    } else {
+        ahfl::ir::opt::print_opt_program(opt_program, out);
+    }
+    return true;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // CliDriver public interface
@@ -332,21 +428,24 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
         return ExitCode::CompileError;
     }
 
+    auto verified_ir =
+        lower_verified_ir_or_report(input, resolve_result, type_check_result, std::cerr);
+    if (!verified_ir.has_value()) {
+        return ExitCode::CompileError;
+    }
+    auto ir_program = std::move(*verified_ir);
+
     if (effective_command_ == CommandKind::RunWorkflow) {
-        auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
         if (options_.optimize_requested) {
-            auto pm = ahfl::passes::create_default_pipeline();
-            static_cast<void>(pm->run(ir_program));
+            run_requested_semantic_optimization_pipeline(ir_program);
         }
         const auto status = run_workflow_with_llm(ir_program, options_, std::cout, std::cerr);
         return status == 0 ? ExitCode::Success : ExitCode::CompileError;
     }
 
     if (package_metadata_ptr != nullptr) {
-        auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
         if (options_.optimize_requested) {
-            auto pm = ahfl::passes::create_default_pipeline();
-            static_cast<void>(pm->run(ir_program));
+            run_requested_semantic_optimization_pipeline(ir_program);
         }
         auto metadata_validation =
             ahfl::handoff::validate_package_metadata(ir_program, *package_metadata_ptr);
@@ -407,19 +506,36 @@ ExitCode CliDriver::run_analysis(const InputT &input, MaybeSourceFile source_fil
     }
 
     if (effective_command_ == CommandKind::ValidateAssurance) {
-        const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+        if (options_.optimize_requested) {
+            run_requested_semantic_optimization_pipeline(ir_program);
+        }
         return validate_assurance_program(ir_program) == 0 ? ExitCode::Success
                                                            : ExitCode::CompileError;
     }
 
     if (effective_command_ == CommandKind::VerifyFormal) {
-        const auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
+        if (options_.optimize_requested) {
+            run_requested_semantic_optimization_pipeline(ir_program);
+        }
         return verify_formal_program(ir_program, options_) == 0 ? ExitCode::Success
                                                                 : ExitCode::CompileError;
     }
 
+    if (effective_command_ == CommandKind::EmitOptIr ||
+        effective_command_ == CommandKind::EmitOptIrJson) {
+        return emit_opt_ir_artifact(ir_program,
+                                    options_.optimize_requested,
+                                    effective_command_ == CommandKind::EmitOptIrJson,
+                                    std::cout,
+                                    std::cerr)
+                   ? ExitCode::Success
+                   : ExitCode::CompileError;
+    }
+    if (options_.optimize_requested) {
+        run_requested_semantic_optimization_pipeline(ir_program);
+    }
     if (const auto backend_status = emit_core_backend(effective_command_,
-                                                      input,
+                                                      ir_program,
                                                       resolve_result,
                                                       type_check_result,
                                                       package_metadata_ptr,

@@ -25,8 +25,14 @@ namespace {
         return "identifier";
     case ir::PathRootKind::Input:
         return "input";
+    case ir::PathRootKind::Context:
+        return "context";
     case ir::PathRootKind::Output:
         return "output";
+    case ir::PathRootKind::State:
+        return "state";
+    case ir::PathRootKind::Local:
+        return "local";
     }
 
     return "invalid";
@@ -425,13 +431,14 @@ class IrJsonPrinter final {
 
     [[nodiscard]] bool has_symbol_ref(const ir::SymbolRef &ref) const {
         return ref.kind != ir::SymbolRefKind::Unknown || !ref.canonical_name.empty() ||
-               !ref.local_name.empty() || !ref.module_name.empty();
+               !ref.local_name.empty() || !ref.module_name.empty() || ref.id.has_value();
     }
 
     [[nodiscard]] bool has_type_ref(const ir::TypeRef &ref) const {
         return ref.kind != ir::TypeRefKind::Unresolved || !ref.display_name.empty() ||
-               !ref.canonical_name.empty() || ref.string_bounds.has_value() ||
-               ref.decimal_scale.has_value() || ref.first || ref.second;
+               !ref.canonical_name.empty() || !ref.variant_name.empty() ||
+               ref.string_bounds.has_value() || ref.decimal_scale.has_value() || ref.first ||
+               ref.second || has_source_range(ref.source_range);
     }
 
     void print_symbol_ref(const ir::SymbolRef &ref, int indent_level) {
@@ -444,6 +451,9 @@ class IrJsonPrinter final {
             if (!ref.module_name.empty()) {
                 field("module_name", [&]() { write_string(ref.module_name); });
             }
+            if (ref.id.has_value()) {
+                field("id", [&]() { write_index(*ref.id); });
+            }
         });
     }
 
@@ -453,6 +463,9 @@ class IrJsonPrinter final {
             field("display_name", [&]() { write_string(ref.display_name); });
             if (!ref.canonical_name.empty()) {
                 field("canonical_name", [&]() { write_string(ref.canonical_name); });
+            }
+            if (!ref.variant_name.empty()) {
+                field("variant_name", [&]() { write_string(ref.variant_name); });
             }
             if (ref.string_bounds.has_value()) {
                 field("string_bounds", [&]() {
@@ -473,7 +486,17 @@ class IrJsonPrinter final {
             if (ref.second) {
                 field("value_type", [&]() { print_type_ref(*ref.second, indent_level + 1); });
             }
+            print_source_range_field(field, ref.source_range, indent_level + 1);
         });
+    }
+
+    template <typename Field>
+    void print_expr_common_fields(const Field &field, const ir::Expr &expr, int indent_level) {
+        field("id", [&]() { write_index(expr.id); });
+        print_source_range_field(field, expr.source_range, indent_level);
+        if (has_type_ref(expr.resolved_type)) {
+            field("resolved_type", [&]() { print_type_ref(expr.resolved_type, indent_level); });
+        }
     }
 
     void print_param(const ir::ParamDecl &param, int indent_level) {
@@ -590,76 +613,76 @@ class IrJsonPrinter final {
                 [&](const ir::NoneLiteralExpr &) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("none_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                     });
                 },
                 [&](const ir::BoolLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("bool_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("value", [&]() { write_bool(value.value); });
                     });
                 },
                 [&](const ir::IntegerLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("integer_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::FloatLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("float_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::DecimalLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("decimal_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::StringLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("string_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::DurationLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("duration_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("spelling", [&]() { write_string(value.spelling); });
                     });
                 },
                 [&](const ir::SomeExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("some"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("value", [&]() { print_expr(*value.value, indent_level + 1); });
                     });
                 },
                 [&](const ir::PathExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("path"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("path", [&]() { print_path(value.path, indent_level + 1); });
                     });
                 },
                 [&](const ir::QualifiedValueExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("qualified_value"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("value", [&]() { write_string(value.value); });
                     });
                 },
                 [&](const ir::CallExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("call"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("callee", [&]() { write_string(value.callee); });
                         field("arguments", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -673,7 +696,7 @@ class IrJsonPrinter final {
                 [&](const ir::StructLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("struct_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("type_name", [&]() { write_string(value.type_name); });
                         field("fields", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
@@ -695,7 +718,7 @@ class IrJsonPrinter final {
                 [&](const ir::ListLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("list_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("items", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &list_item : value.items) {
@@ -708,7 +731,7 @@ class IrJsonPrinter final {
                 [&](const ir::SetLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("set_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("items", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &set_item : value.items) {
@@ -721,7 +744,7 @@ class IrJsonPrinter final {
                 [&](const ir::MapLiteralExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("map_literal"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("entries", [&]() {
                             print_array(indent_level + 1, [&](const auto &item) {
                                 for (const auto &entry : value.entries) {
@@ -744,7 +767,7 @@ class IrJsonPrinter final {
                 [&](const ir::UnaryExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("unary"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("op", [&]() { write_string(expr_unary_op_name(value.op)); });
                         field("operand", [&]() { print_expr(*value.operand, indent_level + 1); });
                     });
@@ -752,7 +775,7 @@ class IrJsonPrinter final {
                 [&](const ir::BinaryExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("binary"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("op", [&]() { write_string(expr_binary_op_name(value.op)); });
                         field("lhs", [&]() { print_expr(*value.lhs, indent_level + 1); });
                         field("rhs", [&]() { print_expr(*value.rhs, indent_level + 1); });
@@ -761,7 +784,7 @@ class IrJsonPrinter final {
                 [&](const ir::MemberAccessExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("member_access"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("base", [&]() { print_expr(*value.base, indent_level + 1); });
                         field("member", [&]() { write_string(value.member); });
                     });
@@ -769,16 +792,9 @@ class IrJsonPrinter final {
                 [&](const ir::IndexAccessExpr &value) {
                     print_object(indent_level, [&](const auto &field) {
                         field("kind", [&]() { write_string("index_access"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
+                        print_expr_common_fields(field, expr, indent_level + 1);
                         field("base", [&]() { print_expr(*value.base, indent_level + 1); });
                         field("index", [&]() { print_expr(*value.index, indent_level + 1); });
-                    });
-                },
-                [&](const ir::GroupExpr &value) {
-                    print_object(indent_level, [&](const auto &field) {
-                        field("kind", [&]() { write_string("group"); });
-                        print_source_range_field(field, expr.source_range, indent_level + 1);
-                        field("expr", [&]() { print_expr(*value.expr, indent_level + 1); });
                     });
                 },
             },
@@ -1281,7 +1297,7 @@ class IrJsonPrinter final {
                                             print_source_range_field(
                                                 entry, clause.source_range, indent_level + 3);
                                             std::visit(Overloaded{
-                                                           [&](const ir::ExprPtr &expr) {
+                                                           [&](const ir::ExprRef &expr) {
                                                                entry("expr", [&]() {
                                                                    print_expr(*expr,
                                                                               indent_level + 3);

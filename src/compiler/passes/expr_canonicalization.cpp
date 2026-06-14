@@ -9,7 +9,7 @@ namespace ahfl::passes {
 namespace {
 
 // Check if an expression is a boolean literal with given value.
-bool is_bool_literal(const ir::ExprPtr &expr, bool value) {
+bool is_bool_literal(const ir::ExprRef &expr, bool value) {
     if (!expr) {
         return false;
     }
@@ -18,7 +18,7 @@ bool is_bool_literal(const ir::ExprPtr &expr, bool value) {
 }
 
 // Recursively canonicalize an expression. Returns true if modified.
-bool canonicalize_expr(ir::ExprPtr &expr) {
+bool canonicalize_expr(ir::ExprRef &expr) {
     if (!expr) {
         return false;
     }
@@ -96,7 +96,7 @@ bool canonicalize_expr(ir::ExprPtr &expr) {
 bool canonicalize_contract_clauses(ir::ContractDecl &contract) {
     bool modified = false;
     for (auto &clause : contract.clauses) {
-        if (auto *expr_ptr = std::get_if<ir::ExprPtr>(&clause.value)) {
+        if (auto *expr_ptr = std::get_if<ir::ExprRef>(&clause.value)) {
             modified |= canonicalize_expr(*expr_ptr);
         }
     }

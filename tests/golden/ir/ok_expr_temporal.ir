@@ -69,12 +69,12 @@ flow ir::expr_temporal::ExprAgent {
       assert_count: 1
     }
     let reply: ir::expr_temporal::Response = ir::expr_temporal::Decide(input)
-    assert ((ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }).note == ir::expr_temporal::DEFAULT_NOTE)
-    if ((((input.values[0] + 1)) > 2) && ir::expr_temporal::ready(reply.note)) {
+    assert (ir::expr_temporal::Response { note: ir::expr_temporal::DEFAULT_NOTE, result: ir::expr_temporal::Status::Pending }.note == ir::expr_temporal::DEFAULT_NOTE)
+    if (((input.values[0] + 1) > 2) && ir::expr_temporal::ready(reply.note)) {
       ctx.note = reply.note
       goto Done
     } else {
-      ctx.note = (ir::expr_temporal::Response { note: (ir::expr_temporal::DEFAULT_NOTE + "_fallback"), result: ir::expr_temporal::Status::Rejected }).note
+      ctx.note = ir::expr_temporal::Response { note: (ir::expr_temporal::DEFAULT_NOTE + "_fallback"), result: ir::expr_temporal::Status::Rejected }.note
       goto Done
     }
   }

@@ -1,21 +1,40 @@
 #pragma once
 
+#include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
+#include "ahfl/compiler/semantics/declaration_info.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
-#include "ahfl/base/support/source.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace ahfl {
 
-struct SourceGraph;
-struct TypeCheckResult;
+// ----------------------------------------------------------------------------
+// TypedDeclPayload — self-contained structural data for a declaration.
+// Populated from TypeEnvironment after declaration analysis so downstream
+// consumers can read TypedProgram without borrowing TypeEnvironment storage.
+// ----------------------------------------------------------------------------
+using TypedDeclPayload = std::variant<std::monostate,
+                                      ModuleDeclInfo,
+                                      ImportDeclInfo,
+                                      ConstDeclInfo,
+                                      TypeAliasDeclInfo,
+                                      StructTypeInfo,
+                                      EnumTypeInfo,
+                                      CapabilityTypeInfo,
+                                      PredicateTypeInfo,
+                                      AgentTypeInfo,
+                                      WorkflowTypeInfo,
+                                      FlowTypeInfo,
+                                      ContractTypeInfo>;
 
 enum class TypedExprChildRole {
     Operand,
@@ -141,10 +160,10 @@ struct TypedProgram;
 
 // Helper: resolve a TypedExprChild to a pointer. Returns nullptr if the
 // child's index is unset / out of range.
-[[nodiscard]] const TypedExpr *
-resolve_child(const TypedProgram &program, const TypedExprChild &child) noexcept;
-[[nodiscard]] TypedExpr *
-resolve_child_mut(TypedProgram &program, const TypedExprChild &child) noexcept;
+[[nodiscard]] const TypedExpr *resolve_child(const TypedProgram &program,
+                                             const TypedExprChild &child) noexcept;
+[[nodiscard]] TypedExpr *resolve_child_mut(TypedProgram &program,
+                                           const TypedExprChild &child) noexcept;
 
 struct TypedExpr {
     ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::NoneLiteral};
@@ -158,6 +177,7 @@ struct TypedExpr {
     std::string semantic_name;
     TypedCallTargetKind call_target_kind{TypedCallTargetKind::None};
     std::string path_root;
+    AssignTargetRootKind path_root_kind{AssignTargetRootKind::Identifier};
     std::vector<std::string> member_path;
     std::vector<TypedExprChild> children;
 
@@ -167,11 +187,11 @@ struct TypedExpr {
     // not need to reach back into the AST. Each field is only meaningful for
     // the `kind`s listed after it.
     // ------------------------------------------------------------------------
-    bool bool_value{false};                        // BoolLiteral
-    ast::ExprUnaryOp unary_op{ast::ExprUnaryOp::Not};       // Unary
+    bool bool_value{false};                                  // BoolLiteral
+    ast::ExprUnaryOp unary_op{ast::ExprUnaryOp::Not};        // Unary
     ast::ExprBinaryOp binary_op{ast::ExprBinaryOp::Implies}; // Binary
-    std::string literal_spelling;                  // Integer/Float/Decimal/String/Duration literal
-    std::string member_name;                       // MemberAccess (right-hand field name)
+    std::string literal_spelling; // Integer/Float/Decimal/String/Duration literal
+    std::string member_name;      // MemberAccess (right-hand field name)
 };
 
 struct TypedDecl {
@@ -188,6 +208,10 @@ struct TypedDecl {
     // already records the declaration's own id.
     std::optional<SymbolId> associated_agent_symbol;
     TypePtr type{nullptr};
+
+    // Structural payload copied out of TypeEnvironment. std::monostate is used
+    // for declaration kinds with no additional structural data.
+    TypedDeclPayload payload;
 };
 
 // ----------------------------------------------------------------------------
@@ -264,16 +288,98 @@ struct TypedTemporalExpr {
     std::string payload_spelling;
 };
 
+struct TypedSymbolLocalKey {
+    SymbolNamespace name_space{SymbolNamespace::Types};
+    std::string name;
+    std::string module_name;
+
+    [[nodiscard]] friend bool operator==(const TypedSymbolLocalKey &,
+                                         const TypedSymbolLocalKey &) noexcept = default;
+};
+
+struct TypedSymbolLocalKeyHash {
+    [[nodiscard]] std::size_t operator()(const TypedSymbolLocalKey &key) const noexcept;
+};
+
+struct TypedReferenceKey {
+    ReferenceKind kind{ReferenceKind::TypeName};
+    std::size_t begin_offset{0};
+    std::size_t end_offset{0};
+    std::size_t source_id_value{0};
+    bool has_source_id{false};
+
+    [[nodiscard]] friend bool operator==(const TypedReferenceKey &,
+                                         const TypedReferenceKey &) noexcept = default;
+};
+
+struct TypedReferenceKeyHash {
+    [[nodiscard]] std::size_t operator()(const TypedReferenceKey &key) const noexcept;
+};
+
+struct TypedReferenceNoSourceKey {
+    ReferenceKind kind{ReferenceKind::TypeName};
+    std::size_t begin_offset{0};
+    std::size_t end_offset{0};
+
+    [[nodiscard]] friend bool operator==(const TypedReferenceNoSourceKey &,
+                                         const TypedReferenceNoSourceKey &) noexcept = default;
+};
+
+struct TypedReferenceNoSourceKeyHash {
+    [[nodiscard]] std::size_t operator()(const TypedReferenceNoSourceKey &key) const noexcept;
+};
+
 struct TypedProgram {
-    const ast::Program *ast_program{nullptr};
-    const SourceGraph *source_graph{nullptr};
-    const ResolveResult *resolve_result{nullptr};
-    const TypeCheckResult *type_check_result{nullptr};
     std::vector<TypedDecl> declarations;
     std::vector<TypedExpr> expressions;
     std::vector<TypedBlock> blocks;
     std::vector<TypedStatement> statements;
     std::vector<TypedTemporalExpr> temporal_exprs;
+
+    // Resolver snapshot copied into TypedProgram during typecheck. This makes
+    // typed consumers independent of ResolveResult lifetime.
+    std::vector<Symbol> symbols;
+    std::vector<ResolvedReference> references;
+    std::vector<ImportBinding> imports;
+    std::unordered_map<std::size_t, std::uint32_t> symbol_id_index_;
+    std::unordered_map<TypedSymbolLocalKey, std::uint32_t, TypedSymbolLocalKeyHash>
+        symbol_local_index_;
+    std::unordered_map<TypedReferenceKey, std::uint32_t, TypedReferenceKeyHash> reference_index_;
+    std::unordered_map<TypedReferenceNoSourceKey, std::uint32_t, TypedReferenceNoSourceKeyHash>
+        reference_no_source_index_;
+
+    void rebuild_resolver_indices();
+    void rebuild_indices();
+    [[nodiscard]] MaybeCRef<Symbol> find_symbol(SymbolId id) const;
+    [[nodiscard]] MaybeCRef<Symbol> find_local_symbol(SymbolNamespace name_space,
+                                                      std::string_view name,
+                                                      std::string_view module_name = "") const;
+    [[nodiscard]] MaybeCRef<ResolvedReference>
+    find_reference(ReferenceKind kind,
+                   SourceRange range,
+                   std::optional<SourceId> source_id = std::nullopt) const;
+
+    // Reverse index: (node_id, source_id) → index into `expressions`.
+    // Maintained by the typechecker on every push_back to `expressions`,
+    // eliminating O(n) linear scans in append_typed_child and find_expr.
+    struct ExprIndexKey {
+        std::uint64_t node_id{0};
+        std::size_t source_id_value{0}; // SourceId::value (0 when source_id is nullopt)
+        bool has_source_id{false};
+
+        [[nodiscard]] friend bool operator==(const ExprIndexKey &,
+                                             const ExprIndexKey &) noexcept = default;
+    };
+    struct ExprIndexKeyHash {
+        [[nodiscard]] std::size_t operator()(const ExprIndexKey &k) const noexcept {
+            // FNV-1a–style combine; good enough for this index.
+            std::size_t h = k.node_id;
+            h ^= k.source_id_value * 0x9e3779b97f4a7c15ULL + 0x9e3779b9 + (h << 6) + (h >> 2);
+            h ^= static_cast<std::size_t>(k.has_source_id) + 0x9e3779b9 + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_map<ExprIndexKey, std::uint32_t, ExprIndexKeyHash> expr_index_;
 
     [[nodiscard]] const TypedExpr *find_expr(std::uint64_t node_id,
                                              std::optional<SourceId> source_id) const noexcept;
@@ -284,8 +390,8 @@ struct TypedProgram {
     // TypeCheckResult::find_expression_type(range, source_id).
     [[nodiscard]] const TypedExpr *
     find_expr_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
-    [[nodiscard]] TypedExpr *
-    find_expr_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
+    [[nodiscard]] TypedExpr *find_expr_by_range(SourceRange range,
+                                                std::optional<SourceId> source_id) noexcept;
 
     // Find the most specific (smallest) expression whose range contains the
     // given byte offset. Used by LSP hover for "what type is under the cursor".
@@ -301,16 +407,12 @@ struct TypedProgram {
     // the AST-fallback and typed-store paths.
     [[nodiscard]] const TypedBlock *
     find_block_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
-    [[nodiscard]] TypedBlock *
-    find_block_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
-    [[nodiscard]] const TypedStatement *
-    find_statement_by_range(SourceRange range,
-                            TypedStmtKind kind,
-                            std::optional<SourceId> source_id) const noexcept;
-    [[nodiscard]] TypedStatement *
-    find_statement_by_range(SourceRange range,
-                            TypedStmtKind kind,
-                            std::optional<SourceId> source_id) noexcept;
+    [[nodiscard]] TypedBlock *find_block_by_range(SourceRange range,
+                                                  std::optional<SourceId> source_id) noexcept;
+    [[nodiscard]] const TypedStatement *find_statement_by_range(
+        SourceRange range, TypedStmtKind kind, std::optional<SourceId> source_id) const noexcept;
+    [[nodiscard]] TypedStatement *find_statement_by_range(
+        SourceRange range, TypedStmtKind kind, std::optional<SourceId> source_id) noexcept;
 
     // Range-based exact match for temporal expressions.
     // Used by the typed-tree IR lowering pass to bridge from
@@ -320,11 +422,9 @@ struct TypedProgram {
     // so the caller can transparently fall back to the AST-based
     // lower_temporal path.
     [[nodiscard]] const TypedTemporalExpr *
-    find_temporal_by_range(SourceRange range,
-                           std::optional<SourceId> source_id) const noexcept;
+    find_temporal_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
     [[nodiscard]] TypedTemporalExpr *
-    find_temporal_by_range(SourceRange range,
-                           std::optional<SourceId> source_id) noexcept;
+    find_temporal_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
 };
 
 // ----------------------------------------------------------------------------
@@ -354,8 +454,7 @@ struct TypedProgram {
 //
 // The project's -Wswitch -Werror guard catches missing cases when
 // `ast::ExprSyntaxKind` / `TypedExpr` coverage grows.
-template <typename Visitor>
-decltype(auto) typed_visit(const TypedExpr &expr, Visitor &&visitor) {
+template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Visitor &&visitor) {
     switch (expr.kind) {
     case ast::ExprSyntaxKind::BoolLiteral:
         return std::forward<Visitor>(visitor).visit_bool_literal(expr);

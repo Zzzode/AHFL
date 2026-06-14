@@ -566,17 +566,6 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr,
     return EvalResult{clone_value(*lv->items[static_cast<size_t>(idx)]), {}};
 }
 
-// ============================================================================
-// GroupExpr
-// ============================================================================
-
-EvalResult
-eval_group_expr(const ir::GroupExpr &expr, const EvalContext &ctx, const CallEvalFn *call_eval) {
-    if (!expr.expr) {
-        return make_error("GroupExpr has null inner expression");
-    }
-    return eval_expr_impl(*expr.expr, ctx, call_eval);
-}
 
 // ============================================================================
 // CallExpr - NOT SUPPORTED in v0.51
@@ -637,8 +626,6 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
                 return eval_member_access(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::IndexAccessExpr>) {
                 return eval_index_access(node, ctx, call_eval);
-            } else if constexpr (std::is_same_v<T, ir::GroupExpr>) {
-                return eval_group_expr(node, ctx, call_eval);
             }
         },
         expr.node);
