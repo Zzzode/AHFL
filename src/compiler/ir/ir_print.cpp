@@ -205,7 +205,6 @@ namespace {
                           [](const ir::MapLiteralExpr &) { return false; },
                           [](const ir::MemberAccessExpr &) { return false; },
                           [](const ir::IndexAccessExpr &) { return false; },
-                          [](const ir::GroupExpr &) { return false; },
                           [](const ir::SomeExpr &) { return true; },
                           [](const ir::UnaryExpr &) { return true; },
                           [](const ir::BinaryExpr &) { return true; },
@@ -314,8 +313,15 @@ class IrProgramPrinter final {
         case ir::PathRootKind::Input:
             builder << "input";
             break;
+        case ir::PathRootKind::Context:
+            builder << path.root_name;
+            break;
         case ir::PathRootKind::Output:
             builder << "output";
+            break;
+        case ir::PathRootKind::State:
+        case ir::PathRootKind::Local:
+            builder << path.root_name;
             break;
         }
 
@@ -455,7 +461,6 @@ class IrProgramPrinter final {
                 [this](const ir::IndexAccessExpr &value) {
                     return render_suffix_base(*value.base) + "[" + render_expr(*value.index) + "]";
                 },
-                [this](const ir::GroupExpr &value) { return "(" + render_expr(*value.expr) + ")"; },
             },
             expr.node);
     }
@@ -675,7 +680,7 @@ class IrProgramPrinter final {
         for (const auto &clause : declaration.clauses) {
             const auto value = std::visit(
                 Overloaded{
-                    [this](const ir::ExprPtr &expr) { return render_expr(*expr); },
+                    [this](const ir::ExprRef &expr) { return render_expr(*expr); },
                     [this](const ir::TemporalExprPtr &expr) { return render_temporal(*expr); },
                 },
                 clause.value);

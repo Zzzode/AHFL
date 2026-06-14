@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -25,6 +27,16 @@ class ProgramIndex {
     [[nodiscard]] const CapabilityDecl *find_capability(std::string_view canonical_name) const;
     [[nodiscard]] const StructDecl *find_struct(std::string_view canonical_name) const;
     [[nodiscard]] const EnumDecl *find_enum(std::string_view canonical_name) const;
+
+    /// O(1) lookup by numeric symbol ID. Returns nullptr if the ID is not indexed.
+    [[nodiscard]] const Decl *find_decl_by_id(std::size_t symbol_id) const;
+
+    /// Convenience: resolve a SymbolRef's optional ID for O(1) lookup, falling
+    /// back to nullptr if the ref has no numeric ID or the ID is not indexed.
+    [[nodiscard]] const Decl *find_decl_by_symbol_ref(const SymbolRef &ref) const {
+        if (!ref.id.has_value()) return nullptr;
+        return find_decl_by_id(*ref.id);
+    }
 
     [[nodiscard]] const std::vector<const AgentDecl *> &agents() const noexcept {
         return agents_in_order_;
@@ -57,6 +69,7 @@ class ProgramIndex {
     std::unordered_map<std::string, const CapabilityDecl *> capabilities_;
     std::unordered_map<std::string, const StructDecl *> structs_;
     std::unordered_map<std::string, const EnumDecl *> enums_;
+    std::unordered_map<std::size_t, const Decl *> decls_by_id_;
     std::vector<const AgentDecl *> agents_in_order_;
     std::vector<const FlowDecl *> flows_in_order_;
     std::vector<const WorkflowDecl *> workflows_in_order_;

@@ -219,13 +219,6 @@ namespace ahfl::smv_detail {
                               }
                               return "(" + *lhs + " " + *op + " " + *rhs + ")";
                           },
-                          [](const ir::GroupExpr &value) -> std::optional<std::string> {
-                              const auto nested = render_bounded_expr(*value.expr);
-                              if (!nested.has_value()) {
-                                  return std::nullopt;
-                              }
-                              return "(" + *nested + ")";
-                          },
                           [](const auto &) -> std::optional<std::string> { return std::nullopt; },
                       },
                       expr.node);

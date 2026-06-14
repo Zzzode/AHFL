@@ -31,8 +31,13 @@ void check(bool condition, const std::string &test_name) {
 // IR 构造辅助函数
 // ============================================================================
 
-ExprPtr make_expr_ptr(ExprNode node) {
-    return std::make_unique<Expr>(Expr{std::move(node), {}});
+ExprArena &test_expr_arena() {
+    static ExprArena arena;
+    return arena;
+}
+
+ExprRef make_expr_ptr(ExprNode node) {
+    return test_expr_arena().make(std::move(node));
 }
 
 StatementPtr make_stmt_ptr(StatementNode node) {

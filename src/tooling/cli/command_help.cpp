@@ -60,6 +60,8 @@ void print_usage(std::ostream &out, bool show_internal) {
     out << "  Core:\n"
         << "    ir                         AHFL intermediate representation\n"
         << "    ir-json                    IR in JSON format\n"
+        << "    opt-ir                     Optimization IR diagnostic dump\n"
+        << "    opt-ir-json                Optimization IR JSON artifact\n"
         << "    native-json                Native backend JSON\n"
         << "    execution-plan             Execution plan for workflows\n"
         << "    execution-journal          Execution journal trace\n"

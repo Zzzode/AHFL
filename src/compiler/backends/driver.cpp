@@ -10,6 +10,7 @@
 #include "ahfl/compiler/backends/smv.hpp"
 #endif
 
+#include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
 #include "compiler/backends/pipeline/summary.hpp"
@@ -19,6 +20,15 @@
 #endif
 
 namespace ahfl {
+
+namespace {
+
+[[nodiscard]] ir::ProgramPhase emission_analysis_phase(const ir::Program &program) noexcept {
+    return program.phase == ir::ProgramPhase::Optimized ? ir::ProgramPhase::Optimized
+                                                        : ir::ProgramPhase::Analyzed;
+}
+
+} // namespace
 
 void initialize_builtin_backends(BackendRegistry &registry) {
     registry.register_builtin_backend(
@@ -158,9 +168,11 @@ void initialize_builtin_backends(BackendRegistry &registry) {
 }
 
 EmitResult emit_backend(BackendKind kind,
-                        const ir::Program &program,
+                        ir::Program &program,
                         std::ostream &out,
                         const handoff::PackageMetadata *package_metadata) {
+    ir::ensure_derived_analyses(
+        program, ir::all_derived_analysis_kinds(), emission_analysis_phase(program));
     EmitContext ctx{program, out, package_metadata};
     return global_backend_registry().emit(kind, ctx);
 }

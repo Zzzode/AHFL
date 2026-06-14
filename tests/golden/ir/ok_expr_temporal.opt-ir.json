@@ -1,0 +1,1984 @@
+{
+  "format": "AHFL_OPT_IR_V1",
+  "source_program_version": "ahfl.ir.v1",
+  "skipped_temporal": [
+    {
+      "scope": "contract::ir::expr_temporal::ExprAgent::clause::1",
+      "kind": "called",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 1170,
+        "end": 1184
+      }
+    },
+    {
+      "scope": "workflow::ir::expr_temporal::ExprWorkflow::safety::0",
+      "kind": "running",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 2034,
+        "end": 2046
+      }
+    },
+    {
+      "scope": "workflow::ir::expr_temporal::ExprWorkflow::safety::0",
+      "kind": "completed",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 2061,
+        "end": 2075
+      }
+    },
+    {
+      "scope": "workflow::ir::expr_temporal::ExprWorkflow::liveness::0",
+      "kind": "completed",
+      "reason": "temporal atom is not a pure expression fragment",
+      "source_range": {
+        "begin": 2103,
+        "end": 2123
+      }
+    }
+  ],
+  "functions": [
+    {
+      "name": "flow::ir::expr_temporal::ExprAgent::Init",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "unresolved",
+        "display_name": "",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 1251,
+        "end": 1775
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 1297,
+            "end": 1302
+          }
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Context",
+            "canonical_name": "ir::expr_temporal::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1284,
+            "end": 1303
+          }
+        },
+        {
+          "id": 4,
+          "name": "reply",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 1272,
+            "end": 1304
+          }
+        },
+        {
+          "id": 5,
+          "name": "_tmp1",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1321,
+            "end": 1416
+          }
+        },
+        {
+          "id": 6,
+          "name": "_tmp2",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1320,
+            "end": 1422
+          }
+        },
+        {
+          "id": 7,
+          "name": "_tmp3",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1320,
+            "end": 1444
+          }
+        },
+        {
+          "id": 8,
+          "name": "_tmp4",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1320,
+            "end": 1444
+          }
+        },
+        {
+          "id": 9,
+          "name": "_tmp5",
+          "type": {
+            "kind": "list",
+            "display_name": "List<Int>",
+            "canonical_name": "",
+            "first": {
+              "kind": "int",
+              "display_name": "Int",
+              "canonical_name": ""
+            }
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1459,
+            "end": 1471
+          }
+        },
+        {
+          "id": 10,
+          "name": "_tmp6",
+          "type": {
+            "kind": "int",
+            "display_name": "Int",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1459,
+            "end": 1473
+          }
+        },
+        {
+          "id": 11,
+          "name": "_tmp7",
+          "type": {
+            "kind": "int",
+            "display_name": "Int",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1459,
+            "end": 1478
+          }
+        },
+        {
+          "id": 12,
+          "name": "_tmp8",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1458,
+            "end": 1483
+          }
+        },
+        {
+          "id": 13,
+          "name": "_tmp9",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1494,
+            "end": 1504
+          }
+        },
+        {
+          "id": 14,
+          "name": "_tmp10",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1488,
+            "end": 1505
+          }
+        },
+        {
+          "id": 15,
+          "name": "_tmp11",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1458,
+            "end": 1505
+          }
+        },
+        {
+          "id": 16,
+          "name": "_tmp12",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1458,
+            "end": 1505
+          }
+        },
+        {
+          "id": 17,
+          "name": "_tmp13",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1531,
+            "end": 1541
+          }
+        },
+        {
+          "id": 18,
+          "name": "ctx.note",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 1520,
+            "end": 1542
+          }
+        },
+        {
+          "id": 19,
+          "name": "_tmp14",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1555,
+            "end": 1565
+          }
+        },
+        {
+          "id": 20,
+          "name": "_tmp15",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1640,
+            "end": 1672
+          }
+        },
+        {
+          "id": 21,
+          "name": "_tmp16",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1607,
+            "end": 1729
+          }
+        },
+        {
+          "id": 22,
+          "name": "_tmp17",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1606,
+            "end": 1735
+          }
+        },
+        {
+          "id": 23,
+          "name": "_tmp18",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1749,
+            "end": 1759
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "call",
+                "op": "",
+                "callee": "ir::expr_temporal::Decide",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 0,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "ir::expr_temporal::Response",
+                  "canonical_name": "ir::expr_temporal::Response"
+                }
+              },
+              "source_range": {
+                "begin": 1284,
+                "end": 1303
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 4,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 3,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "ir::expr_temporal::Response",
+                  "canonical_name": "ir::expr_temporal::Response"
+                }
+              },
+              "source_range": {
+                "begin": 1272,
+                "end": 1304
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 5,
+              "rvalue": {
+                "kind": "aggregate",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "ir::expr_temporal::DEFAULT_NOTE"
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "ir::expr_temporal::Status::Pending"
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "ir::expr_temporal::Response",
+                  "canonical_name": "ir::expr_temporal::Response"
+                }
+              },
+              "source_range": {
+                "begin": 1321,
+                "end": 1416
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 6,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "note",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 5,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1320,
+                "end": 1422
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 7,
+              "rvalue": {
+                "kind": "binary_op",
+                "op": "eq",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 6,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "ir::expr_temporal::DEFAULT_NOTE"
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1320,
+                "end": 1444
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 8,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 7,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1320,
+                "end": 1444
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "assert",
+            "condition": 8,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1313,
+              "end": 1445
+            }
+          }
+        },
+        {
+          "id": 1,
+          "label": "after.assert",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 9,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "values",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 0,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "list",
+                  "display_name": "List<Int>",
+                  "canonical_name": "",
+                  "first": {
+                    "kind": "int",
+                    "display_name": "Int",
+                    "canonical_name": ""
+                  }
+                }
+              },
+              "source_range": {
+                "begin": 1459,
+                "end": 1471
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 10,
+              "rvalue": {
+                "kind": "index",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 9,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": 0
+                  }
+                ],
+                "result_type": {
+                  "kind": "int",
+                  "display_name": "Int",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1459,
+                "end": 1473
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 11,
+              "rvalue": {
+                "kind": "binary_op",
+                "op": "add",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 10,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": 1
+                  }
+                ],
+                "result_type": {
+                  "kind": "int",
+                  "display_name": "Int",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1459,
+                "end": 1478
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 12,
+              "rvalue": {
+                "kind": "binary_op",
+                "op": "gt",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 11,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": 2
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1458,
+                "end": 1483
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 13,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "note",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 4,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1494,
+                "end": 1504
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 14,
+              "rvalue": {
+                "kind": "call",
+                "op": "",
+                "callee": "ir::expr_temporal::ready",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 13,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1488,
+                "end": 1505
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 15,
+              "rvalue": {
+                "kind": "binary_op",
+                "op": "and",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 12,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "local",
+                    "local": 14,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1458,
+                "end": 1505
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 16,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 15,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1458,
+                "end": 1505
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "switch_bool",
+            "condition": 16,
+            "return_value": null,
+            "target": null,
+            "then_block": 2,
+            "else_block": 3,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1455,
+              "end": 1769
+            }
+          }
+        },
+        {
+          "id": 2,
+          "label": "if.then",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 17,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "note",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 4,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1531,
+                "end": 1541
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 18,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 17,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1520,
+                "end": 1542
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 19,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "Done"
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1555,
+                "end": 1565
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 19,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1555,
+              "end": 1565
+            }
+          }
+        },
+        {
+          "id": 3,
+          "label": "if.else",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 20,
+              "rvalue": {
+                "kind": "binary_op",
+                "op": "add",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "ir::expr_temporal::DEFAULT_NOTE"
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "\"_fallback\""
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1640,
+                "end": 1672
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 21,
+              "rvalue": {
+                "kind": "aggregate",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 20,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "ir::expr_temporal::Status::Rejected"
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "ir::expr_temporal::Response",
+                  "canonical_name": "ir::expr_temporal::Response"
+                }
+              },
+              "source_range": {
+                "begin": 1607,
+                "end": 1729
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 22,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "note",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 21,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1606,
+                "end": 1735
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 18,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 22,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1595,
+                "end": 1736
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 23,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "Done"
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1749,
+                "end": 1759
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 23,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1749,
+              "end": 1759
+            }
+          }
+        },
+        {
+          "id": 4,
+          "label": "if.merge",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1251,
+              "end": 1775
+            }
+          }
+        },
+        {
+          "id": 5,
+          "label": "after.goto",
+          "statements": [],
+          "terminator": {
+            "kind": "goto",
+            "condition": null,
+            "return_value": null,
+            "target": 4,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1455,
+              "end": 1769
+            }
+          }
+        },
+        {
+          "id": 6,
+          "label": "after.goto",
+          "statements": [],
+          "terminator": {
+            "kind": "goto",
+            "condition": null,
+            "return_value": null,
+            "target": 4,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1455,
+              "end": 1769
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "flow::ir::expr_temporal::ExprAgent::Done",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "unresolved",
+        "display_name": "",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 1781,
+        "end": 1902
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Context",
+            "canonical_name": "ir::expr_temporal::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1838,
+            "end": 1846
+          }
+        },
+        {
+          "id": 4,
+          "name": "_tmp1",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1809,
+            "end": 1895
+          }
+        },
+        {
+          "id": 5,
+          "name": "_tmp2",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1802,
+            "end": 1896
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "note",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 1,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1838,
+                "end": 1846
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 4,
+              "rvalue": {
+                "kind": "aggregate",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 3,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "ir::expr_temporal::Status::Approved"
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "ir::expr_temporal::Response",
+                  "canonical_name": "ir::expr_temporal::Response"
+                }
+              },
+              "source_range": {
+                "begin": 1809,
+                "end": 1895
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 5,
+              "rvalue": {
+                "kind": "use",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 4,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "struct",
+                  "display_name": "ir::expr_temporal::Response",
+                  "canonical_name": "ir::expr_temporal::Response"
+                }
+              },
+              "source_range": {
+                "begin": 1802,
+                "end": 1896
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 5,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1802,
+              "end": 1896
+            }
+          }
+        },
+        {
+          "id": 1,
+          "label": "after.return",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": null,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1781,
+              "end": 1902
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "contract::ir::expr_temporal::ExprAgent::clause::0",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "bool",
+        "display_name": "Bool",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 1105,
+        "end": 1142
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Context",
+            "canonical_name": "ir::expr_temporal::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "map",
+            "display_name": "Map<String, String>",
+            "canonical_name": "",
+            "first": {
+              "kind": "string",
+              "display_name": "String",
+              "canonical_name": ""
+            },
+            "second": {
+              "kind": "string",
+              "display_name": "String",
+              "canonical_name": ""
+            }
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1121,
+            "end": 1132
+          }
+        },
+        {
+          "id": 4,
+          "name": "_tmp1",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1121,
+            "end": 1139
+          }
+        },
+        {
+          "id": 5,
+          "name": "_tmp2",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1115,
+            "end": 1141
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "attrs",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 0,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "map",
+                  "display_name": "Map<String, String>",
+                  "canonical_name": "",
+                  "first": {
+                    "kind": "string",
+                    "display_name": "String",
+                    "canonical_name": ""
+                  },
+                  "second": {
+                    "kind": "string",
+                    "display_name": "String",
+                    "canonical_name": ""
+                  }
+                }
+              },
+              "source_range": {
+                "begin": 1121,
+                "end": 1132
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 4,
+              "rvalue": {
+                "kind": "index",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 3,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "\"seed\""
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1121,
+                "end": 1139
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 5,
+              "rvalue": {
+                "kind": "call",
+                "op": "",
+                "callee": "ir::expr_temporal::ready",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 4,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1115,
+                "end": 1141
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 5,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1115,
+              "end": 1141
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "contract::ir::expr_temporal::ExprAgent::clause::1::embedded::0",
+      "arg_count": 3,
+      "return_type": {
+        "kind": "bool",
+        "display_name": "Bool",
+        "canonical_name": ""
+      },
+      "source_range": {
+        "begin": 1188,
+        "end": 1214
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "ctx",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Context",
+            "canonical_name": "ir::expr_temporal::Context"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 2,
+          "name": "output",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 3,
+          "name": "_tmp0",
+          "type": {
+            "kind": "map",
+            "display_name": "Map<String, String>",
+            "canonical_name": "",
+            "first": {
+              "kind": "string",
+              "display_name": "String",
+              "canonical_name": ""
+            },
+            "second": {
+              "kind": "string",
+              "display_name": "String",
+              "canonical_name": ""
+            }
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1194,
+            "end": 1205
+          }
+        },
+        {
+          "id": 4,
+          "name": "_tmp1",
+          "type": {
+            "kind": "string",
+            "display_name": "String",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1194,
+            "end": 1212
+          }
+        },
+        {
+          "id": 5,
+          "name": "_tmp2",
+          "type": {
+            "kind": "bool",
+            "display_name": "Bool",
+            "canonical_name": ""
+          },
+          "is_temp": true,
+          "source_range": {
+            "begin": 1188,
+            "end": 1214
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [
+            {
+              "kind": "assign",
+              "dest": 3,
+              "rvalue": {
+                "kind": "field",
+                "op": "",
+                "callee": "",
+                "field_name": "attrs",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 0,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "map",
+                  "display_name": "Map<String, String>",
+                  "canonical_name": "",
+                  "first": {
+                    "kind": "string",
+                    "display_name": "String",
+                    "canonical_name": ""
+                  },
+                  "second": {
+                    "kind": "string",
+                    "display_name": "String",
+                    "canonical_name": ""
+                  }
+                }
+              },
+              "source_range": {
+                "begin": 1194,
+                "end": 1205
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 4,
+              "rvalue": {
+                "kind": "index",
+                "op": "",
+                "callee": "",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 3,
+                    "arg_index": null,
+                    "constant": null
+                  },
+                  {
+                    "kind": "constant",
+                    "local": null,
+                    "arg_index": null,
+                    "constant": "\"seed\""
+                  }
+                ],
+                "result_type": {
+                  "kind": "string",
+                  "display_name": "String",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1194,
+                "end": 1212
+              }
+            },
+            {
+              "kind": "assign",
+              "dest": 5,
+              "rvalue": {
+                "kind": "call",
+                "op": "",
+                "callee": "ir::expr_temporal::ready",
+                "field_name": "",
+                "operands": [
+                  {
+                    "kind": "local",
+                    "local": 4,
+                    "arg_index": null,
+                    "constant": null
+                  }
+                ],
+                "result_type": {
+                  "kind": "bool",
+                  "display_name": "Bool",
+                  "canonical_name": ""
+                }
+              },
+              "source_range": {
+                "begin": 1188,
+                "end": 1214
+              }
+            }
+          ],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 5,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 1188,
+              "end": 1214
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "workflow::ir::expr_temporal::ExprWorkflow::node::run::input",
+      "arg_count": 2,
+      "return_type": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Request",
+        "canonical_name": "ir::expr_temporal::Request"
+      },
+      "source_range": {
+        "begin": 1976,
+        "end": 2009
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 2002,
+            "end": 2007
+          }
+        },
+        {
+          "id": 1,
+          "name": "run",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": null
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 0,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 2002,
+              "end": 2007
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "workflow::ir::expr_temporal::ExprWorkflow::return",
+      "arg_count": 2,
+      "return_type": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Response",
+        "canonical_name": "ir::expr_temporal::Response"
+      },
+      "source_range": {
+        "begin": 2137,
+        "end": 2140
+      },
+      "locals": [
+        {
+          "id": 0,
+          "name": "input",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request"
+          },
+          "is_temp": false,
+          "source_range": null
+        },
+        {
+          "id": 1,
+          "name": "run",
+          "type": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Response",
+            "canonical_name": "ir::expr_temporal::Response"
+          },
+          "is_temp": false,
+          "source_range": {
+            "begin": 2137,
+            "end": 2140
+          }
+        }
+      ],
+      "blocks": [
+        {
+          "id": 0,
+          "label": "entry",
+          "statements": [],
+          "terminator": {
+            "kind": "return",
+            "condition": null,
+            "return_value": 1,
+            "target": null,
+            "then_block": null,
+            "else_block": null,
+            "callee": "",
+            "args": [],
+            "call_dest": null,
+            "call_resume": null,
+            "source_range": {
+              "begin": 2137,
+              "end": 2140
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

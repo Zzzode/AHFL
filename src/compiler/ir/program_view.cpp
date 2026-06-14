@@ -21,6 +21,7 @@ void ProgramIndex::rebuild(const Program &program) {
     capabilities_.clear();
     structs_.clear();
     enums_.clear();
+    decls_by_id_.clear();
     agents_in_order_.clear();
     flows_in_order_.clear();
     workflows_in_order_.clear();
@@ -35,6 +36,9 @@ void ProgramIndex::rebuild(const Program &program) {
                     agents_.emplace(
                         std::string(symbol_canonical_name(agent.symbol_ref, agent.name)), &agent);
                     agents_in_order_.push_back(&agent);
+                    if (agent.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*agent.symbol_ref.id, &declaration);
+                    }
                 },
                 [&](const FlowDecl &flow) {
                     flows_by_agent_.emplace(std::string(symbol_canonical_name(flow.target_ref)),
@@ -46,29 +50,61 @@ void ProgramIndex::rebuild(const Program &program) {
                         std::string(symbol_canonical_name(workflow.symbol_ref, workflow.name)),
                         &workflow);
                     workflows_in_order_.push_back(&workflow);
+                    if (workflow.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*workflow.symbol_ref.id, &declaration);
+                    }
                 },
                 [&](const CapabilityDecl &capability) {
                     capabilities_.emplace(
                         std::string(symbol_canonical_name(capability.symbol_ref, capability.name)),
                         &capability);
                     capabilities_in_order_.push_back(&capability);
+                    if (capability.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*capability.symbol_ref.id, &declaration);
+                    }
                 },
                 [&](const StructDecl &structure) {
                     structs_.emplace(
                         std::string(symbol_canonical_name(structure.symbol_ref, structure.name)),
                         &structure);
                     structs_in_order_.push_back(&structure);
+                    if (structure.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*structure.symbol_ref.id, &declaration);
+                    }
                 },
                 [&](const EnumDecl &enumeration) {
                     enums_.emplace(std::string(symbol_canonical_name(enumeration.symbol_ref,
                                                                      enumeration.name)),
                                    &enumeration);
                     enums_in_order_.push_back(&enumeration);
+                    if (enumeration.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*enumeration.symbol_ref.id, &declaration);
+                    }
+                },
+                [&](const ConstDecl &constant) {
+                    if (constant.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*constant.symbol_ref.id, &declaration);
+                    }
+                },
+                [&](const PredicateDecl &predicate) {
+                    if (predicate.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*predicate.symbol_ref.id, &declaration);
+                    }
+                },
+                [&](const TypeAliasDecl &alias) {
+                    if (alias.symbol_ref.id.has_value()) {
+                        decls_by_id_.emplace(*alias.symbol_ref.id, &declaration);
+                    }
                 },
                 [&](const auto &) {},
             },
             declaration);
     }
+}
+
+const Decl *ProgramIndex::find_decl_by_id(std::size_t symbol_id) const {
+    const auto found = decls_by_id_.find(symbol_id);
+    return found == decls_by_id_.end() ? nullptr : found->second;
 }
 
 const AgentDecl *ProgramIndex::find_agent(std::string_view canonical_name) const {

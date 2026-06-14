@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "ahfl/base/support/ownership.hpp"
+#include "ahfl/base/support/source.hpp"
 
 namespace ahfl::ir {
 
@@ -50,7 +51,10 @@ inline constexpr std::string_view kFormatVersion = "ahfl.ir.v1";
 enum class PathRootKind {
     Identifier, // 普通标识符（变量名、node 输出引用等）
     Input,      // 关键字 `input`
+    Context,    // 关键字/约定根 `ctx`
     Output,     // 关键字 `output`
+    State,      // 约定根 `state`
+    Local,      // Flow-local let binding
 };
 
 /// 表达式一元运算符
@@ -148,6 +152,7 @@ struct SymbolRef {
     std::string canonical_name;
     std::string local_name;
     std::string module_name;
+    std::optional<std::size_t> id; // Numeric symbol ID for O(1) cross-declaration lookup
 };
 
 /// 已解析或结构化的类型引用。
@@ -158,8 +163,10 @@ struct TypeRef {
     TypeRefKind kind{TypeRefKind::Unresolved};
     std::string display_name;
     std::string canonical_name;
+    std::string variant_name;
     std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
     std::optional<std::int64_t> decimal_scale;
+    std::optional<SourceRange> source_range;
     TypeRefPtr first;
     TypeRefPtr second;
 };
