@@ -103,6 +103,8 @@ Avoid:
 - [issue-backlog-global-gaps.zh.md](./plan/issue-backlog-global-gaps.zh.md) - consolidated unresolved work backlog
 - [semantics-typecheck-hardening-v0.1.zh.md](./plan/semantics-typecheck-hardening-v0.1.zh.md) - TypeCheck / Sema hardening rollout plan
 - [typechecker-next-architecture-v0.1.zh.md](./plan/typechecker-next-architecture-v0.1.zh.md) - next-stage Type Checker architecture task list
+- [ir-architecture-evolution-v0.1.zh.md](./plan/ir-architecture-evolution-v0.1.zh.md) - IR multi-layer architecture evolution plan (audit-driven)
+- [lsp-production-readiness-v0.1.zh.md](./plan/lsp-production-readiness-v0.1.zh.md) - LSP usability and production-readiness plan
 
 ### Reference
 

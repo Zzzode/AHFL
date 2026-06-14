@@ -24,6 +24,7 @@
 3. 旧字符串字段保留为展示/兼容入口；稳定身份应优先读 `*_ref.canonical_name`。
 4. flow / workflow summary 是下游 consumer 的受限摘要，不替代完整 expression / statement tree。
 5. `formal_observations` 是 IR 与 formal backend 的共享 observation registry，不属于某个 backend 私有格式。
+6. Opt IR 是独立的优化诊断 artifact，通过 `ahflc emit opt-ir` 输出文本、通过 `ahflc emit opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON；它不是 Semantic JSON IR 的替代格式，也不是普通 backend contract。
 
 ## 定位
 
@@ -37,6 +38,8 @@
 当前版本标识：
 
 - `format_version = "ahfl.ir.v1"`
+
+readonly 当前不是 AHFL Core V0.1 的源码语法，也不是 Semantic IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、Semantic IR 与 JSON IR。
 
 更完整的版本化与 breaking-change 规则见：
 
@@ -67,6 +70,36 @@ JSON IR 适合：
 - 脚本消费
 - downstream tooling
 - 对 declaration / observation / summary 做结构化遍历
+
+Optimization IR：
+
+```bash
+./build/dev/src/tooling/cli/ahflc emit opt-ir tests/golden/ir/ok_expr_temporal.ahfl
+./build/dev/src/tooling/cli/ahflc emit opt-ir -O tests/golden/ir/ok_expr_temporal.ahfl
+./build/dev/src/tooling/cli/ahflc emit opt-ir-json tests/golden/ir/ok_expr_temporal.ahfl
+./build/dev/src/tooling/cli/ahflc emit opt-ir-json -O tests/golden/ir/ok_expr_temporal.ahfl
+```
+
+Opt IR 是 `ir::Program` 下方的 CFG/SSA 风格诊断表示。文本 dump 输出 function、local、basic block、statement、terminator、operand、type、source range，以及未降成 pure expression fragment 的 `skipped_temporal` 记录；`AHFL_OPT_IR_V1` JSON 输出同一模型的结构化机器可读 artifact。普通 backend、Semantic JSON IR、SMV、native / execution / assurance 输出仍消费 Semantic IR (`ir::Program`)；`-O` 在 `emit opt-ir` / `emit opt-ir-json` 中会额外运行 Opt IR passes 并打印优化后的 Opt IR。
+
+Opt IR 当前生产路径是 artifact-only：它不会被 `--optimize` 回降到 Semantic IR，也不会让普通 backend 隐式直连 Opt IR。
+
+Opt IR JSON 顶层结构：
+
+```json
+{
+  "format": "AHFL_OPT_IR_V1",
+  "source_program_version": "ahfl.ir.v1",
+  "skipped_temporal": [],
+  "functions": []
+}
+```
+
+`skipped_temporal` 表示 `called`、`running`、`completed`、`in_state` 等 event/state temporal atom 被有意排除在 expression-function lowering 之外。它们不是静默丢失，而是以 scope、kind、reason 和 source range 进入 artifact：
+
+```text
+skipped_temporal scope=workflow::formal::flow_workflow::ReviewWorkflow::safety::0 kind=running reason="temporal atom is not a pure expression fragment" source=[1040,1055)
+```
 
 ## 顶层结构
 
@@ -189,6 +222,34 @@ JSON IR 中，旧字符串字段仍然保留：
 2. 需要保持旧版本兼容时，仍可读取原有字符串字段。
 3. 对未知 `*_ref` 子字段保持 forward-compatible 忽略能力。
 
+## ExprRef / Source Range / ID
+
+当前 Semantic IR 的普通 expression 由 `Program::expr_arena` 统一拥有，节点之间通过 `ExprRef` 引用，而不是嵌套 owning pointer tree。JSON IR 仍导出结构化 expression tree，消费方不需要直接理解 arena 内存布局，但应按下面规则处理稳定身份和诊断位置：
+
+1. `Expr::id` 是 lowering 时分配的 program-local stable numeric ID，可用于同一次 IR 输出内的诊断和测试关联。
+2. `ExprRef` 是实现层 handle，不是当前 JSON IR 的跨版本 ABI；外部机器消费仍应读取 JSON 节点结构。
+3. expression、statement、declaration provenance、type ref 等位置携带的 `source_range` 使用 `[begin_offset, end_offset)` 半开区间。
+4. 表达式类型应读取结构化 `type_ref` / `resolved_type` 相关字段，不要从展示字符串反推类型。
+
+statement 与 temporal expression 当前不是 arena/ref ABI。它们在 JSON IR 中继续作为 owning tree 输出：statement 由 block 顺序拥有，temporal expression 由 contract clause 或 workflow safety/liveness formula 递归拥有。`Statement::id` 可用于同一次 IR 输出内的诊断和测试关联；temporal expression 没有跨 owner 稳定 handle。外部 consumer 需要遍历 statement / temporal 时，应遍历 JSON tree 本身，而不是期待 `StatementRef` / `TemporalRef`。
+
+## Path Root Kind
+
+JSON IR 中的 path expression 会输出 `root_kind`，用于冻结路径根的语义来源。当前合法取值为：
+
+| `root_kind` | 含义 |
+|-------------|------|
+| `input` | flow handler input、workflow input 或 contract input |
+| `context` | `ctx.*` execution context 路径 |
+| `output` | flow handler output 路径 |
+| `state` | 显式 state 根路径 |
+| `local` | flow 内 let/local binding 路径 |
+| `identifier` | workflow node output 或其他普通 identifier 根 |
+
+Typed HIR serialization、Semantic IR lowering、JSON IR、文本 IR、runtime assignment executor 与 Opt IR lowering 都消费同一组 root kind。下游 consumer 不应再通过 `root_name == "ctx"` 这类字符串约定推断语义；需要判断执行上下文、local binding 或 workflow node output 时，应优先读取 `root_kind`。
+
+当前 DSL golden 覆盖 `input/context/local/output/identifier` 的实际源码路径；`state` 作为 IR 结构能力由 IR printer / JSON 单元测试覆盖。
+
 ## Flow Handler Summary
 
 V0.3 在 `flow.state_handlers[]` 上新增稳定摘要字段：
@@ -261,6 +322,8 @@ V0.3 在 workflow 上新增两类稳定摘要：
 - contract temporal clause 内嵌的 pure bool expr
 - workflow safety / liveness 内嵌的 pure bool expr
 
+Opt IR 对 temporal 的处理与 `formal_observations` 不同：embedded pure bool expr 会降成 OptFunction；event/state atom 会保留为 `skipped_temporal` artifact 记录。二者共同保证 temporal clause 的优化覆盖和不可优化原因都可审查。
+
 它与 summary 一样，都是给下游 consumer 的稳定公共边界，而不是某个 backend 私有结构。
 
 ## 稳定边界与非目标
@@ -273,6 +336,8 @@ V0.3 在 workflow 上新增两类稳定摘要：
 4. `TypeRef` / `SymbolRef` 作为旧字符串字段的结构化机器可读伴随字段
 5. flow summary 与 workflow value summary 的结构化含义
 6. `formal_observations` 的公共角色
+
+内部编译器会用 `Program::analysis_revision` 与 `AnalysisBundle::source_program_revision` 保证 derived analyses freshness；这是 pass / backend emission 的实现合同，不是当前 JSON IR 的外部 ABI 字段。外部 consumer 只应消费已经输出的 summary / observation 内容。
 
 当前不应被视为稳定 ABI 的内容：
 
