@@ -3964,6 +3964,10 @@ add_test(NAME ahfl.lsp.handler_all
     COMMAND $<TARGET_FILE:ahfl_tooling_lsp_handler_tests>
 )
 
+add_test(NAME ahfl.lsp.process_smoke
+    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/lsp_smoke.py" $<TARGET_FILE:ahfl-lsp>
+)
+
 add_test(NAME ahfl.runtime.connection_pool_all
     COMMAND $<TARGET_FILE:ahfl_connection_pool_tests>
 )

@@ -60,11 +60,17 @@ enum class DiagnosticSeverity : int {
 };
 
 struct LspDiagnostic {
+    struct RelatedInformation {
+        Location location;
+        std::string message;
+    };
+
     Range range;
     DiagnosticSeverity severity{DiagnosticSeverity::Error};
     std::string code;
     std::string source{"ahfl"};
     std::string message;
+    std::vector<RelatedInformation> related_information;
 };
 
 // ---------- Completion ----------
@@ -77,6 +83,7 @@ enum class CompletionItemKind : int {
     Interface = 8, // used for Capability
     Function = 3,
     Variable = 6,
+    Constant = 21,
 };
 
 struct CompletionItem {
@@ -128,6 +135,7 @@ struct DocumentSymbol {
     LspSymbolKind kind{LspSymbolKind::Variable};
     Range range;
     Range selection_range;
+    std::vector<DocumentSymbol> children;
 };
 
 struct SymbolInformation {
@@ -182,8 +190,10 @@ serialize_server_capabilities(const ServerCapabilities &caps);
 serialize_symbol_information(const SymbolInformation &sym);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_text_edit(const TextEdit &edit);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_workspace_edit(const WorkspaceEdit &edit);
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_parameter_information(const ParameterInformation &param);
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_signature_information(const SignatureInformation &sig);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_parameter_information(const ParameterInformation &param);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_signature_information(const SignatureInformation &sig);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_signature_help(const SignatureHelp &help);
 
 // ---------- Deserialization helpers ----------
