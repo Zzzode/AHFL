@@ -14,6 +14,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 #include "tooling/lsp/document_store.hpp"
+#include "tooling/lsp/hover_index.hpp"
 #include "tooling/lsp/protocol_types.hpp"
 
 namespace ahfl::lsp {
@@ -45,6 +46,7 @@ struct LspAnalysisSnapshot {
     std::unordered_map<std::string, std::size_t> source_by_uri;
     std::unordered_map<std::string, std::size_t> source_by_display_name;
     std::unordered_map<std::size_t, std::size_t> source_by_id;
+    std::unordered_map<std::size_t, HoverTargetIndex> hover_indices;
 
     [[nodiscard]] const LspSourceSnapshot *source_for_uri(std::string_view uri) const;
     [[nodiscard]] const LspSourceSnapshot *source_for_id(SourceId id) const;
@@ -72,6 +74,9 @@ class AnalysisService {
     [[nodiscard]] std::unique_ptr<LspAnalysisSnapshot> build_snapshot(const std::string &uri);
     [[nodiscard]] std::optional<std::filesystem::path>
     find_project_descriptor(const std::filesystem::path &source_path) const;
+    [[nodiscard]] std::vector<std::filesystem::path>
+    infer_descriptorless_search_roots(const std::filesystem::path &source_path,
+                                      const ParseResult &parse_result) const;
     [[nodiscard]] std::unordered_map<std::string, std::string> open_document_overlays() const;
 
     const DocumentStore &store_;
