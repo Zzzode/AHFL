@@ -68,7 +68,13 @@ namespace {
         kind = opposite(kind);
     }
 
-    return TypeFact{.place = std::move(*place), .kind = kind, .origin = condition.range};
+    return TypeFact{
+        .place = std::move(*place),
+        .kind = kind,
+        .origin = condition.range,
+        .enum_name = {},
+        .variant_name = {},
+    };
 }
 
 [[nodiscard]] std::optional<TypeFact> extract_variant_comparison(const ast::ExprSyntax &condition,

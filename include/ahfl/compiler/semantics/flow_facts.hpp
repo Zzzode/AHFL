@@ -32,7 +32,7 @@ struct TypeFact {
     TypeFactKind kind{TypeFactKind::IsNotNone};
     SourceRange origin;
 
-    // Only populated when kind == IsVariant.
+    // Only populated when kind is IsVariant or IsNotVariant.
     std::string enum_name;
     std::string variant_name;
 };
