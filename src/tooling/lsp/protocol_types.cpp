@@ -2,6 +2,20 @@
 
 namespace ahfl::lsp {
 
+namespace {
+
+[[nodiscard]] const char *markup_kind_name(MarkupKind kind) noexcept {
+    switch (kind) {
+    case MarkupKind::Markdown:
+        return "markdown";
+    case MarkupKind::Plaintext:
+        return "plaintext";
+    }
+    return "markdown";
+}
+
+} // namespace
+
 // ---------- Serialization ----------
 
 std::unique_ptr<json::JsonValue> serialize_position(const Position &pos) {
@@ -60,9 +74,8 @@ std::unique_ptr<json::JsonValue> serialize_completion_item(const CompletionItem 
 std::unique_ptr<json::JsonValue> serialize_hover(const Hover &hover) {
     auto obj = json::JsonValue::make_object();
 
-    // contents as MarkupContent
     auto contents = json::JsonValue::make_object();
-    contents->set("kind", json::JsonValue::make_string("markdown"));
+    contents->set("kind", json::JsonValue::make_string(markup_kind_name(hover.contents_kind)));
     contents->set("value", json::JsonValue::make_string(hover.contents));
     obj->set("contents", std::move(contents));
 

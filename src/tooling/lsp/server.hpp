@@ -6,6 +6,7 @@
 
 #include "tooling/lsp/analysis_service.hpp"
 #include "tooling/lsp/document_store.hpp"
+#include "tooling/lsp/hover_markup.hpp"
 #include "tooling/lsp/json_rpc.hpp"
 
 namespace ahfl::lsp {
@@ -22,6 +23,7 @@ class LspServer {
     JsonRpcTransport transport_;
     DocumentStore store_;
     AnalysisService analysis_;
+    HoverRenderOptions hover_options_;
     bool initialized_{false};
     bool shutdown_requested_{false};
     bool trace_enabled_{false};
