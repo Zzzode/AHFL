@@ -94,8 +94,14 @@ struct CompletionItem {
 
 // ---------- Hover ----------
 
+enum class MarkupKind {
+    Markdown,
+    Plaintext,
+};
+
 struct Hover {
-    std::string contents; // markdown
+    std::string contents;
+    MarkupKind contents_kind{MarkupKind::Markdown};
     std::optional<Range> range;
 };
 

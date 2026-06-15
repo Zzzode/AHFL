@@ -10,6 +10,9 @@ namespace ahfl::lsp {
 
 class HoverService {
   public:
+    HoverService() = default;
+    explicit HoverService(HoverRenderOptions options);
+
     [[nodiscard]] std::optional<HoverPayload> payload_at(const LspAnalysisSnapshot &snapshot,
                                                          const LspSourceSnapshot &source,
                                                          Position position) const;
@@ -19,7 +22,8 @@ class HoverService {
                                                 Position position) const;
 
   private:
-    HoverMarkdownRenderer renderer_;
+    HoverRenderOptions options_;
+    HoverRenderer renderer_;
 };
 
 } // namespace ahfl::lsp
