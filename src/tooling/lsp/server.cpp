@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/semantics/declaration_info.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
+#include "tooling/lsp/hover_service.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -73,6 +74,11 @@ constexpr std::string_view kAllKeywords[] = {
         const auto value = static_cast<unsigned char>(ch);
         return std::isalnum(value) != 0 || ch == '_';
     });
+}
+
+[[nodiscard]] bool is_identifier_char(char ch) {
+    const auto value = static_cast<unsigned char>(ch);
+    return std::isalnum(value) != 0 || ch == '_';
 }
 
 [[nodiscard]] bool contains(SourceRange range, std::size_t offset) noexcept {
@@ -182,6 +188,47 @@ constexpr std::string_view kAllKeywords[] = {
     return &fallback;
 }
 
+[[nodiscard]] std::optional<SourceRange>
+symbol_selection_source_range(const Symbol &symbol, const LspSourceSnapshot &source) {
+    if (source.source == nullptr || symbol.local_name.empty()) {
+        return std::nullopt;
+    }
+
+    const auto &content = source.source->content;
+    const auto begin = std::min(symbol.declaration_range.begin_offset, content.size());
+    const auto end = std::max(begin, std::min(symbol.declaration_range.end_offset, content.size()));
+    std::size_t cursor = begin;
+    while (cursor < end) {
+        const auto found = content.find(symbol.local_name, cursor);
+        if (found == std::string::npos || found + symbol.local_name.size() > end) {
+            return std::nullopt;
+        }
+
+        const auto before_ok = found == 0 || !is_identifier_char(content[found - 1]);
+        const auto after = found + symbol.local_name.size();
+        const auto after_ok = after >= content.size() || !is_identifier_char(content[after]);
+        if (before_ok && after_ok) {
+            return SourceRange{
+                .begin_offset = found,
+                .end_offset = after,
+            };
+        }
+
+        cursor = found + 1;
+    }
+
+    return std::nullopt;
+}
+
+[[nodiscard]] SourceRange symbol_navigation_source_range(const Symbol &symbol,
+                                                         const LspSourceSnapshot &source) {
+    if (const auto selection = symbol_selection_source_range(symbol, source);
+        selection.has_value()) {
+        return *selection;
+    }
+    return symbol.declaration_range;
+}
+
 [[nodiscard]] const LspSourceSnapshot *reference_source(const LspAnalysisSnapshot &snapshot,
                                                         const ResolvedReference &reference,
                                                         const LspSourceSnapshot &fallback) {
@@ -202,7 +249,7 @@ constexpr std::string_view kAllKeywords[] = {
     }
     return Location{
         .uri = source->uri,
-        .range = to_lsp_range(*source->source, symbol.declaration_range),
+        .range = to_lsp_range(*source->source, symbol_navigation_source_range(symbol, *source)),
     };
 }
 
@@ -230,8 +277,11 @@ constexpr std::string_view kAllKeywords[] = {
     }
 
     for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
-        if (same_source(symbol.source_id, source.source_id) &&
-            contains(symbol.declaration_range, offset)) {
+        if (!same_source(symbol.source_id, source.source_id)) {
+            continue;
+        }
+        const auto selection = symbol_selection_source_range(symbol, source);
+        if (selection.has_value() && contains(*selection, offset)) {
             return symbol.id;
         }
     }
@@ -1014,45 +1064,15 @@ void LspServer::handle_hover(const JsonRpcRequest &req) {
         return;
     }
 
-    const auto offset = offset_at(*source->source, position);
-    if (const auto *typed = snapshot->typed_program(); typed != nullptr) {
-        const auto *expr = typed->find_expr_containing(offset, source->source_id);
-        if (expr != nullptr && expr->type != nullptr) {
-            Hover hover;
-            hover.contents = "```\n" + expr->type->describe() + "\n```";
-            if (!expr->semantic_name.empty()) {
-                hover.contents += "\n\n" + expr->semantic_name;
-            }
-            hover.range = to_lsp_range(*source->source, expr->range);
-
-            JsonRpcResponse resp;
-            resp.id = req.id;
-            resp.result = serialize_hover(hover);
-            transport_.send_response(resp);
-            return;
-        }
-    }
-
-    const auto target = symbol_at(*snapshot, *source, offset);
-    if (!target.has_value()) {
-        send_null(transport_, req.id);
+    const HoverService hover_service;
+    if (auto hover = hover_service.hover_at(*snapshot, *source, position); hover.has_value()) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_hover(*hover);
+        transport_.send_response(resp);
         return;
     }
-    const auto symbol = snapshot->resolve_result.symbol_table.get(*target);
-    if (!symbol.has_value()) {
-        send_null(transport_, req.id);
-        return;
-    }
-
-    Hover hover;
-    hover.contents = "**" + symbol->get().local_name + "** (" + symbol_detail(symbol->get().kind) +
-                     ")\n\n`" + symbol->get().canonical_name + "`";
-    hover.range = to_lsp_range(*source->source, symbol->get().declaration_range);
-
-    JsonRpcResponse resp;
-    resp.id = req.id;
-    resp.result = serialize_hover(hover);
-    transport_.send_response(resp);
+    send_null(transport_, req.id);
 }
 
 void LspServer::handle_references(const JsonRpcRequest &req) {
@@ -1213,7 +1233,8 @@ void LspServer::handle_document_symbol(const JsonRpcRequest &req) {
         doc_symbol.name = symbol.local_name;
         doc_symbol.kind = to_lsp_symbol_kind(symbol.kind);
         doc_symbol.range = to_lsp_range(*source->source, symbol.declaration_range);
-        doc_symbol.selection_range = doc_symbol.range;
+        doc_symbol.selection_range =
+            to_lsp_range(*source->source, symbol_navigation_source_range(symbol, *source));
         append_symbol_children(doc_symbol, *snapshot, symbol, *source);
         result->push(serialize_document_symbol(doc_symbol));
     }

@@ -1,5 +1,8 @@
 add_library(ahfl_tooling_lsp STATIC
     analysis_service.cpp
+    hover_index.cpp
+    hover_markup.cpp
+    hover_service.cpp
     json_rpc.cpp
     protocol_types.cpp
     document_store.cpp
