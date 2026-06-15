@@ -1020,6 +1020,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .canonical_name = reader.string_field(*value, "canonical_name"),
             .fields = read_struct_fields(reader, *value, "fields"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
+            .field_index_ = {},
         };
         info.rebuild_field_index();
         return info;
@@ -1029,7 +1030,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         EnumTypeInfo info{
             .symbol = reader.symbol_id_field(*value, "symbol"),
             .canonical_name = reader.string_field(*value, "canonical_name"),
+            .variants = {},
             .declaration_range = reader.range_field(*value, "declaration_range"),
+            .variant_set_ = {},
         };
         const auto *variants = reader.field(*value, "variants");
         if (variants != nullptr && variants->kind == json::Kind::Array) {
@@ -1077,6 +1080,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .states = reader.string_array_field(*value, "states"),
             .initial_state = reader.string_field(*value, "initial_state"),
             .final_states = reader.string_array_field(*value, "final_states"),
+            .transitions = {},
+            .quota = {},
         };
         const auto *transitions = reader.field(*value, "transitions");
         if (transitions != nullptr && transitions->kind == json::Kind::Array) {
@@ -1108,6 +1113,10 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .input_type = reader.type_field(*value, "input_type"),
             .output_type = reader.type_field(*value, "output_type"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
+            .nodes = {},
+            .safety_ranges = {},
+            .liveness_ranges = {},
+            .return_value_range = {},
         };
         const auto *nodes = reader.field(*value, "nodes");
         if (nodes != nullptr && nodes->kind == json::Kind::Array) {
@@ -1136,6 +1145,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .target_name = reader.string_field(*value, "target_name"),
             .target_symbol = reader.symbol_id_field(*value, "target_symbol"),
             .target_range = reader.range_field(*value, "target_range"),
+            .state_handlers = {},
             .declaration_range = reader.range_field(*value, "declaration_range"),
         };
         const auto *handlers = reader.field(*value, "state_handlers");
@@ -1159,6 +1169,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .target_name = reader.string_field(*value, "target_name"),
             .target_symbol = reader.symbol_id_field(*value, "target_symbol"),
             .target_range = reader.range_field(*value, "target_range"),
+            .clauses = {},
             .declaration_range = reader.range_field(*value, "declaration_range"),
         };
         const auto *clauses = reader.field(*value, "clauses");
@@ -1236,6 +1247,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .path_root_kind =
             static_cast<AssignTargetRootKind>(reader.uint_field(object, "path_root_kind")),
         .member_path = reader.string_array_field(object, "member_path"),
+        .children = {},
         .bool_value = reader.bool_field(object, "bool_value"),
         .unary_op = static_cast<ast::ExprUnaryOp>(reader.uint_field(object, "unary_op")),
         .binary_op = static_cast<ast::ExprBinaryOp>(reader.uint_field(object, "binary_op")),
