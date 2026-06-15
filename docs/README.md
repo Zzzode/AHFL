@@ -72,6 +72,7 @@ Avoid:
 - [frontend-lowering-architecture-v0.2.zh.md](./design/frontend-lowering-architecture-v0.2.zh.md)
 - [formal-backend-v0.2.zh.md](./design/formal-backend-v0.2.zh.md)
 - [ir-backend-architecture-v0.2.zh.md](./design/ir-backend-architecture-v0.2.zh.md)
+- [lsp-hover-architecture-v0.1.zh.md](./design/lsp-hover-architecture-v0.1.zh.md)
 - [module-loading-v0.2.zh.md](./design/module-loading-v0.2.zh.md)
 - [module-resolution-rules-v0.2.zh.md](./design/module-resolution-rules-v0.2.zh.md)
 - [native-dry-run-bootstrap-v0.6.zh.md](./design/native-dry-run-bootstrap-v0.6.zh.md)

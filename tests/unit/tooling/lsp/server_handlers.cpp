@@ -1,4 +1,5 @@
 #include "tooling/lsp/analysis_service.hpp"
+#include "tooling/lsp/hover_service.hpp"
 #include "tooling/lsp/server.hpp"
 
 #include <cassert>
@@ -80,6 +81,50 @@ std::string run_handler_request(const std::string &source_text,
     std::string shutdown_body = R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})";
 
     return run_lsp_messages({init_body, did_open_body, req_body, shutdown_body});
+}
+
+Position
+position_of(const std::string &source, const std::string &needle, std::size_t occurrence = 0) {
+    std::size_t search_from = 0;
+    std::size_t offset = std::string::npos;
+    for (std::size_t i = 0; i <= occurrence; ++i) {
+        offset = source.find(needle, search_from);
+        if (offset == std::string::npos) {
+            return {};
+        }
+        search_from = offset + needle.size();
+    }
+
+    Position pos;
+    for (std::size_t i = 0; i < offset; ++i) {
+        if (source[i] == '\n') {
+            ++pos.line;
+            pos.character = 0;
+        } else {
+            ++pos.character;
+        }
+    }
+    return pos;
+}
+
+std::string hover_params_at(const std::string &uri, Position position) {
+    return R"({"textDocument":{"uri":")" + uri + R"("},"position":{"line":)" +
+           std::to_string(position.line) + R"(,"character":)" + std::to_string(position.character) +
+           R"(}})";
+}
+
+std::string hover_request_body(const std::string &uri, Position position, int id = 2) {
+    return R"({"jsonrpc":"2.0","id":)" + std::to_string(id) +
+           R"(,"method":"textDocument/hover","params":)" + hover_params_at(uri, position) + R"(})";
+}
+
+std::string run_hover_request(const std::string &source_text,
+                              const std::string &needle,
+                              std::size_t occurrence = 0) {
+    return run_handler_request(
+        source_text,
+        "textDocument/hover",
+        hover_params_at("file:///test.ahfl", position_of(source_text, needle, occurrence)));
 }
 
 void write_file(const std::filesystem::path &path, const std::string &content) {
@@ -430,6 +475,351 @@ void test_workspace_descriptor_selects_project_for_source() {
           "workspace_descriptor.definition_targets_project_source");
 }
 
+void test_descriptorless_workspace_infers_module_root_for_imports() {
+    const auto root = make_temp_project("descriptorless_workspace");
+    const auto agents_path = root / "lib" / "agents.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    const std::string agents_source = "module lib::agents;\n"
+                                      "import lib::types as types;\n"
+                                      "\n"
+                                      "agent AliasAgent {\n"
+                                      "    input: types::RequestAlias;\n"
+                                      "    context: types::ContextAlias;\n"
+                                      "    output: types::ResponseAlias;\n"
+                                      "    states: [Init, Done];\n"
+                                      "    initial: Init;\n"
+                                      "    final: [Done];\n"
+                                      "    capabilities: [];\n"
+                                      "    transition Init -> Done;\n"
+                                      "}\n";
+    const std::string types_source = "module lib::types;\n"
+                                     "\n"
+                                     "struct Request {\n"
+                                     "    value: String;\n"
+                                     "}\n"
+                                     "\n"
+                                     "struct Context {\n"
+                                     "    value: String = \"pending\";\n"
+                                     "}\n"
+                                     "\n"
+                                     "struct Response {\n"
+                                     "    value: String;\n"
+                                     "}\n"
+                                     "\n"
+                                     "type RequestAlias = Request;\n"
+                                     "type ContextAlias = Context;\n"
+                                     "type ResponseAlias = Response;\n";
+    write_file(agents_path, agents_source);
+    write_file(types_path, types_source);
+
+    const auto agents_uri = AnalysisService::uri_from_path(agents_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const std::string definition =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/definition","params":{"textDocument":{"uri":")" +
+        agents_uri + R"("},"position":{"line":4,"character":24}}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(agents_uri, 1, agents_source),
+        definition,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find("unknown type 'types::RequestAlias'") == std::string::npos,
+          "descriptorless_workspace.no_unknown_imported_alias_diagnostic");
+    check(output.find(types_uri) != std::string::npos,
+          "descriptorless_workspace.definition_targets_imported_source");
+
+    const std::string input_hover =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":")" +
+        agents_uri + R"("},"position":{"line":4,"character":6}}})";
+    const auto input_hover_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(agents_uri, 1, agents_source),
+        input_hover,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    check(input_hover_output.find("lib::agents::AliasAgent") == std::string::npos,
+          "descriptorless_workspace.input_label_hover_does_not_select_agent");
+    check(input_hover_output.find("input: lib::types::Request") != std::string::npos,
+          "descriptorless_workspace.input_label_hover_shows_resolved_type");
+    check(input_hover_output.find("declared as `types::RequestAlias`") != std::string::npos,
+          "descriptorless_workspace.input_label_hover_shows_declared_alias");
+
+    const std::string agent_name_hover =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":")" +
+        agents_uri + R"("},"position":{"line":3,"character":8}}})";
+    const auto agent_name_hover_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(agents_uri, 1, agents_source),
+        agent_name_hover,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    check(agent_name_hover_output.find("lib::agents::AliasAgent") != std::string::npos,
+          "descriptorless_workspace.agent_name_hover_selects_agent");
+
+    const auto alias_position = position_of(agents_source, "RequestAlias");
+    const auto alias_hover_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(agents_uri, 1, agents_source),
+        hover_request_body(agents_uri, alias_position),
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    check(alias_hover_output.find("type lib::types::RequestAlias = lib::types::Request") !=
+              std::string::npos,
+          "descriptorless_workspace.alias_hover_shows_alias_signature");
+    check(alias_hover_output.find("declared as `Request`") != std::string::npos,
+          "descriptorless_workspace.alias_hover_shows_declared_target");
+}
+
+void test_hover_rich_symbol_targets() {
+    const std::string source =
+        "enum Priority {\n"
+        "    High,\n"
+        "    Low,\n"
+        "}\n"
+        "\n"
+        "struct Request {\n"
+        "    category: String;\n"
+        "    priority: Priority;\n"
+        "}\n"
+        "\n"
+        "struct Context {\n"
+        "    value: String = \"pending\";\n"
+        "}\n"
+        "\n"
+        "capability Echo(value: String) -> Request;\n"
+        "predicate IsReady(value: String) -> Bool;\n"
+        "\n"
+        "agent TestAgent {\n"
+        "    input: Request;\n"
+        "    context: Context;\n"
+        "    output: Request;\n"
+        "    states: [Init, Done];\n"
+        "    initial: Init;\n"
+        "    final: [Done];\n"
+        "    capabilities: [Echo];\n"
+        "    transition Init -> Done;\n"
+        "}\n"
+        "\n"
+        "flow for TestAgent {\n"
+        "    state Init {\n"
+        "        let item = input.category;\n"
+        "        let made = Request { category: input.category, priority: Priority::High };\n"
+        "        goto Done;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "workflow TestWorkflow {\n"
+        "    input: Request;\n"
+        "    output: Request;\n"
+        "    node run: TestAgent(input);\n"
+        "    node follow: TestAgent(input) after [run];\n"
+        "    return: follow;\n"
+        "}\n";
+
+    const auto field_output = run_hover_request(source, "category");
+    check(field_output.find("field category: String") != std::string::npos,
+          "hover.struct_field_signature");
+    check(field_output.find("struct field") != std::string::npos, "hover.struct_field_summary");
+
+    const auto variant_output = run_hover_request(source, "High");
+    check(variant_output.find("Priority::High") != std::string::npos,
+          "hover.enum_variant_signature");
+    check(variant_output.find("enum variant") != std::string::npos, "hover.enum_variant_summary");
+
+    const auto param_output = run_hover_request(source, "value: String) -> Request");
+    check(param_output.find("value: String") != std::string::npos,
+          "hover.capability_param_signature");
+    check(param_output.find("capability parameter") != std::string::npos,
+          "hover.capability_param_summary");
+
+    const auto builtin_output = run_hover_request(source, "String");
+    check(builtin_output.find("builtin type") != std::string::npos, "hover.builtin_type_summary");
+    check(builtin_output.find("canonical `String`") != std::string::npos,
+          "hover.builtin_type_canonical");
+
+    const auto state_output = run_hover_request(source, "Done");
+    check(state_output.find("state Done") != std::string::npos, "hover.agent_state_signature");
+    check(state_output.find("final state") != std::string::npos, "hover.agent_state_fact");
+
+    const auto states_label_output = run_hover_request(source, "states");
+    check(states_label_output.find("states: [Init, Done]") != std::string::npos,
+          "hover.agent_states_label_signature");
+    check(states_label_output.find("agent state set") != std::string::npos,
+          "hover.agent_states_label_summary");
+
+    const auto initial_label_output = run_hover_request(source, "initial");
+    check(initial_label_output.find("initial: Init") != std::string::npos,
+          "hover.agent_initial_label_signature");
+    check(initial_label_output.find("agent initial state") != std::string::npos,
+          "hover.agent_initial_label_summary");
+
+    const auto final_label_output = run_hover_request(source, "final");
+    check(final_label_output.find("final: [Done]") != std::string::npos,
+          "hover.agent_final_label_signature");
+    check(final_label_output.find("agent final states") != std::string::npos,
+          "hover.agent_final_label_summary");
+
+    const auto capabilities_label_output = run_hover_request(source, "capabilities");
+    check(capabilities_label_output.find("capabilities: [Echo]") != std::string::npos,
+          "hover.agent_capabilities_label_signature");
+    check(capabilities_label_output.find("agent capabilities") != std::string::npos,
+          "hover.agent_capabilities_label_summary");
+
+    const auto agent_capability_output = run_hover_request(source, "Echo];");
+    check(agent_capability_output.find("capability Echo(value: String) -> Request") !=
+              std::string::npos,
+          "hover.agent_capability_signature");
+    check(agent_capability_output.find("capability") != std::string::npos,
+          "hover.agent_capability_summary");
+
+    auto flow_state_position = position_of(source, "state Init");
+    flow_state_position.character += static_cast<std::uint32_t>(std::string("state ").size());
+    const auto flow_state_output = run_handler_request(
+        source, "textDocument/hover", hover_params_at("file:///test.ahfl", flow_state_position));
+    check(flow_state_output.find("state Init") != std::string::npos, "hover.flow_state_signature");
+    check(flow_state_output.find("flow state") != std::string::npos, "hover.flow_state_summary");
+
+    auto goto_position = position_of(source, "goto Done");
+    goto_position.character += static_cast<std::uint32_t>(std::string("goto ").size());
+    const auto goto_output = run_handler_request(
+        source, "textDocument/hover", hover_params_at("file:///test.ahfl", goto_position));
+    check(goto_output.find("state Done") != std::string::npos, "hover.goto_state_signature");
+    check(goto_output.find("goto target") != std::string::npos, "hover.goto_state_summary");
+
+    const auto workflow_output = run_hover_request(source, "run: TestAgent");
+    check(workflow_output.find("node run: TestAgent") != std::string::npos,
+          "hover.workflow_node_signature");
+    check(workflow_output.find("workflow node") != std::string::npos,
+          "hover.workflow_node_summary");
+
+    const auto workflow_target_output = run_hover_request(source, "TestAgent(input)");
+    check(workflow_target_output.find("agent TestAgent") != std::string::npos,
+          "hover.workflow_target_agent_signature");
+    check(workflow_target_output.find("agent") != std::string::npos,
+          "hover.workflow_target_agent_summary");
+
+    const auto workflow_dependency_output = run_hover_request(source, "run];");
+    check(workflow_dependency_output.find("node run: TestAgent") != std::string::npos,
+          "hover.workflow_dependency_signature");
+    check(workflow_dependency_output.find("workflow dependency") != std::string::npos,
+          "hover.workflow_dependency_summary");
+
+    const auto root_output = run_hover_request(source, "input.category");
+    check(root_output.find("input: Request") != std::string::npos,
+          "hover.path_root_schema_signature");
+    check(root_output.find("agent path root") != std::string::npos,
+          "hover.path_root_schema_summary");
+
+    const auto member_position = position_of(source, "input.category");
+    Position member_char = member_position;
+    member_char.character += static_cast<std::uint32_t>(std::string("input.").size());
+    const auto member_output = run_handler_request(
+        source, "textDocument/hover", hover_params_at("file:///test.ahfl", member_char));
+    check(member_output.find("category: String") != std::string::npos,
+          "hover.member_access_signature");
+    check(member_output.find("member access") != std::string::npos, "hover.member_access_summary");
+
+    const auto literal_field_output = run_hover_request(source, "category: input");
+    check(literal_field_output.find("field category: String") != std::string::npos,
+          "hover.struct_literal_field_signature");
+    check(literal_field_output.find("struct field") != std::string::npos,
+          "hover.struct_literal_field_summary");
+}
+
+void test_hover_service_payload_contract() {
+    const std::string source = "struct Request {\n"
+                               "    category: String;\n"
+                               "}\n"
+                               "\n"
+                               "type RequestAlias = Request;\n"
+                               "\n"
+                               "struct Context {\n"
+                               "    value: String = \"pending\";\n"
+                               "}\n"
+                               "\n"
+                               "agent TestAgent {\n"
+                               "    input: RequestAlias;\n"
+                               "    context: Context;\n"
+                               "    output: Request;\n"
+                               "    states: [Init, Done];\n"
+                               "    initial: Init;\n"
+                               "    final: [Done];\n"
+                               "    capabilities: [];\n"
+                               "    transition Init -> Done;\n"
+                               "}\n";
+    DocumentStore store;
+    store.open(TextDocumentItem{
+        .uri = "file:///payload.ahfl",
+        .language_id = "ahfl",
+        .version = 1,
+        .text = source,
+    });
+    AnalysisService analysis(store);
+    const auto *snapshot = analysis.snapshot_for_uri("file:///payload.ahfl");
+    const auto *lsp_source =
+        snapshot != nullptr ? snapshot->source_for_uri("file:///payload.ahfl") : nullptr;
+    HoverService hover;
+    check(snapshot != nullptr, "hoverPayload.snapshot_exists");
+    check(lsp_source != nullptr, "hoverPayload.source_exists");
+    if (snapshot == nullptr || lsp_source == nullptr) {
+        return;
+    }
+
+    const auto field_payload =
+        hover.payload_at(*snapshot, *lsp_source, position_of(source, "category"));
+    check(field_payload.has_value(), "hoverPayload.field_exists");
+    if (field_payload.has_value()) {
+        check(field_payload->summary == "struct field", "hoverPayload.field_summary");
+        check(field_payload->ahfl_signature == "field category: String",
+              "hoverPayload.field_signature");
+        check(field_payload->token_range.end_offset - field_payload->token_range.begin_offset ==
+                  std::string("category").size(),
+              "hoverPayload.field_token_range");
+    }
+
+    const auto alias_payload =
+        hover.payload_at(*snapshot, *lsp_source, position_of(source, "RequestAlias"));
+    check(alias_payload.has_value(), "hoverPayload.alias_exists");
+    if (alias_payload.has_value()) {
+        check(alias_payload->summary == "type alias", "hoverPayload.alias_summary");
+        check(alias_payload->ahfl_signature == "type RequestAlias = Request",
+              "hoverPayload.alias_signature");
+        check(alias_payload->declared_spelling == "Request",
+              "hoverPayload.alias_declared_spelling");
+    }
+
+    const auto schema_payload =
+        hover.payload_at(*snapshot, *lsp_source, position_of(source, "input"));
+    check(schema_payload.has_value(), "hoverPayload.schema_exists");
+    if (schema_payload.has_value()) {
+        check(schema_payload->summary == "agent schema field", "hoverPayload.schema_summary");
+        check(schema_payload->ahfl_signature == "input: Request", "hoverPayload.schema_signature");
+        check(schema_payload->declared_spelling == "RequestAlias",
+              "hoverPayload.schema_declared_spelling");
+    }
+
+    const std::string changed_source = "struct Request {\n"
+                                       "    category: Int;\n"
+                                       "}\n";
+    store.change("file:///payload.ahfl", 2, changed_source);
+    const auto *changed_snapshot = analysis.snapshot_for_uri("file:///payload.ahfl");
+    const auto *changed_lsp_source = changed_snapshot != nullptr
+                                         ? changed_snapshot->source_for_uri("file:///payload.ahfl")
+                                         : nullptr;
+    check(analysis.analysis_runs() == 2, "hoverPayload.snapshot_rebuilt_after_change");
+    check(changed_lsp_source != nullptr, "hoverPayload.changed_source_exists");
+    if (changed_snapshot != nullptr && changed_lsp_source != nullptr) {
+        const auto changed_payload = hover.payload_at(
+            *changed_snapshot, *changed_lsp_source, position_of(changed_source, "category"));
+        check(changed_payload.has_value(), "hoverPayload.changed_field_exists");
+        if (changed_payload.has_value()) {
+            check(changed_payload->ahfl_signature == "field category: Int",
+                  "hoverPayload.changed_field_signature");
+        }
+    }
+}
+
 void test_signature_help_capability() {
     // Source with a capability declaration and a flow that calls it.
     // The cursor will be placed after the comma in: OrderQuery(input.order_id,
@@ -666,6 +1056,9 @@ int main() {
     test_project_definition_workspace_symbol_and_rename_cross_file();
     test_project_open_document_overlay_drives_definition();
     test_workspace_descriptor_selects_project_for_source();
+    test_descriptorless_workspace_infers_module_root_for_imports();
+    test_hover_rich_symbol_targets();
+    test_hover_service_payload_contract();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
