@@ -32,6 +32,7 @@ enum class HoverTargetKind {
     AgentTransition,
     FlowState,
     WorkflowSchemaLabel,
+    WorkflowTemporalClause,
     WorkflowNode,
     WorkflowDependency,
     Expression,
