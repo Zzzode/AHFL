@@ -10,7 +10,7 @@ on:
       - "scripts/package-vscode-vsix-release.sh"
       - "src/**"
       - "tools/vscode/**"
-      - "docs/reference/lsp-vscode-extension-v0.1.zh.md"
+      - "docs/reference/lsp-vscode-extension.zh.md"
   pull_request:
     paths:
       - ".github/workflows/vscode-extension.yml"
@@ -20,7 +20,7 @@ on:
       - "scripts/package-vscode-vsix-release.sh"
       - "src/**"
       - "tools/vscode/**"
-      - "docs/reference/lsp-vscode-extension-v0.1.zh.md"
+      - "docs/reference/lsp-vscode-extension.zh.md"
   workflow_dispatch:
     inputs:
       publish:
