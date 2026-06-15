@@ -71,7 +71,7 @@
 | V0.1 | 单文件编译器前端闭环 + restricted formal backend | 完整 AST、Resolver、TypeChecker、Validator、IR、`emit-smv` |
 | V0.2 | Project-aware 多文件编译模型 | SourceGraph、跨文件 import/resolve、DeclarationProvenance、project-aware IR |
 
-**设计文档**：`docs/design/core-scope-v0.1.en.md`、`docs/design/compiler-phase-boundaries-v0.2.zh.md`、`docs/design/formal-backend-v0.2.zh.md`、`docs/design/module-loading-v0.2.zh.md`
+**设计文档**：`docs/design/core-scope.en.md`、`docs/design/compiler-phase-boundaries.zh.md`、`docs/design/formal-backend.zh.md`、`docs/design/module-loading.zh.md`
 
 ### 3.2 执行工件管线（V0.3–V0.10）✅
 
