@@ -11,12 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
     "docs/README.md": (
-        "ir-backend-architecture-v0.2.zh.md",
-        "ir-format-v0.3.zh.md",
-        "cli-commands-v0.11.zh.md",
-        "ir-architecture-evolution-v0.1.zh.md",
+        "ir-backend-architecture.zh.md",
+        "ir-format.zh.md",
+        "cli-commands.zh.md",
     ),
-    "docs/design/ir-backend-architecture-v0.2.zh.md": (
+    "docs/design/ir-backend-architecture.zh.md": (
         "```mermaid",
         "emit opt-ir-json",
         "AHFL_OPT_IR_V1",
@@ -26,7 +25,7 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
         "artifact-only",
         "readonly",
     ),
-    "docs/reference/ir-format-v0.3.zh.md": (
+    "docs/reference/ir-format.zh.md": (
         "emit opt-ir-json",
         "AHFL_OPT_IR_V1",
         "skipped_temporal",
@@ -34,20 +33,11 @@ REQUIRED_TEXT: dict[str, tuple[str, ...]] = {
         "artifact-only",
         "readonly",
     ),
-    "docs/reference/cli-commands-v0.11.zh.md": (
+    "docs/reference/cli-commands.zh.md": (
         "ahflc emit-opt-ir-json",
         "emit opt-ir-json",
         "AHFL_OPT_IR_V1",
         "artifact-only",
-    ),
-    "docs/plan/ir-architecture-evolution-v0.1.zh.md": (
-        "| **Done** | T-7 |",
-        "| **Done** | T-10 |",
-        "| **Done** | T-11 |",
-        "| **Done** | T-12 |",
-        "AHFL_OPT_IR_V1",
-        "artifact-only",
-        "readonly",
     ),
 }
 
@@ -77,13 +67,13 @@ def main() -> int:
             if fragment not in text:
                 failures.append(f"{relative_path}: missing required fragment {fragment!r}")
 
-    design_path = ROOT / "docs/design/ir-backend-architecture-v0.2.zh.md"
+    design_path = ROOT / "docs/design/ir-backend-architecture.zh.md"
     if design_path.is_file():
         design_text = design_path.read_text()
         for fragment in FORBIDDEN_IR_DESIGN_FRAGMENTS:
             if fragment in design_text:
                 failures.append(
-                    "docs/design/ir-backend-architecture-v0.2.zh.md: "
+                    "docs/design/ir-backend-architecture.zh.md: "
                     f"architecture diagrams must use Mermaid, found {fragment!r}"
                 )
 
