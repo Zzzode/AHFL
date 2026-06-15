@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions } from 'vscode-languageclient/node';
 
@@ -5,7 +7,7 @@ let client: LanguageClient | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('ahfl');
-    const serverCommand = config.get<string>('serverPath', 'ahfl-lsp');
+    const serverCommand = resolveServerCommand(context, config.get<string>('serverPath', ''));
     const serverArgs = config.get<string[]>('serverArgs', []);
     
     const serverOptions: ServerOptions = {
@@ -42,6 +44,21 @@ export function deactivate(): Thenable<void> | undefined {
         return undefined;
     }
     return client.stop();
+}
+
+function resolveServerCommand(context: vscode.ExtensionContext, configuredPath: string): string {
+    const trimmedPath = configuredPath.trim();
+    if (trimmedPath.length > 0) {
+        return trimmedPath;
+    }
+
+    const executableName = process.platform === 'win32' ? 'ahfl-lsp.exe' : 'ahfl-lsp';
+    const bundledServer = context.asAbsolutePath(path.join('server', executableName));
+    if (fs.existsSync(bundledServer)) {
+        return bundledServer;
+    }
+
+    return 'ahfl-lsp';
 }
 
 class AhflCodeLensProvider implements vscode.CodeLensProvider {
