@@ -78,6 +78,37 @@
           },
           "default": [],
           "description": "Additional arguments passed to the AHFL language server."
+        },
+        "ahfl.hover.detailLevel": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "standard",
+            "debug"
+          ],
+          "default": "standard",
+          "description": "Controls how much information AHFL hover tooltips include."
+        },
+        "ahfl.hover.showSource": {
+          "type": "boolean",
+          "default": false,
+          "description": "Shows source file paths in debug hover details."
+        },
+        "ahfl.hover.maxFacts": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "description": "Maximum number of primary facts shown in standard AHFL hover tooltips."
+        },
+        "ahfl.hover.markupKind": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "markdown",
+            "plaintext"
+          ],
+          "default": "auto",
+          "description": "Controls the MarkupContent kind requested from the AHFL language server."
         }
       }
     }
@@ -88,6 +119,7 @@
     "compile": "npm run check && npm run bundle",
     "watch": "esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --outfile=out/extension.js --sourcemap --watch",
     "vscode:prepublish": "npm run compile",
+    "test:hover": "npm run compile && node ./test/runTest.js",
     "prepackage": "node -e \"const fs = require('fs'); fs.rmSync('server', { recursive: true, force: true }); fs.mkdirSync('dist', { recursive: true });\"",
     "package": "vsce package --no-dependencies --out dist/ahfl-language.vsix",
     "package:target": "vsce package --no-dependencies",
@@ -97,6 +129,7 @@
   "devDependencies": {
     "@types/node": "^22.19.21",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
     "typescript": "^5.3.0",
