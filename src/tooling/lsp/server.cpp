@@ -340,6 +340,115 @@ text_document_position(const json::JsonValue &params, std::string &uri, Position
     return value.has_value() ? std::string(*value) : std::string{};
 }
 
+[[nodiscard]] MarkupKind preferred_hover_markup_kind(const json::JsonValue *params) {
+    if (params == nullptr) {
+        return MarkupKind::Markdown;
+    }
+    const auto *capabilities = params->get("capabilities");
+    const auto *text_document =
+        capabilities != nullptr ? capabilities->get("textDocument") : nullptr;
+    const auto *hover = text_document != nullptr ? text_document->get("hover") : nullptr;
+    const auto *content_format = hover != nullptr ? hover->get("contentFormat") : nullptr;
+    if (content_format == nullptr || !content_format->is_array()) {
+        return MarkupKind::Markdown;
+    }
+    for (const auto &item : content_format->array_items) {
+        if (item == nullptr) {
+            continue;
+        }
+        const auto value = item->as_string();
+        if (!value.has_value()) {
+            continue;
+        }
+        if (*value == "markdown") {
+            return MarkupKind::Markdown;
+        }
+        if (*value == "plaintext") {
+            return MarkupKind::Plaintext;
+        }
+    }
+    return MarkupKind::Markdown;
+}
+
+[[nodiscard]] const json::JsonValue *hover_initialization_options(const json::JsonValue *params) {
+    if (params == nullptr) {
+        return nullptr;
+    }
+    const auto *init_options = params->get("initializationOptions");
+    if (init_options == nullptr || !init_options->is_object()) {
+        return nullptr;
+    }
+    if (const auto *hover = init_options->get("hover"); hover != nullptr && hover->is_object()) {
+        return hover;
+    }
+    const auto *ahfl = init_options->get("ahfl");
+    if (ahfl == nullptr || !ahfl->is_object()) {
+        return nullptr;
+    }
+    const auto *hover = ahfl->get("hover");
+    return hover != nullptr && hover->is_object() ? hover : nullptr;
+}
+
+void apply_hover_detail_level(HoverRenderOptions &options, const json::JsonValue &hover_options) {
+    const auto *value = hover_options.get("detailLevel");
+    if (value == nullptr) {
+        return;
+    }
+    const auto text = value->as_string();
+    if (!text.has_value()) {
+        return;
+    }
+    if (*text == "compact") {
+        options.detail_level = HoverDetailLevel::Compact;
+    } else if (*text == "debug") {
+        options.detail_level = HoverDetailLevel::Debug;
+    } else {
+        options.detail_level = HoverDetailLevel::Standard;
+    }
+}
+
+void apply_hover_markup_kind(HoverRenderOptions &options, const json::JsonValue &hover_options) {
+    const auto *value = hover_options.get("markupKind");
+    if (value == nullptr) {
+        return;
+    }
+    const auto text = value->as_string();
+    if (!text.has_value()) {
+        return;
+    }
+    if (*text == "plaintext") {
+        options.markup_kind = MarkupKind::Plaintext;
+    } else if (*text == "markdown") {
+        options.markup_kind = MarkupKind::Markdown;
+    }
+}
+
+void apply_hover_scalar_options(HoverRenderOptions &options, const json::JsonValue &hover_options) {
+    if (const auto *show_source = hover_options.get("showSource"); show_source != nullptr) {
+        if (const auto value = show_source->as_bool(); value.has_value()) {
+            options.show_source = *value;
+        }
+    }
+    if (const auto *max_facts = hover_options.get("maxFacts"); max_facts != nullptr) {
+        if (const auto value = max_facts->as_int(); value.has_value() && *value >= 0) {
+            options.max_facts = static_cast<std::size_t>(*value);
+        }
+    }
+}
+
+[[nodiscard]] HoverRenderOptions
+hover_render_options_from_initialize(const json::JsonValue *params) {
+    HoverRenderOptions options;
+    options.markup_kind = preferred_hover_markup_kind(params);
+    if (const auto *hover_options = hover_initialization_options(params);
+        hover_options != nullptr) {
+        apply_hover_detail_level(options, *hover_options);
+        apply_hover_markup_kind(options, *hover_options);
+        apply_hover_scalar_options(options, *hover_options);
+    }
+    return options;
+}
+
 [[nodiscard]] std::vector<std::filesystem::path>
 workspace_roots_from_initialize(const json::JsonValue *params) {
     std::vector<std::filesystem::path> roots;
@@ -826,6 +935,7 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
 void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialized_ = true;
     analysis_.set_workspace_roots(workspace_roots_from_initialize(req.params.get()));
+    hover_options_ = hover_render_options_from_initialize(req.params.get());
 
     ServerCapabilities caps;
     auto result = json::JsonValue::make_object();
@@ -1064,7 +1174,7 @@ void LspServer::handle_hover(const JsonRpcRequest &req) {
         return;
     }
 
-    const HoverService hover_service;
+    const HoverService hover_service(hover_options_);
     if (auto hover = hover_service.hover_at(*snapshot, *source, position); hover.has_value()) {
         JsonRpcResponse resp;
         resp.id = req.id;

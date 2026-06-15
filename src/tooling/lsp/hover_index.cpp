@@ -59,14 +59,16 @@ struct IdentifierSegment {
     case HoverTargetKind::CapabilityParam:
     case HoverTargetKind::PredicateParam:
     case HoverTargetKind::AgentSchemaLabel:
-    case HoverTargetKind::AgentState:
     case HoverTargetKind::AgentTransition:
     case HoverTargetKind::FlowState:
     case HoverTargetKind::WorkflowSchemaLabel:
+    case HoverTargetKind::WorkflowTemporalClause:
     case HoverTargetKind::WorkflowNode:
     case HoverTargetKind::WorkflowDependency:
     case HoverTargetKind::LocalBinding:
         return 1;
+    case HoverTargetKind::AgentState:
+        return 2;
     case HoverTargetKind::MemberAccess:
         return 2;
     case HoverTargetKind::Expression:
@@ -188,6 +190,52 @@ schema_label_range(const SourceFile &source, const ast::TypeSyntax &type, std::s
     }
 
     return std::nullopt;
+}
+
+[[nodiscard]] std::optional<SourceRange> temporal_clause_label_range(const SourceFile &source,
+                                                                     SourceRange declaration,
+                                                                     SourceRange formula,
+                                                                     std::string_view label) {
+    if (label.empty()) {
+        return std::nullopt;
+    }
+
+    const auto formula_begin = std::min(formula.begin_offset, source.content.size());
+    const auto declaration_begin = std::min(declaration.begin_offset, source.content.size());
+    auto search_from = formula_begin;
+    while (search_from > declaration_begin) {
+        const auto found = source.content.rfind(label, search_from - 1);
+        if (found == std::string::npos || found < declaration_begin) {
+            return std::nullopt;
+        }
+
+        const auto before_ok = found == 0 || !is_identifier_char(source.content[found - 1]);
+        const auto after = found + label.size();
+        const auto after_ok =
+            after >= source.content.size() || !is_identifier_char(source.content[after]);
+        if (before_ok && after_ok) {
+            auto cursor = after;
+            while (cursor < source.content.size() &&
+                   std::isspace(static_cast<unsigned char>(source.content[cursor])) != 0) {
+                ++cursor;
+            }
+            if (cursor < source.content.size() && source.content[cursor] == ':') {
+                return SourceRange{.begin_offset = found, .end_offset = after};
+            }
+        }
+
+        if (found == 0) {
+            break;
+        }
+        search_from = found;
+    }
+
+    return std::nullopt;
+}
+
+[[nodiscard]] std::string source_text_in_range(const SourceFile &source, SourceRange raw_range) {
+    const auto range = bounded_range(source, raw_range);
+    return source.content.substr(range.begin_offset, range.end_offset - range.begin_offset);
 }
 
 [[nodiscard]] MaybeCRef<Symbol> symbol_for_declaration(const LspAnalysisSnapshot &snapshot,
@@ -439,6 +487,55 @@ void add_agent_property_label_target(HoverTargetIndex &index,
     });
 }
 
+void add_agent_transition_label_target(HoverTargetIndex &index,
+                                       const LspSourceSnapshot &source,
+                                       const Symbol &owner,
+                                       const ast::TransitionSyntax &transition) {
+    if (source.source == nullptr) {
+        return;
+    }
+    const auto range = first_identifier_range(*source.source, transition.range, "transition");
+    if (!range.has_value()) {
+        return;
+    }
+    index.add(HoverTarget{
+        .kind = HoverTargetKind::AgentTransition,
+        .token_range = *range,
+        .source_id = source.source_id,
+        .owner_symbol_id = owner.id,
+        .local_name = "transition",
+        .role = "agent transition",
+        .declared_spelling = transition.from_state + " -> " + transition.to_state,
+        .source_label = source.source->display_name,
+    });
+}
+
+void add_workflow_temporal_clause_target(HoverTargetIndex &index,
+                                         const LspSourceSnapshot &source,
+                                         const Symbol &owner,
+                                         SourceRange declaration_range,
+                                         const ast::TemporalExprSyntax &formula,
+                                         std::string_view label) {
+    if (source.source == nullptr) {
+        return;
+    }
+    const auto range =
+        temporal_clause_label_range(*source.source, declaration_range, formula.range, label);
+    if (!range.has_value()) {
+        return;
+    }
+    index.add(HoverTarget{
+        .kind = HoverTargetKind::WorkflowTemporalClause,
+        .token_range = *range,
+        .source_id = source.source_id,
+        .owner_symbol_id = owner.id,
+        .local_name = std::string(label),
+        .role = "workflow temporal clause",
+        .declared_spelling = source_text_in_range(*source.source, formula.range),
+        .source_label = source.source->display_name,
+    });
+}
+
 [[nodiscard]] std::optional<SymbolId> capability_symbol(const LspAnalysisSnapshot &snapshot,
                                                         const LspSourceSnapshot &source,
                                                         std::string_view name) {
@@ -570,6 +667,26 @@ void add_type_syntax_targets(HoverTargetIndex &index,
 
     add_type_syntax_targets(index, snapshot, source, type->first.get());
     add_type_syntax_targets(index, snapshot, source, type->second.get());
+}
+
+void add_predicate_return_type_target(HoverTargetIndex &index,
+                                      const LspSourceSnapshot &source,
+                                      SourceRange declaration_range) {
+    if (source.source == nullptr) {
+        return;
+    }
+    const auto ranges = identifier_ranges_in_range(*source.source, declaration_range, "Bool");
+    if (ranges.empty()) {
+        return;
+    }
+    index.add(HoverTarget{
+        .kind = HoverTargetKind::TypeReference,
+        .token_range = ranges.back(),
+        .source_id = source.source_id,
+        .local_name = "Bool",
+        .role = "builtin type",
+        .source_label = source.source->display_name,
+    });
 }
 
 [[nodiscard]] std::optional<SymbolId> local_struct_symbol(const LspAnalysisSnapshot &snapshot,
@@ -927,6 +1044,7 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
                 add_type_syntax_targets(index, snapshot, source, param->type.get());
             }
         }
+        add_predicate_return_type_target(index, source, decl.range);
         return;
     }
     case ast::NodeKind::AgentDecl: {
@@ -969,6 +1087,11 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
                                         decl.range,
                                         "capabilities",
                                         bracketed_list(decl.capabilities));
+        for (const auto &transition : decl.transitions) {
+            if (transition) {
+                add_agent_transition_label_target(index, source, symbol->get(), *transition);
+            }
+        }
         add_agent_capability_targets(index, snapshot, source, decl.range, decl.capabilities);
         for (const auto &state : decl.states) {
             add_all_named_targets(index,
@@ -1046,6 +1169,18 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
                                        dependency,
                                        symbol->get().id,
                                        "workflow dependency");
+            }
+        }
+        for (const auto &formula : decl.safety) {
+            if (formula) {
+                add_workflow_temporal_clause_target(
+                    index, source, symbol->get(), decl.range, *formula, "safety");
+            }
+        }
+        for (const auto &formula : decl.liveness) {
+            if (formula) {
+                add_workflow_temporal_clause_target(
+                    index, source, symbol->get(), decl.range, *formula, "liveness");
             }
         }
         add_expr_syntax_targets(index, snapshot, source, decl.return_value.get());
