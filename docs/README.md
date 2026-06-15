@@ -19,12 +19,10 @@ This directory uses a typed document taxonomy. The goal is to make document inte
 
 ## Naming Convention
 
-Except for this file and the two consolidated plan files
-`docs/plan/project-status.zh.md` and `docs/plan/issue-backlog-global-gaps.zh.md`,
-every documentation file must follow this path pattern:
+Except for this index, documentation files live under a typed directory and use one current filename per topic:
 
 ```text
-docs/<class>/<topic>-v<version>.<lang>.md
+docs/<class>/<topic>.<lang>.md
 ```
 
 Rules:
@@ -32,127 +30,89 @@ Rules:
 1. `<class>` must be one of `spec`, `design`, `plan`, or `reference`.
 2. `<topic>` must be a short kebab-case noun phrase.
 3. `<topic>` must not repeat the document class word.
-4. `<version>` uses the repository doc version form such as `v0.1`, `v1.0`, `v1.1`.
-5. `<lang>` uses a short language code such as `en` or `zh`.
-6. `<lang>` must reflect the dominant natural language of the prose body, not just the title.
+4. Do not add document-version suffixes such as `-v0.1` or `-v1.0` to filenames.
+5. If a topic accumulates multiple historical docs, merge the useful content into the current topic file and delete the redundant files.
+6. `<lang>` uses a short language code such as `en` or `zh` and must reflect the dominant prose language.
 7. Internal document links should use relative Markdown links, not machine-local absolute paths.
 8. New docs should not be added directly under `docs/` unless they are index files like this `README.md`.
 
 Examples:
 
-- `docs/spec/core-language-v0.1.zh.md`
-- `docs/design/compiler-phase-boundaries-v0.2.zh.md`
+- `docs/spec/core-language.zh.md`
+- `docs/design/compiler-phase-boundaries.zh.md`
 - `docs/plan/project-status.zh.md`
 
 Avoid:
 
-- `docs/spec.md`
+- `docs/spec/<topic>-version.zh.md`
+- `docs/design/<topic>-dated-draft.zh.md`
 - `docs/final-roadmap.md`
-- `docs/ahfl_new_notes.md`
 - `docs/misc.md`
 
 ## Current Map
 
 ### Spec
 
-- [assurance-v0.1.zh.md](./spec/assurance-v0.1.zh.md)
-- [core-language-v0.1.zh.md](./spec/core-language-v0.1.zh.md)
+- [assurance.zh.md](./spec/assurance.zh.md)
+- [core-language.zh.md](./spec/core-language.zh.md)
 
 ### Design
 
-- [assurance-architecture-v0.1.zh.md](./design/assurance-architecture-v0.1.zh.md)
-- [ast-model-architecture-v0.2.zh.md](./design/ast-model-architecture-v0.2.zh.md)
-- [backend-extension-guide-v0.2.zh.md](./design/backend-extension-guide-v0.2.zh.md)
-- [cli-pipeline-architecture-v0.2.zh.md](./design/cli-pipeline-architecture-v0.2.zh.md)
-- [compiler-architecture-v0.2.zh.md](./design/compiler-architecture-v0.2.zh.md)
-- [compiler-phase-boundaries-v0.2.zh.md](./design/compiler-phase-boundaries-v0.2.zh.md)
-- [compiler-evolution-v0.2.zh.md](./design/compiler-evolution-v0.2.zh.md)
-- [core-scope-v0.1.en.md](./design/core-scope-v0.1.en.md)
-- [diagnostics-architecture-v0.2.zh.md](./design/diagnostics-architecture-v0.2.zh.md)
-- [frontend-lowering-architecture-v0.2.zh.md](./design/frontend-lowering-architecture-v0.2.zh.md)
-- [formal-backend-v0.2.zh.md](./design/formal-backend-v0.2.zh.md)
-- [ir-backend-architecture-v0.2.zh.md](./design/ir-backend-architecture-v0.2.zh.md)
-- [lsp-hover-architecture-v0.1.zh.md](./design/lsp-hover-architecture-v0.1.zh.md)
-- [module-loading-v0.2.zh.md](./design/module-loading-v0.2.zh.md)
-- [module-resolution-rules-v0.2.zh.md](./design/module-resolution-rules-v0.2.zh.md)
-- [native-dry-run-bootstrap-v0.6.zh.md](./design/native-dry-run-bootstrap-v0.6.zh.md)
-- [native-execution-plan-architecture-v0.6.zh.md](./design/native-execution-plan-architecture-v0.6.zh.md)
-- [native-partial-session-failure-bootstrap-v0.9.zh.md](./design/native-partial-session-failure-bootstrap-v0.9.zh.md)
-- [native-export-package-prototype-bootstrap-v0.13.zh.md](./design/native-export-package-prototype-bootstrap-v0.13.zh.md)
-- [durable-store-import-architecture-v0.1.zh.md](./design/durable-store-import-architecture-v0.1.zh.md)
-- [native-store-import-prototype-bootstrap-v0.14.zh.md](./design/native-store-import-prototype-bootstrap-v0.14.zh.md)
-- [native-persistence-prototype-bootstrap-v0.12.zh.md](./design/native-persistence-prototype-bootstrap-v0.12.zh.md)
-- [native-checkpoint-prototype-bootstrap-v0.11.zh.md](./design/native-checkpoint-prototype-bootstrap-v0.11.zh.md)
-- [native-scheduler-prototype-bootstrap-v0.10.zh.md](./design/native-scheduler-prototype-bootstrap-v0.10.zh.md)
-- [native-replay-audit-bootstrap-v0.8.zh.md](./design/native-replay-audit-bootstrap-v0.8.zh.md)
-- [native-runtime-session-bootstrap-v0.7.zh.md](./design/native-runtime-session-bootstrap-v0.7.zh.md)
-- [native-execution-journal-v0.7.zh.md](./design/native-execution-journal-v0.7.zh.md)
-- [native-consumer-bootstrap-v0.5.zh.md](./design/native-consumer-bootstrap-v0.5.zh.md)
-- [native-handoff-architecture-v0.4.zh.md](./design/native-handoff-architecture-v0.4.zh.md)
-- [native-package-authoring-architecture-v0.5.zh.md](./design/native-package-authoring-architecture-v0.5.zh.md)
-- [native-package-metadata-v0.4.zh.md](./design/native-package-metadata-v0.4.zh.md)
-- [project-descriptor-architecture-v0.3.zh.md](./design/project-descriptor-architecture-v0.3.zh.md)
-- [repository-layout-v0.2.zh.md](./design/repository-layout-v0.2.zh.md)
-- [semantics-architecture-v0.2.zh.md](./design/semantics-architecture-v0.2.zh.md)
-- [source-graph-v0.2.zh.md](./design/source-graph-v0.2.zh.md)
-- [testing-strategy-v0.3.zh.md](./design/testing-strategy-v0.3.zh.md)
-- [testing-strategy-v0.5.zh.md](./design/testing-strategy-v0.5.zh.md)
+- [assurance-architecture.zh.md](./design/assurance-architecture.zh.md)
+- [ast-model-architecture.zh.md](./design/ast-model-architecture.zh.md)
+- [backend-extension-guide.zh.md](./design/backend-extension-guide.zh.md)
+- [cli-pipeline-architecture.zh.md](./design/cli-pipeline-architecture.zh.md)
+- [compiler-architecture.zh.md](./design/compiler-architecture.zh.md)
+- [compiler-evolution.zh.md](./design/compiler-evolution.zh.md)
+- [compiler-phase-boundaries.zh.md](./design/compiler-phase-boundaries.zh.md)
+- [core-scope.en.md](./design/core-scope.en.md)
+- [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
+- [durable-store-import-architecture.zh.md](./design/durable-store-import-architecture.zh.md)
+- [formal-backend.zh.md](./design/formal-backend.zh.md)
+- [frontend-lowering-architecture.zh.md](./design/frontend-lowering-architecture.zh.md)
+- [ir-backend-architecture.zh.md](./design/ir-backend-architecture.zh.md)
+- [lsp-hover-architecture.zh.md](./design/lsp-hover-architecture.zh.md)
+- [module-loading.zh.md](./design/module-loading.zh.md)
+- [module-resolution-rules.zh.md](./design/module-resolution-rules.zh.md)
+- [native-runtime-architecture.zh.md](./design/native-runtime-architecture.zh.md)
+- [optional-narrowing-rfc.zh.md](./design/optional-narrowing-rfc.zh.md)
+- [project-descriptor-architecture.zh.md](./design/project-descriptor-architecture.zh.md)
+- [release-evidence-archive.zh.md](./design/release-evidence-archive.zh.md)
+- [repository-layout.zh.md](./design/repository-layout.zh.md)
+- [semantics-architecture.zh.md](./design/semantics-architecture.zh.md)
+- [source-graph.zh.md](./design/source-graph.zh.md)
+- [testing-strategy.zh.md](./design/testing-strategy.zh.md)
 
 ### Plan
 
-- [project-status.zh.md](./plan/project-status.zh.md) - consolidated project status and version history
-- [issue-backlog-global-gaps.zh.md](./plan/issue-backlog-global-gaps.zh.md) - consolidated unresolved work backlog
-- [semantics-typecheck-hardening-v0.1.zh.md](./plan/semantics-typecheck-hardening-v0.1.zh.md) - TypeCheck / Sema hardening rollout plan
-- [typechecker-next-architecture-v0.1.zh.md](./plan/typechecker-next-architecture-v0.1.zh.md) - next-stage Type Checker architecture task list
-- [ir-architecture-evolution-v0.1.zh.md](./plan/ir-architecture-evolution-v0.1.zh.md) - IR multi-layer architecture evolution plan (audit-driven)
-- [lsp-production-readiness-v0.1.zh.md](./plan/lsp-production-readiness-v0.1.zh.md) - LSP usability and production-readiness plan
+- [issue-backlog-global-gaps.zh.md](./plan/issue-backlog-global-gaps.zh.md)
+- [project-status.zh.md](./plan/project-status.zh.md)
+- [semantics-typecheck-hardening.zh.md](./plan/semantics-typecheck-hardening.zh.md)
 
 ### Reference
 
-- User guide series:
-  - [user-guide-overview-v0.1.zh.md](./reference/user-guide-overview-v0.1.zh.md)
-  - [user-guide-authoring-v0.1.zh.md](./reference/user-guide-authoring-v0.1.zh.md)
-  - [user-guide-cli-v0.1.zh.md](./reference/user-guide-cli-v0.1.zh.md)
-  - [user-guide-execution-v0.1.zh.md](./reference/user-guide-execution-v0.1.zh.md)
-  - [user-guide-assurance-v0.1.zh.md](./reference/user-guide-assurance-v0.1.zh.md)
-- Consolidated reference entries:
-  - [cli-commands-v0.11.zh.md](./reference/cli-commands-v0.11.zh.md) - consolidated CLI command reference
-  - [project-usage-v0.5.zh.md](./reference/project-usage-v0.5.zh.md) - consolidated project/workspace/package usage reference
-  - [ir-format-v0.3.zh.md](./reference/ir-format-v0.3.zh.md) - consolidated IR / JSON IR format reference
-  - [native-handoff-usage-v0.5.zh.md](./reference/native-handoff-usage-v0.5.zh.md) - consolidated native handoff usage reference
-  - [native-consumer-matrix-v0.14.zh.md](./reference/native-consumer-matrix-v0.14.zh.md) - consolidated native consumer matrix
-  - [contributor-guide-v0.14.zh.md](./reference/contributor-guide-v0.14.zh.md) - consolidated contributor guide
-- Single-topic references:
-  - [migration-policy-v0.1.zh.md](./reference/migration-policy-v0.1.zh.md)
-  - [durable-store-import-reference-v0.1.zh.md](./reference/durable-store-import-reference-v0.1.zh.md)
-  - [backend-capability-matrix-v0.3.zh.md](./reference/backend-capability-matrix-v0.3.zh.md)
-  - [lsp-vscode-extension-v0.1.zh.md](./reference/lsp-vscode-extension-v0.1.zh.md)
-
-Compatibility references below are retained as explicit compatibility contracts or historical archaeology. Consolidated multi-version compatibility entries are the current maintenance entry points for their type.
-
-- [store-import-prototype-compatibility-v0.14.zh.md](./reference/store-import-prototype-compatibility-v0.14.zh.md)
-- [ir-compatibility-v0.3.zh.md](./reference/ir-compatibility-v0.3.zh.md)
-- [native-package-authoring-compatibility-v0.5.zh.md](./reference/native-package-authoring-compatibility-v0.5.zh.md)
-- [native-package-compatibility-v0.4.zh.md](./reference/native-package-compatibility-v0.4.zh.md)
-- [execution-plan-compatibility-v0.6.zh.md](./reference/execution-plan-compatibility-v0.6.zh.md)
-- [export-package-prototype-compatibility-v0.13.zh.md](./reference/export-package-prototype-compatibility-v0.13.zh.md)
-- [runtime-session-compatibility-v0.9.zh.md](./reference/runtime-session-compatibility-v0.9.zh.md)
-- [execution-journal-compatibility-v0.9.zh.md](./reference/execution-journal-compatibility-v0.9.zh.md)
-- [replay-view-compatibility-v0.9.zh.md](./reference/replay-view-compatibility-v0.9.zh.md)
-- [audit-report-compatibility-v0.9.zh.md](./reference/audit-report-compatibility-v0.9.zh.md)
-- [failure-path-compatibility-v0.9.zh.md](./reference/failure-path-compatibility-v0.9.zh.md)
-- [persistence-prototype-compatibility-v0.12.zh.md](./reference/persistence-prototype-compatibility-v0.12.zh.md)
-- [checkpoint-prototype-compatibility-v0.11.zh.md](./reference/checkpoint-prototype-compatibility-v0.11.zh.md)
-- [scheduler-prototype-compatibility-v0.10.zh.md](./reference/scheduler-prototype-compatibility-v0.10.zh.md)
-- [dry-run-trace-compatibility-v0.6.zh.md](./reference/dry-run-trace-compatibility-v0.6.zh.md)
+- [backend-capability-matrix.zh.md](./reference/backend-capability-matrix.zh.md)
+- [cli-commands.zh.md](./reference/cli-commands.zh.md)
+- [contributor-guide.zh.md](./reference/contributor-guide.zh.md)
+- [durable-store-import-reference.zh.md](./reference/durable-store-import-reference.zh.md)
+- [ir-format.zh.md](./reference/ir-format.zh.md)
+- [lsp-vscode-extension.zh.md](./reference/lsp-vscode-extension.zh.md)
+- [migration-policy.zh.md](./reference/migration-policy.zh.md)
+- [native-handoff-usage.zh.md](./reference/native-handoff-usage.zh.md)
+- [native-runtime-artifacts.zh.md](./reference/native-runtime-artifacts.zh.md)
+- [project-usage.zh.md](./reference/project-usage.zh.md)
+- [user-guide-assurance.zh.md](./reference/user-guide-assurance.zh.md)
+- [user-guide-authoring.zh.md](./reference/user-guide-authoring.zh.md)
+- [user-guide-cli.zh.md](./reference/user-guide-cli.zh.md)
+- [user-guide-execution.zh.md](./reference/user-guide-execution.zh.md)
+- [user-guide-overview.zh.md](./reference/user-guide-overview.zh.md)
 
 ## Governance
 
 When adding or renaming docs:
 
 1. Classify the document before writing it.
-2. Use the typed directory and standard file name immediately.
-3. Update inbound and outbound links in the same change.
-4. Keep this index current.
-
-This convention is also captured as a local skill at `.agents/skills/ahfl-docs-governance/`.
+2. Use the typed directory and current topic filename immediately.
+3. Merge same-topic historical material instead of creating another versioned file.
+4. Update inbound and outbound links in the same change.
+5. Keep this index current.

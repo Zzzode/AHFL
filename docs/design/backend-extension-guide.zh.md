@@ -1,0 +1,372 @@
+# AHFL Backend Extension Guide
+
+本文给出 AHFL Core V0.2 中新增 backend 的实现落地指南，面向需要在现有 `emit-ir` / `emit-ir-json` / `emit-smv` 之外增加新 backend，或扩展现有 backend 输出边界的工程实现者。
+
+关联文档：
+
+- [backend-capability-matrix.zh.md](../reference/backend-capability-matrix.zh.md)
+- [native-runtime-artifacts.zh.md](../reference/native-runtime-artifacts.zh.md)
+- [ir-backend-architecture.zh.md](./ir-backend-architecture.zh.md)
+- [formal-backend.zh.md](./formal-backend.zh.md)
+- [compiler-evolution.zh.md](./compiler-evolution.zh.md)
+- [testing-strategy.zh.md](./testing-strategy.zh.md)
+- [cli-pipeline-architecture.zh.md](./cli-pipeline-architecture.zh.md)
+
+## 目标
+
+本文主要回答五个问题：
+
+1. 新增一个 backend 时，应该先改 IR，还是先改 emitter。
+2. `BackendKind`、driver、CLI 和测试应该按什么顺序扩展。
+3. 哪些能力应先冻结到 IR，哪些只能留在 backend 私有实现。
+4. 如何判断一个 backend 是“保留语义”还是“抽象语义”。
+5. 新 backend 的最小交付面应该包含哪些测试和文档。
+
+## 当前 backend 分层
+
+AHFL 当前 backend 相关代码分布在：
+
+- `include/ahfl/compiler/backends/driver.hpp`
+- `src/compiler/backends/driver.cpp`
+- `include/ahfl/compiler/backends/smv.hpp`
+- `src/compiler/backends/smv/smv.cpp`
+- `include/ahfl/compiler/ir/ir.hpp`
+- `src/compiler/ir/ir_lower.cpp`
+- `src/compiler/ir/ir_json.cpp`
+- `src/tooling/cli/ahflc.cpp`
+
+当前已经存在四类 backend 路径：
+
+- `Ir`
+- `IrJson`
+- `NativeJson`
+- `Summary`
+- `Smv`
+
+这三者共享一个根前提：
+
+- backend 只消费 validate 之后的稳定语义模型和 IR
+
+其中：
+
+1. `Summary`
+   - 是当前仓库里的最小 compiler-facing 参考 backend
+   - 用来验证 backend 扩展路径，而不是提供新的重语义执行边界
+2. `NativeJson`
+   - 是当前仓库里的 runtime-facing 参考 backend
+   - 用来验证 handoff package 如何在不绕开 driver / CLI / docs / golden 的前提下形成正式 consumer 契约
+3. `PackageReview`
+   - 是当前仓库里的 runtime-adjacent reference consumer 输出 backend
+   - 用来验证 direct handoff helper 如何在不绕开 driver / CLI / docs / golden 的前提下形成 review/debug 输出
+
+## 新增 backend 的标准顺序
+
+建议按下面顺序推进：
+
+```text
+确认语义边界
+  -> 确认是否需要扩展 IR
+  -> 实现 backend emitter
+  -> 接入 driver
+  -> 接入 CLI
+  -> 增加 golden / fail-safe tests
+  -> 补设计和 reference 文档
+```
+
+不要反过来先在 CLI 里加一个子命令，再回头猜 backend 需要哪些语义输入。
+
+## 第一步：先定义 backend 边界
+
+新增 backend 前，先明确它属于哪一类：
+
+### 1. 保留语义 backend
+
+例如：
+
+- 尽量保留 declaration / expr / temporal 结构的后端
+
+特点：
+
+1. 对 IR 的结构依赖较强
+2. 希望下游尽量看到原始语义形状
+3. 往往应优先复用或扩展 IR 节点
+
+### 2. 抽象语义 backend
+
+例如：
+
+- 为模型检查、静态分析或摘要消费而做的受限后端
+
+特点：
+
+1. 可能只保留部分语义
+2. 可能引入 observation 或抽象状态
+3. 必须在设计文档里显式写清楚“不承诺什么”
+
+`emit-smv` 就属于第二类。
+
+若新增的是 runtime-facing consumer 路径，还应再回答一个问题：
+
+- 它是 Package Reader、Execution Planner，还是 Policy / Audit Consumer。
+
+具体分类见：
+
+- [native-runtime-artifacts.zh.md](../reference/native-runtime-artifacts.zh.md)
+
+## 第二步：判断是否先扩展 IR
+
+可以用一个简单规则：
+
+1. 若该信息会被多个 backend 共享，应先进入 IR。
+2. 若该信息只是某个 backend 的私有渲染技巧，可留在 emitter 内部。
+
+### 应优先进入 IR 的典型内容
+
+- 新 declaration / expr / statement / temporal 节点
+- stable provenance 字段
+- shared observation 模型
+- 多 backend 都会消费的结构约束结果
+
+### 不必强行进入 IR 的典型内容
+
+- 某个 emitter 的格式化缩进
+- 某个后端专用的局部符号命名缓存
+- 仅用于文本排版的临时字符串
+
+如果一个 backend 为了工作不得不重新回看 AST 或 parse tree，通常说明 IR 边界还不够。
+
+## 第三步：实现 emitter，而不是重写主链
+
+新 backend 的实现应尽量放在：
+
+- `include/ahfl/compiler/backends/<name>.hpp`
+- `src/compiler/backends/<name>.cpp`
+
+这里的“backend”只指消费 `ir::Program` 的 compiler-facing emitter。若输出消费的是 durable-store import 的 request / review / decision / receipt / provider SDK adapter 等领域 artifact，它不是 backend；它应放在：
+
+- `include/ahfl/durable_store_import/artifacts.hpp`
+- `src/pipeline/persistence/durable_store_import/artifacts.cpp`
+
+并由 `ahfl_durable_store_import_artifacts` 构建目标承载。不要为每一种 durable-store import artifact 新增一对 header/source；新增 printer 应扩展这个 artifact emitter Module 的门面和实现。
+
+其核心职责应是：
+
+1. 消费 `ir::Program`
+2. 输出特定目标格式
+
+不该做：
+
+1. 重新读取文件
+2. 重新跑 resolve/typecheck/validate
+3. 直接读取 parse tree
+
+## 第四步：接入 driver
+
+新增 core backend 后，应按统一方式接入：
+
+1. 扩展 `BackendKind`
+2. 在 `src/compiler/backends/driver.cpp` 中用 `BackendRegistrar` 注册 `BackendEntry`
+3. 让 CLI pipeline 在 validate 成功后先 lower 成 `ir::Program`，再调用 driver
+4. 检查 `emit_backend(...)` 的布尔返回值，未注册 backend 必须作为错误处理
+
+这一步的设计目标是：
+
+- 所有 backend 仍然共享统一分发入口
+- backend-facing seam 保持 IR-only，不让 AST / SourceGraph 泄漏到 backend driver
+- registry 是 fail-closed 分发点，而不是 best-effort 输出
+
+不要为了一个新 backend 绕过 `driver.cpp`，直接在 CLI 中调用专用实现。
+
+## 第五步：接入 CLI
+
+CLI 接入应尽量是薄的一层：
+
+1. 增加 action flag
+2. 更新 usage
+3. 在 command catalog 中把命令映射到 `core_backend_for_command(...)`
+4. 在 validate 成功后调用 `emit_backend(...)`
+
+CLI 仍然不应理解：
+
+- backend-specific 中间对象
+- 某个 backend 的私有语义判定
+
+如果新增 backend 需要 CLI 写一大段专属编排，通常说明 backend/driver 边界还没抽清。
+
+若新增的是 runtime-adjacent artifact command，不要接入 `BackendKind`。它应沿 `dispatch_package_command(...)` 所代表的 package pipeline 扩展，并显式声明自己消费哪一层 artifact。Durable-store import artifact printer 不能放在 `src/compiler/backends`，也不能新增 `ahfl_backend_durable_store_import_*` target。
+
+## 新 backend 的最小测试面
+
+按当前仓库策略，至少应补：
+
+1. 一个成功的 golden 输出
+2. 若 backend 共享 IR 新字段，再补对应 `.ir` / `.json` golden
+3. 若 backend 有 project-aware 差异，再补一个 project-aware golden
+
+### 为什么不只测 CLI 成功
+
+因为 backend 是稳定输出边界，单纯断言命令“返回 0”并不能冻结：
+
+1. 输出结构
+2. 字段命名
+3. 抽象边界是否漂移
+
+## 对抽象语义 backend 的额外要求
+
+若 backend 会抽象语义，例如：
+
+- observation-backed export
+- 状态压缩
+- 值流省略
+
+则必须补两类文档说明：
+
+1. 保留哪些语义
+2. 明确不保留哪些语义
+
+否则下游很容易误以为该 backend 代表完整执行语义。
+
+若 backend 面向 runtime-facing consumer，还必须额外补：
+
+3. compatibility / versioning 文档
+4. consumer matrix 中的落点与使用边界
+
+## V0.5 Runtime-Adjacent 扩展模板
+
+若新增的是 V0.5 runtime-adjacent consumer prototype，当前建议顺序为：
+
+```text
+确认属于 reader / planner / review / native-json 哪一层
+  -> 确认是否复用已有 handoff helper
+  -> 若需要共享信息，先扩 handoff::Package
+  -> 再扩 direct helper / backend
+  -> 接入 driver / CLI
+  -> 补 tests/handoff + tests/review + tests/native
+  -> 更新 compatibility / consumer matrix / contributor docs
+```
+
+当前最小模板要求：
+
+1. 不回退读取 AST、raw source、project descriptor 或 `ahfl.package.json`
+2. 优先复用 `handoff::build_package_reader_summary(...)`
+3. 优先复用 `handoff::build_execution_planner_bootstrap(...)`
+4. 若扩 authoring 输入，必须同步更新 authoring compatibility 文档
+5. 若扩 emitted package 稳定语义，必须同步更新 emitted package compatibility 文档
+
+## 常见错误模式
+
+### 1. 先写 emitter，再补 IR
+
+问题：
+
+1. emitter 会开始直接依赖 AST 细节
+2. 第二个 backend 很快复制同样逻辑
+
+### 2. 在 CLI 中堆 backend 专用逻辑
+
+问题：
+
+1. CLI 变成实现层
+2. project-aware 和单文件路径容易分叉失控
+3. core backend command 与 runtime artifact command 的路由变成隐式试探
+
+### 3. 把 backend 私有抽象偷偷塞成 IR 唯一语义
+
+问题：
+
+1. IR 被某个单一 backend 绑架
+2. 其他 backend 失去更完整的结构信息
+
+### 4. 只补文本输出，不补 JSON/IR 关联测试
+
+问题：
+
+1. 很难确认语义变化究竟发生在 IR 还是 emitter
+2. golden 漂移时难以定位问题层次
+
+## 新 backend 的最小交付清单
+
+一个较完整的新 backend 交付，至少应包含：
+
+1. emitter 实现
+2. `BackendKind` 与 driver 接入
+3. CLI 接入
+4. 至少一个 golden
+5. 若涉及共享边界变化，补 IR/JSON golden
+6. 一篇 design 或 reference 文档
+7. registry / command routing 覆盖，确认命令不会静默落空
+
+若是抽象语义 backend，通常还应补：
+
+8. 单独的 boundary 文档
+
+## V0.6 Runtime-Adjacent 扩展模板
+
+若新增的是 V0.6 runtime-adjacent consumer prototype，当前建议顺序为：
+
+```text
+确认属于 handoff package / execution plan / dry-run trace 哪一层
+  -> 若需要共享 planning 语义，先扩 handoff::ExecutionPlan
+  -> 若需要共享 dry-run 输入，先扩 CapabilityMockSet / DryRunRequest
+  -> 若需要共享 review 结果，先扩 DryRunTrace
+  -> 再扩 helper / runner / artifact printer
+  -> 接入 CLI / golden / labels
+  -> 更新 compatibility / consumer matrix / contributor docs
+```
+
+当前最小模板要求：
+
+1. 不回退读取 AST、raw source、project descriptor 或 authoring descriptor
+2. planner / runner / trace 应优先复用 `build_execution_plan(...)`
+3. runner / trace 应优先复用 `validate_execution_plan(...)`
+4. 新增 mock 输入字段时，必须同步更新 mock parser、compatibility 文档与 `tests/dry_run/`
+5. 新增 trace 稳定字段时，必须同步更新 trace compatibility 文档与 `tests/trace/`
+6. 不要把 secret、endpoint、tenant、region 或 deployment 配置塞进 plan / trace 公共层
+7. 不要把 runtime artifact command 加入 `BackendKind`，除非它已经退化成纯 `ir::Program` emitter
+8. Durable-store import artifact printer 放在 `artifacts.hpp` / `artifacts.cpp` seam，链接 `ahfl_durable_store_import_artifacts`
+
+## 当前参考实现
+
+若你需要一个最小可抄的 backend 扩展样例，当前应优先参考：
+
+- `include/ahfl/compiler/backends/summary.hpp`
+- `src/compiler/backends/pipeline/summary.cpp`
+- `include/ahfl/compiler/backends/native_json.hpp`
+- `src/compiler/backends/pipeline/native_json.cpp`
+- `src/compiler/backends/driver.cpp`
+- `src/tooling/cli/ahflc.cpp`
+- `tests/summary/*`
+- `tests/native/*`
+
+它验证了：
+
+1. 新 backend 如何只消费 `ir::Program`
+2. 如何接入 `BackendKind`
+3. 如何接入 CLI 子命令
+4. 如何补 single-file 与 project-aware golden
+5. 如何区分 compiler-facing 与 runtime-facing 两类 backend 扩展路径
+
+各 backend 消费哪些 IR 能力，见：
+
+- [backend-capability-matrix.zh.md](../reference/backend-capability-matrix.zh.md)
+
+## 推荐阅读顺序
+
+建议按下面顺序读：
+
+1. `include/ahfl/compiler/backends/driver.hpp`
+2. `src/compiler/backends/driver.cpp`
+3. `include/ahfl/compiler/ir/ir.hpp`
+4. `src/compiler/ir/ir_lower.cpp`
+5. `src/compiler/backends/smv/smv.cpp`
+6. `src/tooling/cli/ahflc.cpp`
+
+## 对后续实现的约束
+
+后续继续扩展 backend 体系时，应保持以下原则：
+
+1. backend 始终建立在稳定 IR 之上，而不是直接建立在 AST 或 parse tree 之上。
+2. 新 backend 统一经 `BackendKind` 和 driver 分发。
+3. 共享语义先冻结到 IR，再由各 backend 消费。
+4. 抽象语义必须文档化，不得只藏在 emitter 实现里。
+5. backend 变更应伴随 golden 和设计文档，而不只是代码实现。
