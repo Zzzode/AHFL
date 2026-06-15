@@ -9,7 +9,7 @@ export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('ahfl');
     const serverCommand = resolveServerCommand(context, config.get<string>('serverPath', ''));
     const serverArgs = config.get<string[]>('serverArgs', []);
-    
+
     const serverOptions: ServerOptions = {
         command: serverCommand,
         args: serverArgs,
@@ -19,6 +19,14 @@ export function activate(context: vscode.ExtensionContext) {
         documentSelector: [{ scheme: 'file', language: 'ahfl' }],
         synchronize: {
             fileEvents: vscode.workspace.createFileSystemWatcher('**/*.ahfl'),
+        },
+        initializationOptions: {
+            hover: {
+                detailLevel: config.get<string>('hover.detailLevel', 'standard'),
+                showSource: config.get<boolean>('hover.showSource', false),
+                maxFacts: config.get<number>('hover.maxFacts', 3),
+                markupKind: config.get<string>('hover.markupKind', 'auto'),
+            },
         },
     };
 
