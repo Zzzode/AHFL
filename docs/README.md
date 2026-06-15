@@ -126,6 +126,7 @@ Avoid:
   - [migration-policy-v0.1.zh.md](./reference/migration-policy-v0.1.zh.md)
   - [durable-store-import-reference-v0.1.zh.md](./reference/durable-store-import-reference-v0.1.zh.md)
   - [backend-capability-matrix-v0.3.zh.md](./reference/backend-capability-matrix-v0.3.zh.md)
+  - [lsp-vscode-extension-v0.1.zh.md](./reference/lsp-vscode-extension-v0.1.zh.md)
 
 Compatibility references below are retained as explicit compatibility contracts or historical archaeology. Consolidated multi-version compatibility entries are the current maintenance entry points for their type.
 
