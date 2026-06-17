@@ -3,7 +3,7 @@ add_executable(ahfl_bench_compile_time
 )
 target_link_libraries(ahfl_bench_compile_time
     PRIVATE
-        ahfl_base_public
+        ahfl_compiler_ir
 )
 ahfl_apply_project_warnings(ahfl_bench_compile_time)
 
@@ -12,7 +12,7 @@ add_executable(ahfl_bench_memory_usage
 )
 target_link_libraries(ahfl_bench_memory_usage
     PRIVATE
-        ahfl_base_public
+        ahfl_compiler_ir
 )
 ahfl_apply_project_warnings(ahfl_bench_memory_usage)
 

@@ -19,6 +19,161 @@ set_tests_properties(ahflc.dump_types.example PROPERTIES
     PASS_REGULAR_EXPRESSION "workflow refund::audit::RefundAuditWorkflow"
 )
 
+add_test(NAME ahflc.fmt.formats_file_with_config
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=format"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/formats-file-with-config"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.check_pass
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=check-pass"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_4spaces.ahfl"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/check-pass"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.check_fail
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=check-fail"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_REGEX=formatting check failed"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/check-fail"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.formats_directory
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=format-directory"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/formats-directory"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.check_directory_fail
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=check-directory-fail"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/check-directory-fail"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.formats_project
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=format-project"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/formats-project"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.fmt.formats_workspace
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DMODE=format-workspace"
+            "-DSOURCE_FILE=${AHFL_TESTS_DIR}/golden/formatter/unformatted_struct.ahfl"
+            "-DEXPECTED_FILE=${AHFL_TESTS_DIR}/golden/formatter/formatted_struct_2spaces.ahfl"
+            "-DCONFIG_FILE=${AHFL_TESTS_DIR}/golden/formatter/two_spaces.ahfl-format"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/formatter/formats-workspace"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunFormatterCliTest.cmake"
+)
+
+add_test(NAME ahflc.profile.time_passes.emit_summary
+    COMMAND $<TARGET_FILE:ahflc> emit summary -O --time-passes
+            "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+)
+set_tests_properties(ahflc.profile.time_passes.emit_summary PROPERTIES
+    PASS_REGULAR_EXPRESSION "pass timings:"
+)
+
+add_test(NAME ahflc.profile.time_passes.requires_optimize
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit;summary;--time-passes;${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_REGEX=--time-passes requires -O or --optimize"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.profile.smv_size_report.emit_smv
+    COMMAND $<TARGET_FILE:ahflc> emit smv --smv-size-report
+            "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+)
+set_tests_properties(ahflc.profile.smv_size_report.emit_smv PROPERTIES
+    PASS_REGULAR_EXPRESSION "smv size report:.*bytes: [0-9]+.*lines: [0-9]+.*ltlspecs: [0-9]+"
+)
+
+add_test(NAME ahflc.profile.smv_size_report.rejects_non_smv
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=emit;summary;--smv-size-report;${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+            "-DEXPECTED_REGEX=--smv-size-report is only supported with emit smv"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.profile.observability_exports
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
+            "-DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/profile/observability-exports"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunCliObservabilityTest.cmake"
+)
+
+add_test(NAME ahflc.passes.semantic_backend_effect
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_pass_productization.ahfl"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunPassProductizationTest.cmake"
+)
+
+add_test(NAME ahflc.quality.smv_size_budget.flow_workflow
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DMAX_BYTES=22000"
+            "-DMAX_LINES=170"
+            "-DMAX_LTLSPEC=18"
+            "-DMIN_LTLSPEC=10"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
+)
+
+add_test(NAME ahflc.quality.smv_size_budget.pass_productization
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/ir/ok_pass_productization.ahfl"
+            "-DMAX_BYTES=20000"
+            "-DMAX_LINES=150"
+            "-DMAX_LTLSPEC=18"
+            "-DMIN_LTLSPEC=10"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
+)
+
+add_test(NAME ahflc.quality.smv_size_budget.refund_audit
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DINPUT_FILE=${AHFL_EXAMPLES_DIR}/refund_audit_core_v0_1.ahfl"
+            "-DMAX_BYTES=32000"
+            "-DMAX_LINES=230"
+            "-DMAX_LTLSPEC=32"
+            "-DMIN_LTLSPEC=20"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunSmvSizeBudgetTest.cmake"
+)
+
 ahfl_add_output_test(
     ahflc.emit_ir.example
     "emit ir"
@@ -74,6 +229,94 @@ add_test(NAME ahflc.validate_assurance.effects
 )
 set_tests_properties(ahflc.validate_assurance.effects PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: assurance validation ready"
+)
+
+set(AHFL_RUN_SECRET_HANDLE_INPUT [[{"_type":"runtime::e2e_multi_agent::SupportRequest","user_id":"u-1","message":"hello","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"}}]])
+set(AHFL_RUN_SCHEMA_MISMATCH_INPUT [[{"_type":"runtime::e2e_multi_agent::SupportRequest","user_id":"u-1","priority":{"_enum":"runtime::e2e_multi_agent::Priority","_variant":"Low"}}]])
+
+add_test(NAME ahflc.run.llm_config.fail_missing_api_key_secret
+    COMMAND ${CMAKE_COMMAND} -E env --unset=AHFL_TEST_MISSING_LLM_API_KEY_DO_NOT_SET
+            ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SECRET_HANDLE_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_missing_secret.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DEXPECTED_REGEX=failed to resolve LLM api_key_secret 'AHFL_TEST_MISSING_LLM_API_KEY_DO_NOT_SET'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.llm_config.fail_invalid_budget
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SECRET_HANDLE_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_invalid_budget.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DEXPECTED_REGEX=max_prompt_tokens \\+ max_tokens must not exceed max_total_tokens"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.llm_config.fail_missing_fallback_api_key_secret
+    COMMAND ${CMAKE_COMMAND} -E env --unset=AHFL_TEST_MISSING_FALLBACK_LLM_API_KEY_DO_NOT_SET
+            ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SECRET_HANDLE_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_missing_fallback_secret.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DEXPECTED_REGEX=failed to resolve LLM fallback provider 'backup' api_key_secret 'AHFL_TEST_MISSING_FALLBACK_LLM_API_KEY_DO_NOT_SET'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.llm_config.fail_missing_vault_token_env
+    COMMAND ${CMAKE_COMMAND} -E env --unset=AHFL_TEST_MISSING_VAULT_TOKEN_DO_NOT_SET
+            ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SECRET_HANDLE_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_missing_vault_token.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DEXPECTED_REGEX=failed to resolve Vault token_env 'AHFL_TEST_MISSING_VAULT_TOKEN_DO_NOT_SET'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.llm_tools.fail_invalid_capability_mocks
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SECRET_HANDLE_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json;--capability-mocks;${AHFL_TESTS_DIR}/golden/runtime/llm_tool_mocks_invalid.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DEXPECTED_REGEX=capability mock must specify exactly one of 'capability_name' or 'binding_key'"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.run.llm_observability.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/llm_observability_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-observability-smoke"
+)
+
+add_test(NAME ahflc.run.llm_failure_matrix.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/llm_failure_matrix_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-failure-matrix-smoke"
+)
+
+add_test(NAME ahflc.run.llm_secret_manager.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/llm_secret_manager_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/llm-secret-manager-smoke"
+)
+
+add_test(NAME ahflc.run.capability_bindings.smoke
+    COMMAND ${Python3_EXECUTABLE}
+            "${AHFL_TESTS_DIR}/scripts/runtime_capability_bindings_smoke.py"
+            $<TARGET_FILE:ahflc>
+            "${CMAKE_CURRENT_BINARY_DIR}/runtime/capability-bindings-smoke"
+)
+
+add_test(NAME ahflc.run.input_schema.fail_missing_field
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=run;--workflow;runtime::e2e_multi_agent::CustomerSupportWorkflow;--input;${AHFL_RUN_SCHEMA_MISMATCH_INPUT};--llm-config;${AHFL_TESTS_DIR}/golden/runtime/llm_config_test_key.json;${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/runtime/e2e_multi_agent.ahfl"
+            "-DEXPECTED_REGEX=--input does not match workflow input schema"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
 )
 
 ahfl_add_command_fail_test(
@@ -214,6 +457,58 @@ add_test(NAME ahflc.verify_formal.fake_pass
 )
 set_tests_properties(ahflc.verify_formal.fake_pass PROPERTIES
     PASS_REGULAR_EXPRESSION "ok: formal verification passed"
+)
+
+add_test(NAME ahflc.verify_formal.state_space_report
+    COMMAND $<TARGET_FILE:ahflc> verify
+            --model-checker "${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_pass.sh"
+            "${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+)
+set_tests_properties(ahflc.verify_formal.state_space_report PROPERTIES
+    PASS_REGULAR_EXPRESSION "state_space_estimate: 4"
+)
+
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path")
+
+add_test(NAME ahflc.verify_formal.missing_binary
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=verify;--formal-backend;nuxmv;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=checker_status: missing_binary"
+            "-DUNSET_ENV=AHFL_SMV_CHECKER;AHFL_NUXMV_PATH;AHFL_NUSMV_PATH"
+            "-DENV_PATH=${CMAKE_CURRENT_BINARY_DIR}/formal/no-checker-path"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.verify_formal.unsupported_backend
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=verify;--formal-backend;spin;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=checker_status: verification_unsupported"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.verify_formal.checker_error
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_error.sh;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=checker_status: checker_error"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+
+add_test(NAME ahflc.verify_formal.checker_timeout
+    COMMAND ${CMAKE_COMMAND}
+            "-DAHFLC=$<TARGET_FILE:ahflc>"
+            "-DAHFLC_ARGS=verify;--model-checker;${AHFL_TESTS_DIR}/golden/formal/fake_smv_checker_timeout.sh;--checker-timeout-seconds;1;${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DINPUT_FILE=${AHFL_TESTS_DIR}/golden/formal/ok_flow_workflow_semantics.ahfl"
+            "-DEXPECTED_REGEX=checker_timed_out: true"
+            -P "${PROJECT_SOURCE_DIR}/cmake/RunExpectedFailure.cmake"
+)
+set_tests_properties(ahflc.verify_formal.checker_timeout PROPERTIES
+    TIMEOUT 8
 )
 
 add_test(NAME ahflc.verify_formal.fake_fail
@@ -381,6 +676,12 @@ ahfl_add_check_fail_test(
 )
 
 ahfl_add_check_fail_test(
+    ahflc.fail.workflow_input_schema_not_struct
+    "${AHFL_TESTS_DIR}/golden/typecheck/workflow_input_schema_not_struct.ahfl"
+    "workflow input type must resolve to a struct type"
+)
+
+ahfl_add_check_fail_test(
     ahflc.fail.duplicate_struct_field
     "${AHFL_TESTS_DIR}/golden/typecheck/duplicate_struct_field.ahfl"
     "duplicate struct field 'value'"
@@ -396,6 +697,72 @@ ahfl_add_check_fail_test(
     ahflc.fail.context_default_missing
     "${AHFL_TESTS_DIR}/golden/typecheck/context_default_missing.ahfl"
     "agent context field 'value' must declare a default value"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.agent_context_default_schema_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/agent_context_default_schema_mismatch.ahfl"
+    "exact schema mismatch in agent context default"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.container_variance_map_key_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_map_key_mismatch.ahfl"
+    "expected Map<String, Int>, got Map<String\\(2, 8\\), Int>"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.container_variance_optional_reverse_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_optional_reverse_mismatch.ahfl"
+    "expected Optional<String\\(2, 8\\)>, got Optional<String>"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.container_variance_list_reverse_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_list_reverse_mismatch.ahfl"
+    "expected List<String\\(2, 8\\)>, got List<String>"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.container_variance_set_reverse_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_set_reverse_mismatch.ahfl"
+    "expected Set<String\\(2, 8\\)>, got Set<String>"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.container_variance_map_value_reverse_mismatch
+    "${AHFL_TESTS_DIR}/golden/typecheck/container_variance_map_value_reverse_mismatch.ahfl"
+    "expected Map<String, String\\(2, 8\\)>, got Map<String, String>"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.numeric_widening_int_float
+    "${AHFL_TESTS_DIR}/golden/typecheck/numeric_widening_int_float.ahfl"
+    "type mismatch in const initializer: expected Float, got Int"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.numeric_widening_int_decimal
+    "${AHFL_TESTS_DIR}/golden/typecheck/numeric_widening_int_decimal.ahfl"
+    "type mismatch in const initializer: expected Decimal\\(2\\), got Int"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.numeric_widening_decimal_scale
+    "${AHFL_TESTS_DIR}/golden/typecheck/numeric_widening_decimal_scale.ahfl"
+    "type mismatch in const initializer: expected Decimal\\(4\\), got Decimal\\(2\\)"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.numeric_widening_decimal_float
+    "${AHFL_TESTS_DIR}/golden/typecheck/numeric_widening_decimal_float.ahfl"
+    "type mismatch in const initializer: expected Float, got Decimal\\(2\\)"
+)
+
+ahfl_add_check_fail_test(
+    ahflc.fail.numeric_widening_decimal_scale_reverse
+    "${AHFL_TESTS_DIR}/golden/typecheck/numeric_widening_decimal_scale_reverse.ahfl"
+    "type mismatch in const initializer: expected Decimal\\(2\\), got Decimal\\(4\\)"
 )
 
 ahfl_add_check_fail_test(
