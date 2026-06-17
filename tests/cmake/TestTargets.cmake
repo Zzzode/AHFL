@@ -389,6 +389,16 @@ target_link_libraries(ahfl_semantics_type_relations_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_type_relations_tests)
 
+add_executable(ahfl_semantics_type_resolver_tests
+    unit/compiler/semantics/type_resolver.cpp
+)
+target_link_libraries(ahfl_semantics_type_resolver_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_type_resolver_tests)
+
 add_executable(ahfl_semantics_typed_hir_tests
     unit/compiler/semantics/typed_hir.cpp
 )
@@ -722,6 +732,7 @@ foreach(_tgt
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests
     ahfl_semantics_type_relations_tests
+    ahfl_semantics_type_resolver_tests
     ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
     ahfl_semantics_flow_condition_tests

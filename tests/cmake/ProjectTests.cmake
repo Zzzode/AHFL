@@ -3940,6 +3940,10 @@ add_test(NAME ahfl.semantics.type_relations_all
     COMMAND $<TARGET_FILE:ahfl_semantics_type_relations_tests>
 )
 
+add_test(NAME ahfl.semantics.type_resolver_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_type_resolver_tests>
+)
+
 add_test(NAME ahfl.semantics.typed_hir_all
     COMMAND $<TARGET_FILE:ahfl_semantics_typed_hir_tests>
 )
@@ -4020,8 +4024,16 @@ add_test(NAME ahfl.repl.repl_all
     COMMAND $<TARGET_FILE:ahfl_tooling_repl_tests>
 )
 
+add_test(NAME ahfl.repl.process_smoke
+    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/repl_smoke.py" $<TARGET_FILE:ahfl-repl>
+)
+
 add_test(NAME ahfl.dap.basic_all
     COMMAND $<TARGET_FILE:ahfl_tooling_dap_tests>
+)
+
+add_test(NAME ahfl.dap.process_smoke
+    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/dap_smoke.py" $<TARGET_FILE:ahfl-dap>
 )
 
 add_test(NAME ahfl.telemetry.telemetry_all
@@ -4038,6 +4050,10 @@ add_test(NAME ahfl.abi.compat_all
 
 add_test(NAME ahfl.incremental.incremental_all
     COMMAND $<TARGET_FILE:ahfl_tooling_incremental_tests>
+)
+
+add_test(NAME ahfl.incremental.process_smoke
+    COMMAND ${Python3_EXECUTABLE} "${AHFL_TESTS_DIR}/scripts/incremental_smoke.py" $<TARGET_FILE:ahfl-incremental> "${AHFL_TESTS_DIR}/golden/ir/ok_workflow_value_flow.ahfl"
 )
 
 if(AHFL_ENABLE_BACKEND_INFRA)

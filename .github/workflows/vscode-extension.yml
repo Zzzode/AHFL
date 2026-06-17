@@ -74,6 +74,14 @@ jobs:
       - name: Package platform VSIX with release LSP
         run: scripts/package-vscode-vsix-release.sh
 
+      - name: Verify Marketplace package inventory
+        working-directory: tools/vscode
+        run: npm run test:package-inventory
+
+      - name: Smoke install platform VSIX
+        working-directory: tools/vscode
+        run: npm run test:vsix-install
+
       - name: Upload platform VSIX artifact
         uses: actions/upload-artifact@v4
         with:
