@@ -19,6 +19,16 @@ else()
     set(ahflc_command "${AHFLC}" check "${INPUT_FILE}")
 endif()
 
+if(DEFINED UNSET_ENV)
+    foreach(env_name IN LISTS UNSET_ENV)
+        unset(ENV{${env_name}})
+    endforeach()
+endif()
+
+if(DEFINED ENV_PATH)
+    set(ENV{PATH} "${ENV_PATH}")
+endif()
+
 execute_process(
     COMMAND ${ahflc_command}
     RESULT_VARIABLE ahflc_result
