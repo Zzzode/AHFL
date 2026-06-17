@@ -4,6 +4,10 @@
 #include <string>
 #include <vector>
 
+namespace ahfl::ir {
+struct Program;
+} // namespace ahfl::ir
+
 namespace ahfl::formal {
 
 struct AgentMetrics {
@@ -23,7 +27,9 @@ struct StateSpaceEstimate {
     std::string warning;
 };
 
-[[nodiscard]] StateSpaceEstimate
-estimate_state_space(const std::vector<AgentMetrics> &agents);
+[[nodiscard]] StateSpaceEstimate estimate_state_space(const std::vector<AgentMetrics> &agents);
+
+[[nodiscard]] std::vector<AgentMetrics> collect_agent_metrics(const ahfl::ir::Program &program);
+[[nodiscard]] StateSpaceEstimate estimate_state_space(const ahfl::ir::Program &program);
 
 } // namespace ahfl::formal
