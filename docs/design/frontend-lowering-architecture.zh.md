@@ -125,17 +125,17 @@ project-aware 模式下，frontend 还额外负责：
 
 值表达式当前采用分层函数链：
 
-```text
-build_implies_expr
-  -> build_or_expr
-  -> build_and_expr
-  -> build_equality_expr
-  -> build_compare_expr
-  -> build_add_expr
-  -> build_mul_expr
-  -> build_unary_expr
-  -> build_postfix_expr
-  -> build_primary_expr
+```mermaid
+flowchart TD
+    Implies["build_implies_expr"] --> Or["build_or_expr"]
+    Or --> And["build_and_expr"]
+    And --> Equality["build_equality_expr"]
+    Equality --> Compare["build_compare_expr"]
+    Compare --> Add["build_add_expr"]
+    Add --> Mul["build_mul_expr"]
+    Mul --> Unary["build_unary_expr"]
+    Unary --> Postfix["build_postfix_expr"]
+    Postfix --> Primary["build_primary_expr"]
 ```
 
 这意味着：
@@ -190,13 +190,13 @@ lower 成：
 
 temporal expression 当前和普通表达式类似，也采用一条独立的 precedence 链：
 
-```text
-build_temporal_implies_expr
-  -> build_temporal_or_expr
-  -> build_temporal_and_expr
-  -> build_temporal_until_expr
-  -> build_temporal_unary_expr
-  -> build_temporal_atom
+```mermaid
+flowchart TD
+    Implies["build_temporal_implies_expr"] --> Or["build_temporal_or_expr"]
+    Or --> And["build_temporal_and_expr"]
+    And --> Until["build_temporal_until_expr"]
+    Until --> Unary["build_temporal_unary_expr"]
+    Unary --> Atom["build_temporal_atom"]
 ```
 
 并复用通用 helper：

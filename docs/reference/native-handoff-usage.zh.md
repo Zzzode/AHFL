@@ -28,12 +28,12 @@
 
 V0.5 当前推荐路径是：
 
-```text
-ahfl.package.json
-  -> handoff::PackageMetadata
-  -> handoff::Package
-  -> Package Reader Summary
-  -> Execution Planner Bootstrap
+```mermaid
+flowchart TD
+    PackageJson["ahfl.package.json"] --> Metadata["handoff::PackageMetadata"]
+    Metadata --> Package["handoff::Package"]
+    Package --> ReaderSummary["Package Reader Summary"]
+    ReaderSummary --> PlannerBootstrap["Execution Planner Bootstrap"]
 ```
 
 对应到仓库实现：
@@ -67,10 +67,10 @@ ahfl.package.json
 
 最小 reference consumer 路径：
 
-```text
-lower_package(...)
-  -> build_package_reader_summary(...)
-  -> build_execution_planner_bootstrap(...)
+```mermaid
+flowchart TD
+    LowerPackage["lower_package(...)"] --> ReaderSummary["build_package_reader_summary(...)"]
+    ReaderSummary --> PlannerBootstrap["build_execution_planner_bootstrap(...)"]
 ```
 
 helper 当前保证：
