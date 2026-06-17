@@ -126,13 +126,13 @@ project_mode = !search_roots.empty()
 
 当 `dump_project` 为真或 `project_mode` 为真时，CLI 当前采用如下链路：
 
-```text
-ProjectInput
-  -> Frontend::parse_project
-  -> Resolver::resolve(graph)
-  -> TypeChecker::check(graph, ...)
-  -> Validator::validate(graph, ...)
-  -> core backend / package pipeline / summary
+```mermaid
+flowchart TD
+    ProjectInput["ProjectInput"] --> ParseProject["Frontend::parse_project"]
+    ParseProject --> ResolveGraph["Resolver::resolve(graph)"]
+    ResolveGraph --> TypecheckGraph["TypeChecker::check(graph, ...)"]
+    TypecheckGraph --> ValidateGraph["Validator::validate(graph, ...)"]
+    ValidateGraph --> Output["core backend / package pipeline / summary"]
 ```
 
 这条主链有几个刻意设计：
@@ -161,13 +161,13 @@ project-aware 模式当前按阶段顺序 render：
 
 单文件模式当前采用如下链路：
 
-```text
-parse_file
-  -> optional dump-ast
-  -> resolve(program)
-  -> typecheck(program, ...)
-  -> validate(program, ...)
-  -> core backend / package pipeline / summary
+```mermaid
+flowchart TD
+    ParseFile["parse_file"] --> DumpAst["optional dump-ast"]
+    DumpAst --> ResolveProgram["resolve(program)"]
+    ResolveProgram --> TypecheckProgram["typecheck(program, ...)"]
+    TypecheckProgram --> ValidateProgram["validate(program, ...)"]
+    ValidateProgram --> Output["core backend / package pipeline / summary"]
 ```
 
 和 project-aware 模式相比，差别主要在：

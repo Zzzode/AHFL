@@ -159,16 +159,17 @@ ahflc validate-assurance <file.ahfl>
 新增 formal verification gate：
 
 ```text
-ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] <file.ahfl>
+ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-checker <path>] [--formal-model-out <model.smv>] <file.ahfl>
 ```
 
-该命令复用 `emit-smv` 的 lowering，调用 NuSMV/nuXmv 兼容 checker，并把 checker 返回的 `is true` / `is false` specification 结果映射成 CLI 成功或失败。真实 checker 的发现顺序是 `--model-checker`、`AHFL_SMV_CHECKER`、`NuSMV`、`nuXmv`、`nuxmv`。
+该命令复用 `emit-smv` 的 lowering，调用 NuSMV/nuXmv 兼容 checker，并把 checker 返回的 `is true` / `is false` specification 结果映射成 CLI 成功或失败。真实 checker 的发现顺序是 `--model-checker`、`AHFL_SMV_CHECKER`、backend-specific 环境变量和 PATH 中的 `NuSMV`、`nuXmv`、`nuxmv`、`nusmv`。`spin` / `tlaplus` 目前只在 capability matrix 中声明 emit-only，`verify-formal` 会报告 `checker_status: verification_unsupported`。
 
 ## 当前限制
 
 v0.1 实现编译期证据合成、JSON emission、production assurance validation gate 和 SMV checker invocation：
 
 - `verify-formal` 已可调用外部 NuSMV/nuXmv 兼容进程，但本仓库不捆绑 checker 二进制。
+- `ModelCheckerBackend` 暴露机器可读 capability/availability matrix：nuXmv/NuSMV 标记为当前 AHFL SMV 外部验证路径；SPIN/TLA+ 当前只承诺模型 emission，不承诺 AHFL property 外部验证；CLI/report 已输出 `missing_binary`、`verification_unsupported`、`checker_error` 的稳定状态。
 - `check` 仍然只负责语言合法性；production assurance 必须显式运行 `validate-assurance`。
 - 尚未把 obligation 自动编译成 runtime policy。
 - 尚未验证 compensation capability 的签名兼容性。

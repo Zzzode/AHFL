@@ -43,14 +43,14 @@
 
 V0.5 当前把“项目输入”和“package authoring 输入”明确拆成两层：
 
-```text
-project/workspace/search-root input
-  -> ProjectInput
-  -> SourceGraph
-  -> resolve/typecheck/validate
-  -> optional package authoring normalization
-  -> handoff::Package
-  -> review / consumer bootstrap
+```mermaid
+flowchart TD
+    Input["project/workspace/search-root input"] --> ProjectInput["ProjectInput"]
+    ProjectInput --> SourceGraph["SourceGraph"]
+    SourceGraph --> Semantics["resolve / typecheck / validate"]
+    Semantics --> PackageNormalization["optional package authoring normalization"]
+    PackageNormalization --> Package["handoff::Package"]
+    Package --> Consumers["review / consumer bootstrap"]
 ```
 
 其中：
@@ -171,12 +171,12 @@ V0.5 仍保留三条等价的 project-aware 输入路径：
 
 ### 4. 进入 direct reference consumer helper
 
-```text
-load project/workspace
-  -> parse ahfl.package.json
-  -> handoff::lower_package(...)
-  -> build_package_reader_summary(...)
-  -> build_execution_planner_bootstrap(...)
+```mermaid
+flowchart TD
+    Load["load project/workspace"] --> ParsePackage["parse ahfl.package.json"]
+    ParsePackage --> LowerPackage["handoff::lower_package(...)"]
+    LowerPackage --> ReaderSummary["build_package_reader_summary(...)"]
+    ReaderSummary --> PlannerBootstrap["build_execution_planner_bootstrap(...)"]
 ```
 
 ## 支持矩阵
