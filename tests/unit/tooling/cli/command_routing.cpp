@@ -275,6 +275,10 @@ int main() {
             "{\"message\":\"hello\"}",
             "--llm-config",
             "llm.json",
+            "--llm-observability",
+            "llm-observability.json",
+            "--capability-bindings",
+            "bindings.json",
             "app.ahfl",
         };
         const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
@@ -289,8 +293,80 @@ int main() {
         check(options.llm_config_descriptor.has_value() &&
                   *options.llm_config_descriptor == "llm.json",
               "parse_options: run llm config captured");
+        check(options.llm_observability_path.has_value() &&
+                  *options.llm_observability_path == "llm-observability.json",
+              "parse_options: run llm observability output captured");
+        check(options.capability_bindings_descriptor.has_value() &&
+                  *options.capability_bindings_descriptor == "bindings.json",
+              "parse_options: run capability bindings captured");
         check(options.positional.size() == 1 && options.positional.front() == "app.ahfl",
               "parse_options: run input file captured");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {"emit", "summary", "-O", "--time-passes", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(), "parse_options: time-passes has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::EmitSummary,
+              "parse_options: time-passes preserves selected command");
+        check(options.optimize_requested, "parse_options: -O captured");
+        check(options.time_passes_requested, "parse_options: --time-passes captured");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {"emit", "smv", "--smv-size-report", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(), "parse_options: smv-size-report has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::EmitSmv,
+              "parse_options: smv-size-report preserves selected command");
+        check(options.smv_size_report_requested, "parse_options: --smv-size-report captured");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "emit",
+            "summary",
+            "--trace-export",
+            "trace.jsonl",
+            "--metrics-export",
+            "metrics.jsonl",
+            "--structured-log",
+            "log.jsonl",
+            "--memory-report",
+            "memory.json",
+            "app.ahfl",
+        };
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(), "parse_options: observability has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::EmitSummary,
+              "parse_options: observability preserves selected command");
+        check(options.trace_export_path.has_value() && *options.trace_export_path == "trace.jsonl",
+              "parse_options: --trace-export captured");
+        check(options.metrics_export_path.has_value() &&
+                  *options.metrics_export_path == "metrics.jsonl",
+              "parse_options: --metrics-export captured");
+        check(options.structured_log_path.has_value() &&
+                  *options.structured_log_path == "log.jsonl",
+              "parse_options: --structured-log captured");
+        check(options.memory_report_path.has_value() &&
+                  *options.memory_report_path == "memory.json",
+              "parse_options: --memory-report captured");
+    }
+
+    {
+        ahfl::cli::CommandLineOptions options;
+        constexpr std::string_view args[] = {
+            "verify", "--checker-timeout-seconds", "2", "app.ahfl"};
+        const auto parse_result = ahfl::cli::parse_options_from_table(args, options);
+        check(!parse_result.has_value(), "parse_options: checker timeout has no immediate exit");
+        check(options.selected_command == ahfl::cli::CommandKind::VerifyFormal,
+              "parse_options: checker timeout preserves verify command");
+        check(options.checker_timeout_seconds.has_value() &&
+                  *options.checker_timeout_seconds == "2",
+              "parse_options: --checker-timeout-seconds captured");
     }
 
     // resolve_subcommand — core emit artifacts

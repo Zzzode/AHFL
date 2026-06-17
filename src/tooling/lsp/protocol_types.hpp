@@ -114,8 +114,11 @@ struct ServerCapabilities {
     bool hover_provider{true};
     bool references_provider{true};
     bool rename_provider{true};
+    bool prepare_rename_provider{true};
+    bool diagnostic_provider{true};
     bool document_symbol_provider{true};
     bool workspace_symbol_provider{true};
+    bool workspace_folders_provider{true};
     bool signature_help_provider{true};
 };
 

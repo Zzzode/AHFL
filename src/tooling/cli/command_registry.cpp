@@ -94,6 +94,7 @@ emit_command(CommandKind kind,
 constexpr CommandSpec kCommandSpecs[] = {
     command(CommandKind::Check, "check", 0),
     command(CommandKind::RunWorkflow, "run", 109, 106),
+    command(CommandKind::Format, "fmt", kNotListed, 109),
     routed_command(CommandKind::DumpAst, "dump-ast", ActionGroup::Dump, "ast", 1, 0, 73),
     routed_command(CommandKind::DumpTypes, "dump-types", ActionGroup::Dump, "types", 3, 1, 72),
     routed_command(CommandKind::DumpProject, "dump-project", ActionGroup::Dump, "project", 2, 2, 0),
