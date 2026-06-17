@@ -13,3 +13,12 @@ ahfl_enable_cxx23(ahfl_tooling_incremental)
 target_include_directories(ahfl_tooling_incremental PRIVATE ${PROJECT_SOURCE_DIR}/src)
 
 ahfl_apply_project_warnings(ahfl_tooling_incremental)
+
+add_executable(ahfl-incremental main.cpp)
+target_link_libraries(ahfl-incremental
+    PRIVATE
+        ahfl_tooling_incremental
+)
+target_include_directories(ahfl-incremental PRIVATE ${PROJECT_SOURCE_DIR}/src)
+
+ahfl_apply_project_warnings(ahfl-incremental)
