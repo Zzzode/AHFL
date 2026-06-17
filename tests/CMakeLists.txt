@@ -34,6 +34,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/cmake/SingleFileCliTests.cmake")
 
 include("${CMAKE_CURRENT_LIST_DIR}/fuzz/CMakeLists.txt")
 include("${CMAKE_CURRENT_LIST_DIR}/bench/CMakeLists.txt")
+include("${CMAKE_CURRENT_LIST_DIR}/mutation/CMakeLists.txt")
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/LabelTests.cmake")
 
