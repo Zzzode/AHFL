@@ -37,11 +37,11 @@ module resolution 位于：
 
 因此它是 loader 和语义阶段之间的桥：
 
-```text
-module loading
-  -> source graph
-  -> module resolution
-  -> typecheck / validate / IR
+```mermaid
+flowchart TD
+    ModuleLoading["module loading"] --> SourceGraph["source graph"]
+    SourceGraph --> ModuleResolution["module resolution"]
+    ModuleResolution --> Downstream["typecheck / validate / IR"]
 ```
 
 ## 三种名字
