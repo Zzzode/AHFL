@@ -1,12 +1,13 @@
 #pragma once
 
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/command_catalog.hpp"
 #include "tooling/cli/diagnostic_consumer.hpp"
 #include "tooling/cli/exit_code.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
-#include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -15,6 +16,24 @@
 #include <string_view>
 
 namespace ahfl::cli {
+
+struct MemoryReportSnapshot {
+    std::size_t source_count{};
+    std::size_t source_bytes{};
+    std::size_t typed_declarations{};
+    std::size_t typed_expressions{};
+    std::size_t typed_blocks{};
+    std::size_t typed_statements{};
+    std::size_t typed_temporal_expressions{};
+    std::size_t typed_symbols{};
+    std::size_t typed_references{};
+    std::size_t typed_imports{};
+    std::size_t ir_declarations{};
+    std::size_t ir_expressions{};
+    std::size_t proxy_current_bytes{};
+    std::size_t proxy_peak_bytes{};
+    std::size_t proxy_allocation_count{};
+};
 
 class CliDriver final {
   public:
@@ -30,7 +49,11 @@ class CliDriver final {
 
     [[nodiscard]] std::optional<ExitCode> load_package_and_mocks();
 
+    [[nodiscard]] ExitCode run_observed();
+
     [[nodiscard]] ExitCode execute();
+
+    [[nodiscard]] ExitCode format_source_file();
 
     template <typename InputT>
     [[nodiscard]] ExitCode run_analysis(const InputT &input, MaybeSourceFile source_file);
@@ -40,6 +63,7 @@ class CliDriver final {
     ahfl::Frontend frontend_;
     std::optional<ahfl::handoff::PackageMetadata> package_metadata_;
     std::optional<ahfl::dry_run::CapabilityMockSet> capability_mock_set_;
+    std::optional<MemoryReportSnapshot> memory_report_;
     std::unique_ptr<DiagnosticConsumer> diag_consumer_;
 };
 

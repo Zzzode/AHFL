@@ -51,19 +51,38 @@ available through debug hover:
 Use `compact` for signature-only hover, or `debug` when inspecting canonical
 names, module names, and source paths.
 
-## Hover Regression
+## Extension Regression
 
-Run the VS Code extension-host hover regression after building the LSP server:
+Run the VS Code extension-host regression after building the LSP server:
 
 ```bash
 cmake --build --preset build-dev --target ahfl-lsp
 cd tools/vscode
-npm run test:hover
+npm run test:extension
 ```
 
 The test opens `tests/integration/check_ok` in a VS Code Extension Development
 Host and validates schema labels, state labels, type aliases, struct fields, and
-workflow nodes through `vscode.executeHoverProvider`.
+workflow nodes through `vscode.executeHoverProvider`. It verifies member
+completion through `vscode.executeCompletionItemProvider`, applies a rename
+workspace edit through `vscode.executeDocumentRenameProvider`, and confirms the
+edited document updates both declaration and reference sites. It also edits an
+unopened imported `.ahfl` file under the test workspace and verifies watched-file
+invalidation refreshes diagnostics for the open dependent document. Finally, it
+opens a temporary broken `.ahfl` file, waits for AHFL diagnostics to reach VS
+Code's diagnostics collection, edits the file into a valid state, and verifies
+the diagnostics clear.
+
+Generate and validate a Problems diagnostics transcript:
+
+```bash
+cd tools/vscode
+npm run test:problems-transcript
+```
+
+The transcript is written to `tools/vscode/dist/problems-transcript.json` and is
+based on `vscode.languages.getDiagnostics`, the same diagnostics collection that
+feeds VS Code's Problems view.
 
 ## Local VSIX Packaging
 
@@ -80,6 +99,14 @@ tools/vscode/dist/ahfl-language-<version>-<target>.vsix
 ```
 
 It contains the VS Code client and the matching release `ahfl-lsp` server.
+Verify the Marketplace package inventory and smoke test installation into a
+temporary VS Code profile:
+
+```bash
+cd tools/vscode
+npm run test:package-inventory
+npm run test:vsix-install
+```
 
 For client-only extension development, package from `tools/vscode`:
 

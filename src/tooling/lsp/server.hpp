@@ -1,8 +1,10 @@
 #pragma once
 
+#include <filesystem>
 #include <istream>
 #include <ostream>
 #include <string_view>
+#include <vector>
 
 #include "tooling/lsp/analysis_service.hpp"
 #include "tooling/lsp/document_store.hpp"
@@ -24,6 +26,7 @@ class LspServer {
     DocumentStore store_;
     AnalysisService analysis_;
     HoverRenderOptions hover_options_;
+    std::vector<std::filesystem::path> workspace_roots_;
     bool initialized_{false};
     bool shutdown_requested_{false};
     bool trace_enabled_{false};
@@ -38,7 +41,10 @@ class LspServer {
     void handle_definition(const JsonRpcRequest &req);
     void handle_hover(const JsonRpcRequest &req);
     void handle_references(const JsonRpcRequest &req);
+    void handle_prepare_rename(const JsonRpcRequest &req);
     void handle_rename(const JsonRpcRequest &req);
+    void handle_text_document_diagnostic(const JsonRpcRequest &req);
+    void handle_workspace_diagnostic(const JsonRpcRequest &req);
     void handle_document_symbol(const JsonRpcRequest &req);
     void handle_workspace_symbol(const JsonRpcRequest &req);
     void handle_signature_help(const JsonRpcRequest &req);
@@ -47,10 +53,13 @@ class LspServer {
     void handle_did_open(const json::JsonValue &params);
     void handle_did_change(const json::JsonValue &params);
     void handle_did_close(const json::JsonValue &params);
+    void handle_workspace_folders_changed(const json::JsonValue &params);
+    void handle_watched_files_changed(const json::JsonValue &params);
     void handle_exit();
 
     // Analysis
     void publish_diagnostics(const std::string &uri);
+    void publish_open_document_diagnostics();
     void trace(std::string_view message) const;
 };
 

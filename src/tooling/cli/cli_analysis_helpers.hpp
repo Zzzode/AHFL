@@ -39,7 +39,9 @@ emit_core_backend(std::optional<CommandKind> effective_command,
                   const ahfl::ResolveResult &resolve_result,
                   const ahfl::TypeCheckResult &type_check_result,
                   const ahfl::handoff::PackageMetadata *package_metadata,
-                  std::ostream &out);
+                  const CommandLineOptions &options,
+                  std::ostream &out,
+                  std::ostream &err);
 
 /// Template overload: lowers InputT to IR, then delegates to the ir::Program overload.
 template <typename InputT>
@@ -49,15 +51,23 @@ emit_core_backend(std::optional<CommandKind> effective_command,
                   const ahfl::ResolveResult &resolve_result,
                   const ahfl::TypeCheckResult &type_check_result,
                   const ahfl::handoff::PackageMetadata *package_metadata,
-                  std::ostream &out) {
+                  const CommandLineOptions &options,
+                  std::ostream &out,
+                  std::ostream &err) {
     const auto backend = core_backend_for_command(effective_command);
     if (!backend.has_value()) {
         return std::nullopt;
     }
 
     auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
-    return emit_core_backend(
-        effective_command, ir_program, resolve_result, type_check_result, package_metadata, out);
+    return emit_core_backend(effective_command,
+                             ir_program,
+                             resolve_result,
+                             type_check_result,
+                             package_metadata,
+                             options,
+                             out,
+                             err);
 }
 
 // ---------------------------------------------------------------------------

@@ -5,9 +5,33 @@ const vscode = require('vscode');
 
 const HOVER_TIMEOUT_MS = 15_000;
 const HOVER_POLL_MS = 250;
+const DIAGNOSTIC_TIMEOUT_MS = 15_000;
+const DIAGNOSTIC_POLL_MS = 250;
+const COMPLETION_TIMEOUT_MS = 15_000;
+const COMPLETION_POLL_MS = 250;
+const diagnosticsTranscriptControlPath = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  '.vscode-test',
+  'diagnostics-transcript-path.txt'
+);
+const defaultDiagnosticsTranscriptPath = path.resolve(__dirname, '..', '..', 'dist', 'problems-transcript.json');
+const diagnosticsTranscriptPath = resolveDiagnosticsTranscriptPath();
+const diagnosticsTranscript = [];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function resolveDiagnosticsTranscriptPath() {
+  if (process.env.AHFL_VSCODE_DIAGNOSTICS_TRANSCRIPT) {
+    return process.env.AHFL_VSCODE_DIAGNOSTICS_TRANSCRIPT;
+  }
+  if (!fs.existsSync(diagnosticsTranscriptControlPath)) {
+    return defaultDiagnosticsTranscriptPath;
+  }
+  return fs.readFileSync(diagnosticsTranscriptControlPath, 'utf8').trim() || defaultDiagnosticsTranscriptPath;
 }
 
 function hoverText(hover) {
@@ -33,10 +57,115 @@ function positionForNeedle(document, needle, occurrence = 0) {
   return document.positionAt(offset);
 }
 
-async function openWorkspaceDocument(relativePath) {
+function positionAfterNeedle(document, needle, occurrence = 0) {
+  const text = document.getText();
+  let searchFrom = 0;
+  let offset = -1;
+  for (let index = 0; index <= occurrence; index += 1) {
+    offset = text.indexOf(needle, searchFrom);
+    assert.notStrictEqual(offset, -1, `missing fixture text: ${needle}`);
+    searchFrom = offset + needle.length;
+  }
+  return document.positionAt(offset + needle.length);
+}
+
+function workspaceRootPath() {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   assert.ok(workspaceFolder, 'expected hover test workspace folder');
-  const uri = vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, relativePath));
+  return workspaceFolder.uri.fsPath;
+}
+
+function writeTextFile(filePath, content) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, 'utf8');
+}
+
+function diagnosticCodeText(diagnostic) {
+  if (typeof diagnostic.code === 'string') {
+    return diagnostic.code;
+  }
+  if (diagnostic.code && typeof diagnostic.code.value === 'string') {
+    return diagnostic.code.value;
+  }
+  if (diagnostic.code !== undefined && diagnostic.code !== null) {
+    return String(diagnostic.code);
+  }
+  return '';
+}
+
+function diagnosticSeverityName(severity) {
+  switch (severity) {
+    case vscode.DiagnosticSeverity.Error:
+      return 'error';
+    case vscode.DiagnosticSeverity.Warning:
+      return 'warning';
+    case vscode.DiagnosticSeverity.Information:
+      return 'information';
+    case vscode.DiagnosticSeverity.Hint:
+      return 'hint';
+    default:
+      return `unknown:${severity}`;
+  }
+}
+
+function transcriptUriLabel(uri) {
+  const folders = vscode.workspace.workspaceFolders || [];
+  for (const folder of folders) {
+    if (uri.scheme === folder.uri.scheme && uri.fsPath.startsWith(`${folder.uri.fsPath}${path.sep}`)) {
+      return `${folder.name}/${path.relative(folder.uri.fsPath, uri.fsPath).split(path.sep).join('/')}`;
+    }
+  }
+  return path.basename(uri.fsPath);
+}
+
+function diagnosticTranscriptEntry(diagnostic) {
+  return {
+    source: diagnostic.source || '',
+    severity: diagnosticSeverityName(diagnostic.severity),
+    code: diagnosticCodeText(diagnostic),
+    message: diagnostic.message,
+    range: {
+      start: {
+        line: diagnostic.range.start.line,
+        character: diagnostic.range.start.character,
+      },
+      end: {
+        line: diagnostic.range.end.line,
+        character: diagnostic.range.end.character,
+      },
+    },
+  };
+}
+
+function recordDiagnosticsSnapshot(scenario, uri, diagnostics) {
+  if (!diagnosticsTranscriptPath) {
+    return;
+  }
+  diagnosticsTranscript.push({
+    scenario,
+    source: 'vscode.languages.getDiagnostics',
+    document: transcriptUriLabel(uri),
+    problemCount: diagnostics.length,
+    diagnostics: diagnostics.map(diagnosticTranscriptEntry),
+  });
+  writeDiagnosticsTranscript();
+}
+
+function writeDiagnosticsTranscript() {
+  if (!diagnosticsTranscriptPath) {
+    return;
+  }
+  const transcript = {
+    schema: 'ahfl.vscode.problemsTranscript.v1',
+    source: 'vscode.languages.getDiagnostics',
+    snapshots: diagnosticsTranscript,
+  };
+  fs.mkdirSync(path.dirname(diagnosticsTranscriptPath), { recursive: true });
+  fs.writeFileSync(diagnosticsTranscriptPath, `${JSON.stringify(transcript, null, 2)}\n`, 'utf8');
+}
+
+async function openWorkspaceDocument(relativePath) {
+  const uri = vscode.Uri.file(path.join(workspaceRootPath(), relativePath));
   const document = await vscode.workspace.openTextDocument(uri);
   await vscode.window.showTextDocument(document, { preview: false });
   return document;
@@ -63,6 +192,61 @@ async function waitForHover(document, needle, expectedFragments, occurrence = 0)
   );
 }
 
+function completionItems(result) {
+  if (!result) {
+    return [];
+  }
+  if (Array.isArray(result)) {
+    return result;
+  }
+  return result.items || [];
+}
+
+async function waitForCompletionLabels(document, position, expectedLabels) {
+  const deadline = Date.now() + COMPLETION_TIMEOUT_MS;
+  let lastLabels = [];
+  while (Date.now() < deadline) {
+    const result = await vscode.commands.executeCommand(
+      'vscode.executeCompletionItemProvider',
+      document.uri,
+      position
+    );
+    lastLabels = completionItems(result).map((item) => item.label);
+    if (expectedLabels.every((label) => lastLabels.includes(label))) {
+      return lastLabels;
+    }
+    await sleep(COMPLETION_POLL_MS);
+  }
+
+  assert.fail(
+    `completion did not contain ${JSON.stringify(expectedLabels)}\nLast labels:\n${JSON.stringify(
+      lastLabels,
+      null,
+      2
+    )}`
+  );
+}
+
+async function waitForDiagnostics(uri, predicate, description) {
+  const deadline = Date.now() + DIAGNOSTIC_TIMEOUT_MS;
+  let lastDiagnostics = [];
+  while (Date.now() < deadline) {
+    lastDiagnostics = vscode.languages.getDiagnostics(uri);
+    if (predicate(lastDiagnostics)) {
+      return lastDiagnostics;
+    }
+    await sleep(DIAGNOSTIC_POLL_MS);
+  }
+
+  assert.fail(
+    `diagnostics did not satisfy ${description}\nLast diagnostics:\n${JSON.stringify(
+      lastDiagnostics,
+      null,
+      2
+    )}`
+  );
+}
+
 async function configureExtension() {
   const serverPath = process.env.AHFL_VSCODE_TEST_SERVER;
   assert.ok(serverPath, 'AHFL_VSCODE_TEST_SERVER must be set');
@@ -80,9 +264,7 @@ async function configureExtension() {
   await extension.activate();
 }
 
-async function run() {
-  await configureExtension();
-
+async function runHoverRegression() {
   const agents = await openWorkspaceDocument('lib/agents.ahfl');
   await waitForHover(agents, 'input:', ['input: lib::types::Request', 'Input schema for']);
   await waitForHover(agents, 'states:', ['states: [Init, Done]', 'Defines 2 states']);
@@ -97,8 +279,207 @@ async function run() {
   const workflow = await openWorkspaceDocument('app/main.ahfl');
   await waitForHover(workflow, 'run: agents::AliasAgent', [
     'node run: agents::AliasAgent',
-    'Workflow node in',
+    'workflow node',
   ]);
+}
+
+async function runCompletionRegression() {
+  const workflow = await openWorkspaceDocument('app/main.ahfl');
+  await waitForCompletionLabels(workflow, positionAfterNeedle(workflow, 'input.'), ['value']);
+}
+
+async function runRenameRegression() {
+  const tempDir = fs.mkdtempSync(path.join(workspaceRootPath(), 'ahfl-vscode-rename-'));
+  const projectFile = path.join(tempDir, 'ahfl.project.json');
+  const tempFile = path.join(tempDir, 'rename.ahfl');
+  const projectDescriptor = `${JSON.stringify(
+    {
+      format_version: 'ahfl.project.v0.3',
+      name: 'vscode-rename',
+      search_roots: ['.'],
+      entry_sources: ['rename.ahfl'],
+    },
+    null,
+    2
+  )}\n`;
+  const source = [
+    'module scratch::rename;',
+    '',
+    'struct Msg {',
+    '    value: String;',
+    '}',
+    '',
+    'struct Envelope {',
+    '    payload: Msg;',
+    '}',
+    '',
+  ].join('\n');
+
+  try {
+    writeTextFile(projectFile, projectDescriptor);
+    writeTextFile(tempFile, source);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(tempFile));
+    await vscode.window.showTextDocument(document, { preview: false });
+
+    const edit = await vscode.commands.executeCommand(
+      'vscode.executeDocumentRenameProvider',
+      document.uri,
+      positionForNeedle(document, 'Msg'),
+      'Message'
+    );
+    assert.ok(edit, 'expected AHFL rename provider to return a workspace edit');
+
+    const applied = await vscode.workspace.applyEdit(edit);
+    assert.strictEqual(applied, true, 'expected AHFL rename workspace edit to apply');
+    await document.save();
+
+    const renamed = document.getText();
+    assert.ok(renamed.includes('struct Message {'), 'expected renamed struct declaration');
+    assert.ok(renamed.includes('payload: Message;'), 'expected renamed struct reference');
+    assert.strictEqual(renamed.includes('struct Msg {'), false, 'old struct declaration remains');
+    assert.strictEqual(renamed.includes('payload: Msg;'), false, 'old struct reference remains');
+  } finally {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    await sleep(500);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function replaceDocumentText(document, content) {
+  const edit = new vscode.WorkspaceEdit();
+  const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+  edit.replace(document.uri, fullRange, content);
+  const applied = await vscode.workspace.applyEdit(edit);
+  assert.strictEqual(applied, true, 'expected VS Code workspace edit to apply');
+  await document.save();
+}
+
+async function runDiagnosticsRegression() {
+  const tempDir = fs.mkdtempSync(path.join(workspaceRootPath(), 'ahfl-vscode-diagnostics-'));
+  const projectFile = path.join(tempDir, 'ahfl.project.json');
+  const tempFile = path.join(tempDir, 'broken.ahfl');
+  const projectDescriptor = `${JSON.stringify(
+    {
+      format_version: 'ahfl.project.v0.3',
+      name: 'vscode-diagnostics',
+      search_roots: ['.'],
+      entry_sources: ['broken.ahfl'],
+    },
+    null,
+    2
+  )}\n`;
+  const brokenSource = 'module scratch::broken;\n\nstruct Broken {\n    value: Missing;\n}\n';
+  const fixedSource = 'module scratch::broken;\n\nstruct Broken {\n    value: String;\n}\n';
+
+  try {
+    writeTextFile(projectFile, projectDescriptor);
+    writeTextFile(tempFile, brokenSource);
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(tempFile));
+    await vscode.window.showTextDocument(document, { preview: false });
+
+    const diagnostics = await waitForDiagnostics(
+      document.uri,
+      (items) => items.some((diagnostic) => diagnostic.severity === vscode.DiagnosticSeverity.Error),
+      'at least one error diagnostic for a broken AHFL file'
+    );
+    recordDiagnosticsSnapshot('broken-file.error-published', document.uri, diagnostics);
+    assert.ok(
+      diagnostics.some((diagnostic) => diagnostic.source === 'ahfl'),
+      'expected diagnostics to be published by AHFL language server'
+    );
+
+    await replaceDocumentText(document, fixedSource);
+    const fixedDiagnostics = await waitForDiagnostics(
+      document.uri,
+      (items) => items.length === 0,
+      'empty diagnostics after fixing the AHFL file'
+    );
+    recordDiagnosticsSnapshot('broken-file.fixed-cleared', document.uri, fixedDiagnostics);
+  } finally {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function runWatchedFilesRegression() {
+  const tempDir = fs.mkdtempSync(path.join(workspaceRootPath(), 'ahfl-vscode-watch-'));
+  const projectFile = path.join(tempDir, 'ahfl.project.json');
+  const mainFile = path.join(tempDir, 'app', 'main.ahfl');
+  const typesFile = path.join(tempDir, 'lib', 'types.ahfl');
+  const projectDescriptor = `${JSON.stringify(
+    {
+      format_version: 'ahfl.project.v0.3',
+      name: 'vscode-watch',
+      search_roots: ['.'],
+      entry_sources: ['app/main.ahfl'],
+    },
+    null,
+    2
+  )}\n`;
+  const mainSource = [
+    'module app::main;',
+    'import lib::types as types;',
+    '',
+    'struct Use {',
+    '    payload: types::Msg;',
+    '}',
+    '',
+  ].join('\n');
+  const validTypesSource = [
+    'module lib::types;',
+    '',
+    'struct Msg {',
+    '    value: String;',
+    '}',
+    '',
+  ].join('\n');
+  const missingTypeSource = ['module lib::types;', '', 'struct Other {', '    value: String;', '}', ''].join(
+    '\n'
+  );
+
+  try {
+    writeTextFile(projectFile, projectDescriptor);
+    writeTextFile(mainFile, mainSource);
+    writeTextFile(typesFile, validTypesSource);
+
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(mainFile));
+    await vscode.window.showTextDocument(document, { preview: false });
+    const beforeDiagnostics = await waitForDiagnostics(
+      document.uri,
+      (items) => items.length === 0,
+      'empty diagnostics before imported file changes'
+    );
+    recordDiagnosticsSnapshot('watched-files.before-import-change', document.uri, beforeDiagnostics);
+
+    await vscode.workspace.fs.writeFile(vscode.Uri.file(typesFile), Buffer.from(missingTypeSource, 'utf8'));
+    const afterDiagnostics = await waitForDiagnostics(
+      document.uri,
+      (items) =>
+        items.some(
+          (diagnostic) =>
+            diagnostic.severity === vscode.DiagnosticSeverity.Error &&
+            diagnostic.source === 'ahfl' &&
+            (diagnosticCodeText(diagnostic).startsWith('resolve.') ||
+              diagnostic.message.includes('types::Msg') ||
+              diagnostic.message.includes('Msg'))
+      ),
+      'AHFL resolve diagnostic after an unopened imported file removes Msg'
+    );
+    recordDiagnosticsSnapshot('watched-files.after-import-change', document.uri, afterDiagnostics);
+  } finally {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function run() {
+  await configureExtension();
+  await runHoverRegression();
+  await runCompletionRegression();
+  await runRenameRegression();
+  await runDiagnosticsRegression();
+  await runWatchedFilesRegression();
+  writeDiagnosticsTranscript();
 }
 
 module.exports = { run };

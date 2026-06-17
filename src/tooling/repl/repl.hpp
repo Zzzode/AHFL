@@ -1,7 +1,7 @@
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
-#include <functional>
 
 namespace ahfl::repl {
 
@@ -28,32 +28,34 @@ struct ReplConfig {
     bool verbose = false;
 };
 
-[[nodiscard]] ReplCommandKind parse_command(const std::string& input);
+[[nodiscard]] ReplCommandKind parse_command(const std::string &input);
 
-[[nodiscard]] ReplResult execute_command(const std::string& input);
+[[nodiscard]] ReplResult execute_command(const std::string &input);
 
 [[nodiscard]] std::string get_help_text();
 
 class Repl {
-public:
+  public:
     explicit Repl(ReplConfig config = {});
 
-    [[nodiscard]] ReplResult process_input(const std::string& input);
+    [[nodiscard]] ReplResult process_input(const std::string &input);
 
-    [[nodiscard]] const ReplConfig& config() const;
+    [[nodiscard]] const ReplConfig &config() const;
     [[nodiscard]] size_t history_size() const;
-    [[nodiscard]] const std::vector<std::string>& history() const;
+    [[nodiscard]] const std::vector<std::string> &history() const;
 
-    void set_eval_handler(std::function<std::string(const std::string&)> handler);
-    void set_type_handler(std::function<std::string(const std::string&)> handler);
-    void set_verify_handler(std::function<std::string(const std::string&)> handler);
+    void set_eval_handler(std::function<std::string(const std::string &)> handler);
+    void set_type_handler(std::function<std::string(const std::string &)> handler);
+    void set_verify_handler(std::function<std::string(const std::string &)> handler);
+    void set_simulate_handler(std::function<std::string(const std::string &)> handler);
 
-private:
+  private:
     ReplConfig config_;
     std::vector<std::string> history_;
-    std::function<std::string(const std::string&)> eval_handler_;
-    std::function<std::string(const std::string&)> type_handler_;
-    std::function<std::string(const std::string&)> verify_handler_;
+    std::function<std::string(const std::string &)> eval_handler_;
+    std::function<std::string(const std::string &)> type_handler_;
+    std::function<std::string(const std::string &)> verify_handler_;
+    std::function<std::string(const std::string &)> simulate_handler_;
 };
 
 } // namespace ahfl::repl
