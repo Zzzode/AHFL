@@ -15,6 +15,7 @@ namespace ahfl::cli {
 enum class CommandKind {
     Check,
     RunWorkflow,
+    Format,
     DumpAst,
     DumpTypes,
     DumpProject,
@@ -71,19 +72,31 @@ struct CommandLineOptions {
     bool dump_types_requested{false};
     std::optional<std::string_view> package_descriptor;
     std::optional<std::string_view> capability_mocks_descriptor;
+    std::optional<std::string_view> tool_catalog_descriptor;
+    std::optional<std::string_view> capability_bindings_descriptor;
     std::optional<std::string_view> project_descriptor;
     std::optional<std::string_view> workspace_descriptor;
     std::optional<std::string_view> project_name;
     std::optional<std::string_view> workflow_name;
     std::optional<std::string_view> runtime_input_json;
     std::optional<std::string_view> llm_config_descriptor;
+    std::optional<std::string_view> llm_observability_path;
     std::optional<std::string_view> input_fixture;
     std::optional<std::string_view> run_id;
+    std::optional<std::string_view> formal_backend;
     std::optional<std::string_view> model_checker;
+    std::optional<std::string_view> checker_timeout_seconds;
     std::optional<std::string_view> formal_model_out;
     bool explain_requested{false};
     bool optimize_requested{false};
+    bool time_passes_requested{false};
+    bool smv_size_report_requested{false};
+    std::optional<std::string_view> trace_export_path;
+    std::optional<std::string_view> metrics_export_path;
+    std::optional<std::string_view> structured_log_path;
+    std::optional<std::string_view> memory_report_path;
     bool show_internal_artifacts{false};
+    bool format_check_requested{false};
     std::vector<std::string_view> search_roots;
     std::vector<std::string_view> positional;
 };

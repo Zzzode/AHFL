@@ -289,6 +289,32 @@ symbol_selection_source_range(const Symbol &symbol, const LspSourceSnapshot &sou
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<Location> rename_location_at(const LspAnalysisSnapshot &snapshot,
+                                                         const LspSourceSnapshot &source,
+                                                         std::size_t offset) {
+    for (const auto &reference : snapshot.resolve_result.references()) {
+        if (same_source(reference.source_id, source.source_id) &&
+            contains(reference.range, offset)) {
+            return reference_location(snapshot, reference, source);
+        }
+    }
+
+    for (const auto &symbol : snapshot.resolve_result.symbol_table.symbols()) {
+        if (!same_source(symbol.source_id, source.source_id)) {
+            continue;
+        }
+        const auto selection = symbol_selection_source_range(symbol, source);
+        if (selection.has_value() && contains(*selection, offset) && source.source != nullptr) {
+            return Location{
+                .uri = source.uri,
+                .range = to_lsp_range(*source.source, *selection),
+            };
+        }
+    }
+
+    return std::nullopt;
+}
+
 void send_null(JsonRpcTransport &transport, const std::string &id) {
     JsonRpcResponse resp;
     resp.id = id;
@@ -301,6 +327,33 @@ void send_empty_array(JsonRpcTransport &transport, const std::string &id) {
     resp.id = id;
     resp.result = json::JsonValue::make_array();
     transport.send_response(resp);
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_full_diagnostic_report(const std::vector<LspDiagnostic> &diagnostics) {
+    auto report = json::JsonValue::make_object();
+    report->set("kind", json::JsonValue::make_string("full"));
+
+    auto items = json::JsonValue::make_array();
+    for (const auto &diagnostic : diagnostics) {
+        items->push(serialize_diagnostic(diagnostic));
+    }
+    report->set("items", std::move(items));
+    return report;
+}
+
+[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_workspace_diagnostic_item(
+    std::string_view uri,
+    std::optional<int> version,
+    const std::vector<LspDiagnostic> &diagnostics) {
+    auto item = serialize_full_diagnostic_report(diagnostics);
+    item->set("uri", json::JsonValue::make_string(std::string(uri)));
+    if (version.has_value()) {
+        item->set("version", json::JsonValue::make_int(*version));
+    } else {
+        item->set("version", json::JsonValue::make_null());
+    }
+    return item;
 }
 
 void send_invalid_params(JsonRpcTransport &transport, const std::string &id, std::string message) {
@@ -456,7 +509,7 @@ workspace_roots_from_initialize(const json::JsonValue *params) {
         return roots;
     }
 
-    const auto append_root_uri = [&](const json::JsonValue *value) {
+    const auto append_root_uri = [&roots](const json::JsonValue *value) {
         if (value == nullptr) {
             return;
         }
@@ -486,6 +539,53 @@ workspace_roots_from_initialize(const json::JsonValue *params) {
     }
 
     return roots;
+}
+
+void append_workspace_folder_roots(std::vector<std::filesystem::path> &roots,
+                                   const json::JsonValue *folders) {
+    if (folders == nullptr || !folders->is_array()) {
+        return;
+    }
+
+    for (const auto &folder : folders->array_items) {
+        const auto *uri_value = folder->get("uri");
+        if (uri_value == nullptr) {
+            continue;
+        }
+        const auto uri = uri_value->as_string();
+        if (!uri.has_value()) {
+            continue;
+        }
+        if (auto path = AnalysisService::path_from_uri(*uri); path.has_value()) {
+            roots.push_back(*path);
+        }
+    }
+}
+
+void remove_workspace_folder_roots(std::vector<std::filesystem::path> &roots,
+                                   const json::JsonValue *folders) {
+    if (folders == nullptr || !folders->is_array()) {
+        return;
+    }
+
+    std::unordered_set<std::string> removed;
+    for (const auto &folder : folders->array_items) {
+        const auto *uri_value = folder->get("uri");
+        if (uri_value == nullptr) {
+            continue;
+        }
+        const auto uri = uri_value->as_string();
+        if (!uri.has_value()) {
+            continue;
+        }
+        if (auto path = AnalysisService::path_from_uri(*uri); path.has_value()) {
+            removed.insert(AnalysisService::normalized_path_key(*path));
+        }
+    }
+
+    std::erase_if(roots, [&removed](const std::filesystem::path &root) {
+        return removed.contains(AnalysisService::normalized_path_key(root));
+    });
 }
 
 void push_keyword_completion(std::vector<CompletionItem> &items, std::string_view keyword) {
@@ -895,8 +995,14 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_hover(req);
     } else if (req.method == "textDocument/references") {
         handle_references(req);
+    } else if (req.method == "textDocument/prepareRename") {
+        handle_prepare_rename(req);
     } else if (req.method == "textDocument/rename") {
         handle_rename(req);
+    } else if (req.method == "textDocument/diagnostic") {
+        handle_text_document_diagnostic(req);
+    } else if (req.method == "workspace/diagnostic") {
+        handle_workspace_diagnostic(req);
     } else if (req.method == "textDocument/documentSymbol") {
         handle_document_symbol(req);
     } else if (req.method == "workspace/symbol") {
@@ -927,6 +1033,14 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
         if (notif.params) {
             handle_did_close(*notif.params);
         }
+    } else if (notif.method == "workspace/didChangeWorkspaceFolders") {
+        if (notif.params) {
+            handle_workspace_folders_changed(*notif.params);
+        }
+    } else if (notif.method == "workspace/didChangeWatchedFiles") {
+        if (notif.params) {
+            handle_watched_files_changed(*notif.params);
+        }
     } else if (notif.method == "exit") {
         handle_exit();
     }
@@ -934,7 +1048,8 @@ void LspServer::handle_notification(const JsonRpcNotification &notif) {
 
 void LspServer::handle_initialize(const JsonRpcRequest &req) {
     initialized_ = true;
-    analysis_.set_workspace_roots(workspace_roots_from_initialize(req.params.get()));
+    workspace_roots_ = workspace_roots_from_initialize(req.params.get());
+    analysis_.set_workspace_roots(workspace_roots_);
     hover_options_ = hover_render_options_from_initialize(req.params.get());
 
     ServerCapabilities caps;
@@ -972,7 +1087,7 @@ void LspServer::handle_did_open(const json::JsonValue &params) {
     auto item = parse_text_document_item(*td);
     store_.open(item);
     analysis_.invalidate_all();
-    publish_diagnostics(item.uri);
+    publish_open_document_diagnostics();
 }
 
 void LspServer::handle_did_change(const json::JsonValue &params) {
@@ -999,7 +1114,7 @@ void LspServer::handle_did_change(const json::JsonValue &params) {
 
     store_.change(versioned.uri, versioned.version, std::string(*text));
     analysis_.invalidate_all();
-    publish_diagnostics(versioned.uri);
+    publish_open_document_diagnostics();
 }
 
 void LspServer::handle_did_close(const json::JsonValue &params) {
@@ -1016,6 +1131,25 @@ void LspServer::handle_did_close(const json::JsonValue &params) {
     diag_params->set("uri", json::JsonValue::make_string(id.uri));
     diag_params->set("diagnostics", json::JsonValue::make_array());
     transport_.send_notification("textDocument/publishDiagnostics", std::move(diag_params));
+    publish_open_document_diagnostics();
+}
+
+void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) {
+    const auto *event = params.get("event");
+    if (event == nullptr) {
+        return;
+    }
+
+    remove_workspace_folder_roots(workspace_roots_, event->get("removed"));
+    append_workspace_folder_roots(workspace_roots_, event->get("added"));
+    analysis_.set_workspace_roots(workspace_roots_);
+    publish_open_document_diagnostics();
+}
+
+void LspServer::handle_watched_files_changed(const json::JsonValue &params) {
+    (void)params;
+    analysis_.invalidate_all();
+    publish_open_document_diagnostics();
 }
 
 void LspServer::handle_exit() {
@@ -1042,6 +1176,12 @@ void LspServer::publish_diagnostics(const std::string &uri) {
 
     trace("publishDiagnostics " + uri + " count=" + std::to_string(lsp_diagnostics.size()));
     transport_.send_notification("textDocument/publishDiagnostics", std::move(params));
+}
+
+void LspServer::publish_open_document_diagnostics() {
+    for (const auto &uri : store_.all_uris()) {
+        publish_diagnostics(uri);
+    }
 }
 
 void LspServer::trace(std::string_view message) const {
@@ -1243,6 +1383,39 @@ void LspServer::handle_references(const JsonRpcRequest &req) {
     transport_.send_response(resp);
 }
 
+void LspServer::handle_prepare_rename(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto location =
+        rename_location_at(*snapshot, *source, offset_at(*source->source, position));
+    if (!location.has_value()) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = serialize_range(location->range);
+    transport_.send_response(resp);
+}
+
 void LspServer::handle_rename(const JsonRpcRequest &req) {
     if (!req.params) {
         send_null(transport_, req.id);
@@ -1311,6 +1484,62 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
     JsonRpcResponse resp;
     resp.id = req.id;
     resp.result = serialize_workspace_edit(edit);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_text_document_diagnostic(const JsonRpcRequest &req) {
+    if (!req.params) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_full_diagnostic_report({});
+        transport_.send_response(resp);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        JsonRpcResponse resp;
+        resp.id = req.id;
+        resp.result = serialize_full_diagnostic_report({});
+        transport_.send_response(resp);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = serialize_full_diagnostic_report(
+        snapshot != nullptr ? snapshot->diagnostics_for_uri(uri) : std::vector<LspDiagnostic>{});
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_workspace_diagnostic(const JsonRpcRequest &req) {
+    auto result = json::JsonValue::make_object();
+    auto items = json::JsonValue::make_array();
+    std::unordered_set<std::string> emitted;
+
+    for (const auto *snapshot : analysis_.workspace_snapshots()) {
+        if (snapshot == nullptr) {
+            continue;
+        }
+        for (const auto &source : snapshot->sources) {
+            if (source.uri.empty() || !emitted.insert(source.uri).second) {
+                continue;
+            }
+
+            const auto *document = store_.get(source.uri);
+            const std::optional<int> version =
+                document != nullptr ? std::optional<int>(document->version) : std::nullopt;
+            items->push(serialize_workspace_diagnostic_item(
+                source.uri, version, snapshot->diagnostics_for_uri(source.uri)));
+        }
+    }
+
+    result->set("items", std::move(items));
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
     transport_.send_response(resp);
 }
 

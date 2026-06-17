@@ -115,8 +115,12 @@ class AstFormatter {
         }
 
         // Top-level declarations
+        bool needs_separator = !imports.empty() && !others.empty();
         for (const auto *decl : others) {
-            newline();
+            if (needs_separator) {
+                newline();
+                needs_separator = false;
+            }
             format_declaration(*decl);
         }
 

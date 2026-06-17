@@ -115,7 +115,18 @@ std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapab
     }
 
     if (caps.rename_provider) {
-        obj->set("renameProvider", json::JsonValue::make_bool(true));
+        auto rename = json::JsonValue::make_object();
+        if (caps.prepare_rename_provider) {
+            rename->set("prepareProvider", json::JsonValue::make_bool(true));
+        }
+        obj->set("renameProvider", std::move(rename));
+    }
+
+    if (caps.diagnostic_provider) {
+        auto diagnostic = json::JsonValue::make_object();
+        diagnostic->set("interFileDependencies", json::JsonValue::make_bool(true));
+        diagnostic->set("workspaceDiagnostics", json::JsonValue::make_bool(true));
+        obj->set("diagnosticProvider", std::move(diagnostic));
     }
 
     if (caps.document_symbol_provider) {
@@ -124,6 +135,15 @@ std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapab
 
     if (caps.workspace_symbol_provider) {
         obj->set("workspaceSymbolProvider", json::JsonValue::make_bool(true));
+    }
+
+    if (caps.workspace_folders_provider) {
+        auto workspace = json::JsonValue::make_object();
+        auto workspace_folders = json::JsonValue::make_object();
+        workspace_folders->set("supported", json::JsonValue::make_bool(true));
+        workspace_folders->set("changeNotifications", json::JsonValue::make_bool(true));
+        workspace->set("workspaceFolders", std::move(workspace_folders));
+        obj->set("workspace", std::move(workspace));
     }
 
     if (caps.signature_help_provider) {
