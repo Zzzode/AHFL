@@ -49,14 +49,10 @@ TEST_CASE("type relations support covariant container element types") {
 
 TEST_CASE("type relations keep map keys invariant but values covariant") {
     auto &tc = ahfl::TypeContext::global();
-    const auto bounded_to_int =
-        tc.map(bounded_string_type(2, 8), tc.make(ahfl::TypeKind::Int));
-    const auto string_to_int =
-        tc.map(string_type(), tc.make(ahfl::TypeKind::Int));
-    const auto string_to_bounded =
-        tc.map(string_type(), bounded_string_type(2, 8));
-    const auto string_to_string =
-        tc.map(string_type(), string_type());
+    const auto bounded_to_int = tc.map(bounded_string_type(2, 8), tc.make(ahfl::TypeKind::Int));
+    const auto string_to_int = tc.map(string_type(), tc.make(ahfl::TypeKind::Int));
+    const auto string_to_bounded = tc.map(string_type(), bounded_string_type(2, 8));
+    const auto string_to_string = tc.map(string_type(), string_type());
 
     // Map keys are invariant: BoundedString != String at the key position.
     CHECK_FALSE(ahfl::is_subtype_of(*bounded_to_int, *string_to_int));
@@ -66,34 +62,60 @@ TEST_CASE("type relations keep map keys invariant but values covariant") {
     CHECK_FALSE(ahfl::is_subtype_of(*string_to_string, *string_to_bounded));
 }
 
-TEST_CASE("type relations support decimal scale promotion") {
+TEST_CASE("type relations reject implicit numeric subtyping by default") {
     auto &tc = ahfl::TypeContext::global();
     const auto decimal_2 = tc.decimal(2);
     const auto decimal_4 = tc.decimal(4);
     const auto i32 = tc.make(ahfl::TypeKind::Int);
+    const auto f64 = tc.make(ahfl::TypeKind::Float);
 
-    // Decimal(2) <: Decimal(4) since wider scale (4) accepts narrower (2).
-    CHECK(ahfl::is_subtype_of(*decimal_2, *decimal_4));
-    CHECK(ahfl::is_assignable_to(*decimal_2, *decimal_4));
-    // Reverse should not hold: Decimal(4) is NOT <: Decimal(2).
+    CHECK_FALSE(ahfl::is_subtype_of(*i32, *f64));
+    CHECK_FALSE(ahfl::is_assignable_to(*i32, *f64));
+    CHECK_FALSE(ahfl::is_subtype_of(*i32, *decimal_2));
+    CHECK_FALSE(ahfl::is_assignable_to(*i32, *decimal_2));
+    CHECK_FALSE(ahfl::is_subtype_of(*decimal_2, *f64));
+    CHECK_FALSE(ahfl::is_assignable_to(*decimal_2, *f64));
+    CHECK_FALSE(ahfl::is_subtype_of(*decimal_2, *decimal_4));
+    CHECK_FALSE(ahfl::is_assignable_to(*decimal_2, *decimal_4));
     CHECK_FALSE(ahfl::is_subtype_of(*decimal_4, *decimal_2));
     CHECK_FALSE(ahfl::is_assignable_to(*decimal_4, *decimal_2));
-    // Int <: Decimal (numeric promotion).
-    CHECK(ahfl::is_subtype_of(*i32, *decimal_2));
-    CHECK(ahfl::is_subtype_of(*i32, *decimal_4));
 }
 
 TEST_CASE("nominal types prefer symbol identity over display names") {
     auto &tc = ahfl::TypeContext::global();
-    const auto left = tc.struct_type("pkg::Request", ahfl::SymbolId{1});
-    const auto right_same_name = tc.struct_type("pkg::Request", ahfl::SymbolId{2});
-    const auto right_same_symbol = tc.struct_type("pkg::RenamedRequest", ahfl::SymbolId{1});
-    const auto fallback_left = tc.struct_type("pkg::Request");
-    const auto fallback_right = tc.struct_type("pkg::Request");
+    const auto struct_left = tc.struct_type("pkg::Request", ahfl::SymbolId{1});
+    const auto struct_same_name = tc.struct_type("pkg::Request", ahfl::SymbolId{2});
+    const auto struct_same_symbol = tc.struct_type("pkg::RenamedRequest", ahfl::SymbolId{1});
+    const auto struct_fallback_left = tc.struct_type("pkg::Request");
+    const auto struct_fallback_right = tc.struct_type("pkg::Request");
 
-    CHECK_FALSE(ahfl::are_types_equivalent(*left, *right_same_name));
-    CHECK(ahfl::are_types_equivalent(*left, *right_same_symbol));
-    CHECK(ahfl::are_types_equivalent(*fallback_left, *fallback_right));
+    CHECK_FALSE(ahfl::are_types_equivalent(*struct_left, *struct_same_name));
+    CHECK(ahfl::are_types_equivalent(*struct_left, *struct_same_symbol));
+    CHECK(ahfl::are_types_equivalent(*struct_fallback_left, *struct_fallback_right));
+
+    const auto enum_left = tc.enum_type("pkg::Priority", ahfl::SymbolId{3});
+    const auto enum_same_name = tc.enum_type("pkg::Priority", ahfl::SymbolId{4});
+    const auto enum_same_symbol = tc.enum_type("pkg::RenamedPriority", ahfl::SymbolId{3});
+    const auto enum_fallback_left = tc.enum_type("pkg::Priority");
+    const auto enum_fallback_right = tc.enum_type("pkg::Priority");
+
+    CHECK_FALSE(ahfl::are_types_equivalent(*enum_left, *enum_same_name));
+    CHECK(ahfl::are_types_equivalent(*enum_left, *enum_same_symbol));
+    CHECK(ahfl::are_types_equivalent(*enum_fallback_left, *enum_fallback_right));
+
+    const auto variant_left = tc.enum_variant_type("pkg::Priority", "High", ahfl::SymbolId{5});
+    const auto variant_same_name = tc.enum_variant_type("pkg::Priority", "High", ahfl::SymbolId{6});
+    const auto variant_same_symbol =
+        tc.enum_variant_type("pkg::RenamedPriority", "High", ahfl::SymbolId{5});
+    const auto variant_other_member =
+        tc.enum_variant_type("pkg::RenamedPriority", "Low", ahfl::SymbolId{5});
+    const auto variant_fallback_left = tc.enum_variant_type("pkg::Priority", "High");
+    const auto variant_fallback_right = tc.enum_variant_type("pkg::Priority", "High");
+
+    CHECK_FALSE(ahfl::are_types_equivalent(*variant_left, *variant_same_name));
+    CHECK(ahfl::are_types_equivalent(*variant_left, *variant_same_symbol));
+    CHECK_FALSE(ahfl::are_types_equivalent(*variant_left, *variant_other_member));
+    CHECK(ahfl::are_types_equivalent(*variant_fallback_left, *variant_fallback_right));
 }
 
 TEST_CASE("constraint skeleton traces nested Map->List->Struct nominal mismatch") {
@@ -250,7 +272,8 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
         CHECK_FALSE(ok);
         bool found = false;
         for (const auto &s : ctx.trace().steps) {
-            if (s.path == "list.element") found = true;
+            if (s.path == "list.element")
+                found = true;
         }
         CHECK(found);
     }
@@ -261,8 +284,10 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
         CHECK_FALSE(ok);
         bool found_key = false, found_value = false;
         for (const auto &s : ctx.trace().steps) {
-            if (s.path == "map.key") found_key = true;
-            if (s.path == "map.value") found_value = true;
+            if (s.path == "map.key")
+                found_key = true;
+            if (s.path == "map.value")
+                found_value = true;
         }
         CHECK(found_key);
         // key mismatch short-circuits the value recursion (equivalent_pairwise
@@ -276,7 +301,8 @@ TEST_CASE("flat trace records list/set/map element mismatch paths") {
         CHECK_FALSE(ok);
         bool found_value = false;
         for (const auto &s : ctx.trace().steps) {
-            if (s.path == "map.value") found_value = true;
+            if (s.path == "map.value")
+                found_value = true;
         }
         CHECK(found_value);
     }
@@ -313,25 +339,40 @@ TEST_CASE("TypeRelationOptions::allow_bounded_string_relaxation gates BS <: Stri
     }
 }
 
-TEST_CASE("TypeRelationOptions::allow_numeric_widening gates Int -> Float") {
+TEST_CASE("TypeRelationOptions::allow_numeric_widening explicitly enables numeric promotion") {
     using namespace ahfl;
     auto &tc = TypeContext::global();
     const auto i32 = tc.make(TypeKind::Int);
     const auto f64 = tc.make(TypeKind::Float);
+    const auto decimal_2 = tc.decimal(2);
+    const auto decimal_4 = tc.decimal(4);
 
-    // Default (ON): Int <: Float (widening).
+    // Default (OFF): source-level AHFL has no implicit numeric subtyping.
     {
         TypeRelationContext ctx;
-        CHECK(ctx.subtype(*i32, *f64));
-        CHECK(ctx.assignable(*i32, *f64));
-    }
-    // Strict (OFF): no widening between numerics.
-    {
-        TypeRelationOptions opts;
-        opts.allow_numeric_widening = false;
-        TypeRelationContext ctx(opts);
         CHECK_FALSE(ctx.subtype(*i32, *f64));
         CHECK_FALSE(ctx.assignable(*i32, *f64));
+        CHECK_FALSE(ctx.subtype(*i32, *decimal_2));
+        CHECK_FALSE(ctx.assignable(*i32, *decimal_2));
+        CHECK_FALSE(ctx.subtype(*decimal_2, *decimal_4));
+        CHECK_FALSE(ctx.assignable(*decimal_2, *decimal_4));
+    }
+    // Compatibility mode (ON): legacy widening remains available to callers
+    // that deliberately opt out of source-level strictness.
+    {
+        TypeRelationOptions opts;
+        opts.allow_numeric_widening = true;
+        TypeRelationContext ctx(opts);
+        CHECK(ctx.subtype(*i32, *f64));
+        CHECK(ctx.assignable(*i32, *f64));
+        CHECK(ctx.subtype(*i32, *decimal_2));
+        CHECK(ctx.assignable(*i32, *decimal_2));
+        CHECK(ctx.subtype(*decimal_2, *decimal_4));
+        CHECK(ctx.assignable(*decimal_2, *decimal_4));
+        CHECK_FALSE(ctx.subtype(*decimal_2, *f64));
+        CHECK_FALSE(ctx.assignable(*decimal_2, *f64));
+        CHECK_FALSE(ctx.subtype(*decimal_4, *decimal_2));
+        CHECK_FALSE(ctx.assignable(*decimal_4, *decimal_2));
     }
     // Float never assigns to Int regardless of the flag.
     {
@@ -357,8 +398,8 @@ TEST_CASE("TypeRelationContext member methods delegate to free functions") {
     // subtype (default: BS <: String on)
     CHECK(ctx.subtype(*bs, *s));
 
-    // assignable (default: numeric widening on)
-    CHECK(ctx.assignable(*i32, *tc.make(TypeKind::Float)));
+    // assignable (default: numeric widening off)
+    CHECK_FALSE(ctx.assignable(*i32, *tc.make(TypeKind::Float)));
 
     // exact_schema
     CHECK(ctx.exact_schema(*s, *s));

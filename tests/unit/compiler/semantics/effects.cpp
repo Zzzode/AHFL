@@ -4,6 +4,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "ahfl/compiler/semantics/validate.hpp"
 
 #include <algorithm>
 #include <string>
@@ -57,6 +58,30 @@ namespace {
         }
     }
     return nullptr;
+}
+
+[[nodiscard]] ahfl::ValidationResult validate_source(std::string_view filename,
+                                                     std::string_view source,
+                                                     bool require_typecheck_clean = true) {
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text(std::string(filename), std::string(source));
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    if (require_typecheck_clean) {
+        REQUIRE_FALSE(type_result.has_errors());
+    }
+
+    const ahfl::Validator validator;
+    auto validation_result = validator.validate(*parse_result.program, resolve_result, type_result);
+    REQUIRE(validation_result.has_errors());
+    return validation_result;
 }
 
 TEST_CASE("Expression effects distinguish predicate and capability calls") {
@@ -125,11 +150,1086 @@ flow for EffectAgent {
     CHECK(predicate_effect->effect == ahfl::ExprEffect::PredicateCall);
     CHECK(predicate_effect->is_pure);
 
-    const auto *capability_effect = type_result.typed_program.find_expr_by_range(
-        range_of(source, "Do(input)"), std::nullopt);
+    const auto *capability_effect =
+        type_result.typed_program.find_expr_by_range(range_of(source, "Do(input)"), std::nullopt);
     REQUIRE(capability_effect != nullptr);
     CHECK(capability_effect->effect == ahfl::ExprEffect::CapabilityCall);
     CHECK_FALSE(capability_effect->is_pure);
+}
+
+TEST_CASE("Const expression diagnostics report the concrete expression effect") {
+    const std::string source = R"AHFL(
+struct Response {
+    value: String;
+}
+
+capability Build() -> Response;
+
+const bad: Response = Build();
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("const_expr_effect_diagnostic.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.CONST_EXPR_REQUIRED") ==
+          1);
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "const expression required in const initializer"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "expression has runtime effect: capability call"));
+}
+
+TEST_CASE("Non-pure expression diagnostics report concrete effects across semantic boundaries") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Probe(value: String) -> Bool;
+
+agent NonPureAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Probe];
+}
+
+contract for NonPureAgent {
+    requires: Probe(input.value);
+}
+
+flow for NonPureAgent {
+    state Done {
+        if Probe(input.value) {
+        }
+        assert Probe(input.value);
+        return Response { value: input.value };
+    }
+}
+
+workflow NonPureWorkflow {
+    input: Request;
+    output: Response;
+    node run: NonPureAgent(input);
+    safety: always Probe(input.value);
+    return: run;
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("non_pure_effect_diagnostics.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NON_PURE_EXPRESSION") ==
+          4);
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "contract expression must be pure; expression effect: capability call"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "temporal embedded expression must be pure; expression effect: capability call"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "if condition must be pure; expression effect: capability call"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "assert condition must be pure; expression effect: capability call"));
+}
+
+TEST_CASE("Bool semantic boundary diagnostics use stable typecheck codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent BoolBoundaryAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+contract for BoolBoundaryAgent {
+    requires: input.value;
+}
+
+flow for BoolBoundaryAgent {
+    state Done {
+        if input.value {
+        }
+        assert input.value;
+        return Response { value: input.value };
+    }
+}
+
+workflow BoolBoundaryWorkflow {
+    input: Request;
+    output: Response;
+    node run: BoolBoundaryAgent(input);
+    safety: always input.value;
+    return: run;
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("bool_boundary_diagnostic_codes.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 4);
+    CHECK(diagnostics_contain(type_result.diagnostics, "contract expression must have type Bool"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "temporal embedded expression must have type Bool"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "if condition must have type Bool"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "assert condition must have type Bool"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'String' here"));
+}
+
+TEST_CASE("Callable diagnostics use stable typecheck codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Declared(value: String, extra: String) -> Response;
+capability NotDeclared(value: String) -> Response;
+capability AsPredicate(value: String) -> Bool;
+predicate NeedsTwo(value: String, extra: String) -> Bool;
+predicate Wrap(flag: Bool) -> Bool;
+
+agent CallableAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Declared, AsPredicate];
+}
+
+contract for CallableAgent {
+    requires: NeedsTwo(input.value);
+    requires: Wrap(AsPredicate(input.value));
+}
+
+flow for CallableAgent {
+    state Done {
+        let missing = NotDeclared(input.value);
+        let wrong = Declared(input.value);
+        return Response { value: input.value };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("callable_diagnostic_codes.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.WRONG_ARITY") == 2);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.CAPABILITY_NOT_ALLOWED") ==
+          2);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NON_PURE_EXPRESSION") ==
+          2);
+
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "predicate 'NeedsTwo' expects 2 argument(s), got 1"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "capability 'Declared' expects 2 argument(s), got 1"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "capability 'NotDeclared' is not declared in the current agent capabilities"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "capability call 'AsPredicate' is not allowed in this context"));
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "predicate arguments must be pure expressions; expression effect: capability call"));
+}
+
+TEST_CASE("Field and literal diagnostics use stable typecheck codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+    numbers: List<Int>;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent FieldLiteralAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for FieldLiteralAgent {
+    state Done {
+        let bad_member = input.value.missing;
+        let bad_field = input.valu;
+        let bad_string_index = input.value[0];
+        let bad_list_index = input.numbers["zero"];
+        let empty_list = [];
+        let empty_set = set[];
+        let empty_map = map[];
+        let none_value = none;
+        let missing = Response {};
+        return Response {
+            value: input.value,
+            value: input.value,
+            valu: input.value,
+        };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("field_literal_diagnostic_codes.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_MEMBER_ACCESS") ==
+          1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_FIELD") == 2);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.DUPLICATE_FIELD") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.MISSING_FIELD") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics,
+                                     "typecheck.EMPTY_LITERAL_WITHOUT_CONTEXT") == 3);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.NONE_WITHOUT_CONTEXT") ==
+          1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_INDEX_ACCESS") ==
+          2);
+
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "member access requires a struct value, got String"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "unknown field 'valu' on struct 'Request'; did you mean 'value'?"));
+    CHECK(
+        diagnostics_contain(type_result.diagnostics, "duplicate field 'value' in struct literal"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "missing field 'value' in struct literal"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty list literal"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty set literal"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "cannot infer type of empty map literal"));
+    CHECK(
+        diagnostics_contain(type_result.diagnostics,
+                            "cannot infer type of 'none' without an expected Optional<T> context"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "list index must have type Int"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "index access requires a List or Map value, got String"));
+}
+
+TEST_CASE("Expression operation diagnostics use stable typecheck codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    text: String;
+    count: Int;
+    flag: Bool;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent OperationDiagnosticAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for OperationDiagnosticAgent {
+    state Done {
+        let bad_not = not input.text;
+        let bad_unary = -input.text;
+        let bad_none = input.text == none;
+        let bad_logic = input.flag and input.text;
+        let bad_compare = input.text < input.count;
+        let bad_add = input.text + input.count;
+        let bad_subtract = input.text - input.count;
+        let bad_multiply = input.text * input.count;
+        let bad_modulo = input.text % input.count;
+        return Response {
+            value: input.text,
+        };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("operation_diagnostic_codes.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_OPERATION") == 9);
+
+    CHECK(diagnostics_contain(type_result.diagnostics, "logical not requires Bool, got String"));
+    CHECK(
+        diagnostics_contain(type_result.diagnostics,
+                            "numeric unary operator requires Int, Float, or Decimal, got String"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "comparison with none requires Optional<T>, got String"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "logical operator requires Bool operands"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "comparison operands are not type-compatible: String vs Int"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "operator '+' is not defined for String and Int"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "operator '-' is not defined for String and Int"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "arithmetic operator is not defined for String and Int"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "operator '%' requires Int operands"));
+}
+
+TEST_CASE("Declaration diagnostics use stable typecheck codes") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String;
+}
+
+struct Response {
+    value: String;
+}
+
+struct DuplicateField {
+    value: Int;
+    value: String;
+}
+
+enum DuplicateVariant {
+    Pending,
+    Pending,
+}
+
+agent DeclarationDiagnosticAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("declaration_diagnostic_codes.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.DUPLICATE_FIELD") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.DUPLICATE_VARIANT") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.MISSING_FIELD") == 1);
+
+    CHECK(diagnostics_contain(type_result.diagnostics, "duplicate struct field 'value'"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "duplicate enum variant 'Pending'"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "agent context field 'value' must declare a default value"));
+}
+
+TEST_CASE("Let shadowing diagnostics use stable typecheck warning code") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent ShadowAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for ShadowAgent {
+    state Init {
+        let reply: String = input.value;
+        let reply: String = reply;
+        goto Done;
+    }
+
+    state Done {
+        return Response { value: ctx.value };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("shadowed_binding_warning.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    CHECK_FALSE(type_result.has_errors());
+    CHECK(type_result.diagnostics.has_warning());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.SHADOWED_BINDING") == 1);
+
+    const auto *diagnostic =
+        diagnostic_with_code(type_result.diagnostics, "typecheck.SHADOWED_BINDING");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->severity == ahfl::DiagnosticSeverity::Warning);
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "let binding 'reply' shadows an existing binding of type 'String'"));
+}
+
+TEST_CASE("Typecheck missing reference fallbacks use stable typecheck codes") {
+    const std::string source = R"AHFL(
+struct Payload {
+    value: String;
+}
+
+enum Mode {
+    A,
+    B,
+}
+
+predicate Ready() -> Bool;
+
+const StructFallback: Payload = Payload { value: "ok" };
+const QualifiedFallback: Mode = Mode::A;
+const CallFallback: Bool = Ready();
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typecheck_missing_references.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    ahfl::ResolveResult missing_references;
+    missing_references.symbol_table = resolve_result.symbol_table;
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, missing_references);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_TYPE") >= 2);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics,
+                                     "typecheck.UNKNOWN_QUALIFIED_VALUE") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.UNKNOWN_CALLABLE") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.SEMANTIC_ERROR") == 0);
+
+    CHECK(diagnostics_contain(type_result.diagnostics, "unknown type 'Payload'"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "unknown qualified value 'Mode::A'"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "unknown callable 'Ready'"));
+}
+
+TEST_CASE("Typecheck invalid type reference fallback uses stable typecheck code") {
+    const std::string source = R"AHFL(
+struct Payload {
+    value: String;
+}
+
+capability Do() -> Payload;
+
+const Broken: Payload = Payload { value: "ok" };
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typecheck_invalid_type_reference.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const auto capability_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Capabilities, "Do");
+    REQUIRE(capability_symbol.has_value());
+
+    ahfl::ResolveResult invalid_type_reference;
+    invalid_type_reference.symbol_table = resolve_result.symbol_table;
+    for (const auto &import : resolve_result.imports()) {
+        invalid_type_reference.add_import(import);
+    }
+    for (auto reference : resolve_result.references()) {
+        if (reference.kind == ahfl::ReferenceKind::TypeName && reference.text == "Payload") {
+            reference.target = capability_symbol->get().id;
+        }
+        invalid_type_reference.add_reference(reference);
+    }
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, invalid_type_reference);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_TYPE_REFERENCE") >=
+          1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.SEMANTIC_ERROR") == 0);
+    CHECK(diagnostics_contain(type_result.diagnostics, "symbol 'Do' does not name a type"));
+}
+
+TEST_CASE("Typecheck invalid callable reference fallbacks use stable typecheck code") {
+    const std::string source = R"AHFL(
+struct Payload {
+    value: String;
+}
+
+predicate Ready() -> Bool;
+
+const Broken: Bool = Ready();
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result =
+        frontend.parse_text("typecheck_invalid_callable_reference.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    ahfl::ResolveResult missing_callable_symbol;
+    missing_callable_symbol.symbol_table = resolve_result.symbol_table;
+    for (const auto &import : resolve_result.imports()) {
+        missing_callable_symbol.add_import(import);
+    }
+    for (auto reference : resolve_result.references()) {
+        if (reference.kind == ahfl::ReferenceKind::CallTarget && reference.text == "Ready") {
+            reference.target = ahfl::SymbolId{resolve_result.symbol_table.symbols().size() + 1000};
+        }
+        missing_callable_symbol.add_reference(reference);
+    }
+
+    const ahfl::TypeChecker type_checker;
+    const auto missing_symbol_result =
+        type_checker.check(*parse_result.program, missing_callable_symbol);
+    REQUIRE(missing_symbol_result.has_errors());
+    CHECK(diagnostic_count_with_code(missing_symbol_result.diagnostics,
+                                     "typecheck.INVALID_CALLABLE_REFERENCE") == 1);
+    CHECK(diagnostic_count_with_code(missing_symbol_result.diagnostics,
+                                     "typecheck.SEMANTIC_ERROR") == 0);
+    CHECK(diagnostics_contain(missing_symbol_result.diagnostics, "call target symbol is missing"));
+
+    const auto payload_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Types, "Payload");
+    REQUIRE(payload_symbol.has_value());
+
+    ahfl::ResolveResult non_callable_symbol;
+    non_callable_symbol.symbol_table = resolve_result.symbol_table;
+    for (const auto &import : resolve_result.imports()) {
+        non_callable_symbol.add_import(import);
+    }
+    for (auto reference : resolve_result.references()) {
+        if (reference.kind == ahfl::ReferenceKind::CallTarget && reference.text == "Ready") {
+            reference.target = payload_symbol->get().id;
+        }
+        non_callable_symbol.add_reference(reference);
+    }
+
+    const auto non_callable_result = type_checker.check(*parse_result.program, non_callable_symbol);
+    REQUIRE(non_callable_result.has_errors());
+    CHECK(diagnostic_count_with_code(non_callable_result.diagnostics,
+                                     "typecheck.INVALID_CALLABLE_REFERENCE") == 1);
+    CHECK(diagnostic_count_with_code(non_callable_result.diagnostics, "typecheck.SEMANTIC_ERROR") ==
+          0);
+    CHECK(diagnostics_contain(non_callable_result.diagnostics,
+                              "symbol 'Payload' does not name a callable"));
+}
+
+TEST_CASE("Typecheck missing callable metadata fallbacks use stable typecheck code") {
+    const std::string capability_base = R"AHFL(
+struct Payload {
+    value: String;
+}
+
+const Broken: Payload = Do();
+)AHFL";
+
+    const std::string capability_full = capability_base + R"AHFL(
+
+capability Do() -> Payload;
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto capability_parse =
+        frontend.parse_text("typecheck_missing_capability_metadata.ahfl", capability_base);
+    REQUIRE_FALSE(capability_parse.has_errors());
+    REQUIRE(capability_parse.program != nullptr);
+
+    const auto capability_full_parse =
+        frontend.parse_text("typecheck_missing_capability_metadata_full.ahfl", capability_full);
+    REQUIRE_FALSE(capability_full_parse.has_errors());
+    REQUIRE(capability_full_parse.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto capability_resolve = resolver.resolve(*capability_full_parse.program);
+    REQUIRE_FALSE(capability_resolve.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto capability_result =
+        type_checker.check(*capability_parse.program, capability_resolve);
+    REQUIRE(capability_result.has_errors());
+    CHECK(diagnostic_count_with_code(capability_result.diagnostics,
+                                     "typecheck.MISSING_CALLABLE_METADATA") == 1);
+    CHECK(diagnostic_count_with_code(capability_result.diagnostics, "typecheck.SEMANTIC_ERROR") ==
+          0);
+    CHECK(diagnostics_contain(capability_result.diagnostics,
+                              "capability type info is missing for 'Do'"));
+
+    const std::string predicate_base = R"AHFL(
+const Broken: Bool = Ready();
+)AHFL";
+
+    const std::string predicate_full = predicate_base + R"AHFL(
+
+predicate Ready() -> Bool;
+)AHFL";
+
+    const auto predicate_parse =
+        frontend.parse_text("typecheck_missing_predicate_metadata.ahfl", predicate_base);
+    REQUIRE_FALSE(predicate_parse.has_errors());
+    REQUIRE(predicate_parse.program != nullptr);
+
+    const auto predicate_full_parse =
+        frontend.parse_text("typecheck_missing_predicate_metadata_full.ahfl", predicate_full);
+    REQUIRE_FALSE(predicate_full_parse.has_errors());
+    REQUIRE(predicate_full_parse.program != nullptr);
+
+    const auto predicate_resolve = resolver.resolve(*predicate_full_parse.program);
+    REQUIRE_FALSE(predicate_resolve.has_errors());
+
+    const auto predicate_result = type_checker.check(*predicate_parse.program, predicate_resolve);
+    REQUIRE(predicate_result.has_errors());
+    CHECK(diagnostic_count_with_code(predicate_result.diagnostics,
+                                     "typecheck.MISSING_CALLABLE_METADATA") == 1);
+    CHECK(diagnostic_count_with_code(predicate_result.diagnostics, "typecheck.SEMANTIC_ERROR") ==
+          0);
+    CHECK(diagnostics_contain(predicate_result.diagnostics,
+                              "predicate type info is missing for 'Ready'"));
+}
+
+TEST_CASE("Typecheck missing environment metadata fallbacks use stable typecheck codes") {
+    const std::string base_source = R"AHFL(
+module typecheck::metadata;
+import typecheck::metadata as self;
+
+const ConstBroken: String = self::Value;
+const StructBroken: Payload = Payload { value: "ok" };
+const EnumBroken: Mode = Mode::A;
+)AHFL";
+
+    const std::string full_source = base_source + R"AHFL(
+
+const Value: String = "ok";
+
+struct Payload {
+    value: String;
+}
+
+enum Mode {
+    A,
+    B,
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto base_parse =
+        frontend.parse_text("typecheck_missing_environment_metadata.ahfl", base_source);
+    REQUIRE_FALSE(base_parse.has_errors());
+    REQUIRE(base_parse.program != nullptr);
+
+    const auto full_parse =
+        frontend.parse_text("typecheck_missing_environment_metadata_full.ahfl", full_source);
+    REQUIRE_FALSE(full_parse.has_errors());
+    REQUIRE(full_parse.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*full_parse.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*base_parse.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.MISSING_CONST_METADATA") ==
+          1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.MISSING_TYPE_METADATA") ==
+          2);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.SEMANTIC_ERROR") == 0);
+
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "constant type info is missing for 'self::Value'"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "struct type info is missing for"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "enum type info is missing for"));
+}
+
+TEST_CASE("Validation state-machine diagnostics use stable validation codes") {
+    const auto unreachable = validate_source("validation_unreachable_state.ahfl", R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent UnreachableStateAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Dead, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+    transition Dead -> Done;
+}
+
+flow for UnreachableStateAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Dead {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+)AHFL");
+
+    CHECK(diagnostic_count_with_code(unreachable.diagnostics, "validation.INVALID_STATE") == 1);
+    CHECK(diagnostics_contain(unreachable.diagnostics,
+                              "state 'Dead' is unreachable from initial state 'Init'"));
+
+    const auto flow = validate_source("validation_flow_state.ahfl", R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent FlowStateAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Middle, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Middle;
+    transition Middle -> Done;
+}
+
+flow for FlowStateAgent {
+    state Init {
+        goto Init;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+)AHFL");
+
+    CHECK(diagnostic_count_with_code(flow.diagnostics, "validation.INVALID_STATE") == 2);
+    CHECK(diagnostics_contain(flow.diagnostics, "missing non-final-state handler for 'Middle'"));
+    CHECK(diagnostics_contain(flow.diagnostics, "illegal goto from state 'Init' to 'Init'"));
+}
+
+TEST_CASE("Validation duplicate capability diagnostics use stable validation code") {
+    const auto duplicate_capability =
+        validate_source("validation_duplicate_capability.ahfl", R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Echo(request: Request) -> Response;
+
+agent DuplicateCapabilityAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo, Echo];
+    transition Init -> Done;
+}
+
+flow for DuplicateCapabilityAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+)AHFL");
+
+    CHECK(diagnostic_count_with_code(duplicate_capability.diagnostics,
+                                     "validation.DUPLICATE_CAPABILITY") == 1);
+    CHECK(diagnostic_count_with_code(duplicate_capability.diagnostics,
+                                     "validation.SEMANTIC_INVARIANT") == 0);
+    CHECK(diagnostics_contain(duplicate_capability.diagnostics,
+                              "duplicate capability 'Echo' in agent capability list"));
+}
+
+TEST_CASE("Validation workflow and temporal diagnostics use stable validation codes") {
+    const auto temporal = validate_source("validation_temporal_formula.ahfl",
+                                          R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent TemporalAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for TemporalAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+
+contract for TemporalAgent {
+    invariant: always in_state(Missing);
+    invariant: always running(step);
+}
+
+workflow TemporalWorkflow {
+    input: Request;
+    output: Response;
+    node run: TemporalAgent(input);
+    liveness: eventually completed(run, Init);
+    return: run;
+}
+)AHFL",
+                                          false);
+
+    CHECK(diagnostic_count_with_code(temporal.diagnostics, "validation.INVALID_TEMPORAL_FORMULA") ==
+          3);
+    CHECK(diagnostics_contain(temporal.diagnostics,
+                              "unknown state 'Missing' in contract for 'TemporalAgent'"));
+    CHECK(diagnostics_contain(temporal.diagnostics,
+                              "running(...) is only valid in workflow safety/liveness formulas"));
+    CHECK(diagnostics_contain(temporal.diagnostics,
+                              "state 'Init' is not a final state of node 'run'"));
+
+    const auto workflow = validate_source("validation_workflow_graph.ahfl",
+                                          R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+agent WorkflowAgent {
+    input: Request;
+    context: Context;
+    output: Request;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+flow for WorkflowAgent {
+    state Init {
+        goto Done;
+    }
+
+    state Done {
+        return Request {
+            value: input.value,
+        };
+    }
+}
+
+workflow BadWorkflow {
+    input: Request;
+    output: Request;
+    node first: WorkflowAgent(input) after [missing];
+    node second: WorkflowAgent(first) after [third];
+    node third: WorkflowAgent(second) after [second];
+    return: first;
+}
+)AHFL",
+                                          false);
+
+    CHECK(diagnostic_count_with_code(workflow.diagnostics, "validation.INVALID_WORKFLOW_GRAPH") ==
+          2);
+    CHECK(diagnostics_contain(workflow.diagnostics, "unknown workflow dependency 'missing'"));
+    CHECK(
+        diagnostics_contain(workflow.diagnostics, "workflow dependency cycle detected involving"));
 }
 
 TEST_CASE("Optional narrowing supports symmetric member facts and else complements") {
@@ -285,9 +1385,7 @@ flow for NarrowDebugAgent {
     CHECK(default_result.diagnostics.entries().empty());
 
     const auto debug_result = type_checker.check(
-        *parse_result.program,
-        resolve_result,
-        ahfl::TypeCheckOptions{.explain_narrowing = true});
+        *parse_result.program, resolve_result, ahfl::TypeCheckOptions{.explain_narrowing = true});
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
@@ -333,7 +1431,8 @@ flow for NarrowDebugUnsupportedAgent {
 )AHFL";
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("optional_narrowing_debug_unsupported.ahfl", source);
+    const auto parse_result =
+        frontend.parse_text("optional_narrowing_debug_unsupported.ahfl", source);
     REQUIRE_FALSE(parse_result.has_errors());
     REQUIRE(parse_result.program != nullptr);
 
@@ -343,13 +1442,12 @@ flow for NarrowDebugUnsupportedAgent {
 
     const ahfl::TypeChecker type_checker;
     const auto debug_result = type_checker.check(
-        *parse_result.program,
-        resolve_result,
-        ahfl::TypeCheckOptions{.explain_narrowing = true});
+        *parse_result.program, resolve_result, ahfl::TypeCheckOptions{.explain_narrowing = true});
     REQUIRE_FALSE(debug_result.has_errors());
     CHECK(diagnostics_contain(
         debug_result.diagnostics,
-        "narrowing: condition 'ctx.token != none || input.fallback != \"\"' did not produce Optional narrowing facts because disjunctive conditions are not represented"));
+        "narrowing: condition 'ctx.token != none || input.fallback != \"\"' did not produce "
+        "Optional narrowing facts because disjunctive conditions are not represented"));
 }
 
 TEST_CASE("Type diagnostics suggest nearby struct fields") {
@@ -576,7 +1674,8 @@ flow for GroupedExpectationAgent {
 )AHFL";
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("struct_field_grouped_list_expectation.ahfl", source);
+    const auto parse_result =
+        frontend.parse_text("struct_field_grouped_list_expectation.ahfl", source);
     REQUIRE_FALSE(parse_result.has_errors());
     REQUIRE(parse_result.program != nullptr);
 
@@ -717,7 +1816,8 @@ flow for AssignmentExpectationAgent {
 )AHFL";
 
     const ahfl::Frontend frontend;
-    const auto parse_result = frontend.parse_text("assignment_target_list_expectation.ahfl", source);
+    const auto parse_result =
+        frontend.parse_text("assignment_target_list_expectation.ahfl", source);
     REQUIRE_FALSE(parse_result.has_errors());
     REQUIRE(parse_result.program != nullptr);
 
@@ -776,8 +1876,104 @@ flow for ActualOriginAgent {
     const ahfl::TypeChecker type_checker;
     const auto type_result = type_checker.check(*parse_result.program, resolve_result);
     REQUIRE(type_result.has_errors());
+    CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'Int' here"));
+}
+
+TEST_CASE("Const initializer diagnostics preserve declared type expectation") {
+    const std::string source = R"AHFL(
+module typed::diagnostics;
+import typed::diagnostics as self;
+
+const NarrowMapKey: Map<String(2, 8), Int> = map [];
+const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("const_initializer_expectation.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 1);
+    const auto *diagnostic =
+        diagnostic_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->related.size() == 2);
+    CHECK(diagnostics_contain(
+        type_result.diagnostics,
+        "expected type 'Map<String, Int>' from declared type of const 'RejectedMapKey' declared "
+        "here"));
     CHECK(diagnostics_contain(type_result.diagnostics,
-                              "actual expression has type 'Int' here"));
+                              "actual expression has type 'Map<String(2, 8), Int>' here"));
+}
+
+TEST_CASE("Const agent context defaults preserve exact schema expectation") {
+    const std::string source = R"AHFL(
+struct Config {
+    value: String;
+}
+
+struct WiderConfig {
+    value: String;
+    extra: String;
+}
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    config: Config = WiderConfig {
+        value: "seed",
+        extra: "extra",
+    };
+}
+
+struct Response {
+    value: String;
+}
+
+agent BadContextDefaultAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("agent_context_default_expectation.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EXACT_SCHEMA_MISMATCH") ==
+          1);
+    const auto *diagnostic =
+        diagnostic_with_code(type_result.diagnostics, "typecheck.EXACT_SCHEMA_MISMATCH");
+    REQUIRE(diagnostic != nullptr);
+    CHECK(diagnostic->related.size() == 3);
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "agent context default requires an exact schema match"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "expected schema 'Config' from agent context default declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "actual expression has type 'WiderConfig' here"));
 }
 
 TEST_CASE("Type diagnostics preserve assignment expectation through some literals") {
@@ -825,14 +2021,74 @@ flow for SomeExpectationAgent {
     const auto type_result = type_checker.check(*parse_result.program, resolve_result);
     REQUIRE(type_result.has_errors());
     CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 1);
-    const auto *diagnostic = diagnostic_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH");
+    const auto *diagnostic =
+        diagnostic_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH");
     REQUIRE(diagnostic != nullptr);
     CHECK(diagnostic->related.size() == 2);
     CHECK(diagnostics_contain(
         type_result.diagnostics,
         "expected type 'String' from assignment target 'ctx.token' declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'Int' here"));
+}
+
+TEST_CASE("Type diagnostics describe inferred collection expectation origins") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+agent InferredCollectionExpectationAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for InferredCollectionExpectationAgent {
+    state Done {
+        let mixedList = [1, "x"];
+        let mixedSet = set [1, "x"];
+        let mixedMap = map ["a": 1, 2: "x"];
+        return Response { value: input.value };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("inferred_collection_expectation.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.TYPE_MISMATCH") == 4);
+
     CHECK(diagnostics_contain(type_result.diagnostics,
-                              "actual expression has type 'Int' here"));
+                              "expected type 'Int' from previous list element declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "expected type 'Int' from previous set element declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "expected type 'String' from previous map key declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "expected type 'Int' from previous map value declared here"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'String' here"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "actual expression has type 'Int' here"));
 }
 
 TEST_CASE("Type diagnostics describe actual expression origins for schema boundaries") {
@@ -883,16 +2139,60 @@ flow for SchemaActualOriginAgent {
     const ahfl::TypeChecker type_checker;
     const auto type_result = type_checker.check(*parse_result.program, resolve_result);
     REQUIRE(type_result.has_errors());
-    CHECK(diagnostic_count_with_code(type_result.diagnostics,
-                                     "typecheck.EXACT_SCHEMA_MISMATCH") == 1);
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.EXACT_SCHEMA_MISMATCH") ==
+          1);
     const auto *diagnostic =
         diagnostic_with_code(type_result.diagnostics, "typecheck.EXACT_SCHEMA_MISMATCH");
     REQUIRE(diagnostic != nullptr);
     CHECK(diagnostic->related.size() == 3);
-    CHECK(diagnostics_contain(type_result.diagnostics,
-                              "exact schema match"));
+    CHECK(diagnostics_contain(type_result.diagnostics, "exact schema match"));
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "actual expression has type 'WiderResponse' here"));
+}
+
+TEST_CASE("Schema boundary declaration diagnostics use stable typecheck codes") {
+    const std::string source = R"AHFL(
+enum Status {
+    Pending,
+    Done,
+}
+
+type InputAlias = Status;
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent InvalidInputAgent {
+    input: InputAlias;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("schema_boundary_decl_type_code.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto type_result = type_checker.check(*parse_result.program, resolve_result);
+    REQUIRE(type_result.has_errors());
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_AGENT_TYPE") == 1);
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "agent input type must resolve to a struct type"));
 }
 
 TEST_CASE("Type checker records typed HIR expressions alongside legacy expression types") {
@@ -968,12 +2268,12 @@ flow for HirAgent {
     CHECK(typed_expr->effect == expression.effect);
     CHECK(typed_expr->is_pure == expression.is_pure);
 
-    const auto struct_literal = std::find_if(
-        type_result.typed_program.expressions.begin(),
-        type_result.typed_program.expressions.end(),
-        [](const ahfl::TypedExpr &expr) {
-            return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral;
-        });
+    const auto struct_literal =
+        std::find_if(type_result.typed_program.expressions.begin(),
+                     type_result.typed_program.expressions.end(),
+                     [](const ahfl::TypedExpr &expr) {
+                         return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral;
+                     });
     REQUIRE(struct_literal != type_result.typed_program.expressions.end());
     REQUIRE(struct_literal->resolved_symbol.has_value());
     CHECK(*struct_literal->resolved_symbol == response_symbol->get().id);
@@ -981,8 +2281,8 @@ flow for HirAgent {
     REQUIRE(struct_literal->children.size() == 1);
     CHECK(struct_literal->children.front().role == ahfl::TypedExprChildRole::StructFieldValue);
     CHECK(struct_literal->children.front().name == "value");
-    const auto *struct_child = ahfl::resolve_child(
-        type_result.typed_program, struct_literal->children.front());
+    const auto *struct_child =
+        ahfl::resolve_child(type_result.typed_program, struct_literal->children.front());
     REQUIRE(struct_child != nullptr);
     CHECK(struct_child->kind == ahfl::ast::ExprSyntaxKind::Path);
     CHECK(struct_child->semantic_name == "input.value");
@@ -992,8 +2292,7 @@ flow for HirAgent {
 
     const auto &tp = type_result.typed_program;
     const auto grouped_struct_literal = std::find_if(
-        tp.expressions.begin(), tp.expressions.end(),
-        [&tp](const ahfl::TypedExpr &expr) {
+        tp.expressions.begin(), tp.expressions.end(), [&tp](const ahfl::TypedExpr &expr) {
             return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
                    expr.children.size() == 1 &&
                    ahfl::resolve_child(tp, expr.children.front()) != nullptr &&
@@ -1001,17 +2300,15 @@ flow for HirAgent {
                        ahfl::ast::ExprSyntaxKind::Group;
         });
     REQUIRE(grouped_struct_literal != tp.expressions.end());
-    const auto *grouped_child =
-        ahfl::resolve_child(tp, grouped_struct_literal->children.front());
+    const auto *grouped_child = ahfl::resolve_child(tp, grouped_struct_literal->children.front());
     CHECK(grouped_child->semantic_name == "input.value");
     CHECK(grouped_child->path_root == "input");
     CHECK(grouped_child->member_path == std::vector<std::string>{"value"});
 
-    const auto call = std::find_if(tp.expressions.begin(), tp.expressions.end(),
-                                   [](const ahfl::TypedExpr &expr) {
-                                       return expr.kind == ahfl::ast::ExprSyntaxKind::Call &&
-                                              expr.semantic_name == "Do";
-                                   });
+    const auto call =
+        std::find_if(tp.expressions.begin(), tp.expressions.end(), [](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Do";
+        });
     REQUIRE(call != tp.expressions.end());
     REQUIRE(call->resolved_symbol.has_value());
     CHECK(*call->resolved_symbol == do_symbol->get().id);
@@ -1026,11 +2323,9 @@ flow for HirAgent {
     CHECK(call_child->path_root == "reply");
     CHECK(call_child->member_path == std::vector<std::string>{"value"});
 
-    const auto predicate_call = std::find_if(
-        tp.expressions.begin(), tp.expressions.end(),
-        [](const ahfl::TypedExpr &expr) {
-            return expr.kind == ahfl::ast::ExprSyntaxKind::Call &&
-                   expr.semantic_name == "Ready";
+    const auto predicate_call =
+        std::find_if(tp.expressions.begin(), tp.expressions.end(), [](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::Call && expr.semantic_name == "Ready";
         });
     REQUIRE(predicate_call != tp.expressions.end());
     REQUIRE(predicate_call->resolved_symbol.has_value());
@@ -1046,19 +2341,21 @@ flow for HirAgent {
     CHECK(pred_child->path_root == "reply");
     CHECK(pred_child->member_path == std::vector<std::string>{"value"});
 
-    const auto bool_literal = std::find_if(type_result.typed_program.expressions.begin(),
-                                           type_result.typed_program.expressions.end(),
-                                           [](const ahfl::TypedExpr &expr) {
-                                               return expr.kind == ahfl::ast::ExprSyntaxKind::BoolLiteral;
-                                           });
+    const auto bool_literal =
+        std::find_if(type_result.typed_program.expressions.begin(),
+                     type_result.typed_program.expressions.end(),
+                     [](const ahfl::TypedExpr &expr) {
+                         return expr.kind == ahfl::ast::ExprSyntaxKind::BoolLiteral;
+                     });
     REQUIRE(bool_literal != type_result.typed_program.expressions.end());
     CHECK(bool_literal->semantic_name == "true");
 
-    const auto none_literal = std::find_if(type_result.typed_program.expressions.begin(),
-                                           type_result.typed_program.expressions.end(),
-                                           [](const ahfl::TypedExpr &expr) {
-                                               return expr.kind == ahfl::ast::ExprSyntaxKind::NoneLiteral;
-                                           });
+    const auto none_literal =
+        std::find_if(type_result.typed_program.expressions.begin(),
+                     type_result.typed_program.expressions.end(),
+                     [](const ahfl::TypedExpr &expr) {
+                         return expr.kind == ahfl::ast::ExprSyntaxKind::NoneLiteral;
+                     });
     REQUIRE(none_literal != type_result.typed_program.expressions.end());
     CHECK(none_literal->semantic_name == "none");
 }
@@ -1104,10 +2401,10 @@ flow for RelationTraceAgent {
     REQUIRE_FALSE(resolve_result.has_errors());
 
     const ahfl::TypeChecker type_checker;
-    const auto type_result = type_checker.check(
-        *parse_result.program,
-        resolve_result,
-        ahfl::TypeCheckOptions{.trace_type_relations = true});
+    const auto type_result =
+        type_checker.check(*parse_result.program,
+                           resolve_result,
+                           ahfl::TypeCheckOptions{.trace_type_relations = true});
     REQUIRE_FALSE(type_result.has_errors());
 
     bool saw_assignable = false;

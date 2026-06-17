@@ -56,6 +56,42 @@ enum class TypedCallTargetKind {
     Predicate,
 };
 
+enum class ConstValueKind : std::uint8_t {
+    NoneLiteral = 0,
+    Bool,
+    Integer,
+    Float,
+    Decimal,
+    String,
+    Duration,
+    EnumVariant,
+    ConstReference,
+    Some,
+    Struct,
+    List,
+    Set,
+    Map,
+    Unary,
+    Binary,
+    MemberAccess,
+    IndexAccess,
+};
+
+struct ConstValue {
+    ConstValueKind kind{ConstValueKind::NoneLiteral};
+    std::string scalar;
+    std::optional<SymbolId> symbol;
+    std::vector<std::string> child_names;
+    std::vector<ConstValue> children;
+};
+
+struct ConstDependencyEdge {
+    SymbolId source;
+    SymbolId target;
+    SourceRange reference_range;
+    std::optional<SourceId> source_id;
+};
+
 struct TypedExpr;
 
 // ----------------------------------------------------------------------------
@@ -192,6 +228,7 @@ struct TypedExpr {
     ast::ExprBinaryOp binary_op{ast::ExprBinaryOp::Implies}; // Binary
     std::string literal_spelling; // Integer/Float/Decimal/String/Duration literal
     std::string member_name;      // MemberAccess (right-hand field name)
+    std::optional<ConstValue> const_value;
 };
 
 struct TypedDecl {
@@ -341,6 +378,7 @@ struct TypedProgram {
     std::vector<Symbol> symbols;
     std::vector<ResolvedReference> references;
     std::vector<ImportBinding> imports;
+    std::vector<ConstDependencyEdge> const_dependencies;
     std::unordered_map<std::size_t, std::uint32_t> symbol_id_index_;
     std::unordered_map<TypedSymbolLocalKey, std::uint32_t, TypedSymbolLocalKeyHash>
         symbol_local_index_;

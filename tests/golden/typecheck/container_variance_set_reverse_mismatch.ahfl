@@ -1,0 +1,5 @@
+module typecheck::variance;
+import typecheck::variance as self;
+
+const WideSet: Set<String> = set [];
+const RejectedSet: Set<String(2, 8)> = self::WideSet;

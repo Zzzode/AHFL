@@ -170,21 +170,33 @@ class ValidationPass final {
         return resolve_result_.find_reference(kind, range, current_source_id_);
     }
 
-    void error_here(std::string message, SourceRange range) {
+    void validation_error_here(ErrorCode<DiagnosticCategory::Validation> code,
+                               std::string message,
+                               SourceRange range) {
         if (current_source_ != nullptr) {
             result_.diagnostics.error()
-                .code(error_codes::validation::SemanticInvariant)
+                .code(code)
                 .message(std::move(message))
                 .range(range)
                 .source(current_source_->source)
                 .emit();
         } else {
-            result_.diagnostics.error()
-                .code(error_codes::validation::SemanticInvariant)
-                .message(std::move(message))
-                .range(range)
-                .emit();
+            result_.diagnostics.error().code(code).message(std::move(message)).range(range).emit();
         }
+    }
+
+    void invalid_state_here(std::string message, SourceRange range) {
+        validation_error_here(error_codes::validation::InvalidState, std::move(message), range);
+    }
+
+    void invalid_temporal_here(std::string message, SourceRange range) {
+        validation_error_here(
+            error_codes::validation::InvalidTemporalFormula, std::move(message), range);
+    }
+
+    void invalid_workflow_here(std::string message, SourceRange range) {
+        validation_error_here(
+            error_codes::validation::InvalidWorkflowGraph, std::move(message), range);
     }
 
     void index_declarations() {
@@ -223,11 +235,13 @@ class ValidationPass final {
         }
 
         if (!is_bool_type(*expr_info->type) && !is_error_type(*expr_info->type)) {
-            error_here("temporal embedded expression must have type Bool", expr.range);
+            invalid_temporal_here(
+                messages::validation::TemporalEmbeddedExprMustBeBool.format_with(), expr.range);
         }
 
         if (!expr_info->is_pure) {
-            error_here("temporal embedded expression must be pure", expr.range);
+            invalid_temporal_here(
+                messages::validation::TemporalEmbeddedExprMustBePure.format_with(), expr.range);
         }
     }
 
@@ -241,53 +255,61 @@ class ValidationPass final {
 
                 for (const auto &state : decl.get().states) {
                     if (!states.insert(state).second) {
-                        error_here("duplicate agent state '" + state + "'", decl.get().range);
+                        invalid_state_here(
+                            messages::validation::DuplicateAgentState.format_with(state),
+                            decl.get().range);
                     }
                 }
 
                 if (!states.contains(decl.get().initial_state)) {
-                    error_here("initial state '" + decl.get().initial_state +
-                                   "' is not declared in agent states",
-                               decl.get().range);
+                    invalid_state_here(messages::validation::InitialStateNotDeclared.format_with(
+                                           decl.get().initial_state),
+                                       decl.get().range);
                 }
 
                 for (const auto &final_state : decl.get().final_states) {
                     if (!final_states.insert(final_state).second) {
-                        error_here("duplicate final state '" + final_state + "'", decl.get().range);
+                        invalid_state_here(
+                            messages::validation::DuplicateFinalState.format_with(final_state),
+                            decl.get().range);
                     }
 
                     if (!states.contains(final_state)) {
-                        error_here("final state '" + final_state +
-                                       "' is not declared in agent states",
-                                   decl.get().range);
+                        invalid_state_here(
+                            messages::validation::FinalStateNotDeclared.format_with(final_state),
+                            decl.get().range);
                     }
                 }
 
                 for (const auto &capability : decl.get().capabilities) {
                     if (!capabilities.insert(capability).second) {
-                        error_here("duplicate capability '" + capability +
-                                       "' in agent capability list",
-                                   decl.get().range);
+                        validation_error_here(
+                            error_codes::validation::DuplicateCapability,
+                            messages::validation::DuplicateCapability.format_with(capability),
+                            decl.get().range);
                     }
                 }
 
                 for (const auto &transition : decl.get().transitions) {
                     if (!states.contains(transition->from_state)) {
-                        error_here("transition source state '" + transition->from_state +
-                                       "' is not declared in agent states",
-                                   transition->range);
+                        invalid_state_here(
+                            messages::validation::TransitionSourceNotDeclared.format_with(
+                                transition->from_state),
+                            transition->range);
                     }
 
                     if (!states.contains(transition->to_state)) {
-                        error_here("transition target state '" + transition->to_state +
-                                       "' is not declared in agent states",
-                                   transition->range);
+                        invalid_state_here(
+                            messages::validation::TransitionTargetNotDeclared.format_with(
+                                transition->to_state),
+                            transition->range);
                     }
 
                     if (final_states.contains(transition->from_state)) {
-                        error_here("final state '" + transition->from_state +
-                                       "' must not have outgoing transitions",
-                                   transition->range);
+                        invalid_state_here(
+                            messages::validation::FinalStateOutgoingTransition.format_with(
+                                transition->from_state),
+                            transition->range);
                     }
 
                     adjacency[transition->from_state].push_back(transition->to_state);
@@ -316,9 +338,9 @@ class ValidationPass final {
 
                 for (const auto &state : decl.get().states) {
                     if (!reachable.contains(state)) {
-                        error_here("state '" + state + "' is unreachable from initial state '" +
-                                       decl.get().initial_state + "'",
-                                   decl.get().range);
+                        invalid_state_here(messages::validation::UnreachableAgentState.format_with(
+                                               state, decl.get().initial_state),
+                                           decl.get().range);
                     }
                 }
             });
@@ -338,19 +360,19 @@ class ValidationPass final {
             const auto state =
                 std::find(agent_decl.states.begin(), agent_decl.states.end(), expr.name);
             if (state == agent_decl.states.end()) {
-                error_here("unknown state '" + expr.name + "' in contract for '" +
-                               std::string(agent_name) + "'",
-                           expr.range);
+                invalid_temporal_here(
+                    messages::validation::UnknownContractState.format_with(expr.name, agent_name),
+                    expr.range);
             }
             break;
         }
         case ast::TemporalExprSyntaxKind::Running:
-            error_here("running(...) is only valid in workflow safety/liveness formulas",
-                       expr.range);
+            invalid_temporal_here(messages::validation::RunningOnlyWorkflow.format_with(),
+                                  expr.range);
             break;
         case ast::TemporalExprSyntaxKind::Completed:
-            error_here("completed(...) is only valid in workflow safety/liveness formulas",
-                       expr.range);
+            invalid_temporal_here(messages::validation::CompletedOnlyWorkflow.format_with(),
+                                  expr.range);
             break;
         case ast::TemporalExprSyntaxKind::Unary:
             check_contract_temporal_expr(*expr.first, agent_decl, agent_name);
@@ -432,9 +454,9 @@ class ValidationPass final {
             return ControlFlowSummary{};
         case ast::StatementSyntaxKind::Goto: {
             if (!has_transition(agent_decl, handler_state, statement.goto_stmt->target_state)) {
-                error_here("illegal goto from state '" + std::string(handler_state) + "' to '" +
-                               statement.goto_stmt->target_state + "'",
-                           statement.goto_stmt->range);
+                invalid_state_here(messages::validation::IllegalGoto.format_with(
+                                       handler_state, statement.goto_stmt->target_state),
+                                   statement.goto_stmt->range);
             }
 
             return ControlFlowSummary{
@@ -444,8 +466,9 @@ class ValidationPass final {
         }
         case ast::StatementSyntaxKind::Return:
             if (!is_final_handler) {
-                error_here("return is only allowed in final state handlers",
-                           statement.return_stmt->range);
+                invalid_state_here(
+                    messages::validation::ReturnOnlyAllowedInFinalHandler.format_with(),
+                    statement.return_stmt->range);
             }
 
             return ControlFlowSummary{
@@ -521,15 +544,17 @@ class ValidationPass final {
 
             for (const auto &handler : decl.state_handlers) {
                 if (!known_states.contains(handler->state_name)) {
-                    error_here("flow handler state '" + handler->state_name +
-                                   "' is not declared in the target agent",
-                               handler->range);
+                    invalid_state_here(
+                        messages::validation::FlowHandlerStateNotDeclared.format_with(
+                            handler->state_name),
+                        handler->range);
                     continue;
                 }
 
                 if (!handlers.emplace(handler->state_name, std::cref(*handler)).second) {
-                    error_here("duplicate flow handler for state '" + handler->state_name + "'",
-                               handler->range);
+                    invalid_state_here(
+                        messages::validation::DuplicateFlowHandler.format_with(handler->state_name),
+                        handler->range);
                 }
             }
 
@@ -538,10 +563,15 @@ class ValidationPass final {
                     continue;
                 }
 
-                const auto prefix = final_states.contains(state)
-                                        ? "missing final-state handler for '"
-                                        : "missing non-final-state handler for '";
-                error_here(std::string(prefix) + state + "'", decl.range);
+                if (final_states.contains(state)) {
+                    invalid_state_here(
+                        messages::validation::MissingFinalStateHandler.format_with(state),
+                        decl.range);
+                } else {
+                    invalid_state_here(
+                        messages::validation::MissingNonFinalStateHandler.format_with(state),
+                        decl.range);
+                }
             }
 
             for (const auto &handler : decl.state_handlers) {
@@ -555,15 +585,17 @@ class ValidationPass final {
 
                 if (is_final_handler) {
                     if (summary.may_fallthrough || summary.saw_goto || !summary.saw_return) {
-                        error_here("final-state handler '" + handler->state_name +
-                                       "' must end with return on all control paths",
-                                   handler->range);
+                        invalid_state_here(
+                            messages::validation::FinalStateHandlerMustReturn.format_with(
+                                handler->state_name),
+                            handler->range);
                     }
                 } else {
                     if (summary.may_fallthrough || summary.saw_return || !summary.saw_goto) {
-                        error_here("non-final-state handler '" + handler->state_name +
-                                       "' must end with goto on all control paths",
-                                   handler->range);
+                        invalid_state_here(
+                            messages::validation::NonFinalStateHandlerMustGoto.format_with(
+                                handler->state_name),
+                            handler->range);
                     }
                 }
             }
@@ -592,20 +624,24 @@ class ValidationPass final {
             check_typed_temporal_expr(*expr.expr);
             break;
         case ast::TemporalExprSyntaxKind::Called:
-            error_here("called(...) is only valid in agent contracts", expr.range);
+            invalid_temporal_here(messages::validation::CalledOnlyAgentContracts.format_with(),
+                                  expr.range);
             break;
         case ast::TemporalExprSyntaxKind::InState:
-            error_here("in_state(...) is only valid in agent contracts", expr.range);
+            invalid_temporal_here(messages::validation::InStateOnlyAgentContracts.format_with(),
+                                  expr.range);
             break;
         case ast::TemporalExprSyntaxKind::Running:
             if (!node_agent_ids.contains(expr.name)) {
-                error_here("unknown workflow node '" + expr.name + "'", expr.range);
+                invalid_temporal_here(
+                    messages::validation::UnknownWorkflowNode.format_with(expr.name), expr.range);
             }
             break;
         case ast::TemporalExprSyntaxKind::Completed: {
             const auto node = node_agent_ids.find(expr.name);
             if (node == node_agent_ids.end()) {
-                error_here("unknown workflow node '" + expr.name + "'", expr.range);
+                invalid_temporal_here(
+                    messages::validation::UnknownWorkflowNode.format_with(expr.name), expr.range);
                 break;
             }
 
@@ -619,9 +655,10 @@ class ValidationPass final {
             }
 
             if (!contains_name(agent_decl->get().final_states, *expr.state_name)) {
-                error_here("state '" + *expr.state_name + "' is not a final state of node '" +
-                               expr.name + "'",
-                           expr.range);
+                invalid_temporal_here(
+                    messages::validation::WorkflowCompletedStateNotFinal.format_with(
+                        *expr.state_name, expr.name),
+                    expr.range);
             }
             break;
         }
@@ -648,7 +685,9 @@ class ValidationPass final {
 
             for (const auto &node : decl.nodes) {
                 if (!node_names.insert(node->name).second) {
-                    error_here("duplicate workflow node '" + node->name + "'", node->range);
+                    invalid_workflow_here(
+                        messages::validation::DuplicateWorkflowNode.format_with(node->name),
+                        node->range);
                     continue;
                 }
 
@@ -667,7 +706,9 @@ class ValidationPass final {
                                      [&](const Owned<ast::WorkflowNodeDeclSyntax> &candidate) {
                                          return candidate->name == dependency;
                                      }) == decl.nodes.end()) {
-                        error_here("unknown workflow dependency '" + dependency + "'", node->range);
+                        invalid_workflow_here(
+                            messages::validation::UnknownWorkflowDependency.format_with(dependency),
+                            node->range);
                     }
                 }
             }
@@ -695,9 +736,9 @@ class ValidationPass final {
                     }
 
                     if (state->second == VisitState::Visiting) {
-                        error_here("workflow dependency cycle detected involving '" + node_name +
-                                       "'",
-                                   decl.range);
+                        invalid_workflow_here(
+                            messages::validation::WorkflowDependencyCycle.format_with(node_name),
+                            decl.range);
                         return;
                     }
 
