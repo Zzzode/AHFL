@@ -1,8 +1,12 @@
 #include "runtime/engine/grpc_transport.hpp"
 
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -20,6 +24,17 @@ void check(bool condition, const std::string &test_name) {
     } else {
         std::cerr << "FAIL: " << test_name << "\n";
     }
+}
+
+bool has_header_pair(const std::vector<std::pair<std::string, std::string>> &headers,
+                     const std::string &name,
+                     const std::string &value) {
+    for (const auto &[header_name, header_value] : headers) {
+        if (header_name == name && header_value == value) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ============================================================================
@@ -375,6 +390,73 @@ void test_parse_grpc_message_missing() {
     check(msg.empty(), "parse_message.missing_empty");
 }
 
+// ============================================================================
+// Test 21: execute_grpc_json_transcoding captures response metadata and trailers
+// ============================================================================
+
+void test_execute_captures_metadata_and_trailers() {
+    const auto test_dir = std::filesystem::temp_directory_path() /
+                          ("ahfl-grpc-curl-test-" + std::to_string(getpid()));
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::create_directories(test_dir);
+    const auto curl_path = test_dir / "curl";
+
+    {
+        std::ofstream script(curl_path);
+        script << "#!/bin/sh\n";
+        script << "config=$(cat)\n";
+        script << "header_path=$(printf '%s\\n' \"$config\" | "
+                  "sed -n 's/^dump-header = \"\\(.*\\)\"$/\\1/p' | tail -n 1)\n";
+        script << "if [ -n \"$header_path\" ]; then\n";
+        script << "cat > \"$header_path\" <<'EOF'\n";
+        script << "HTTP/2 200\r\n";
+        script << "content-type: application/json\r\n";
+        script << "x-request-id: req-123\r\n";
+        script << "\r\n";
+        script << "grpc-status: 7\r\n";
+        script << "grpc-message: permission%20denied\r\n";
+        script << "\r\n";
+        script << "EOF\n";
+        script << "fi\n";
+        script << "printf '\"ignored\"\\n200\\n'\n";
+    }
+    chmod(curl_path.c_str(), S_IRWXU);
+
+    const char *old_path_cstr = std::getenv("PATH");
+    const std::string old_path = old_path_cstr != nullptr ? old_path_cstr : "";
+    const std::string scoped_path = test_dir.string() + ":" + old_path;
+    setenv("PATH", scoped_path.c_str(), 1);
+
+    GrpcJsonTranscodingRequest request;
+    request.endpoint.host = "localhost";
+    request.endpoint.port = 50051;
+    request.endpoint.service_name = "svc.Test";
+    request.endpoint.method_name = "Call";
+    request.endpoint.use_tls = false;
+    request.serialized_body = "{}";
+    request.timeout = std::chrono::seconds{5};
+
+    const auto response = execute_grpc_json_transcoding(request);
+
+    if (old_path_cstr != nullptr) {
+        setenv("PATH", old_path.c_str(), 1);
+    } else {
+        unsetenv("PATH");
+    }
+    std::filesystem::remove_all(test_dir);
+
+    check(response.status_code == GrpcStatusCode::Ok, "execute_capture.status_ok");
+    check(response.body == R"("ignored")", "execute_capture.body");
+    check(has_header_pair(response.response_metadata, "content-type", "application/json"),
+          "execute_capture.metadata_content_type");
+    check(has_header_pair(response.response_metadata, "x-request-id", "req-123"),
+          "execute_capture.metadata_request_id");
+    check(has_header_pair(response.trailers, "grpc-status", "7"),
+          "execute_capture.trailer_status");
+    check(has_header_pair(response.trailers, "grpc-message", "permission%20denied"),
+          "execute_capture.trailer_message");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -398,6 +480,7 @@ int main() {
     test_parse_grpc_message_basic();
     test_parse_grpc_message_percent_encoded();
     test_parse_grpc_message_missing();
+    test_execute_captures_metadata_and_trailers();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;

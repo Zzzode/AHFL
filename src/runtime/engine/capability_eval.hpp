@@ -14,4 +14,10 @@ namespace ahfl::runtime {
 [[nodiscard]] evaluator::EvalResult eval_expr_with_capabilities(
     const ir::Expr &expr, const evaluator::EvalContext &eval_ctx, const CapabilityInvoker &invoker);
 
+[[nodiscard]] evaluator::EvalResult
+eval_expr_with_capabilities(const ir::Expr &expr,
+                            const evaluator::EvalContext &eval_ctx,
+                            const ContextualCapabilityInvoker &invoker,
+                            const CapabilityInvocationContext &context);
+
 } // namespace ahfl::runtime

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ahfl::runtime {
 
@@ -12,6 +14,8 @@ struct WireTransportResponse {
     std::string body;
     std::string error;
     bool timed_out{false};
+    std::vector<std::pair<std::string, std::string>> response_headers;
+    std::vector<std::pair<std::string, std::string>> trailers;
 };
 
 class WireTransport {
