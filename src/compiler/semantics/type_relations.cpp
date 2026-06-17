@@ -40,7 +40,8 @@ std::vector<std::string> RelationTrace::format_notes(std::size_t max_notes) cons
 
     // First pass: failed steps only.
     for (const auto &s : steps) {
-        if (notes.size() >= max_notes) break;
+        if (notes.size() >= max_notes)
+            break;
         if (s.result == TypeRelationResult::Rejected) {
             std::string note;
             if (!s.path.empty()) {
@@ -56,7 +57,8 @@ std::vector<std::string> RelationTrace::format_notes(std::size_t max_notes) cons
 
     // Second pass: success steps if room.
     for (const auto &s : steps) {
-        if (notes.size() >= max_notes) break;
+        if (notes.size() >= max_notes)
+            break;
         if (s.result == TypeRelationResult::Accepted) {
             std::string note;
             if (!s.path.empty()) {
@@ -111,10 +113,13 @@ void sync_trace(TypeRelationContext *ctx,
                 const std::string &actual,
                 bool satisfied,
                 std::string reason = {}) {
-    if (ctx == nullptr || !ctx->options().enable_trace) return;
+    if (ctx == nullptr || !ctx->options().enable_trace)
+        return;
     // Depth approximated by path nesting level (count of '.').
     int depth = 0;
-    for (char c : path) if (c == '.') ++depth;
+    for (char c : path)
+        if (c == '.')
+            ++depth;
     ctx->record_trace_step(kind, depth, path, expected, actual, satisfied, std::move(reason));
 }
 
@@ -130,9 +135,7 @@ std::string join_path(const std::string &parent, std::string_view segment) {
 }
 
 // Recursive helper used by TypeConstraintSkeleton::to_string.
-void dump_node(std::ostringstream &out,
-               const TypeConstraintNode &node,
-               int depth) {
+void dump_node(std::ostringstream &out, const TypeConstraintNode &node, int depth) {
     const std::string indent(static_cast<std::size_t>(depth) * 2, ' ');
     out << indent;
 
@@ -181,8 +184,7 @@ struct FrameGuard {
     TypeRelationContext *ctx;
     bool pushed;
 
-    FrameGuard(TypeRelationContext *c, TypeConstraintNode node)
-        : ctx(c), pushed(false) {
+    FrameGuard(TypeRelationContext *c, TypeConstraintNode node) : ctx(c), pushed(false) {
         if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
             ctx->push_node(std::move(node));
             pushed = true;
@@ -224,8 +226,7 @@ bool equivalent_leaf(const Type &lhs,
                      TypeRelationContext *ctx,
                      const std::string &path,
                      bool value) {
-    sync_trace(ctx, TypeRelationKind::Equivalent, path,
-               rhs.describe(), lhs.describe(), value);
+    sync_trace(ctx, TypeRelationKind::Equivalent, path, rhs.describe(), lhs.describe(), value);
     if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
         TypeConstraintNode n;
         n.kind = TypeConstraintNode::Kind::Relation;
@@ -254,6 +255,16 @@ bool equivalent_pairwise(const Type &lhs_a,
     return ok_a && ok_b;
 }
 
+[[nodiscard]] bool nominal_name_matches(std::optional<SymbolId> lhs_symbol,
+                                        std::string_view lhs_name,
+                                        std::optional<SymbolId> rhs_symbol,
+                                        std::string_view rhs_name) noexcept {
+    if (lhs_symbol.has_value() && rhs_symbol.has_value()) {
+        return *lhs_symbol == *rhs_symbol;
+    }
+    return lhs_name == rhs_name;
+}
+
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
@@ -275,39 +286,17 @@ bool equivalent_impl(const Type &lhs,
     }
 
     return lhs.visit(types::Overloads{
-        [&](const types::AnyT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::NeverT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::ErrorT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::UnitT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::BoolT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::IntT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::FloatT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::StringT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::UUIDT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::TimestampT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
-        [&](const types::DurationT &) {
-            return equivalent_leaf(lhs, rhs, ctx, path, true);
-        },
+        [&](const types::AnyT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::NeverT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::ErrorT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::UnitT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::BoolT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::IntT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::FloatT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::StringT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::UUIDT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::TimestampT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
+        [&](const types::DurationT &) { return equivalent_leaf(lhs, rhs, ctx, path, true); },
         [&](const types::BoundedStringT &l) {
             const auto *r = rhs.get_if<types::BoundedStringT>();
             bool eq = r != nullptr && l.minimum == r->minimum && l.maximum == r->maximum;
@@ -326,40 +315,21 @@ bool equivalent_impl(const Type &lhs,
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
 
-            FrameGuard guard(ctx, make_composite_node(
-                                      TypeConstraintNode::Kind::And,
-                                      path, lhs, rhs));
+            FrameGuard guard(ctx,
+                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
 
-            bool name_ok = false;
-            if (l.symbol.has_value() && r->symbol.has_value()) {
-                // Model symbol match as a relation leaf under struct.name.
-                bool sym_ok = *l.symbol == *r->symbol;
-                if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
-                    TypeConstraintNode n;
-                    n.kind = TypeConstraintNode::Kind::Relation;
-                    n.relation = "equivalent";
-                    n.path = join_path(path, "struct.name");
-                    n.left_describe = lhs.describe();
-                    n.right_describe = rhs.describe();
-                    n.satisfied = sym_ok;
-                    ctx->push_node(std::move(n));
-                    ctx->pop_node();
-                }
-                name_ok = sym_ok;
-            } else {
-                bool cname_ok = l.canonical_name == r->canonical_name;
-                if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
-                    TypeConstraintNode n;
-                    n.kind = TypeConstraintNode::Kind::Relation;
-                    n.relation = "equivalent";
-                    n.path = join_path(path, "struct.name");
-                    n.left_describe = lhs.describe();
-                    n.right_describe = rhs.describe();
-                    n.satisfied = cname_ok;
-                    ctx->push_node(std::move(n));
-                    ctx->pop_node();
-                }
-                name_ok = cname_ok;
+            const bool name_ok =
+                nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
+            if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
+                TypeConstraintNode n;
+                n.kind = TypeConstraintNode::Kind::Relation;
+                n.relation = "equivalent";
+                n.path = join_path(path, "struct.name");
+                n.left_describe = lhs.describe();
+                n.right_describe = rhs.describe();
+                n.satisfied = name_ok;
+                ctx->push_node(std::move(n));
+                ctx->pop_node();
             }
             // Note: StructT has no fields in the payload in this codebase
             // version, so the And node has exactly one child (struct.name).
@@ -371,12 +341,8 @@ bool equivalent_impl(const Type &lhs,
             if (r == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            bool eq = [&] {
-                if (l.symbol.has_value() && r->symbol.has_value()) {
-                    return *l.symbol == *r->symbol;
-                }
-                return l.canonical_name == r->canonical_name;
-            }();
+            bool eq =
+                nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
             return equivalent_leaf(lhs, rhs, ctx, path, eq);
         },
         [&](const types::EnumVariantT &l) {
@@ -384,13 +350,9 @@ bool equivalent_impl(const Type &lhs,
             if (r == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            bool eq = [&] {
-                if (l.symbol.has_value() && r->symbol.has_value() && *l.symbol != *r->symbol) {
-                    return false;
-                }
-                return l.canonical_name == r->canonical_name &&
-                       l.variant_name == r->variant_name;
-            }();
+            const bool eq =
+                l.variant_name == r->variant_name &&
+                nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
             return equivalent_leaf(lhs, rhs, ctx, path, eq);
         },
         [&](const types::OptionalT &l) {
@@ -398,45 +360,41 @@ bool equivalent_impl(const Type &lhs,
             if (r == nullptr || l.inner == nullptr || r->inner == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx, make_composite_node(
-                                      TypeConstraintNode::Kind::And,
-                                      path, lhs, rhs));
-            return equivalent_impl(*l.inner, *r->inner, ctx,
-                                   join_path(path, "optional.inner"), visited);
+            FrameGuard guard(ctx,
+                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
+            return equivalent_impl(
+                *l.inner, *r->inner, ctx, join_path(path, "optional.inner"), visited);
         },
         [&](const types::ListT &l) {
             const auto *r = rhs.get_if<types::ListT>();
             if (r == nullptr || l.element == nullptr || r->element == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx, make_composite_node(
-                                      TypeConstraintNode::Kind::And,
-                                      path, lhs, rhs));
-            return equivalent_impl(*l.element, *r->element, ctx,
-                                   join_path(path, "list.element"), visited);
+            FrameGuard guard(ctx,
+                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
+            return equivalent_impl(
+                *l.element, *r->element, ctx, join_path(path, "list.element"), visited);
         },
         [&](const types::SetT &l) {
             const auto *r = rhs.get_if<types::SetT>();
             if (r == nullptr || l.element == nullptr || r->element == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx, make_composite_node(
-                                      TypeConstraintNode::Kind::And,
-                                      path, lhs, rhs));
-            return equivalent_impl(*l.element, *r->element, ctx,
-                                   join_path(path, "set.element"), visited);
+            FrameGuard guard(ctx,
+                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
+            return equivalent_impl(
+                *l.element, *r->element, ctx, join_path(path, "set.element"), visited);
         },
         [&](const types::MapT &l) {
             const auto *r = rhs.get_if<types::MapT>();
-            if (r == nullptr || l.key == nullptr || r->key == nullptr ||
-                l.value == nullptr || r->value == nullptr) {
+            if (r == nullptr || l.key == nullptr || r->key == nullptr || l.value == nullptr ||
+                r->value == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx, make_composite_node(
-                                      TypeConstraintNode::Kind::And,
-                                      path, lhs, rhs));
-            return equivalent_pairwise(*l.key, *r->key, *l.value, *r->value,
-                                       ctx, path, "map.key", "map.value", visited);
+            FrameGuard guard(ctx,
+                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
+            return equivalent_pairwise(
+                *l.key, *r->key, *l.value, *r->value, ctx, path, "map.key", "map.value", visited);
         },
     });
 }
@@ -454,8 +412,7 @@ bool subtype_leaf(const Type &source,
                   TypeRelationContext *ctx,
                   const std::string &path,
                   bool value) {
-    sync_trace(ctx, TypeRelationKind::Subtype, path,
-               target.describe(), source.describe(), value);
+    sync_trace(ctx, TypeRelationKind::Subtype, path, target.describe(), source.describe(), value);
     if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
         TypeConstraintNode n;
         n.kind = TypeConstraintNode::Kind::Relation;
@@ -517,8 +474,7 @@ bool subtype_impl(const Type &source,
     // Branch 1: equivalence.  Use a separate visited set for the equivalence
     // sub-query — cycle detection is per-relation, not cross-relation.
     TypePairSet equiv_visited;
-    const bool eq = equivalent_impl(source, target, ctx, join_path(path, "equiv"),
-                                    &equiv_visited);
+    const bool eq = equivalent_impl(source, target, ctx, join_path(path, "equiv"), &equiv_visited);
     if (eq) {
         return true;
     }
@@ -540,8 +496,8 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::OptionalT>();
         const auto *t = target.get_if<types::OptionalT>();
         if (s != nullptr && t != nullptr && s->inner && t->inner) {
-            return subtype_impl(*s->inner, *t->inner, ctx,
-                                join_path(path, "optional.inner"), visited);
+            return subtype_impl(
+                *s->inner, *t->inner, ctx, join_path(path, "optional.inner"), visited);
         }
     }
     // List<A> <: List<B> if A <: B
@@ -549,8 +505,8 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::ListT>();
         const auto *t = target.get_if<types::ListT>();
         if (s != nullptr && t != nullptr && s->element && t->element) {
-            return subtype_impl(*s->element, *t->element, ctx,
-                                join_path(path, "list.element"), visited);
+            return subtype_impl(
+                *s->element, *t->element, ctx, join_path(path, "list.element"), visited);
         }
     }
     // Set<A> <: Set<B> if A <: B
@@ -558,8 +514,8 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::SetT>();
         const auto *t = target.get_if<types::SetT>();
         if (s != nullptr && t != nullptr && s->element && t->element) {
-            return subtype_impl(*s->element, *t->element, ctx,
-                                join_path(path, "set.element"), visited);
+            return subtype_impl(
+                *s->element, *t->element, ctx, join_path(path, "set.element"), visited);
         }
     }
     // Map<K1,V1> <: Map<K2,V2> if K1 equiv K2 AND V1 <: V2
@@ -568,20 +524,18 @@ bool subtype_impl(const Type &source,
         const auto *t = target.get_if<types::MapT>();
         if (s != nullptr && t != nullptr && s->key && t->key && s->value && t->value) {
             TypePairSet key_equiv_visited;
-            if (!equivalent_impl(*s->key, *t->key, ctx,
-                                 join_path(path, "map.key"), &key_equiv_visited)) {
-                return subtype_leaf(source, target, ctx,
-                                    join_path(path, "map.key-mismatch"), false);
+            if (!equivalent_impl(
+                    *s->key, *t->key, ctx, join_path(path, "map.key"), &key_equiv_visited)) {
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "map.key-mismatch"), false);
             }
-            return subtype_impl(*s->value, *t->value, ctx,
-                                join_path(path, "map.value"), visited);
+            return subtype_impl(*s->value, *t->value, ctx, join_path(path, "map.value"), visited);
         }
     }
 
     // BoundedString <: String relaxation.
     const auto *src_bs = source.get_if<types::BoundedStringT>();
-    const bool allow_bs =
-        ctx == nullptr ? true : ctx->options().allow_bounded_string_relaxation;
+    const bool allow_bs = ctx == nullptr ? true : ctx->options().allow_bounded_string_relaxation;
     if (allow_bs && src_bs != nullptr && target.holds<types::StringT>()) {
         return subtype_leaf(source, target, ctx, join_path(path, "bounded->string"), true);
     }
@@ -590,24 +544,21 @@ bool subtype_impl(const Type &source,
     if (allow_bs && src_bs != nullptr) {
         const auto *tgt_bs = target.get_if<types::BoundedStringT>();
         if (tgt_bs != nullptr) {
-            bool ok = src_bs->minimum >= tgt_bs->minimum &&
-                      src_bs->maximum <= tgt_bs->maximum;
-            return subtype_leaf(source, target, ctx,
-                                join_path(path, "bounded.bounds"), ok);
+            bool ok = src_bs->minimum >= tgt_bs->minimum && src_bs->maximum <= tgt_bs->maximum;
+            return subtype_leaf(source, target, ctx, join_path(path, "bounded.bounds"), ok);
         }
     }
 
-    // Numeric widening (Int -> Float). Disabled in strict / schema mode.
-    const bool allow_numeric =
-        ctx == nullptr ? true : ctx->options().allow_numeric_widening;
+    // Numeric widening (Int -> Float). Disabled by default; callers must
+    // explicitly opt in for compatibility or non-source-level analyses.
+    const bool allow_numeric = ctx == nullptr ? true : ctx->options().allow_numeric_widening;
     if (allow_numeric && source.holds<types::IntT>() && target.holds<types::FloatT>()) {
         return subtype_leaf(source, target, ctx, join_path(path, "numeric.widen"), true);
     }
 
     // Int <: Decimal (numeric promotion).
     if (allow_numeric && source.holds<types::IntT>() && target.holds<types::DecimalT>()) {
-        return subtype_leaf(source, target, ctx,
-                            join_path(path, "numeric.int->decimal"), true);
+        return subtype_leaf(source, target, ctx, join_path(path, "numeric.int->decimal"), true);
     }
     // Decimal(s1) <: Decimal(s2) if s2 >= s1 (wider scale accepts narrower).
     if (allow_numeric && source.holds<types::DecimalT>() && target.holds<types::DecimalT>()) {
@@ -615,8 +566,7 @@ bool subtype_impl(const Type &source,
         const auto *t = target.get_if<types::DecimalT>();
         if (s != nullptr && t != nullptr) {
             const bool ok = t->scale >= s->scale;
-            return subtype_leaf(source, target, ctx,
-                                join_path(path, "numeric.decimal-widen"), ok);
+            return subtype_leaf(source, target, ctx, join_path(path, "numeric.decimal-widen"), ok);
         }
     }
 
@@ -664,8 +614,7 @@ bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext 
     // Previously ctx was passed only when emit_constraint_skeleton was true,
     // which silently dropped all flat trace output when trace_type_relations
     // was on but skeleton was off (the common case).
-    const bool wants_ctx =
-        ctx.options().emit_constraint_skeleton || ctx.options().enable_trace;
+    const bool wants_ctx = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace;
 
     if (wants_ctx && ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
         TypeConstraintNode top;
@@ -677,8 +626,11 @@ bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext 
     }
 
     TypePairSet visited;
-    const bool result = equivalent_impl(lhs, rhs, wants_ctx ? &ctx : nullptr,
-                                        /*path=*/"", &visited);
+    const bool result = equivalent_impl(lhs,
+                                        rhs,
+                                        wants_ctx ? &ctx : nullptr,
+                                        /*path=*/"",
+                                        &visited);
 
     if (wants_ctx && ctx.options().emit_constraint_skeleton) {
         // pop the synthetic top-level And frame (it aggregates children).
@@ -696,10 +648,9 @@ bool are_types_equivalent(const Type &lhs, const Type &rhs) {
 // ---- Subtype public API ----------------------------------------------------
 
 bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &ctx) {
-    const bool wants_ctx =
-        ctx.options().emit_constraint_skeleton || ctx.options().enable_trace ||
-        !ctx.options().allow_bounded_string_relaxation ||
-        !ctx.options().allow_numeric_widening;
+    const bool wants_ctx = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace ||
+                           !ctx.options().allow_bounded_string_relaxation ||
+                           !ctx.options().allow_numeric_widening;
 
     if (wants_ctx && ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
         TypeConstraintNode top;
@@ -711,8 +662,11 @@ bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &
     }
 
     TypePairSet visited;
-    const bool result = subtype_impl(source, target, wants_ctx ? &ctx : nullptr,
-                                     /*path=*/"", &visited);
+    const bool result = subtype_impl(source,
+                                     target,
+                                     wants_ctx ? &ctx : nullptr,
+                                     /*path=*/"",
+                                     &visited);
 
     if (wants_ctx && ctx.options().emit_constraint_skeleton) {
         ctx.pop_node();
@@ -730,10 +684,9 @@ bool is_subtype_of(const Type &source, const Type &target) {
 bool is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx) {
     // Assignability is modelled as a subtype relation; let subtype_impl own
     // the Or node (equiv path ∪ subtype relaxations).
-    const bool wants_ctx =
-        ctx.options().emit_constraint_skeleton || ctx.options().enable_trace ||
-        !ctx.options().allow_bounded_string_relaxation ||
-        !ctx.options().allow_numeric_widening;
+    const bool wants_ctx = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace ||
+                           !ctx.options().allow_bounded_string_relaxation ||
+                           !ctx.options().allow_numeric_widening;
 
     if (wants_ctx && ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
         TypeConstraintNode top;
@@ -785,8 +738,7 @@ bool is_exact_schema_match(const Type &source, const Type &target, TypeRelationC
     // boundary (are_types_equivalent records its inner steps as Equivalent).
     // Top-level step is always recorded (even on success) so callers can
     // identify which API was exercised.
-    const bool wants_trace =
-        ctx.options().emit_constraint_skeleton || ctx.options().enable_trace;
+    const bool wants_trace = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace;
     if (wants_trace && ctx.options().enable_trace) {
         TypeRelationTraceStep step;
         step.kind = TypeRelationKind::ExactSchema;

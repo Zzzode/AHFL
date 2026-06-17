@@ -515,12 +515,42 @@ using Json = json::JsonValue;
     return object;
 }
 
+[[nodiscard]] std::unique_ptr<Json> j_const_dependency(const ConstDependencyEdge &edge) {
+    auto object = Json::make_object();
+    object->set("source", j_symbol_id(edge.source));
+    object->set("target", j_symbol_id(edge.target));
+    object->set("reference_range", j_range(edge.reference_range));
+    object->set("source_id", j_source_id(edge.source_id));
+    return object;
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_expr_child(const TypedExprChild &child) {
     auto object = Json::make_object();
     object->set("role", j_enum(child.role));
     object->set("name", Json::make_string(child.name));
     object->set("expr_index", j_int(child.expr_index));
     return object;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_const_value(const ConstValue &value) {
+    auto object = Json::make_object();
+    object->set("kind", j_enum(value.kind));
+    object->set("scalar", Json::make_string(value.scalar));
+    object->set("symbol", j_optional_symbol_id(value.symbol));
+    object->set("child_names", j_string_array(value.child_names));
+    auto children = Json::make_array();
+    for (const auto &child : value.children) {
+        children->push(j_const_value(child));
+    }
+    object->set("children", std::move(children));
+    return object;
+}
+
+[[nodiscard]] std::unique_ptr<Json> j_optional_const_value(const std::optional<ConstValue> &value) {
+    if (!value.has_value()) {
+        return Json::make_null();
+    }
+    return j_const_value(*value);
 }
 
 [[nodiscard]] std::unique_ptr<Json> j_expr(const TypedExpr &expr) {
@@ -548,6 +578,7 @@ using Json = json::JsonValue;
     object->set("binary_op", j_enum(expr.binary_op));
     object->set("literal_spelling", Json::make_string(expr.literal_spelling));
     object->set("member_name", Json::make_string(expr.member_name));
+    object->set("const_value", j_optional_const_value(expr.const_value));
     return object;
 }
 
@@ -1222,12 +1253,52 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
     };
 }
 
+[[nodiscard]] ConstDependencyEdge read_const_dependency(Reader &reader, const Json &object) {
+    return ConstDependencyEdge{
+        .source = reader.symbol_id_field(object, "source"),
+        .target = reader.symbol_id_field(object, "target"),
+        .reference_range = reader.range_field(object, "reference_range"),
+        .source_id = reader.optional_source_id_field(object, "source_id"),
+    };
+}
+
 [[nodiscard]] TypedExprChild read_expr_child(Reader &reader, const Json &object) {
     return TypedExprChild{
         .role = static_cast<TypedExprChildRole>(reader.uint_field(object, "role")),
         .name = reader.string_field(object, "name"),
         .expr_index = reader.u32_field(object, "expr_index"),
     };
+}
+
+[[nodiscard]] ConstValue read_const_value(Reader &reader, const Json &object) {
+    ConstValue value{
+        .kind = static_cast<ConstValueKind>(reader.uint_field(object, "kind")),
+        .scalar = reader.string_field(object, "scalar"),
+        .symbol = reader.optional_symbol_id_field(object, "symbol"),
+        .child_names = reader.string_array_field(object, "child_names"),
+        .children = {},
+    };
+
+    const auto *children = reader.field(object, "children");
+    if (children != nullptr && children->kind == json::Kind::Array) {
+        value.children.reserve(children->array_items.size());
+        for (const auto &item : children->array_items) {
+            value.children.push_back(read_const_value(reader, *item));
+        }
+    }
+    return value;
+}
+
+[[nodiscard]] std::optional<ConstValue> read_optional_const_value(Reader &reader,
+                                                                  const Json &object) {
+    const auto *value = object.get("const_value");
+    if (value == nullptr || value->is_null()) {
+        return std::nullopt;
+    }
+    if (value->kind != json::Kind::Object) {
+        return std::nullopt;
+    }
+    return read_const_value(reader, *value);
 }
 
 [[nodiscard]] TypedExpr read_expr(Reader &reader, const Json &object) {
@@ -1253,6 +1324,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .binary_op = static_cast<ast::ExprBinaryOp>(reader.uint_field(object, "binary_op")),
         .literal_spelling = reader.string_field(object, "literal_spelling"),
         .member_name = reader.string_field(object, "member_name"),
+        .const_value = read_optional_const_value(reader, object),
     };
 
     const auto *children = reader.field(object, "children");
@@ -1338,9 +1410,12 @@ read_array(Reader &reader, const Json &object, std::string_view key, Fn fn) {
 std::string serialize_typed_program_json(const TypedProgram &program) {
     auto root = Json::make_object();
     root->set("format", Json::make_string("AHFL_TYPED_HIR_V1"));
+    root->set("const_value_artifact_schema",
+              Json::make_string(std::string(kConstValueArtifactSchemaVersion)));
     root->set("symbols", j_array(program.symbols, j_symbol));
     root->set("references", j_array(program.references, j_reference));
     root->set("imports", j_array(program.imports, j_import));
+    root->set("const_dependencies", j_array(program.const_dependencies, j_const_dependency));
     root->set("declarations", j_array(program.declarations, j_decl));
     root->set("expressions", j_array(program.expressions, j_expr));
     root->set("blocks", j_array(program.blocks, j_block));
@@ -1415,11 +1490,17 @@ std::optional<TypedProgram> deserialize_typed_program_json(std::string_view json
     if (reader.string_field(root, "format") != "AHFL_TYPED_HIR_V1") {
         return std::nullopt;
     }
+    if (reader.string_field(root, "const_value_artifact_schema") !=
+        kConstValueArtifactSchemaVersion) {
+        return std::nullopt;
+    }
 
     TypedProgram program;
     program.symbols = read_array<Symbol>(reader, root, "symbols", read_symbol);
     program.references = read_array<ResolvedReference>(reader, root, "references", read_reference);
     program.imports = read_array<ImportBinding>(reader, root, "imports", read_import);
+    program.const_dependencies =
+        read_array<ConstDependencyEdge>(reader, root, "const_dependencies", read_const_dependency);
     program.declarations = read_array<TypedDecl>(reader, root, "declarations", read_decl);
     program.expressions = read_array<TypedExpr>(reader, root, "expressions", read_expr);
     program.blocks = read_array<TypedBlock>(reader, root, "blocks", read_block);

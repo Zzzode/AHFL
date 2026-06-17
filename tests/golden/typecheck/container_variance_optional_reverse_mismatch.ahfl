@@ -1,0 +1,5 @@
+module typecheck::variance;
+import typecheck::variance as self;
+
+const WideOptional: Optional<String> = none;
+const RejectedOptional: Optional<String(2, 8)> = self::WideOptional;
