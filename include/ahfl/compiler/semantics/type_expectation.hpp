@@ -24,5 +24,10 @@ struct TypeExpectation {
 };
 
 [[nodiscard]] std::string describe_type_expectation_origin(TypeExpectationOriginKind kind);
+[[nodiscard]] std::string expected_type_note(const Type &target,
+                                             const TypeExpectation &expectation);
+[[nodiscard]] std::string expected_schema_note(const Type &target,
+                                               const TypeExpectation &expectation);
+[[nodiscard]] std::string actual_type_note(const Type &source);
 
 } // namespace ahfl

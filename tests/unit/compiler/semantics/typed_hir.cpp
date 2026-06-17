@@ -25,6 +25,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <future>
 #include <sstream>
 #include <string>
@@ -73,7 +75,94 @@ struct TypedHIRFixture {
         REQUIRE_FALSE(result.has_errors());
         return result;
     }
+
+    [[nodiscard]] ahfl::TypeCheckResult
+    check_project(const std::filesystem::path &root,
+                  const std::vector<std::filesystem::path> &entry_files) const {
+        const auto parse = frontend.parse_project(ahfl::ProjectInput{
+            .entry_files = entry_files,
+            .search_roots = {root},
+        });
+        if (parse.has_errors()) {
+            std::ostringstream ss;
+            parse.diagnostics.render(ss);
+            std::fprintf(
+                stderr, "=== PROJECT PARSE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+        }
+        REQUIRE_FALSE(parse.has_errors());
+
+        ahfl::Resolver resolver;
+        const auto resolve = resolver.resolve(parse.graph);
+        if (resolve.has_errors()) {
+            std::ostringstream ss;
+            resolve.diagnostics.render(ss);
+            std::fprintf(
+                stderr, "=== PROJECT RESOLVE DIAGNOSTICS ===\n%s\n=== END ===\n", ss.str().c_str());
+        }
+        REQUIRE_FALSE(resolve.has_errors());
+
+        ahfl::TypeChecker checker;
+        auto result = checker.check(parse.graph, resolve);
+        if (result.has_errors()) {
+            std::ostringstream ss;
+            result.diagnostics.render(ss);
+            std::fprintf(stderr,
+                         "=== PROJECT TYPECHECK DIAGNOSTICS ===\n%s\n=== END ===\n",
+                         ss.str().c_str());
+        }
+        REQUIRE_FALSE(result.has_errors());
+        return result;
+    }
+
+    [[nodiscard]] ahfl::TypeCheckResult check_with_errors(const std::string &source) const {
+        const auto parse = frontend.parse_text("typed_hir_error_test.ahfl", source);
+        REQUIRE_FALSE(parse.has_errors());
+        REQUIRE(parse.program != nullptr);
+
+        ahfl::Resolver resolver;
+        const auto resolve = resolver.resolve(*parse.program);
+        REQUIRE_FALSE(resolve.has_errors());
+
+        ahfl::TypeChecker checker;
+        return checker.check(*parse.program, resolve);
+    }
 };
+
+void write_file(const std::filesystem::path &path, const std::string &content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::binary);
+    out << content;
+}
+
+[[nodiscard]] std::filesystem::path make_temp_project(std::string_view name) {
+    const auto root =
+        std::filesystem::temp_directory_path() / ("ahfl_typed_hir_" + std::string(name));
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    return root;
+}
+
+[[nodiscard]] std::size_t diagnostic_count_with_code(const ahfl::DiagnosticBag &diagnostics,
+                                                     std::string_view code) {
+    std::size_t count = 0;
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == code) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+[[nodiscard]] bool diagnostic_with_code_and_message(const ahfl::DiagnosticBag &diagnostics,
+                                                    std::string_view code,
+                                                    std::string_view message) {
+    return std::any_of(diagnostics.entries().begin(),
+                       diagnostics.entries().end(),
+                       [code, message](const ahfl::Diagnostic &entry) {
+                           return entry.code.has_value() && *entry.code == code &&
+                                  entry.message == message;
+                       });
+}
 
 // Small prefix providing Request/Response/Capability shared by many cases.
 const char *kSharedPrefix = R"AHFL(
@@ -119,6 +208,28 @@ const ahfl::TypedExpr *find_by_range(const std::vector<ahfl::TypedExpr> &exprs,
         }
     }
     return nullptr;
+}
+
+[[nodiscard]] std::string const_value_signature(const ahfl::ConstValue &value) {
+    std::string signature = std::to_string(static_cast<unsigned>(value.kind));
+    signature += "(";
+    signature += value.scalar;
+    signature += ")";
+    if (value.symbol.has_value()) {
+        signature += "#";
+        signature += std::to_string(value.symbol->value);
+    }
+    signature += "[";
+    for (std::size_t index = 0; index < value.children.size(); ++index) {
+        if (index > 0) {
+            signature += ",";
+        }
+        signature += index < value.child_names.size() ? value.child_names[index] : "";
+        signature += "=";
+        signature += const_value_signature(value.children[index]);
+    }
+    signature += "]";
+    return signature;
 }
 
 } // namespace
@@ -305,6 +416,640 @@ flow for A {
         }
         CHECK(found_field);
     }
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR carries serializable const value trees") {
+    const std::string source = R"AHFL(
+module typed::const_eval;
+import typed::const_eval as self;
+
+enum Priority {
+    Low,
+    High,
+}
+
+struct Settings {
+    label: String;
+    code: Int;
+    tags: List<String>;
+    fallback: Optional<String>;
+    priority: Priority;
+}
+
+const DefaultLabel: String = "stable";
+const ForwardCode: Int = self::LaterCode + 1;
+const BaseCode: Int = 40;
+const LaterCode: Int = 41;
+const DefaultSettings: Settings = Settings {
+    label: self::DefaultLabel,
+    code: self::BaseCode + 2,
+    tags: ["ops", "runtime"],
+    fallback: some(self::DefaultLabel),
+    priority: Priority::High
+};
+const SettingsLabel: String = self::DefaultSettings.label;
+const SecondTag: String = self::DefaultSettings.tags[1];
+const LabelMatches: Bool = self::DefaultSettings.label == self::DefaultLabel;
+const FloatSum: Float = 1.5 + 2.25;
+const DecimalDelta: Decimal(2) = 3.50d - 1.25d;
+const DecimalLess: Bool = 1.25d < 3.50d;
+const CombinedLabel: String = "ops" + "runtime";
+const DurationLess: Bool = 500ms < 1s;
+const DurationEquivalent: Bool = 60s == 1m;
+	)AHFL";
+
+    const auto result = check(source);
+    const auto &program = result.typed_program;
+
+    const auto default_label_symbol =
+        std::find_if(program.symbols.begin(), program.symbols.end(), [](const ahfl::Symbol &sym) {
+            return sym.kind == ahfl::SymbolKind::Const && sym.local_name == "DefaultLabel";
+        });
+    REQUIRE(default_label_symbol != program.symbols.end());
+    const auto priority_symbol =
+        std::find_if(program.symbols.begin(), program.symbols.end(), [](const ahfl::Symbol &sym) {
+            return sym.kind == ahfl::SymbolKind::Enum && sym.local_name == "Priority";
+        });
+    REQUIRE(priority_symbol != program.symbols.end());
+
+    const auto settings_literal = std::find_if(
+        program.expressions.begin(), program.expressions.end(), [](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::StructLiteral &&
+                   expr.semantic_name == "Settings" && expr.const_value.has_value();
+        });
+    REQUIRE(settings_literal != program.expressions.end());
+    REQUIRE(settings_literal->const_value.has_value());
+    const auto &settings_value = *settings_literal->const_value;
+    CHECK(settings_value.kind == ahfl::ConstValueKind::Struct);
+    CHECK(settings_value.scalar == "Settings");
+    REQUIRE(settings_value.symbol.has_value());
+    CHECK(settings_value.child_names ==
+          std::vector<std::string>{"label", "code", "tags", "fallback", "priority"});
+    REQUIRE(settings_value.children.size() == 5);
+
+    CHECK(settings_value.children[0].kind == ahfl::ConstValueKind::ConstReference);
+    CHECK(settings_value.children[0].scalar == "self::DefaultLabel");
+    REQUIRE(settings_value.children[0].symbol.has_value());
+    CHECK(*settings_value.children[0].symbol == default_label_symbol->id);
+    REQUIRE(settings_value.children[0].children.size() == 1);
+    CHECK(settings_value.children[0].child_names == std::vector<std::string>{"value"});
+    CHECK(settings_value.children[0].children[0].kind == ahfl::ConstValueKind::String);
+    CHECK(settings_value.children[0].children[0].scalar == "\"stable\"");
+
+    CHECK(settings_value.children[1].kind == ahfl::ConstValueKind::Integer);
+    CHECK(settings_value.children[1].scalar == "42");
+
+    const auto &tags_value = settings_value.children[2];
+    CHECK(tags_value.kind == ahfl::ConstValueKind::List);
+    CHECK(tags_value.child_names == std::vector<std::string>{"", ""});
+    REQUIRE(tags_value.children.size() == 2);
+    CHECK(tags_value.children[0].kind == ahfl::ConstValueKind::String);
+    CHECK(tags_value.children[0].scalar == "\"ops\"");
+    CHECK(tags_value.children[1].kind == ahfl::ConstValueKind::String);
+    CHECK(tags_value.children[1].scalar == "\"runtime\"");
+
+    const auto &fallback_value = settings_value.children[3];
+    CHECK(fallback_value.kind == ahfl::ConstValueKind::Some);
+    CHECK(fallback_value.child_names == std::vector<std::string>{"value"});
+    REQUIRE(fallback_value.children.size() == 1);
+    CHECK(fallback_value.children[0].kind == ahfl::ConstValueKind::ConstReference);
+    CHECK(fallback_value.children[0].scalar == "self::DefaultLabel");
+    REQUIRE(fallback_value.children[0].symbol.has_value());
+    CHECK(*fallback_value.children[0].symbol == default_label_symbol->id);
+    REQUIRE(fallback_value.children[0].children.size() == 1);
+    CHECK(fallback_value.children[0].children[0].kind == ahfl::ConstValueKind::String);
+    CHECK(fallback_value.children[0].children[0].scalar == "\"stable\"");
+
+    CHECK(settings_value.children[4].kind == ahfl::ConstValueKind::EnumVariant);
+    CHECK(settings_value.children[4].scalar == "Priority::High");
+    REQUIRE(settings_value.children[4].symbol.has_value());
+    CHECK(*settings_value.children[4].symbol == priority_symbol->id);
+
+    const auto *settings_label =
+        find_by_range(program.expressions, range_of(source, "self::DefaultSettings.label"));
+    REQUIRE(settings_label != nullptr);
+    REQUIRE(settings_label->const_value.has_value());
+    CHECK(settings_label->const_value->kind == ahfl::ConstValueKind::ConstReference);
+    REQUIRE(settings_label->const_value->children.size() == 1);
+    CHECK(settings_label->const_value->children[0].kind == ahfl::ConstValueKind::String);
+    CHECK(settings_label->const_value->children[0].scalar == "\"stable\"");
+
+    const auto second_tag = std::find_if(
+        program.expressions.begin(), program.expressions.end(), [](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::IndexAccess &&
+                   expr.const_value.has_value() &&
+                   expr.const_value->kind == ahfl::ConstValueKind::String &&
+                   expr.const_value->scalar == "\"runtime\"";
+        });
+    REQUIRE(second_tag != program.expressions.end());
+
+    const auto *label_matches = find_by_range(
+        program.expressions, range_of(source, "self::DefaultSettings.label == self::DefaultLabel"));
+    REQUIRE(label_matches != nullptr);
+    REQUIRE(label_matches->const_value.has_value());
+    CHECK(label_matches->const_value->kind == ahfl::ConstValueKind::Bool);
+    CHECK(label_matches->const_value->scalar == "true");
+
+    const auto *forward_code =
+        find_by_range(program.expressions, range_of(source, "self::LaterCode + 1"));
+    REQUIRE(forward_code != nullptr);
+    REQUIRE(forward_code->const_value.has_value());
+    CHECK(forward_code->const_value->kind == ahfl::ConstValueKind::Integer);
+    CHECK(forward_code->const_value->scalar == "42");
+
+    const auto *float_sum = find_by_range(program.expressions, range_of(source, "1.5 + 2.25"));
+    REQUIRE(float_sum != nullptr);
+    REQUIRE(float_sum->const_value.has_value());
+    CHECK(float_sum->const_value->kind == ahfl::ConstValueKind::Float);
+    CHECK(float_sum->const_value->scalar == "3.75");
+
+    const auto *decimal_delta =
+        find_by_range(program.expressions, range_of(source, "3.50d - 1.25d"));
+    REQUIRE(decimal_delta != nullptr);
+    REQUIRE(decimal_delta->const_value.has_value());
+    CHECK(decimal_delta->const_value->kind == ahfl::ConstValueKind::Decimal);
+    CHECK(decimal_delta->const_value->scalar == "2.25d");
+
+    const auto *decimal_less =
+        find_by_range(program.expressions, range_of(source, "1.25d < 3.50d"));
+    REQUIRE(decimal_less != nullptr);
+    REQUIRE(decimal_less->const_value.has_value());
+    CHECK(decimal_less->const_value->kind == ahfl::ConstValueKind::Bool);
+    CHECK(decimal_less->const_value->scalar == "true");
+
+    const auto *combined_label =
+        find_by_range(program.expressions, range_of(source, "\"ops\" + \"runtime\""));
+    REQUIRE(combined_label != nullptr);
+    REQUIRE(combined_label->const_value.has_value());
+    CHECK(combined_label->const_value->kind == ahfl::ConstValueKind::String);
+    CHECK(combined_label->const_value->scalar == "\"opsruntime\"");
+
+    const auto *duration_less = find_by_range(program.expressions, range_of(source, "500ms < 1s"));
+    REQUIRE(duration_less != nullptr);
+    REQUIRE(duration_less->const_value.has_value());
+    CHECK(duration_less->const_value->kind == ahfl::ConstValueKind::Bool);
+    CHECK(duration_less->const_value->scalar == "true");
+
+    const auto *duration_equivalent =
+        find_by_range(program.expressions, range_of(source, "60s == 1m"));
+    REQUIRE(duration_equivalent != nullptr);
+    REQUIRE(duration_equivalent->const_value.has_value());
+    CHECK(duration_equivalent->const_value->kind == ahfl::ConstValueKind::Bool);
+    CHECK(duration_equivalent->const_value->scalar == "true");
+
+    const auto *duration_seconds = find_by_range(program.expressions, range_of(source, "60s"));
+    const auto *duration_minutes = find_by_range(program.expressions, range_of(source, "1m"));
+    REQUIRE(duration_seconds != nullptr);
+    REQUIRE(duration_minutes != nullptr);
+    REQUIRE(duration_seconds->const_value.has_value());
+    REQUIRE(duration_minutes->const_value.has_value());
+    CHECK(duration_seconds->const_value->kind == ahfl::ConstValueKind::Duration);
+    CHECK(duration_minutes->const_value->kind == ahfl::ConstValueKind::Duration);
+    CHECK(duration_seconds->const_value->scalar == "60000ms");
+    CHECK(duration_minutes->const_value->scalar == "60000ms");
+    CHECK(const_value_signature(*duration_seconds->const_value) ==
+          const_value_signature(*duration_minutes->const_value));
+
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr typed HIR normalizes Set and Map const values") {
+    const std::string source = R"AHFL(
+module typed::const_normalize;
+
+const SourceList: List<String> = ["b", "a"];
+const SourceSet: Set<String> = set ["b", "a"];
+const CanonicalSet: Set<String> = set ["a", "b"];
+const SourceMap: Map<String, Int> = map ["b": 2, "a": 1];
+const CanonicalMap: Map<String, Int> = map ["a": 1, "b": 2];
+)AHFL";
+
+    const auto result = check(source);
+    const auto &program = result.typed_program;
+
+    const auto *source_list =
+        find_by_range(program.expressions, range_of(source, "[\"b\", \"a\"]"));
+    REQUIRE(source_list != nullptr);
+    REQUIRE(source_list->const_value.has_value());
+    CHECK(source_list->const_value->kind == ahfl::ConstValueKind::List);
+    REQUIRE(source_list->const_value->children.size() == 2);
+    CHECK(source_list->const_value->children[0].scalar == "\"b\"");
+    CHECK(source_list->const_value->children[1].scalar == "\"a\"");
+
+    const auto *source_set =
+        find_by_range(program.expressions, range_of(source, "set [\"b\", \"a\"]"));
+    const auto *canonical_set =
+        find_by_range(program.expressions, range_of(source, "set [\"a\", \"b\"]"));
+    REQUIRE(source_set != nullptr);
+    REQUIRE(canonical_set != nullptr);
+    REQUIRE(source_set->const_value.has_value());
+    REQUIRE(canonical_set->const_value.has_value());
+    CHECK(source_set->const_value->kind == ahfl::ConstValueKind::Set);
+    REQUIRE(source_set->const_value->children.size() == 2);
+    CHECK(source_set->const_value->children[0].scalar == "\"a\"");
+    CHECK(source_set->const_value->children[1].scalar == "\"b\"");
+    CHECK(const_value_signature(*source_set->const_value) ==
+          const_value_signature(*canonical_set->const_value));
+
+    const auto *source_map =
+        find_by_range(program.expressions, range_of(source, "map [\"b\": 2, \"a\": 1]"));
+    const auto *canonical_map =
+        find_by_range(program.expressions, range_of(source, "map [\"a\": 1, \"b\": 2]"));
+    REQUIRE(source_map != nullptr);
+    REQUIRE(canonical_map != nullptr);
+    REQUIRE(source_map->const_value.has_value());
+    REQUIRE(canonical_map->const_value.has_value());
+    CHECK(source_map->const_value->kind == ahfl::ConstValueKind::Map);
+    REQUIRE(source_map->const_value->children.size() == 4);
+    CHECK(source_map->const_value->child_names ==
+          std::vector<std::string>{"key", "value", "key", "value"});
+    CHECK(source_map->const_value->children[0].scalar == "\"a\"");
+    CHECK(source_map->const_value->children[1].scalar == "1");
+    CHECK(source_map->const_value->children[2].scalar == "\"b\"");
+    CHECK(source_map->const_value->children[3].scalar == "2");
+    CHECK(const_value_signature(*source_map->const_value) ==
+          const_value_signature(*canonical_map->const_value));
+
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "ConstExpr typed HIR resolves project forward const dependencies") {
+    const auto root = make_temp_project("const_forward_project");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto defs_path = root / "lib" / "defs.ahfl";
+
+    const std::string defs_source = R"AHFL(
+module lib::defs;
+import lib::defs as self;
+
+const CrossForward: Int = self::Later + 1;
+const Later: Int = 40;
+)AHFL";
+    const std::string main_source = R"AHFL(
+module app::main;
+import lib::defs as defs;
+
+const ProjectAnswer: Int = defs::CrossForward + 1;
+)AHFL";
+
+    write_file(defs_path, defs_source);
+    write_file(main_path, main_source);
+
+    const auto result = check_project(root, {main_path});
+    const auto &program = result.typed_program;
+    const auto folded_project_answer = std::find_if(
+        program.expressions.begin(), program.expressions.end(), [](const ahfl::TypedExpr &expr) {
+            return expr.kind == ahfl::ast::ExprSyntaxKind::Binary && expr.const_value.has_value() &&
+                   expr.const_value->kind == ahfl::ConstValueKind::Integer &&
+                   expr.const_value->scalar == "42";
+        });
+    REQUIRE(folded_project_answer != program.expressions.end());
+
+    const auto find_const_symbol = [&](std::string_view module, std::string_view name) {
+        auto symbol = program.find_local_symbol(ahfl::SymbolNamespace::Consts, name, module);
+        REQUIRE(symbol.has_value());
+        return symbol->get();
+    };
+    const auto project_answer = find_const_symbol("app::main", "ProjectAnswer");
+    const auto cross_forward = find_const_symbol("lib::defs", "CrossForward");
+    const auto later = find_const_symbol("lib::defs", "Later");
+
+    const auto find_edge = [&](ahfl::SymbolId source, ahfl::SymbolId target) {
+        return std::find_if(program.const_dependencies.begin(),
+                            program.const_dependencies.end(),
+                            [source, target](const ahfl::ConstDependencyEdge &edge) {
+                                return edge.source == source && edge.target == target;
+                            });
+    };
+
+    REQUIRE(program.const_dependencies.size() == 2);
+    const auto main_edge = find_edge(project_answer.id, cross_forward.id);
+    REQUIRE(main_edge != program.const_dependencies.end());
+    CHECK(main_edge->source_id == project_answer.source_id);
+    CHECK(main_edge->reference_range.begin_offset ==
+          range_of(main_source, "defs::CrossForward").begin_offset);
+    CHECK(main_edge->reference_range.end_offset ==
+          range_of(main_source, "defs::CrossForward").end_offset);
+
+    const auto defs_edge = find_edge(cross_forward.id, later.id);
+    REQUIRE(defs_edge != program.const_dependencies.end());
+    CHECK(defs_edge->source_id == cross_forward.source_id);
+    CHECK(defs_edge->reference_range.begin_offset ==
+          range_of(defs_source, "self::Later").begin_offset);
+    CHECK(defs_edge->reference_range.end_offset == range_of(defs_source, "self::Later").end_offset);
+
+    const auto snapshot = ahfl::serialize_typed_program_json(program);
+    auto restored = ahfl::deserialize_typed_program_json(snapshot);
+    REQUIRE(restored.has_value());
+    REQUIRE(restored->const_dependencies.size() == program.const_dependencies.size());
+    CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "ConstExpr dependency cycles report structured diagnostics") {
+    const std::string source = R"AHFL(
+module typed::const_cycle;
+import typed::const_cycle as self;
+
+const A: Int = self::B + 1;
+const B: Int = self::A + 1;
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_count_with_code(result.diagnostics, "typecheck.CONST_DEPENDENCY_CYCLE") == 1);
+    const auto diagnostic = std::find_if(
+        result.diagnostics.entries().begin(),
+        result.diagnostics.entries().end(),
+        [](const ahfl::Diagnostic &entry) {
+            return entry.code.has_value() && *entry.code == "typecheck.CONST_DEPENDENCY_CYCLE";
+        });
+    REQUIRE(diagnostic != result.diagnostics.entries().end());
+    CHECK(diagnostic->message ==
+          ahfl::messages::typecheck::ConstDependencyCycle.format_with("typed::const_cycle::A"));
+    REQUIRE(diagnostic->related.size() == 1);
+    CHECK(diagnostic->related.front().message ==
+          ahfl::messages::typecheck::ConstDependencyCycleParticipant.format_with());
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Flow assignment target diagnostics use stable code and template") {
+    const std::string source = R"AHFL(
+struct Request { value: String; }
+struct Context { value: String = ""; }
+struct Response { value: String; }
+capability Echo(payload: String) -> Response;
+
+agent Worker {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for Worker {
+    state Init {
+        input.value = "mutated";
+        goto Done;
+    }
+    state Done {
+        return Response { value: input.value };
+    }
+}
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_OPERATION",
+        ahfl::messages::typecheck::AssignmentTargetRequiresContext.format_with()));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "Unknown path root diagnostics use stable code and template") {
+    const std::string source = R"AHFL(
+struct Request { value: String; }
+struct Context { value: String = ""; }
+struct Response { value: String; }
+capability Echo(payload: String) -> Response;
+
+agent Worker {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+
+flow for Worker {
+    state Init {
+        let broken = missing.value;
+        goto Done;
+    }
+    state Done {
+        return Response { value: input.value };
+    }
+}
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.UNKNOWN_VALUE",
+        ahfl::messages::typecheck::UnknownValue.format_with("missing")));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Struct literal target diagnostics use stable code and template") {
+    const std::string source = R"AHFL(
+struct Payload { value: String; }
+enum Mode { A, B }
+
+const Broken: Payload = Mode { value: "x" };
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_STRUCT_LITERAL_TARGET",
+        ahfl::messages::typecheck::StructLiteralTargetRequiresStruct.format_with("Mode")));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Qualified value owner diagnostics use stable code and template") {
+    const std::string source = R"AHFL(
+struct Payload { value: String; }
+
+const Broken: Payload = Payload::value;
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_QUALIFIED_VALUE",
+        ahfl::messages::typecheck::QualifiedValueRequiresConstOrEnumVariant.format_with(
+            "Payload::value")));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Unknown enum variant diagnostics use stable code and template") {
+    const std::string source = R"AHFL(
+enum Mode { A, B }
+
+const Broken: Mode = Mode::MissingVariant;
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.UNKNOWN_ENUM_VARIANT",
+        ahfl::messages::typecheck::UnknownEnumVariant.format_with("Mode::MissingVariant")));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Schema boundary declaration diagnostics use stable code and template") {
+    const std::string source = R"AHFL(
+struct Request { value: String; }
+struct Context { value: String = ""; }
+struct Response { value: String; }
+
+agent InvalidAgent {
+    input: Int;
+    context: List<String>;
+    output: Optional<String>;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+agent Worker {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [];
+    transition Init -> Done;
+}
+
+workflow InvalidWorkflow {
+    input: List<String>;
+    output: Optional<String>;
+    node run: Worker(Request { value: "ok" });
+    return: run;
+}
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_AGENT_TYPE",
+        ahfl::messages::typecheck::SchemaBoundaryTypeRequiresStruct.format_with("agent input")));
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_AGENT_TYPE",
+        ahfl::messages::typecheck::SchemaBoundaryTypeRequiresStruct.format_with(
+            "agent context default")));
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_AGENT_TYPE",
+        ahfl::messages::typecheck::SchemaBoundaryTypeRequiresStruct.format_with("agent output")));
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_AGENT_TYPE",
+        ahfl::messages::typecheck::SchemaBoundaryTypeRequiresStruct.format_with("workflow input")));
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.INVALID_AGENT_TYPE",
+        ahfl::messages::typecheck::SchemaBoundaryTypeRequiresStruct.format_with(
+            "workflow output")));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck applies covariant container variance rules") {
+    const std::string source = R"AHFL(
+module typed::variance;
+import typed::variance as self;
+
+const NarrowOptional: Optional<String(2, 8)> = none;
+const WideOptional: Optional<String> = self::NarrowOptional;
+
+const NarrowList: List<String(2, 8)> = [];
+const WideList: List<String> = self::NarrowList;
+
+const NarrowSet: Set<String(2, 8)> = set [];
+const WideSet: Set<String> = self::NarrowSet;
+
+const NarrowMapValue: Map<String, String(2, 8)> = map [];
+const WideMapValue: Map<String, String> = self::NarrowMapValue;
+)AHFL";
+
+    const auto result = check(source);
+    const auto require_const_type = [&](std::string_view name, std::string_view expected) {
+        const auto symbol = result.typed_program.find_local_symbol(
+            ahfl::SymbolNamespace::Consts, name, "typed::variance");
+        REQUIRE(symbol.has_value());
+        const auto type = result.environment.get_const_type(symbol->get().id);
+        REQUIRE(type.has_value());
+        CHECK(type->get().describe() == expected);
+    };
+
+    require_const_type("WideOptional", "Optional<String>");
+    require_const_type("WideList", "List<String>");
+    require_const_type("WideSet", "Set<String>");
+    require_const_type("WideMapValue", "Map<String, String>");
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "Source typecheck keeps map keys invariant") {
+    const std::string source = R"AHFL(
+module typed::variance;
+import typed::variance as self;
+
+const NarrowMapKey: Map<String(2, 8), Int> = map [];
+const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
+)AHFL";
+
+    const auto result = check_with_errors(source);
+    REQUIRE(result.has_errors());
+    CHECK(diagnostic_with_code_and_message(
+        result.diagnostics,
+        "typecheck.TYPE_MISMATCH",
+        ahfl::messages::typecheck::TypeMismatch.format_with(
+            "const initializer", "Map<String, Int>", "Map<String(2, 8), Int>")));
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "TypeEnvironment nominal lookup is SymbolId-first") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+enum Priority {
+    Low,
+    High,
+}
+)AHFL";
+
+    const auto result = check(source);
+
+    const auto request_info = result.environment.find_struct("Request");
+    REQUIRE(request_info.has_value());
+    const auto priority_info = result.environment.find_enum("Priority");
+    REQUIRE(priority_info.has_value());
+
+    auto &types = ahfl::TypeContext::global();
+    const auto renamed_request = types.struct_type("renamed::Request", request_info->get().symbol);
+    const auto renamed_priority = types.enum_type("renamed::Priority", priority_info->get().symbol);
+
+    const auto resolved_request = result.environment.get_struct(*renamed_request);
+    REQUIRE(resolved_request.has_value());
+    CHECK(resolved_request->get().symbol == request_info->get().symbol);
+    CHECK(resolved_request->get().canonical_name == "Request");
+
+    const auto resolved_priority = result.environment.get_enum(*renamed_priority);
+    REQUIRE(resolved_priority.has_value());
+    CHECK(resolved_priority->get().symbol == priority_info->get().symbol);
+    CHECK(resolved_priority->get().canonical_name == "Priority");
 }
 
 TEST_CASE_FIXTURE(TypedHIRFixture, "T1.2 TypedDecl records all declaration kinds") {
@@ -578,10 +1323,18 @@ workflow RunWorker {
     const auto tc = check(source);
     const auto snapshot = ahfl::serialize_typed_program_json(tc.typed_program);
     REQUIRE(snapshot.find("AHFL_TYPED_HIR_V1") != std::string::npos);
+    REQUIRE(snapshot.find(std::string(ahfl::kConstValueArtifactSchemaVersion)) !=
+            std::string::npos);
 
     auto restored = ahfl::deserialize_typed_program_json(snapshot);
     REQUIRE(restored.has_value());
     CHECK(ahfl::serialize_typed_program_json(*restored) == snapshot);
+
+    auto const_schema_mismatch = ahfl::deserialize_typed_program_json(
+        replace_first(snapshot,
+                      std::string(ahfl::kConstValueArtifactSchemaVersion),
+                      "AHFL_CONST_VALUE_ARTIFACT_V0"));
+    CHECK_FALSE(const_schema_mismatch.has_value());
 
     CHECK(restored->declarations.size() == tc.typed_program.declarations.size());
     CHECK(restored->expressions.size() == tc.typed_program.expressions.size());
@@ -590,6 +1343,7 @@ workflow RunWorker {
     CHECK(restored->temporal_exprs.size() == tc.typed_program.temporal_exprs.size());
     CHECK(restored->symbols.size() == tc.typed_program.symbols.size());
     CHECK(restored->references.size() == tc.typed_program.references.size());
+    CHECK(restored->const_dependencies.size() == tc.typed_program.const_dependencies.size());
 
     const auto module_it =
         std::find_if(restored->declarations.begin(),
