@@ -1,7 +1,7 @@
 #pragma once
 
 // Internal header (not in public include/) shared by typecheck.cpp,
-// typecheck_decls.cpp, and any future split implementation file. It exposes
+// typecheck_decls.cpp, typecheck_expr.cpp, and future split implementation files. It exposes
 // the TypeCheckPass class plus the shared helper types so a single class
 // definition can be implemented across multiple translation units, mirroring
 // LLVM/Clang Sema's split between SemaDecl/SemaExpr/SemaStmt while keeping
@@ -11,12 +11,15 @@
 #include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/semantics/const_sema.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
+#include "ahfl/compiler/semantics/expression_sema.hpp"
 #include "ahfl/compiler/semantics/flow_facts.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/type_expectation.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
+#include "ahfl/compiler/semantics/type_resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 
@@ -37,38 +40,11 @@ namespace ahfl {
 
 namespace internal {
 
-using BindingMap = std::unordered_map<std::string, TypePtr>;
-
-enum class CallContext {
-    PureOnly,
-    Flow,
-    Workflow,
-};
-
-struct TypedValue {
-    TypePtr type;
-    ExprEffect effect{ExprEffect::Pure};
-    bool is_pure{true};
-    std::optional<AssignTargetRootKind> path_root_kind;
-};
-
-enum class ConstEvalKind {
-    KnownConst,
-    NotConst,
-    Error,
-};
-
-struct ConstEvalResult {
-    ConstEvalKind kind{ConstEvalKind::Error};
-    TypedValue typed_value;
-};
-
-struct ValueContext {
-    BindingMap bindings;
-    FlowFacts flow_facts;
-    CallContext call_context{CallContext::PureOnly};
-    std::optional<SymbolId> current_agent;
-};
+using BindingMap = ExpressionBindingMap;
+using CallContext = ExpressionCallContext;
+using TypedValue = ExpressionValue;
+using ConstEvalResult = ConstExpressionResult;
+using ValueContext = ExpressionContext;
 
 [[nodiscard]] inline bool same_range(SourceRange lhs, SourceRange rhs) noexcept {
     return lhs.begin_offset == rhs.begin_offset && lhs.end_offset == rhs.end_offset;
@@ -114,7 +90,7 @@ find_decl_ref(const std::unordered_map<std::size_t, std::reference_wrapper<const
 //
 // The actual visit_expr_syntax dispatch lives in ahfl::ast (see ast.hpp) so
 // it can be shared across passes. This re-export merely exposes it under the
-// `internal` alias used by typecheck.cpp.
+// `internal` alias used by the split typecheck implementation files.
 
 using ast::visit_expr_syntax;
 
@@ -161,7 +137,7 @@ class TypeCheckPass final {
     using BindingMap = internal::BindingMap;
     using CallContext = internal::CallContext;
     using TypedValue = internal::TypedValue;
-    using ConstEvalKind = internal::ConstEvalKind;
+    using ConstEvalKind = ahfl::ConstEvalKind;
     using ConstEvalResult = internal::ConstEvalResult;
     using ValueContext = internal::ValueContext;
 
@@ -210,8 +186,10 @@ class TypeCheckPass final {
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>>
         workflow_decls_;
 
-    std::unordered_map<std::size_t, TypePtr> resolved_alias_types_;
-    std::unordered_set<std::size_t> active_aliases_;
+    std::unordered_map<std::size_t, ConstValue> const_values_;
+    std::unordered_set<std::size_t> active_const_values_;
+    std::unordered_set<std::size_t> failed_const_values_;
+    TypeAliasResolutionState alias_resolution_;
 
     // Declaration indexing & environment building (typecheck_decls.cpp).
     void index_program_declarations(const ast::Program &program);
@@ -279,8 +257,12 @@ class TypeCheckPass final {
                               std::string message,
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes);
+    void non_pure_error_here(std::string_view context_label, ExprEffect effect, SourceRange range);
+    void remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value);
+    [[nodiscard]] bool ensure_const_value(SymbolId id, SourceRange use_range);
 
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
+    [[nodiscard]] TypeResolver make_type_resolver();
     [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
@@ -317,10 +299,15 @@ class TypeCheckPass final {
                                                    SchemaBoundaryKind boundary,
                                                    SourceRange range,
                                                    const TypeExpectation &expectation);
-    [[nodiscard]] ConstEvalResult check_const_expr(const ast::ExprSyntax &expr,
-                                                   const ValueContext &context,
-                                                   MaybeCRef<Type> expected_type,
-                                                   std::string_view context_label);
+    void check_schema_boundary_decl_type(const TypePtr &type,
+                                         SchemaBoundaryKind boundary,
+                                         SourceRange range);
+    [[nodiscard]] ConstEvalResult
+    check_const_expr(const ast::ExprSyntax &expr,
+                     const ValueContext &context,
+                     MaybeCRef<Type> expected_type,
+                     std::string_view context_label,
+                     std::optional<SymbolId> source_const = std::nullopt);
 
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
                                         const ValueContext &context,
@@ -333,33 +320,6 @@ class TypeCheckPass final {
                                              MaybeCRef<Type> expected_type = std::nullopt,
                                              const TypeExpectation *expectation = nullptr);
     [[nodiscard]] TypedValue check_path(const ast::PathSyntax &path, const ValueContext &context);
-    [[nodiscard]] TypedValue check_qualified_value(const ast::ExprSyntax &expr);
-    [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr, const ValueContext &context);
-    [[nodiscard]] TypedValue check_struct_literal(const ast::ExprSyntax &expr,
-                                                  const ValueContext &context);
-    [[nodiscard]] TypedValue check_list_literal(const ast::ExprSyntax &expr,
-                                                const ValueContext &context,
-                                                MaybeCRef<Type> expected_type,
-                                                const TypeExpectation *expectation = nullptr);
-    [[nodiscard]] TypedValue check_set_literal(const ast::ExprSyntax &expr,
-                                               const ValueContext &context,
-                                               MaybeCRef<Type> expected_type,
-                                               const TypeExpectation *expectation = nullptr);
-    [[nodiscard]] TypedValue check_map_literal(const ast::ExprSyntax &expr,
-                                               const ValueContext &context,
-                                               MaybeCRef<Type> expected_type,
-                                               const TypeExpectation *expectation = nullptr);
-    [[nodiscard]] TypedValue check_unary_expr(const ast::ExprSyntax &expr,
-                                              const ValueContext &context);
-    [[nodiscard]] TypedValue check_binary_expr(const ast::ExprSyntax &expr,
-                                               const ValueContext &context);
-    [[nodiscard]] TypedValue check_member_access(const ast::ExprSyntax &expr,
-                                                 const ValueContext &context);
-    [[nodiscard]] TypedValue check_index_access(const ast::ExprSyntax &expr,
-                                                const ValueContext &context);
-
-    [[nodiscard]] TypePtr
-    field_access(const Type &base_type, std::string_view field_name, SourceRange range);
     [[nodiscard]] TypePtr make_any_type() const {
         return types_->make(TypeKind::Any);
     }
@@ -412,9 +372,6 @@ class TypeCheckPass final {
     [[nodiscard]] TypedValue typed_effect(TypePtr type, ExprEffect effect) const;
     [[nodiscard]] TypedValue error_typed(bool is_pure = true) const;
     [[nodiscard]] TypedValue error_typed_effect(ExprEffect effect) const;
-    [[nodiscard]] TypePtr
-    apply_flow_narrowing(TypePtr type, const Place &place, const FlowFacts &facts) const;
-
     // Helpers moved from the global internal namespace (Del-L2 cleanup).
     [[nodiscard]] TypePtr clone_or_any(MaybeCRef<Type> type) const {
         if (!type.has_value()) {

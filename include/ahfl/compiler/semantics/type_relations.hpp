@@ -96,8 +96,9 @@ struct TypeRelationOptions {
     bool allow_bounded_string_relaxation{true};
 
     // When true, numeric types follow widening rules: narrower numeric types
-    // are assignable to wider ones (e.g. Int -> Float). Default: true.
-    bool allow_numeric_widening{true};
+    // are assignable to wider ones (e.g. Int -> Float). Default: false —
+    // AHFL source-level subtyping does not include numeric promotion.
+    bool allow_numeric_widening{false};
 };
 
 // ---------------------------------------------------------------------------

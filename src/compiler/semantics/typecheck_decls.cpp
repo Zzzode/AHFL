@@ -31,10 +31,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                 .symbol = {},
                 .range = declaration->range,
                 .source_id = current_source_id_,
-                .payload = ModuleDeclInfo{
-                    .name = decl.name ? decl.name->spelling() : std::string{},
-                    .declaration_range = declaration->range,
-                },
+                .payload =
+                    ModuleDeclInfo{
+                        .name = decl.name ? decl.name->spelling() : std::string{},
+                        .declaration_range = declaration->range,
+                    },
             });
             break;
         }
@@ -45,11 +46,12 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
                 .symbol = {},
                 .range = declaration->range,
                 .source_id = current_source_id_,
-                .payload = ImportDeclInfo{
-                    .target_module = decl.path ? decl.path->spelling() : std::string{},
-                    .alias = decl.alias,
-                    .declaration_range = declaration->range,
-                },
+                .payload =
+                    ImportDeclInfo{
+                        .target_module = decl.path ? decl.path->spelling() : std::string{},
+                        .alias = decl.alias,
+                        .declaration_range = declaration->range,
+                    },
             });
             break;
         }
@@ -229,11 +231,11 @@ void TypeCheckPass::build_type_environment() {
                 const auto symbol = symbol_of(decl.symbol);
                 decl.payload = TypeAliasDeclInfo{
                     .symbol = decl.symbol,
-                    .canonical_name = symbol.has_value() ? symbol->get().canonical_name
-                                                         : std::string(alias.name),
+                    .canonical_name =
+                        symbol.has_value() ? symbol->get().canonical_name : std::string(alias.name),
                     .local_name = alias.name,
-                    .aliased_type = alias.aliased_type ? resolve_type(*alias.aliased_type)
-                                                       : make_error_type(),
+                    .aliased_type =
+                        alias.aliased_type ? resolve_type(*alias.aliased_type) : make_error_type(),
                     .aliased_type_spelling =
                         alias.aliased_type ? alias.aliased_type->spelling() : std::string{},
                     .aliased_type_range =
@@ -308,9 +310,10 @@ void TypeCheckPass::build_struct_types() {
             std::unordered_set<std::string> seen_fields;
             for (const auto &field : decl.get().fields) {
                 if (!seen_fields.insert(field->name).second) {
-                    typecheck_error_here(error_codes::typecheck::DuplicateField,
-                                         "duplicate struct field '" + field->name + "'",
-                                         field->range);
+                    typecheck_error_here(
+                        error_codes::typecheck::DuplicateField,
+                        messages::typecheck::DuplicateStructField.format_with(field->name),
+                        field->range);
                 }
 
                 info.fields.push_back(StructFieldInfo{
@@ -346,9 +349,10 @@ void TypeCheckPass::build_enum_types() {
             std::unordered_set<std::string> seen_variants;
             for (const auto &variant : decl.get().variants) {
                 if (!seen_variants.insert(variant->name).second) {
-                    typecheck_error_here(error_codes::typecheck::DuplicateVariant,
-                                         "duplicate enum variant '" + variant->name + "'",
-                                         variant->range);
+                    typecheck_error_here(
+                        error_codes::typecheck::DuplicateVariant,
+                        messages::typecheck::DuplicateEnumVariant.format_with(variant->name),
+                        variant->range);
                 }
 
                 info.variants.push_back(EnumVariantInfo{
@@ -396,11 +400,14 @@ void TypeCheckPass::build_capability_types() {
                 info.effect.receipt_mode = static_cast<int>(eff.receipt_mode);
                 info.effect.retry_mode = static_cast<int>(eff.retry_mode);
                 info.effect.source_range = eff.range;
-                if (eff.domain) info.effect.domain = eff.domain->spelling();
+                if (eff.domain)
+                    info.effect.domain = eff.domain->spelling();
                 if (eff.idempotency_key)
                     info.effect.idempotency_key = eff.idempotency_key->spelling();
-                if (eff.timeout) info.effect.timeout = eff.timeout->spelling;
-                if (eff.compensation) info.effect.compensation = eff.compensation->spelling();
+                if (eff.timeout)
+                    info.effect.timeout = eff.timeout->spelling;
+                if (eff.compensation)
+                    info.effect.compensation = eff.compensation->spelling();
                 info.effect.policies.reserve(eff.policies.size());
                 for (const auto &policy : eff.policies)
                     info.effect.policies.push_back(policy->spelling());
@@ -457,28 +464,22 @@ void TypeCheckPass::build_agent_types() {
                 .declaration_range = decl.get().range,
             };
 
-            if (info.input_type && !info.input_type->holds<types::StructT>()) {
-                error_here("agent input type must resolve to a struct type",
-                           decl.get().input_type->range);
-            }
-
-            if (info.context_type && !info.context_type->holds<types::StructT>()) {
-                error_here("agent context type must resolve to a struct type",
-                           decl.get().context_type->range);
-            }
-
-            if (info.output_type && !info.output_type->holds<types::StructT>()) {
-                error_here("agent output type must resolve to a struct type",
-                           decl.get().output_type->range);
-            }
+            check_schema_boundary_decl_type(
+                info.input_type, SchemaBoundaryKind::AgentInput, decl.get().input_type->range);
+            check_schema_boundary_decl_type(info.context_type,
+                                            SchemaBoundaryKind::AgentContextDefault,
+                                            decl.get().context_type->range);
+            check_schema_boundary_decl_type(
+                info.output_type, SchemaBoundaryKind::AgentOutput, decl.get().output_type->range);
 
             for (const auto &capability_name : decl.get().capabilities) {
                 const auto capability_symbol =
                     find_local_here(SymbolNamespace::Capabilities, capability_name);
                 if (!capability_symbol.has_value()) {
-                    error_here("unknown capability '" + capability_name +
-                                   "' in agent capability list",
-                               decl.get().range);
+                    typecheck_error_here(
+                        error_codes::typecheck::UnknownCapability,
+                        messages::typecheck::UnknownCapabilityInAgent.format_with(capability_name),
+                        decl.get().range);
                     continue;
                 }
 
@@ -552,15 +553,11 @@ void TypeCheckPass::build_workflow_types() {
                 .declaration_range = decl.get().range,
             };
 
-            if (info.input_type && !info.input_type->holds<types::StructT>()) {
-                error_here("workflow input type must resolve to a struct type",
-                           decl.get().input_type->range);
-            }
-
-            if (info.output_type && !info.output_type->holds<types::StructT>()) {
-                error_here("workflow output type must resolve to a struct type",
-                           decl.get().output_type->range);
-            }
+            check_schema_boundary_decl_type(
+                info.input_type, SchemaBoundaryKind::WorkflowInput, decl.get().input_type->range);
+            check_schema_boundary_decl_type(info.output_type,
+                                            SchemaBoundaryKind::WorkflowOutput,
+                                            decl.get().output_type->range);
 
             // T1.8 Phase 2: populate node/temporal data.
             info.nodes.reserve(decl.get().nodes.size());
@@ -714,8 +711,7 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
         };
 
         for (const auto &clause : decl.clauses) {
-            const bool is_temporal =
-                (!clause->expr && static_cast<bool>(clause->temporal_expr));
+            const bool is_temporal = (!clause->expr && static_cast<bool>(clause->temporal_expr));
             SourceRange expr_range;
             if (is_temporal) {
                 expr_range = clause->temporal_expr->range;
@@ -747,24 +743,8 @@ void TypeCheckPass::check_const_initializers_in_program(const ast::Program &prog
             continue;
         }
 
-        const auto declared_type = result_.environment.get_const_type(symbol->get().id);
-        if (!declared_type.has_value()) {
-            continue;
-        }
-
-        const ValueContext context;
-        auto value = check_const_expr(*decl.value, context, declared_type, "const initializer");
-        const TypeExpectation expectation{
-            .expected = declared_type->get().clone(),
-            .origin_kind = TypeExpectationOriginKind::Annotation,
-            .origin_range = decl.type->range,
-            .description = "declared type of const '" + std::string(decl.name) + "'",
-        };
-        (void)check_assignable(*value.typed_value.type,
-                               declared_type->get(),
-                               decl.value->range,
-                               "const initializer",
-                               expectation);
+        (void)ensure_const_value(symbol->get().id,
+                                 decl.value != nullptr ? decl.value->range : decl.range);
     }
 }
 
@@ -799,24 +779,24 @@ void TypeCheckPass::check_struct_defaults() {
                 }
 
                 const auto &field_info = struct_info->get().fields[index];
+                const auto default_policy = classify_const_struct_default_validation(
+                    *field_info.type, field_info.declaration_range, is_context_struct);
                 const ValueContext context;
                 auto value = check_const_expr(*field_decl->default_value,
                                               context,
                                               std::cref(*field_info.type),
-                                              "struct field default");
-                if (is_context_struct) {
-                    (void)check_exact_schema_boundary(*value.typed_value.type,
-                                                      *field_info.type,
-                                                      SchemaBoundaryKind::AgentContextDefault,
-                                                      field_decl->default_value->range,
-                                                      field_info.declaration_range);
-                } else {
-                    (void)check_assignable(*value.typed_value.type,
-                                           *field_info.type,
-                                           field_decl->default_value->range,
-                                           "struct field default",
-                                           field_info.declaration_range);
-                }
+                                              default_policy.context_label);
+                ConstTypeRelationValidator const_relations{
+                    relations_,
+                    ConstDiagnosticEmitter{
+                        result_.diagnostics,
+                        current_source_ != nullptr ? &current_source_->source : nullptr,
+                    },
+                };
+                (void)const_relations.check_struct_default(*value.checked_expr.type,
+                                                           *field_info.type,
+                                                           field_decl->default_value->range,
+                                                           default_policy);
             }
         });
     }
@@ -843,10 +823,10 @@ void TypeCheckPass::check_agent_context_defaults() {
         with_symbol_context(context_struct->get().symbol, [&]() {
             for (const auto &field : context_struct->get().fields) {
                 if (!field.has_default) {
-                    typecheck_error_here(error_codes::typecheck::MissingField,
-                                         "agent context field '" + field.name +
-                                             "' must declare a default value",
-                                         field.declaration_range);
+                    typecheck_error_here(
+                        error_codes::typecheck::MissingField,
+                        messages::typecheck::MissingAgentContextDefault.format_with(field.name),
+                        field.declaration_range);
                 }
             }
         });

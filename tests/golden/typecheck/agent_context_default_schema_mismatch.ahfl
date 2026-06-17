@@ -1,0 +1,33 @@
+struct Config {
+    value: String;
+}
+
+struct WiderConfig {
+    value: String;
+    extra: String;
+}
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    config: Config = WiderConfig {
+        value: "seed",
+        extra: "extra",
+    };
+}
+
+struct Response {
+    value: String;
+}
+
+agent BadContextDefaultAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}

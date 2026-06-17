@@ -40,4 +40,23 @@ ExprEffect join_effects(ExprEffect lhs, ExprEffect rhs) noexcept {
     return rank(lhs) >= rank(rhs) ? lhs : rhs;
 }
 
+std::string_view to_string(ExprEffect effect) noexcept {
+    switch (effect) {
+    case ExprEffect::Pure:
+        return "pure";
+    case ExprEffect::ConstOnly:
+        return "const-only";
+    case ExprEffect::PredicateCall:
+        return "predicate call";
+    case ExprEffect::CapabilityCall:
+        return "capability call";
+    case ExprEffect::ExternalEffect:
+        return "external effect";
+    case ExprEffect::Unknown:
+        return "unknown effect";
+    }
+
+    return "unknown effect";
+}
+
 } // namespace ahfl

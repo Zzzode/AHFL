@@ -1,0 +1,5 @@
+module typecheck::variance;
+import typecheck::variance as self;
+
+const NarrowMapKey: Map<String(2, 8), Int> = map [];
+const RejectedMapKey: Map<String, Int> = self::NarrowMapKey;
