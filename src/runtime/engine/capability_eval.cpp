@@ -132,4 +132,23 @@ evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
         });
 }
 
+evaluator::EvalResult eval_expr_with_capabilities(const ir::Expr &expr,
+                                                  const evaluator::EvalContext &eval_ctx,
+                                                  const ContextualCapabilityInvoker &invoker,
+                                                  const CapabilityInvocationContext &context) {
+    return eval_expr_with_capability_call_handler(
+        expr,
+        eval_ctx,
+        [&invoker,
+         &context](const std::string &callee,
+                   const std::vector<evaluator::Value> &arg_values) -> evaluator::EvalResult {
+            if (!invoker) {
+                return make_unknown_capability_error("capability invoker is empty when invoking '" +
+                                                     callee + "'");
+            }
+            return capability_call_result_to_eval_result(callee,
+                                                         invoker(context, callee, arg_values));
+        });
+}
+
 } // namespace ahfl::runtime

@@ -1,0 +1,8 @@
+{
+  "endpoint": "https://api.example.invalid/v1",
+  "model": "test-model",
+  "api_key": "sk-test",
+  "max_tokens": 2048,
+  "max_prompt_tokens": 3072,
+  "max_total_tokens": 4096
+}

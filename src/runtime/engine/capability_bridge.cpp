@@ -92,6 +92,13 @@ CapabilityCallResult CapabilityRegistry::invoke(const std::string &name,
     return invoke_with_retry(it->second, args);
 }
 
+CapabilityCallResult
+CapabilityRegistry::invoke_with_context(const CapabilityInvocationContext & /*context*/,
+                                        const std::string &name,
+                                        const std::vector<Value> &args) {
+    return invoke(name, args);
+}
+
 bool CapabilityRegistry::has(const std::string &name) const {
     return bindings_.find(name) != bindings_.end();
 }
@@ -109,6 +116,15 @@ CapabilityInvoker CapabilityRegistry::as_invoker() {
     auto *self = this;
     return [self](const std::string &name, const std::vector<Value> &args) -> CapabilityCallResult {
         return self->invoke(name, args);
+    };
+}
+
+ContextualCapabilityInvoker CapabilityRegistry::as_contextual_invoker() {
+    auto *self = this;
+    return [self](const CapabilityInvocationContext &context,
+                  const std::string &name,
+                  const std::vector<Value> &args) -> CapabilityCallResult {
+        return self->invoke_with_context(context, name, args);
     };
 }
 

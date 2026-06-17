@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -56,6 +57,64 @@ class FakeCapabilityTransport final : public CapabilityTransportAdapter {
         return grpc_response;
     }
 };
+
+class StaticSecretProvider final : public ahfl::secret::SecretProvider {
+  public:
+    explicit StaticSecretProvider(std::unordered_map<std::string, std::string> secrets)
+        : secrets_(std::move(secrets)) {}
+
+    [[nodiscard]] std::optional<std::string> resolve(std::string_view key) override {
+        auto it = secrets_.find(std::string(key));
+        if (it == secrets_.end()) {
+            return std::nullopt;
+        }
+        return it->second;
+    }
+
+    void refresh(std::string_view) override {}
+
+  private:
+    std::unordered_map<std::string, std::string> secrets_;
+};
+
+std::shared_ptr<ahfl::secret::SecretManager>
+make_secret_manager(std::unordered_map<std::string, std::string> secrets) {
+    return std::make_shared<ahfl::secret::SecretManager>(
+        std::make_unique<StaticSecretProvider>(std::move(secrets)));
+}
+
+bool has_request_header(const HttpRequest &request,
+                        const std::string &name,
+                        const std::string &value) {
+    auto it = request.headers.find(name);
+    return it != request.headers.end() && it->second == value;
+}
+
+bool has_request_metadata(const GrpcJsonTranscodingRequest &request,
+                          const std::string &name,
+                          const std::string &value) {
+    for (const auto &[key, metadata_value] : request.metadata) {
+        if (key == name && metadata_value == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool has_request_metadata_name(const GrpcJsonTranscodingRequest &request, const std::string &name) {
+    for (const auto &metadata : request.metadata) {
+        if (metadata.first == name) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::shared_ptr<const TypeRef> make_response_schema(TypeRefKind kind) {
+    auto schema = std::make_shared<TypeRef>();
+    schema->kind = kind;
+    return schema;
+}
 
 // ============================================================================
 // Test 1: register_and_invoke_mock
@@ -300,6 +359,58 @@ void test_http_capability_rejects_malformed_json_response() {
           "http_malformed.error_message");
 }
 
+void test_http_capability_timeout_fails_closed() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 0,
+        .body = {},
+        .error = "operation timeout",
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/capability";
+    config.timeout.deadline = std::chrono::milliseconds{1500};
+    auto binding = make_http_capability("http_timeout", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_timeout", {});
+
+    check(result.status == CapabilityCallStatus::Timeout, "http_timeout.status");
+    check(!result.value.has_value(), "http_timeout.no_value");
+    check(result.error_message == "HTTP request timed out", "http_timeout.message");
+    check(transport->http_requests.size() == 1, "http_timeout.request_count");
+    if (!transport->http_requests.empty()) {
+        check(transport->http_requests.front().timeout_seconds == 1, "http_timeout.request_budget");
+    }
+}
+
+void test_http_capability_rejects_response_schema_mismatch() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = "42",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/capability";
+    config.response_schema = make_response_schema(TypeRefKind::String);
+    auto binding = make_http_capability("http_schema_mismatch", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_schema_mismatch", {});
+
+    check(result.status == CapabilityCallStatus::Error, "http_schema_mismatch.status");
+    check(!result.value.has_value(), "http_schema_mismatch.no_value");
+    check(result.error_message.find(
+              "response schema validation failed: expected String but got Int") !=
+              std::string::npos,
+          "http_schema_mismatch.message");
+    check(transport->http_requests.size() == 1, "http_schema_mismatch.request_count");
+}
+
 void test_http_capability_text_plain_response() {
     auto transport = std::make_shared<FakeCapabilityTransport>();
     transport->http_response = HttpResponse{
@@ -321,6 +432,124 @@ void test_http_capability_text_plain_response() {
     auto *value =
         result.value.has_value() ? std::get_if<StringValue>(&result.value->node) : nullptr;
     check(value != nullptr && value->value == "plain response", "http_text.value");
+}
+
+void test_http_capability_bearer_auth_header() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = R"("ok")",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/secure";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::BearerToken,
+        .token_key = "HTTP_TOKEN",
+    };
+    config.secret_manager = make_secret_manager({{"HTTP_TOKEN", "token-123"}});
+
+    auto binding = make_http_capability("http_auth", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_auth", {});
+
+    check(result.status == CapabilityCallStatus::Success, "http_auth.status");
+    check(transport->http_requests.size() == 1, "http_auth.request_count");
+    if (!transport->http_requests.empty()) {
+        check(has_request_header(
+                  transport->http_requests.front(), "Authorization", "Bearer token-123"),
+              "http_auth.authorization_header");
+    }
+}
+
+void test_http_capability_auth_missing_secret_fails_closed() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = R"("should_not_call")",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/secure";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::BearerToken,
+        .token_key = "MISSING_TOKEN",
+    };
+    config.secret_manager = make_secret_manager({});
+
+    auto binding = make_http_capability("http_auth_missing", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_auth_missing", {});
+
+    check(result.status == CapabilityCallStatus::Error, "http_auth_missing.status");
+    check(result.error_message ==
+              "HTTP capability auth failed: bearer token secret not found: MISSING_TOKEN",
+          "http_auth_missing.message");
+    check(transport->http_requests.empty(), "http_auth_missing.no_transport_call");
+}
+
+void test_http_capability_auth_missing_secret_manager_fails_closed() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = R"("should_not_call")",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/secure";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::BearerToken,
+        .token_key = "HTTP_TOKEN",
+    };
+
+    auto binding = make_http_capability("http_auth_no_manager", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_auth_no_manager", {});
+
+    check(result.status == CapabilityCallStatus::Error, "http_auth_no_manager.status");
+    check(result.error_message == "HTTP capability auth failed: secret manager is required",
+          "http_auth_no_manager.message");
+    check(transport->http_requests.empty(), "http_auth_no_manager.no_transport_call");
+}
+
+void test_http_capability_mtls_auth_paths() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->http_response = HttpResponse{
+        .status_code = 200,
+        .body = R"("ok")",
+        .error = {},
+    };
+
+    HTTPCapabilityConfig config;
+    config.url = "https://example.com/secure";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::MTLS,
+        .cert_path_key = "CERT_PATH",
+        .key_path_key = "KEY_PATH",
+    };
+    config.secret_manager =
+        make_secret_manager({{"CERT_PATH", "/tmp/client.pem"}, {"KEY_PATH", "/tmp/client.key"}});
+
+    auto binding = make_http_capability("http_mtls", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("http_mtls", {});
+
+    check(result.status == CapabilityCallStatus::Success, "http_mtls.status");
+    check(transport->http_requests.size() == 1, "http_mtls.request_count");
+    if (!transport->http_requests.empty()) {
+        const auto &request = transport->http_requests.front();
+        check(request.tls_client_certificate_path == "/tmp/client.pem", "http_mtls.cert_path");
+        check(request.tls_client_key_path == "/tmp/client.key", "http_mtls.key_path");
+        check(request.headers.find("Authorization") == request.headers.end(),
+              "http_mtls.no_bearer");
+    }
 }
 
 // ============================================================================
@@ -424,6 +653,244 @@ void test_grpc_capability_rejects_malformed_json_response() {
     check(!result.value.has_value(), "grpc_malformed.no_value");
     check(result.error_message == "invalid wire JSON response body",
           "grpc_malformed.error_message");
+}
+
+void test_grpc_capability_timeout_fails_closed() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::DeadlineExceeded,
+        .body = {},
+        .error_message = "deadline exceeded",
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.timeout.deadline = std::chrono::milliseconds{2500};
+    auto binding = make_grpc_json_transcoding_capability(
+        "grpc_timeout", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_timeout", {});
+
+    check(result.status == CapabilityCallStatus::Timeout, "grpc_timeout.status");
+    check(!result.value.has_value(), "grpc_timeout.no_value");
+    check(result.error_message == "deadline exceeded", "grpc_timeout.message");
+    check(transport->grpc_requests.size() == 1, "grpc_timeout.request_count");
+    if (!transport->grpc_requests.empty()) {
+        check(transport->grpc_requests.front().timeout == std::chrono::seconds{2},
+              "grpc_timeout.request_budget");
+    }
+}
+
+void test_grpc_capability_rejects_response_schema_mismatch() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("not an int")",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.response_schema = make_response_schema(TypeRefKind::Int);
+    auto binding = make_grpc_json_transcoding_capability(
+        "grpc_schema_mismatch", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_schema_mismatch", {});
+
+    check(result.status == CapabilityCallStatus::Error, "grpc_schema_mismatch.status");
+    check(!result.value.has_value(), "grpc_schema_mismatch.no_value");
+    check(result.error_message.find(
+              "response schema validation failed: expected Int but got String") !=
+              std::string::npos,
+          "grpc_schema_mismatch.message");
+    check(transport->grpc_requests.size() == 1, "grpc_schema_mismatch.request_count");
+}
+
+void test_grpc_capability_trailer_status_overrides_http_ok() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("ignored")",
+        .error_message = {},
+        .response_metadata = {{"content-type", "application/json"}},
+        .trailers = {{"grpc-status", "7"}, {"grpc-message", "permission%20denied"}},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    auto binding = make_grpc_json_transcoding_capability(
+        "grpc_trailer_status", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_trailer_status", {});
+
+    check(result.status == CapabilityCallStatus::Error, "grpc_trailer_status.status_error");
+    check(result.error_message == "permission denied", "grpc_trailer_status.message");
+    check(transport->grpc_requests.size() == 1, "grpc_trailer_status.request_count");
+}
+
+void test_grpc_capability_metadata_status_overrides_http_ok() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("ignored")",
+        .error_message = {},
+        .response_metadata = {{"grpc-status", "3"}, {"grpc-message", "invalid%20input"}},
+        .trailers = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    auto binding = make_grpc_json_transcoding_capability(
+        "grpc_metadata_status", std::move(config), transport);
+
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_metadata_status", {});
+
+    check(result.status == CapabilityCallStatus::Error, "grpc_metadata_status.status_error");
+    check(result.error_message == "invalid input", "grpc_metadata_status.message");
+    check(transport->grpc_requests.size() == 1, "grpc_metadata_status.request_count");
+}
+
+void test_grpc_capability_auth_missing_secret_fails_closed() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("should_not_call")",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::BearerToken,
+        .token_key = "MISSING_TOKEN",
+    };
+    config.secret_manager = make_secret_manager({});
+
+    auto binding =
+        make_grpc_json_transcoding_capability("grpc_auth_missing", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_auth_missing", {});
+
+    check(result.status == CapabilityCallStatus::Error, "grpc_auth_missing.status");
+    check(result.error_message ==
+              "gRPC capability auth failed: bearer token secret not found: MISSING_TOKEN",
+          "grpc_auth_missing.message");
+    check(transport->grpc_requests.empty(), "grpc_auth_missing.no_transport_call");
+}
+
+void test_grpc_capability_auth_missing_secret_manager_fails_closed() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("should_not_call")",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::BearerToken,
+        .token_key = "GRPC_TOKEN",
+    };
+
+    auto binding =
+        make_grpc_json_transcoding_capability("grpc_auth_no_manager", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_auth_no_manager", {});
+
+    check(result.status == CapabilityCallStatus::Error, "grpc_auth_no_manager.status");
+    check(result.error_message == "gRPC capability auth failed: secret manager is required",
+          "grpc_auth_no_manager.message");
+    check(transport->grpc_requests.empty(), "grpc_auth_no_manager.no_transport_call");
+}
+
+void test_grpc_capability_bearer_auth_metadata() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("ok")",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::BearerToken,
+        .token_key = "GRPC_TOKEN",
+    };
+    config.secret_manager = make_secret_manager({{"GRPC_TOKEN", "grpc-token"}});
+
+    auto binding = make_grpc_json_transcoding_capability("grpc_auth", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_auth", {});
+
+    check(result.status == CapabilityCallStatus::Success, "grpc_auth.status");
+    check(transport->grpc_requests.size() == 1, "grpc_auth.request_count");
+    if (!transport->grpc_requests.empty()) {
+        check(has_request_metadata(
+                  transport->grpc_requests.front(), "Authorization", "Bearer grpc-token"),
+              "grpc_auth.authorization_metadata");
+    }
+}
+
+void test_grpc_capability_mtls_auth_paths() {
+    auto transport = std::make_shared<FakeCapabilityTransport>();
+    transport->grpc_response = GrpcJsonTranscodingResponse{
+        .status_code = GrpcStatusCode::Ok,
+        .body = R"("ok")",
+        .error_message = {},
+    };
+
+    GrpcJsonTranscodingCapabilityConfig config;
+    config.endpoint = "https://grpc.example.com";
+    config.service = "Example.Service";
+    config.method = "Compute";
+    config.auth = ahfl::secret::AuthConfig{
+        .scheme = ahfl::secret::AuthScheme::MTLS,
+        .cert_path_key = "CERT_PATH",
+        .key_path_key = "KEY_PATH",
+    };
+    config.secret_manager = make_secret_manager(
+        {{"CERT_PATH", "/tmp/grpc-client.pem"}, {"KEY_PATH", "/tmp/grpc-client.key"}});
+
+    auto binding = make_grpc_json_transcoding_capability("grpc_mtls", std::move(config), transport);
+    CapabilityRegistry registry;
+    registry.register_capability(std::move(binding));
+    auto result = registry.invoke("grpc_mtls", {});
+
+    check(result.status == CapabilityCallStatus::Success, "grpc_mtls.status");
+    check(transport->grpc_requests.size() == 1, "grpc_mtls.request_count");
+    if (!transport->grpc_requests.empty()) {
+        const auto &request = transport->grpc_requests.front();
+        check(request.tls_client_certificate_path == "/tmp/grpc-client.pem", "grpc_mtls.cert_path");
+        check(request.tls_client_key_path == "/tmp/grpc-client.key", "grpc_mtls.key_path");
+        check(!has_request_metadata_name(request, "Authorization"), "grpc_mtls.no_bearer");
+    }
 }
 
 // ============================================================================
@@ -652,10 +1119,24 @@ int main() {
     test_http_capability_binding();
     test_http_capability_injected_transport_success();
     test_http_capability_rejects_malformed_json_response();
+    test_http_capability_timeout_fails_closed();
+    test_http_capability_rejects_response_schema_mismatch();
     test_http_capability_text_plain_response();
+    test_http_capability_bearer_auth_header();
+    test_http_capability_auth_missing_secret_fails_closed();
+    test_http_capability_auth_missing_secret_manager_fails_closed();
+    test_http_capability_mtls_auth_paths();
     test_grpc_capability_json_transcoding();
     test_grpc_capability_injected_transport_success();
     test_grpc_capability_rejects_malformed_json_response();
+    test_grpc_capability_timeout_fails_closed();
+    test_grpc_capability_rejects_response_schema_mismatch();
+    test_grpc_capability_trailer_status_overrides_http_ok();
+    test_grpc_capability_metadata_status_overrides_http_ok();
+    test_grpc_capability_auth_missing_secret_fails_closed();
+    test_grpc_capability_auth_missing_secret_manager_fails_closed();
+    test_grpc_capability_bearer_auth_metadata();
+    test_grpc_capability_mtls_auth_paths();
     test_circuit_breaker_state_transitions();
     test_multiple_capabilities();
     test_eval_with_capability_call();

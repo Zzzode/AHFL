@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "runtime/providers/llm/http_client.hpp"
+
 namespace ahfl::llm_provider {
 
 /// Callback invoked for each streaming chunk.
@@ -20,7 +22,9 @@ class SSEParser {
     [[nodiscard]] std::optional<std::string> feed_line(std::string_view line);
 
     /// Check if the stream has signaled completion ([DONE]).
-    [[nodiscard]] bool is_done() const { return done_; }
+    [[nodiscard]] bool is_done() const {
+        return done_;
+    }
 
   private:
     bool done_{false};
@@ -36,8 +40,13 @@ struct StreamResult {
 /// Streaming client for SSE chat completion responses.
 class StreamingClient {
   public:
-    explicit StreamingClient(std::string_view endpoint, std::string_view api_key,
+    explicit StreamingClient(std::string_view endpoint,
+                             std::string_view api_key,
                              std::string_view model);
+    StreamingClient(std::string_view endpoint,
+                    std::string_view api_key,
+                    std::string_view model,
+                    HttpAuthConfig auth_config);
 
     /// Execute a streaming chat completion request.
     [[nodiscard]] StreamResult stream(const std::string &request_json, StreamChunkCallback cb);
@@ -46,6 +55,7 @@ class StreamingClient {
     std::string endpoint_;
     std::string api_key_;
     std::string model_;
+    HttpAuthConfig auth_config_;
 };
 
 } // namespace ahfl::llm_provider

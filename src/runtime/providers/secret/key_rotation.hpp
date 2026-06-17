@@ -28,10 +28,14 @@ struct RotationPolicy {
 
 struct RotationEvent {
     std::string key;
+    std::string provider_prefix{"unqualified"};
+    std::string key_fingerprint;
     RotationStatus status{RotationStatus::Idle};
     std::chrono::system_clock::time_point timestamp;
-    std::string old_version;
-    std::string new_version;
+    bool previous_value_present{false};
+    bool rotated_value_present{false};
+    std::size_t attempts{0};
+    bool secret_free{true};
     std::string error_message;
 };
 
