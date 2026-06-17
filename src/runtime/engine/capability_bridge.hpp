@@ -20,6 +20,15 @@ namespace ahfl::runtime {
 
 using evaluator::Value;
 
+struct CapabilityInvocationContext {
+    std::string workflow_name;
+    std::string workflow_node_name;
+    std::string agent_name;
+    std::string state_name;
+    std::size_t workflow_node_execution_index{0};
+    bool has_workflow_node_context{false};
+};
+
 // Capability 调用状态
 enum class CapabilityCallStatus {
     Success,
@@ -39,6 +48,10 @@ struct CapabilityCallResult {
 
 using CapabilityInvoker =
     std::function<CapabilityCallResult(const std::string &name, const std::vector<Value> &args)>;
+using ContextualCapabilityInvoker =
+    std::function<CapabilityCallResult(const CapabilityInvocationContext &context,
+                                       const std::string &name,
+                                       const std::vector<Value> &args)>;
 
 enum class CapabilityResponseFormat {
     Json,
@@ -107,9 +120,14 @@ class CapabilityRegistry {
 
     [[nodiscard]] CapabilityCallResult invoke(const std::string &name,
                                               const std::vector<Value> &args);
+    [[nodiscard]] CapabilityCallResult
+    invoke_with_context(const CapabilityInvocationContext &context,
+                        const std::string &name,
+                        const std::vector<Value> &args);
     [[nodiscard]] bool has(const std::string &name) const;
     [[nodiscard]] std::vector<std::string> registered_names() const;
     [[nodiscard]] CapabilityInvoker as_invoker();
+    [[nodiscard]] ContextualCapabilityInvoker as_contextual_invoker();
 
   private:
     std::unordered_map<std::string, CapabilityBinding> bindings_;

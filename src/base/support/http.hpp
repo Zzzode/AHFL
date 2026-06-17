@@ -21,6 +21,15 @@ struct HttpRequest {
     int timeout_seconds{30};
     HttpVersion version{HttpVersion::Default};
     bool capture_headers{false};
+    std::string tls_client_certificate_path;
+    std::string tls_client_key_path;
+    std::string tls_ca_certificate_path;
+    bool verify_tls{true};
+};
+
+struct HttpHeaderBlock {
+    bool has_status_line{false};
+    std::vector<std::pair<std::string, std::string>> headers;
 };
 
 struct HttpResponse {
@@ -30,6 +39,7 @@ struct HttpResponse {
     std::string error;
     bool timed_out{false};
     std::vector<std::pair<std::string, std::string>> response_headers;
+    std::vector<HttpHeaderBlock> response_header_blocks;
 
     [[nodiscard]] bool is_success() const {
         return status_code >= 200 && status_code < 300;

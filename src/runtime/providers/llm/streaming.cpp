@@ -5,6 +5,7 @@
 
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace ahfl::llm_provider {
 
@@ -54,16 +55,19 @@ StreamingClient::StreamingClient(std::string_view endpoint,
                                  std::string_view model)
     : endpoint_(endpoint), api_key_(api_key), model_(model) {}
 
+StreamingClient::StreamingClient(std::string_view endpoint,
+                                 std::string_view api_key,
+                                 std::string_view model,
+                                 HttpAuthConfig auth_config)
+    : endpoint_(endpoint), api_key_(api_key), model_(model), auth_config_(std::move(auth_config)) {}
+
 StreamResult StreamingClient::stream(const std::string &request_json, StreamChunkCallback cb) {
     StreamResult result;
 
     ahfl::support::HttpRequest request;
     request.method = "POST";
     request.url = endpoint_;
-    request.headers = {
-        {"Content-Type", "application/json"},
-        {"Authorization", "Bearer " + api_key_},
-    };
+    request.headers = chat_completion_headers(api_key_, auth_config_);
     request.body = request_json;
 
     const auto response = ahfl::support::execute_http(request);
@@ -94,12 +98,15 @@ StreamResult StreamingClient::stream(const std::string &request_json, StreamChun
         }
     }
 
-    if (cb) {
+    const bool completed = parser.is_done();
+    if (cb && completed) {
         cb("", true);
     }
 
-    result.success = response.is_success();
-    if (!result.success) {
+    result.success = response.is_success() && completed;
+    if (response.is_success() && !completed) {
+        result.error = "stream request ended before [DONE]";
+    } else if (!result.success) {
         result.error = response.error.empty() ? "stream request failed with status " +
                                                     std::to_string(response.status_code)
                                               : response.error;
