@@ -416,6 +416,128 @@ flow for HirAgent {
     }
 }
 
+TEST_CASE("Typed HIR lowering preserves SymbolRef ids across declarations and references") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "";
+}
+
+struct Response {
+    value: String;
+}
+
+capability Echo(value: String) -> Response;
+
+agent SymbolAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [Echo];
+}
+
+flow for SymbolAgent {
+    state Done {
+        return Response { value: input.value };
+    }
+}
+
+workflow SymbolWorkflow {
+    input: Request;
+    output: Response;
+    node run: SymbolAgent(input);
+    return: run;
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("typed_hir_symbol_ref_ids.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto type_result = checker.check(*parse_result.program, resolve_result);
+    REQUIRE_FALSE(type_result.has_errors());
+
+    const auto request_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Types, "Request");
+    const auto response_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Types, "Response");
+    const auto echo_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Capabilities, "Echo");
+    const auto agent_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Agents, "SymbolAgent");
+    const auto workflow_symbol =
+        resolve_result.symbol_table.find_local(ahfl::SymbolNamespace::Workflows, "SymbolWorkflow");
+    REQUIRE(request_symbol.has_value());
+    REQUIRE(response_symbol.has_value());
+    REQUIRE(echo_symbol.has_value());
+    REQUIRE(agent_symbol.has_value());
+    REQUIRE(workflow_symbol.has_value());
+
+    const auto typed_ir =
+        ahfl::lower_typed_program(type_result.typed_program, *parse_result.program);
+    CHECK_FALSE(ahfl::ir::verify_ir_program(typed_ir).has_errors());
+
+    const ahfl::ir::StructDecl *request_decl = nullptr;
+    const ahfl::ir::AgentDecl *agent_decl = nullptr;
+    const ahfl::ir::FlowDecl *flow_decl = nullptr;
+    const ahfl::ir::WorkflowDecl *workflow_decl = nullptr;
+    for (const auto &decl : typed_ir.declarations) {
+        if (const auto *value = std::get_if<ahfl::ir::StructDecl>(&decl);
+            value != nullptr && value->name == "Request") {
+            request_decl = value;
+        } else if (const auto *value = std::get_if<ahfl::ir::AgentDecl>(&decl);
+                   value != nullptr && value->name == "SymbolAgent") {
+            agent_decl = value;
+        } else if (const auto *value = std::get_if<ahfl::ir::FlowDecl>(&decl); value != nullptr) {
+            flow_decl = value;
+        } else if (const auto *value = std::get_if<ahfl::ir::WorkflowDecl>(&decl);
+                   value != nullptr && value->name == "SymbolWorkflow") {
+            workflow_decl = value;
+        }
+    }
+    REQUIRE(request_decl != nullptr);
+    REQUIRE(agent_decl != nullptr);
+    REQUIRE(flow_decl != nullptr);
+    REQUIRE(workflow_decl != nullptr);
+
+    REQUIRE(request_decl->symbol_ref.id.has_value());
+    CHECK(*request_decl->symbol_ref.id == request_symbol->get().id.value);
+    REQUIRE(agent_decl->symbol_ref.id.has_value());
+    CHECK(*agent_decl->symbol_ref.id == agent_symbol->get().id.value);
+    REQUIRE(agent_decl->capability_refs.size() == 1);
+    REQUIRE(agent_decl->capability_refs.front().id.has_value());
+    CHECK(*agent_decl->capability_refs.front().id == echo_symbol->get().id.value);
+
+    REQUIRE(flow_decl->target_ref.id.has_value());
+    CHECK(*flow_decl->target_ref.id == agent_symbol->get().id.value);
+    REQUIRE(workflow_decl->symbol_ref.id.has_value());
+    CHECK(*workflow_decl->symbol_ref.id == workflow_symbol->get().id.value);
+    REQUIRE(workflow_decl->nodes.size() == 1);
+    REQUIRE(workflow_decl->nodes.front().target_ref.id.has_value());
+    CHECK(*workflow_decl->nodes.front().target_ref.id == agent_symbol->get().id.value);
+
+    CHECK(agent_decl->input_type_ref.kind == ahfl::ir::TypeRefKind::Struct);
+    CHECK(agent_decl->input_type_ref.canonical_name == request_symbol->get().canonical_name);
+    CHECK(agent_decl->output_type_ref.kind == ahfl::ir::TypeRefKind::Struct);
+    CHECK(agent_decl->output_type_ref.canonical_name == response_symbol->get().canonical_name);
+    CHECK(workflow_decl->input_type_ref.kind == ahfl::ir::TypeRefKind::Struct);
+    CHECK(workflow_decl->input_type_ref.canonical_name == request_symbol->get().canonical_name);
+    CHECK(workflow_decl->output_type_ref.kind == ahfl::ir::TypeRefKind::Struct);
+    CHECK(workflow_decl->output_type_ref.canonical_name == response_symbol->get().canonical_name);
+}
+
 TEST_CASE("IR lowering prefers Typed HIR expression types for inferred let bindings") {
     const std::string source = R"AHFL(
 struct Request {

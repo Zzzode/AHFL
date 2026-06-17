@@ -1895,6 +1895,16 @@ ahfl_label_tests(
     LABELS ahfl-v0.56 v0.56-llm-provider
     TESTS
         ahfl.llm_provider.all
+        ahflc.run.llm_config.fail_missing_api_key_secret
+        ahflc.run.llm_config.fail_invalid_budget
+        ahflc.run.llm_config.fail_missing_fallback_api_key_secret
+        ahflc.run.llm_config.fail_missing_vault_token_env
+        ahflc.run.llm_tools.fail_invalid_capability_mocks
+        ahflc.run.llm_observability.smoke
+        ahflc.run.llm_failure_matrix.smoke
+        ahflc.run.llm_secret_manager.smoke
+        ahflc.run.capability_bindings.smoke
+        ahflc.run.input_schema.fail_missing_field
 )
 
 ahfl_label_tests(
@@ -1927,6 +1937,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.58 v0.58-passes
     TESTS
         ahfl.passes.pass_manager_all
+        ahflc.passes.semantic_backend_effect
 )
 
 ahfl_label_tests(
@@ -1977,6 +1988,11 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formal-model-checker
     TESTS
         ahfl.formal.model_checker_backends_all
+        ahflc.verify_formal.state_space_report
+        ahflc.verify_formal.missing_binary
+        ahflc.verify_formal.unsupported_backend
+        ahflc.verify_formal.checker_error
+        ahflc.verify_formal.checker_timeout
 )
 
 ahfl_label_tests(
@@ -2012,6 +2028,13 @@ ahfl_label_tests(
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-formatter
     TESTS
+        ahflc.fmt.formats_file_with_config
+        ahflc.fmt.check_pass
+        ahflc.fmt.check_fail
+        ahflc.fmt.formats_directory
+        ahflc.fmt.check_directory_fail
+        ahflc.fmt.formats_project
+        ahflc.fmt.formats_workspace
         ahfl.formatter.formatter_all
 )
 
@@ -2019,12 +2042,14 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-repl
     TESTS
         ahfl.repl.repl_all
+        ahfl.repl.process_smoke
 )
 
 ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-dap
     TESTS
         ahfl.dap.basic_all
+        ahfl.dap.process_smoke
 )
 
 ahfl_label_tests(
@@ -2037,6 +2062,11 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-profiling
     TESTS
         ahfl.profiling.profiling_all
+        ahflc.profile.time_passes.emit_summary
+        ahflc.profile.time_passes.requires_optimize
+        ahflc.profile.smv_size_report.emit_smv
+        ahflc.profile.smv_size_report.rejects_non_smv
+        ahflc.profile.observability_exports
 )
 
 ahfl_label_tests(
@@ -2049,6 +2079,7 @@ ahfl_label_tests(
     LABELS ahfl-v0.59 v0.59-incremental
     TESTS
         ahfl.incremental.incremental_all
+        ahfl.incremental.process_smoke
 )
 
 if(AHFL_ENABLE_BACKEND_INFRA)
@@ -2080,6 +2111,9 @@ ahfl_label_tests(
         ahfl.bench.memory_usage
         ahfl.bench.smv_size
         ahfl.bench.ir_pipeline
+        ahflc.quality.smv_size_budget.flow_workflow
+        ahflc.quality.smv_size_budget.pass_productization
+        ahflc.quality.smv_size_budget.refund_audit
 )
 
 ahfl_label_tests(
@@ -2099,4 +2133,28 @@ ahfl_label_tests(
     TESTS
         ahfl.property.lowering_equiv
         ahfl.property.smv_syntax
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-mutation
+    TESTS
+        ahfl.mutation.config_report
+)
+
+ahfl_label_tests(
+    LABELS ahfl-v0.59 v0.59-quality-gates
+    TESTS
+        ahfl.fuzz.parser_check
+        ahfl.fuzz.typecheck_check
+        ahfl.fuzz.smv_emitter_check
+        ahfl.property.lowering_equiv
+        ahfl.property.smv_syntax
+        ahfl.bench.compile_time
+        ahfl.bench.memory_usage
+        ahfl.bench.smv_size
+        ahfl.bench.ir_pipeline
+        ahflc.quality.smv_size_budget.flow_workflow
+        ahflc.quality.smv_size_budget.pass_productization
+        ahflc.quality.smv_size_budget.refund_audit
+        ahfl.mutation.config_report
 )
