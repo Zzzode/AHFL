@@ -11,51 +11,57 @@
 
 ## 目录分层
 
-```text
-AHFL/
-├── CMakeLists.txt
-├── cmake/
-│   ├── RunExpectedFailure.cmake
-│   ├── RunExpectedOutput.cmake
-│   └── modules/
-│       ├── AhflCompileCommands.cmake
-│       ├── AhflCompiler.cmake
-│       ├── AhflFormatting.cmake
-│       └── AhflTesting.cmake
-├── include/ahfl/
-│   ├── base/
-│   │   └── support/
-│   └── compiler/
-│       ├── backends/
-│       ├── frontend/
-│       ├── handoff/
-│       ├── ir/
-│       └── semantics/
-├── src/
-│   ├── base/
-│   ├── compiler/
-│   │   ├── backends/
-│   │   ├── handoff/
-│   │   ├── ir/
-│   │   ├── semantics/
-│   │   └── syntax/
-│   │       ├── frontend/
-│   │       └── parser/generated/
-│   ├── pipeline/
-│   ├── runtime/
-│   ├── tooling/
-│   └── verification/
-├── tests/
-├── docs/
-│   ├── spec/
-│   ├── design/
-│   ├── plan/
-│   ├── reference/
-│   └── README.md
-├── grammar/
-├── examples/
-└── third_party/
-    └── antlr4/
+```mermaid
+flowchart TD
+    Root["AHFL/"]
+
+    Root --> CMakeRoot["CMakeLists.txt"]
+    Root --> CMake["cmake/"]
+    CMake --> RunExpectedFailure["RunExpectedFailure.cmake"]
+    CMake --> RunExpectedOutput["RunExpectedOutput.cmake"]
+    CMake --> CMakeModules["modules/"]
+    CMakeModules --> AhflCompileCommands["AhflCompileCommands.cmake"]
+    CMakeModules --> AhflCompiler["AhflCompiler.cmake"]
+    CMakeModules --> AhflFormatting["AhflFormatting.cmake"]
+    CMakeModules --> AhflTesting["AhflTesting.cmake"]
+
+    Root --> Include["include/ahfl/"]
+    Include --> IncludeBase["base/"]
+    IncludeBase --> IncludeSupport["support/"]
+    Include --> IncludeCompiler["compiler/"]
+    IncludeCompiler --> IncludeBackends["backends/"]
+    IncludeCompiler --> IncludeFrontend["frontend/"]
+    IncludeCompiler --> IncludeHandoff["handoff/"]
+    IncludeCompiler --> IncludeIr["ir/"]
+    IncludeCompiler --> IncludeSemantics["semantics/"]
+
+    Root --> Src["src/"]
+    Src --> SrcBase["base/"]
+    Src --> SrcCompiler["compiler/"]
+    SrcCompiler --> SrcBackends["backends/"]
+    SrcCompiler --> SrcHandoff["handoff/"]
+    SrcCompiler --> SrcIr["ir/"]
+    SrcCompiler --> SrcSemantics["semantics/"]
+    SrcCompiler --> SrcSyntax["syntax/"]
+    SrcSyntax --> SrcFrontend["frontend/"]
+    SrcSyntax --> GeneratedParser["parser/generated/"]
+    Src --> Pipeline["pipeline/"]
+    Src --> Runtime["runtime/"]
+    Src --> Tooling["tooling/"]
+    Src --> Verification["verification/"]
+
+    Root --> Tests["tests/"]
+    Root --> Docs["docs/"]
+    Docs --> Spec["spec/"]
+    Docs --> Design["design/"]
+    Docs --> Plan["plan/"]
+    Docs --> Reference["reference/"]
+    Docs --> DocsReadme["README.md"]
+
+    Root --> Grammar["grammar/"]
+    Root --> Examples["examples/"]
+    Root --> ThirdParty["third_party/"]
+    ThirdParty --> Antlr["antlr4/"]
 ```
 
 ## 文档职责边界

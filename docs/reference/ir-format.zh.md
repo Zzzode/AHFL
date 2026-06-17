@@ -75,7 +75,7 @@ Optimization IR：
 ./build/dev/src/tooling/cli/ahflc emit opt-ir-json -O tests/golden/ir/ok_expr_temporal.ahfl
 ```
 
-Opt IR 是 `ir::Program` 下方的 CFG/SSA 风格诊断表示。文本 dump 输出 function、local、basic block、statement、terminator、operand、type、source range，以及未降成 pure expression fragment 的 `skipped_temporal` 记录；`AHFL_OPT_IR_V1` JSON 输出同一模型的结构化机器可读 artifact。普通 backend、Semantic JSON IR、SMV、native / execution / assurance 输出仍消费 Semantic IR (`ir::Program`)；`-O` 在 `emit opt-ir` / `emit opt-ir-json` 中会额外运行 Opt IR passes 并打印优化后的 Opt IR。
+Opt IR 是 `ir::Program` 下方的 CFG/SSA 风格诊断表示。文本 dump 输出 function、local、basic block、statement、terminator、operand、type、source range，以及未降成 pure expression fragment 的 `skipped_temporal` 记录；`AHFL_OPT_IR_V1` JSON 输出同一模型的结构化机器可读 artifact。普通 backend、Semantic JSON IR、SMV、native / execution / assurance 输出仍消费 Semantic IR (`ir::Program`)；`-O` 会先运行 Semantic IR pass pipeline，因此普通 backend 输出可以变化。`emit opt-ir` / `emit opt-ir-json` 在此基础上还会运行 Opt IR passes 并打印优化后的 Opt IR。
 
 Opt IR 当前生产路径是 artifact-only：它不会被 `--optimize` 回降到 Semantic IR，也不会让普通 backend 隐式直连 Opt IR。
 

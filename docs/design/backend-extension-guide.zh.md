@@ -63,14 +63,14 @@ AHFL 当前 backend 相关代码分布在：
 
 建议按下面顺序推进：
 
-```text
-确认语义边界
-  -> 确认是否需要扩展 IR
-  -> 实现 backend emitter
-  -> 接入 driver
-  -> 接入 CLI
-  -> 增加 golden / fail-safe tests
-  -> 补设计和 reference 文档
+```mermaid
+flowchart TD
+    Semantics["确认语义边界"] --> IR["确认是否需要扩展 IR"]
+    IR --> Emitter["实现 backend emitter"]
+    Emitter --> Driver["接入 driver"]
+    Driver --> CLI["接入 CLI"]
+    CLI --> Tests["增加 golden / fail-safe tests"]
+    Tests --> Docs["补设计和 reference 文档"]
 ```
 
 不要反过来先在 CLI 里加一个子命令，再回头猜 backend 需要哪些语义输入。
@@ -235,14 +235,14 @@ CLI 仍然不应理解：
 
 若新增的是 V0.5 runtime-adjacent consumer prototype，当前建议顺序为：
 
-```text
-确认属于 reader / planner / review / native-json 哪一层
-  -> 确认是否复用已有 handoff helper
-  -> 若需要共享信息，先扩 handoff::Package
-  -> 再扩 direct helper / backend
-  -> 接入 driver / CLI
-  -> 补 tests/handoff + tests/review + tests/native
-  -> 更新 compatibility / consumer matrix / contributor docs
+```mermaid
+flowchart TD
+    Layer["确认属于 reader / planner / review / native-json 哪一层"] --> Helper["确认是否复用已有 handoff helper"]
+    Helper --> Package["若需要共享信息，先扩 handoff::Package"]
+    Package --> Backend["再扩 direct helper / backend"]
+    Backend --> DriverCli["接入 driver / CLI"]
+    DriverCli --> Tests["补 tests/handoff + tests/review + tests/native"]
+    Tests --> Docs["更新 compatibility / consumer matrix / contributor docs"]
 ```
 
 当前最小模板要求：
@@ -304,14 +304,14 @@ CLI 仍然不应理解：
 
 若新增的是 V0.6 runtime-adjacent consumer prototype，当前建议顺序为：
 
-```text
-确认属于 handoff package / execution plan / dry-run trace 哪一层
-  -> 若需要共享 planning 语义，先扩 handoff::ExecutionPlan
-  -> 若需要共享 dry-run 输入，先扩 CapabilityMockSet / DryRunRequest
-  -> 若需要共享 review 结果，先扩 DryRunTrace
-  -> 再扩 helper / runner / artifact printer
-  -> 接入 CLI / golden / labels
-  -> 更新 compatibility / consumer matrix / contributor docs
+```mermaid
+flowchart TD
+    Layer["确认属于 handoff package / execution plan / dry-run trace 哪一层"] --> Plan["若需要共享 planning 语义，先扩 handoff::ExecutionPlan"]
+    Plan --> DryRun["若需要共享 dry-run 输入，先扩 CapabilityMockSet / DryRunRequest"]
+    DryRun --> Review["若需要共享 review 结果，先扩 DryRunTrace"]
+    Review --> Implementation["再扩 helper / runner / artifact printer"]
+    Implementation --> Gates["接入 CLI / golden / labels"]
+    Gates --> Docs["更新 compatibility / consumer matrix / contributor docs"]
 ```
 
 当前最小模板要求：
