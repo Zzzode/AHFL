@@ -120,8 +120,8 @@ struct MessageTemplate {
         std::size_t pos = 0;
         ((pos = result.find(placeholder, pos),
           pos != std::string::npos
-              ? (result.replace(pos, placeholder.length(),
-                                std::string_view(std::forward<Args>(args))),
+              ? (result.replace(
+                     pos, placeholder.length(), std::string_view(std::forward<Args>(args))),
                  pos += std::string_view(std::forward<Args>(args)).length())
               : pos),
          ...);
@@ -160,10 +160,31 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> SemanticError{"SEMANTI
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ExactSchemaMismatch{
     "EXACT_SCHEMA_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownType{"UNKNOWN_TYPE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownValue{"UNKNOWN_VALUE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownQualifiedValue{
+    "UNKNOWN_QUALIFIED_VALUE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownCallable{"UNKNOWN_CALLABLE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidTypeReference{
+    "INVALID_TYPE_REFERENCE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidCallableReference{
+    "INVALID_CALLABLE_REFERENCE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingCallableMetadata{
+    "MISSING_CALLABLE_METADATA"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingConstMetadata{
+    "MISSING_CONST_METADATA"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingTypeMetadata{
+    "MISSING_TYPE_METADATA"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidStructLiteralTarget{
+    "INVALID_STRUCT_LITERAL_TARGET"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidQualifiedValue{
+    "INVALID_QUALIFIED_VALUE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownEnumVariant{
+    "UNKNOWN_ENUM_VARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidOperation{"INVALID_OPERATION"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NonPureExpression{"NON_PURE_EXPRESSION"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ConstExprRequired{
-    "CONST_EXPR_REQUIRED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ConstExprRequired{"CONST_EXPR_REQUIRED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ConstDependencyCycle{
+    "CONST_DEPENDENCY_CYCLE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidMemberAccess{
     "INVALID_MEMBER_ACCESS"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownField{"UNKNOWN_FIELD"};
@@ -185,19 +206,33 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADO
 } // namespace typecheck
 
 namespace validation {
-inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{
-    "SEMANTIC_INVARIANT"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{"SEMANTIC_INVARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> RequiredFieldEmpty{
     "REQUIRED_FIELD_EMPTY"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> OptionalFieldEmpty{
     "OPTIONAL_FIELD_EMPTY"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidState{"INVALID_STATE"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> DuplicateCapability{
+    "DUPLICATE_CAPABILITY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidTemporalFormula{
+    "INVALID_TEMPORAL_FORMULA"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> InvalidWorkflowGraph{
+    "INVALID_WORKFLOW_GRAPH"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyMessage{
     "FAILURE_SUMMARY_EMPTY_MESSAGE"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> FailureSummaryEmptyNodeName{
     "FAILURE_SUMMARY_EMPTY_NODE_NAME"};
 } // namespace validation
+
+namespace runtime {
+inline constexpr ErrorCode<DiagnosticCategory::Runtime> LLMPromptBudgetRejected{
+    "LLM_PROMPT_BUDGET_REJECTED"};
+inline constexpr ErrorCode<DiagnosticCategory::Runtime> LLMTokenBudgetExceeded{
+    "LLM_TOKEN_BUDGET_EXCEEDED"};
+inline constexpr ErrorCode<DiagnosticCategory::Runtime> LLMCostBudgetExceeded{
+    "LLM_COST_BUDGET_EXCEEDED"};
+} // namespace runtime
 
 namespace backend {
 inline constexpr ErrorCode<DiagnosticCategory::Backend> BootstrapError{"BOOTSTRAP_ERROR"};
@@ -231,20 +266,68 @@ inline constexpr MessageTemplate MultipleModuleDeclarations{
 
 namespace typecheck {
 inline constexpr MessageTemplate TypeMismatch{"type mismatch in {}: expected {}, got {}"};
+inline constexpr MessageTemplate BoolExpressionRequired{"{} must have type Bool"};
 inline constexpr MessageTemplate ExactSchemaMismatch{
     "exact schema mismatch in {}: expected {}, got {}"};
 inline constexpr MessageTemplate InvalidMemberAccess{
     "member access requires a struct value, got {}"};
+inline constexpr MessageTemplate UnknownType{"unknown type '{}'"};
+inline constexpr MessageTemplate UnknownValue{"unknown value '{}'"};
+inline constexpr MessageTemplate UnknownQualifiedValue{"unknown qualified value '{}'"};
+inline constexpr MessageTemplate UnknownCallable{"unknown callable '{}'"};
+inline constexpr MessageTemplate ResolvedTypeSymbolMissing{"resolved type symbol is missing"};
+inline constexpr MessageTemplate SymbolDoesNotNameType{"symbol '{}' does not name a type"};
+inline constexpr MessageTemplate TypeAliasCycleDuringResolution{
+    "type alias cycle reached during type resolution"};
+inline constexpr MessageTemplate TypeAliasDeclarationMissing{"type alias declaration is missing"};
+inline constexpr MessageTemplate CallTargetSymbolMissing{"call target symbol is missing"};
+inline constexpr MessageTemplate SymbolDoesNotNameCallable{"symbol '{}' does not name a callable"};
+inline constexpr MessageTemplate CapabilityTypeInfoMissing{
+    "capability type info is missing for '{}'"};
+inline constexpr MessageTemplate PredicateTypeInfoMissing{
+    "predicate type info is missing for '{}'"};
+inline constexpr MessageTemplate ConstTypeInfoMissing{"constant type info is missing for '{}'"};
+inline constexpr MessageTemplate StructTypeInfoMissing{"struct type info is missing for '{}'"};
+inline constexpr MessageTemplate EnumTypeInfoMissing{"enum type info is missing for '{}'"};
+inline constexpr MessageTemplate StructLiteralTargetRequiresStruct{
+    "struct literal target '{}' does not resolve to a struct type"};
+inline constexpr MessageTemplate QualifiedValueRequiresConstOrEnumVariant{
+    "qualified value '{}' must refer to a constant or enum variant"};
+inline constexpr MessageTemplate UnknownEnumVariant{"unknown enum variant '{}'"};
 inline constexpr MessageTemplate UnknownField{"unknown field '{}' on struct '{}'"};
 inline constexpr MessageTemplate MissingField{"missing field '{}' in struct literal"};
 inline constexpr MessageTemplate DuplicateField{"duplicate field '{}' in struct literal"};
+inline constexpr MessageTemplate DuplicateStructField{"duplicate struct field '{}'"};
+inline constexpr MessageTemplate DuplicateEnumVariant{"duplicate enum variant '{}'"};
+inline constexpr MessageTemplate MissingAgentContextDefault{
+    "agent context field '{}' must declare a default value"};
 inline constexpr MessageTemplate InvalidOperator{"operator '{}' is not defined for {} and {}"};
+inline constexpr MessageTemplate LogicalNotRequiresBool{"logical not requires Bool, got {}"};
+inline constexpr MessageTemplate NumericUnaryRequiresNumeric{
+    "numeric unary operator requires Int, Float, or Decimal, got {}"};
+inline constexpr MessageTemplate NoneComparisonRequiresOptional{
+    "comparison with none requires Optional<T>, got {}"};
+inline constexpr MessageTemplate LogicalOperatorRequiresBool{
+    "logical operator requires Bool operands"};
+inline constexpr MessageTemplate ComparisonOperandsIncompatible{
+    "comparison operands are not type-compatible: {} vs {}"};
+inline constexpr MessageTemplate ArithmeticOperatorInvalid{
+    "arithmetic operator is not defined for {} and {}"};
+inline constexpr MessageTemplate ModuloRequiresInt{"operator '%' requires Int operands"};
 inline constexpr MessageTemplate NoneWithoutContext{
     "cannot infer type of 'none' without an expected Optional<T> context"};
 inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};
 inline constexpr MessageTemplate EmptySetWithoutContext{"cannot infer type of empty set literal"};
 inline constexpr MessageTemplate EmptyMapWithoutContext{"cannot infer type of empty map literal"};
-inline constexpr MessageTemplate InvalidAgentType{"agent {} type must resolve to a struct type"};
+inline constexpr MessageTemplate ListIndexRequiresInt{"list index must have type Int"};
+inline constexpr MessageTemplate IndexTargetRequiresCollection{
+    "index access requires a List or Map value, got {}"};
+inline constexpr MessageTemplate AssignmentTargetRequiresContext{
+    "assignment target must be rooted at writable 'ctx'"};
+inline constexpr MessageTemplate SchemaBoundaryTypeRequiresStruct{
+    "{} type must resolve to a struct type"};
+inline constexpr MessageTemplate ShadowedBinding{
+    "let binding '{}' shadows an existing binding of type '{}'"};
 inline constexpr MessageTemplate UnknownCapabilityInAgent{
     "unknown capability '{}' in agent capability list"};
 inline constexpr MessageTemplate CapabilityNotAllowed{
@@ -255,14 +338,66 @@ inline constexpr MessageTemplate WrongArity{"{} '{}' expects {} argument(s), got
 inline constexpr MessageTemplate PredicateArgsNotPure{
     "predicate arguments must be pure expressions"};
 inline constexpr MessageTemplate NonPureContext{"{} must be a pure expression"};
-inline constexpr MessageTemplate ConstExprRequired{
-    "const expression required in {}: {}"};
+inline constexpr MessageTemplate ConstExprRequired{"const expression required in {}: {}"};
+inline constexpr MessageTemplate ConstDependencyCycle{
+    "const dependency cycle detected involving '{}'"};
+inline constexpr MessageTemplate ConstDependencyCycleParticipant{
+    "const declaration participates in the dependency cycle"};
 } // namespace typecheck
 
 namespace validation {
 inline constexpr MessageTemplate VersionMismatch{"{} must be '{}'"};
 inline constexpr MessageTemplate RequiredFieldEmpty{"{} must not be empty"};
 inline constexpr MessageTemplate OptionalFieldEmpty{"{} {}"};
+inline constexpr MessageTemplate DuplicateAgentState{"duplicate agent state '{}'"};
+inline constexpr MessageTemplate InitialStateNotDeclared{
+    "initial state '{}' is not declared in agent states"};
+inline constexpr MessageTemplate DuplicateFinalState{"duplicate final state '{}'"};
+inline constexpr MessageTemplate FinalStateNotDeclared{
+    "final state '{}' is not declared in agent states"};
+inline constexpr MessageTemplate DuplicateCapability{
+    "duplicate capability '{}' in agent capability list"};
+inline constexpr MessageTemplate TransitionSourceNotDeclared{
+    "transition source state '{}' is not declared in agent states"};
+inline constexpr MessageTemplate TransitionTargetNotDeclared{
+    "transition target state '{}' is not declared in agent states"};
+inline constexpr MessageTemplate FinalStateOutgoingTransition{
+    "final state '{}' must not have outgoing transitions"};
+inline constexpr MessageTemplate UnreachableAgentState{
+    "state '{}' is unreachable from initial state '{}'"};
+inline constexpr MessageTemplate IllegalGoto{"illegal goto from state '{}' to '{}'"};
+inline constexpr MessageTemplate ReturnOnlyAllowedInFinalHandler{
+    "return is only allowed in final state handlers"};
+inline constexpr MessageTemplate FlowHandlerStateNotDeclared{
+    "flow handler state '{}' is not declared in the target agent"};
+inline constexpr MessageTemplate DuplicateFlowHandler{"duplicate flow handler for state '{}'"};
+inline constexpr MessageTemplate MissingFinalStateHandler{"missing final-state handler for '{}'"};
+inline constexpr MessageTemplate MissingNonFinalStateHandler{
+    "missing non-final-state handler for '{}'"};
+inline constexpr MessageTemplate FinalStateHandlerMustReturn{
+    "final-state handler '{}' must end with return on all control paths"};
+inline constexpr MessageTemplate NonFinalStateHandlerMustGoto{
+    "non-final-state handler '{}' must end with goto on all control paths"};
+inline constexpr MessageTemplate TemporalEmbeddedExprMustBeBool{
+    "temporal embedded expression must have type Bool"};
+inline constexpr MessageTemplate TemporalEmbeddedExprMustBePure{
+    "temporal embedded expression must be pure"};
+inline constexpr MessageTemplate UnknownContractState{"unknown state '{}' in contract for '{}'"};
+inline constexpr MessageTemplate RunningOnlyWorkflow{
+    "running(...) is only valid in workflow safety/liveness formulas"};
+inline constexpr MessageTemplate CompletedOnlyWorkflow{
+    "completed(...) is only valid in workflow safety/liveness formulas"};
+inline constexpr MessageTemplate CalledOnlyAgentContracts{
+    "called(...) is only valid in agent contracts"};
+inline constexpr MessageTemplate InStateOnlyAgentContracts{
+    "in_state(...) is only valid in agent contracts"};
+inline constexpr MessageTemplate UnknownWorkflowNode{"unknown workflow node '{}'"};
+inline constexpr MessageTemplate WorkflowCompletedStateNotFinal{
+    "state '{}' is not a final state of node '{}'"};
+inline constexpr MessageTemplate DuplicateWorkflowNode{"duplicate workflow node '{}'"};
+inline constexpr MessageTemplate UnknownWorkflowDependency{"unknown workflow dependency '{}'"};
+inline constexpr MessageTemplate WorkflowDependencyCycle{
+    "workflow dependency cycle detected involving '{}'"};
 inline constexpr MessageTemplate FailureSummaryEmptyMessage{
     "{} contains failure summary with empty message"};
 inline constexpr MessageTemplate FailureSummaryEmptyNodeName{
@@ -423,10 +558,18 @@ class DiagnosticBag {
 
     // === Core Operations ===
 
-    [[nodiscard]] bool has_error() const noexcept { return error_count_ > 0; }
-    [[nodiscard]] bool has_warning() const noexcept { return warning_count_ > 0; }
-    [[nodiscard]] std::size_t error_count() const noexcept { return error_count_; }
-    [[nodiscard]] std::size_t warning_count() const noexcept { return warning_count_; }
+    [[nodiscard]] bool has_error() const noexcept {
+        return error_count_ > 0;
+    }
+    [[nodiscard]] bool has_warning() const noexcept {
+        return warning_count_ > 0;
+    }
+    [[nodiscard]] std::size_t error_count() const noexcept {
+        return error_count_;
+    }
+    [[nodiscard]] std::size_t warning_count() const noexcept {
+        return warning_count_;
+    }
 
     [[nodiscard]] const std::vector<Diagnostic> &entries() const noexcept {
         return diagnostics_;
@@ -480,8 +623,7 @@ class DiagnosticBag {
             out << '\n';
 
             // Source snippet + caret rendering
-            if (source.has_value() && diagnostic.range.has_value() &&
-                !diagnostic.range->empty()) {
+            if (source.has_value() && diagnostic.range.has_value() && !diagnostic.range->empty()) {
                 auto &src = source->get();
                 src.refresh_line_starts_cache();
                 const auto &starts = src.line_starts_cache;
@@ -489,9 +631,8 @@ class DiagnosticBag {
 
                 std::size_t line_idx = begin_pos.line - 1;
                 std::size_t line_start = starts[line_idx];
-                std::size_t line_end = (line_idx + 1 < starts.size())
-                                           ? starts[line_idx + 1] - 1
-                                           : src.content.size();
+                std::size_t line_end =
+                    (line_idx + 1 < starts.size()) ? starts[line_idx + 1] - 1 : src.content.size();
                 if (line_end > line_start && line_end <= src.content.size() &&
                     src.content[line_end - 1] == '\r') {
                     --line_end;
@@ -532,8 +673,8 @@ class DiagnosticBag {
                     } else if (source.has_value()) {
                         const auto &src_file = source->get();
                         const auto pos = src_file.locate(related.range->begin_offset);
-                        out << " (" << src_file.display_name << ":" << pos.line << ":"
-                            << pos.column << ")";
+                        out << " (" << src_file.display_name << ":" << pos.line << ":" << pos.column
+                            << ")";
                     }
                 }
                 out << '\n';
