@@ -18,8 +18,29 @@ namespace ahfl::formal {
     return ".pml";
 }
 
-[[nodiscard]] ModelEmissionResult
-SpinBackend::emit_model(const BmcStateMachine &machine) {
+[[nodiscard]] ModelCheckerCapabilities SpinBackend::capabilities() const {
+    return ModelCheckerCapabilities{
+        .emits_model = true,
+        .supports_external_verification = false,
+        .supports_ahfl_smv_semantics = false,
+        .required_binary = "spin",
+        .property_semantics =
+            {
+                "state-machine control graph Promela emission",
+            },
+        .skip_reason = "SPIN external verification is not wired for AHFL property semantics yet",
+    };
+}
+
+[[nodiscard]] ModelCheckerAvailability SpinBackend::availability() const {
+    return ModelCheckerAvailability{
+        .status = ModelCheckerAvailabilityStatus::VerificationUnsupported,
+        .binary_path = {},
+        .reason = capabilities().skip_reason,
+    };
+}
+
+[[nodiscard]] ModelEmissionResult SpinBackend::emit_model(const BmcStateMachine &machine) {
     ModelEmissionResult result;
 
     if (machine.states.empty()) {
@@ -75,8 +96,7 @@ SpinBackend::emit_model(const BmcStateMachine &machine) {
     return result;
 }
 
-[[nodiscard]] VerificationSummary
-SpinBackend::verify(const std::string & /*model_text*/) {
+[[nodiscard]] VerificationSummary SpinBackend::verify(const std::string & /*model_text*/) {
     VerificationSummary summary;
     summary.all_passed = false;
     summary.properties_checked = 0;

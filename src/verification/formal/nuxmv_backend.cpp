@@ -8,6 +8,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace ahfl::formal {
 
@@ -72,21 +73,22 @@ std::string write_temp_model(const std::string &model_text) {
     return path.string();
 }
 
+} // namespace
+
 /// Parse nuXmv/NuSMV output for verification results.
 /// Expected output contains lines like:
 ///   -- specification G (state != bad_state)  is true
 ///   -- specification F (state = target)  is false
 ///   -- as demonstrated by the following execution sequence
-struct ParsedResult {
-    std::size_t properties_checked = 0;
-    std::size_t properties_passed = 0;
-    std::string counterexample_trace;
-    std::string error;
-};
+NuXmvVerificationOutput parse_nuxmv_verification_output(std::string_view output, bool timed_out) {
+    NuXmvVerificationOutput parsed;
+    if (timed_out) {
+        parsed.status = NuXmvOutputStatus::Timeout;
+        parsed.error = "nuXmv/NuSMV process timed out";
+        return parsed;
+    }
 
-ParsedResult parse_verification_output(const std::string &output) {
-    ParsedResult parsed;
-    std::istringstream iss(output);
+    std::istringstream iss{std::string(output)};
     std::string line;
     bool in_counterexample = false;
 
@@ -94,6 +96,10 @@ ParsedResult parse_verification_output(const std::string &output) {
         // Check for property results
         if (line.find("-- specification") != std::string::npos ||
             line.find("-- LTL specification") != std::string::npos) {
+            if (!parsed.counterexample_trace.empty() && in_counterexample) {
+                in_counterexample = false;
+            }
+
             parsed.properties_checked++;
             if (line.find("is true") != std::string::npos) {
                 parsed.properties_passed++;
@@ -109,28 +115,28 @@ ParsedResult parse_verification_output(const std::string &output) {
                 line.find("state =") != std::string::npos) {
                 parsed.counterexample_trace += line + "\n";
             }
-            // End of counterexample (next specification or empty section)
-            if (!parsed.counterexample_trace.empty() &&
-                (line.find("-- specification") != std::string::npos ||
-                 line.find("-- LTL specification") != std::string::npos)) {
-                in_counterexample = false;
-            }
         }
 
         // Check for errors
-        if (line.find("file") != std::string::npos && line.find("error") != std::string::npos) {
-            parsed.error += line + "\n";
-        }
-        if (line.find("*** PARSE ERROR") != std::string::npos ||
+        if ((line.find("file") != std::string::npos && line.find("error") != std::string::npos) ||
+            line.find("*** PARSE ERROR") != std::string::npos ||
             line.find("TYPE ERROR") != std::string::npos) {
             parsed.error += line + "\n";
         }
     }
 
+    if (!parsed.error.empty()) {
+        parsed.status = NuXmvOutputStatus::Error;
+    } else if (parsed.properties_checked == 0) {
+        parsed.status = NuXmvOutputStatus::Unknown;
+    } else if (parsed.properties_passed == parsed.properties_checked) {
+        parsed.status = NuXmvOutputStatus::Passed;
+    } else {
+        parsed.status = NuXmvOutputStatus::Failed;
+    }
+
     return parsed;
 }
-
-} // namespace
 
 [[nodiscard]] ModelCheckerKind NuXmvBackend::kind() const {
     return ModelCheckerKind::NuXmv;
@@ -142,6 +148,41 @@ ParsedResult parse_verification_output(const std::string &output) {
 
 [[nodiscard]] std::string_view NuXmvBackend::file_extension() const {
     return ".smv";
+}
+
+[[nodiscard]] ModelCheckerCapabilities NuXmvBackend::capabilities() const {
+    return ModelCheckerCapabilities{
+        .emits_model = true,
+        .supports_external_verification = true,
+        .supports_ahfl_smv_semantics = true,
+        .required_binary = "nuXmv or NuSMV",
+        .property_semantics =
+            {
+                "AHFL restricted SMV state-machine semantics",
+                "workflow lifecycle LTLSPEC",
+                "bounded control/data predicates",
+                "capability call/effect event obligations",
+            },
+        .skip_reason =
+            "nuXmv/NuSMV binary not found; pass --model-checker or set AHFL_SMV_CHECKER, "
+            "AHFL_NUXMV_PATH, or AHFL_NUSMV_PATH",
+    };
+}
+
+[[nodiscard]] ModelCheckerAvailability NuXmvBackend::availability() const {
+    auto binary = find_nuxmv_binary();
+    if (binary.empty()) {
+        return ModelCheckerAvailability{
+            .status = ModelCheckerAvailabilityStatus::MissingBinary,
+            .binary_path = {},
+            .reason = capabilities().skip_reason,
+        };
+    }
+    return ModelCheckerAvailability{
+        .status = ModelCheckerAvailabilityStatus::Available,
+        .binary_path = std::move(binary),
+        .reason = {},
+    };
 }
 
 [[nodiscard]] ModelEmissionResult NuXmvBackend::emit_model(const BmcStateMachine &machine) {
@@ -242,12 +283,17 @@ ParsedResult parse_verification_output(const std::string &output) {
     fs::remove(cmd_path, ec);
 
     // Parse the output
-    auto parsed = parse_verification_output(output);
+    auto parsed = parse_nuxmv_verification_output(output, process_result.timed_out);
 
     summary.properties_checked = parsed.properties_checked;
     summary.properties_passed = parsed.properties_passed;
+    summary.timed_out = parsed.status == NuXmvOutputStatus::Timeout;
+    summary.raw_output = output;
 
-    if (!parsed.error.empty()) {
+    if (parsed.status == NuXmvOutputStatus::Timeout) {
+        summary.all_passed = false;
+        summary.error_message = parsed.error;
+    } else if (parsed.status == NuXmvOutputStatus::Error) {
         summary.all_passed = false;
         summary.error_message = parsed.error;
     } else if (parsed.properties_checked == 0 && exit_code != 0) {
@@ -263,8 +309,11 @@ ParsedResult parse_verification_output(const std::string &output) {
                 lines++;
             }
         }
+    } else if (parsed.status == NuXmvOutputStatus::Unknown) {
+        summary.all_passed = false;
+        summary.error_message = "nuXmv produced no specification result";
     } else {
-        summary.all_passed = (parsed.properties_passed == parsed.properties_checked);
+        summary.all_passed = parsed.status == NuXmvOutputStatus::Passed;
     }
 
     if (!parsed.counterexample_trace.empty()) {

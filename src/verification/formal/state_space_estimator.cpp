@@ -1,8 +1,11 @@
 #include "verification/formal/state_space_estimator.hpp"
 
+#include "ahfl/compiler/ir/ir.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <variant>
 
 namespace ahfl::formal {
 
@@ -12,8 +15,7 @@ constexpr std::size_t tractability_threshold = 1'000'000; // 10^6
 
 } // namespace
 
-[[nodiscard]] StateSpaceEstimate
-estimate_state_space(const std::vector<AgentMetrics> &agents) {
+[[nodiscard]] StateSpaceEstimate estimate_state_space(const std::vector<AgentMetrics> &agents) {
     StateSpaceEstimate estimate;
     estimate.num_agents = agents.size();
     estimate.estimation_method = "multiplicative";
@@ -54,15 +56,39 @@ estimate_state_space(const std::vector<AgentMetrics> &agents) {
 
     if (overflow) {
         estimate.likely_tractable = false;
-        estimate.warning = "State space exceeds representable limit; verification likely intractable";
+        estimate.warning =
+            "State space exceeds representable limit; verification likely intractable";
     } else if (product > tractability_threshold) {
         estimate.likely_tractable = false;
-        estimate.warning = "State space exceeds tractability threshold (10^6); consider abstraction";
+        estimate.warning =
+            "State space exceeds tractability threshold (10^6); consider abstraction";
     } else {
         estimate.likely_tractable = true;
     }
 
     return estimate;
+}
+
+std::vector<AgentMetrics> collect_agent_metrics(const ahfl::ir::Program &program) {
+    std::vector<AgentMetrics> agents;
+    for (const auto &declaration : program.declarations) {
+        const auto *agent = std::get_if<ahfl::ir::AgentDecl>(&declaration);
+        if (agent == nullptr) {
+            continue;
+        }
+
+        agents.push_back(AgentMetrics{
+            .agent_name = agent->name,
+            .state_count = agent->states.size(),
+            .transition_count = agent->transitions.size(),
+            .capability_count = agent->capability_refs.size(),
+        });
+    }
+    return agents;
+}
+
+StateSpaceEstimate estimate_state_space(const ahfl::ir::Program &program) {
+    return estimate_state_space(collect_agent_metrics(program));
 }
 
 } // namespace ahfl::formal
