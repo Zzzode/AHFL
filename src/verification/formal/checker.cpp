@@ -2,6 +2,7 @@
 
 #include "verification/formal/counterexample.hpp"
 #include "verification/formal/counterexample_json.hpp"
+#include "verification/formal/model_checker_backend.hpp"
 #include "verification/formal/process_launcher.hpp"
 
 #if defined(AHFL_ENABLE_BACKEND_FORMAL)
@@ -20,30 +21,72 @@
 
 namespace ahfl::formal {
 
+namespace {
+
+void print_state_space_estimate(const StateSpaceEstimate &estimate, std::ostream &out) {
+    out << "state_space_estimate: " << estimate.estimated_states << '\n';
+    out << "state_space_agents: " << estimate.num_agents << '\n';
+    out << "state_space_max_states_per_agent: " << estimate.max_states_per_agent << '\n';
+    out << "state_space_transitions: " << estimate.total_transitions << '\n';
+    out << "state_space_likely_tractable: " << (estimate.likely_tractable ? "true" : "false")
+        << '\n';
+    if (!estimate.estimation_method.empty()) {
+        out << "state_space_method: " << estimate.estimation_method << '\n';
+    }
+    if (!estimate.warning.empty()) {
+        out << "state_space_warning: " << estimate.warning << '\n';
+    }
+}
+
+} // namespace
+
 #if defined(AHFL_ENABLE_BACKEND_FORMAL)
 namespace {
 
-[[nodiscard]] std::optional<std::string> resolve_checker_path(const FormalCheckerOptions &options) {
+struct CheckerResolution {
+    ModelCheckerKind backend_kind{ModelCheckerKind::NuXmv};
+    ModelCheckerCapabilities capabilities;
+    ModelCheckerAvailability availability;
+};
+
+[[nodiscard]] CheckerResolution resolve_checker(const FormalCheckerOptions &options) {
+    auto backend = create_backend(options.backend_kind);
+    CheckerResolution resolution{
+        .backend_kind = options.backend_kind,
+        .capabilities = backend->capabilities(),
+        .availability = backend->availability(),
+    };
+
+    if (!resolution.capabilities.supports_external_verification ||
+        !resolution.capabilities.supports_ahfl_smv_semantics) {
+        resolution.availability = ModelCheckerAvailability{
+            .status = ModelCheckerAvailabilityStatus::VerificationUnsupported,
+            .binary_path = {},
+            .reason = resolution.capabilities.skip_reason,
+        };
+        return resolution;
+    }
+
     if (options.checker_path.has_value() && !options.checker_path->empty()) {
-        return options.checker_path;
+        resolution.availability = ModelCheckerAvailability{
+            .status = ModelCheckerAvailabilityStatus::Available,
+            .binary_path = *options.checker_path,
+            .reason = {},
+        };
+        return resolution;
     }
 
     if (const auto *env_value = std::getenv("AHFL_SMV_CHECKER");
         env_value != nullptr && std::string_view(env_value).size() > 0) {
-        return std::string(env_value);
+        resolution.availability = ModelCheckerAvailability{
+            .status = ModelCheckerAvailabilityStatus::Available,
+            .binary_path = std::string(env_value),
+            .reason = {},
+        };
+        return resolution;
     }
 
-    if (auto checker = find_executable("NuSMV"); checker.has_value()) {
-        return checker;
-    }
-    if (auto checker = find_executable("nuXmv"); checker.has_value()) {
-        return checker;
-    }
-    if (auto checker = find_executable("nuxmv"); checker.has_value()) {
-        return checker;
-    }
-
-    return std::nullopt;
+    return resolution;
 }
 
 [[nodiscard]] std::filesystem::path make_temp_model_path() {
@@ -55,14 +98,16 @@ namespace {
 struct ProcessResult {
     int exit_code{-1};
     std::string output;
+    bool timed_out{false};
 };
 
 [[nodiscard]] ProcessResult run_checker(std::string_view checker_path,
-                                        const std::filesystem::path &model_path) {
+                                        const std::filesystem::path &model_path,
+                                        std::chrono::seconds timeout) {
     ProcessConfig config;
     config.executable = std::string(checker_path);
     config.arguments = {model_path.string()};
-    config.timeout = std::chrono::seconds{60};
+    config.timeout = timeout;
     const auto result = launch_process(config);
     auto output = result.stdout_output;
     if (!result.stderr_output.empty()) {
@@ -71,6 +116,7 @@ struct ProcessResult {
     return ProcessResult{
         .exit_code = result.exit_code,
         .output = std::move(output),
+        .timed_out = result.timed_out,
     };
 }
 
@@ -211,6 +257,40 @@ void print_output_excerpt(std::string_view output, std::ostream &out) {
 
 #endif
 
+std::optional<ModelCheckerKind> parse_model_checker_kind(std::string_view value) {
+    std::string normalized(value);
+    std::ranges::transform(normalized, normalized.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    if (normalized == "nusmv") {
+        return ModelCheckerKind::NuSMV;
+    }
+    if (normalized == "nuxmv") {
+        return ModelCheckerKind::NuXmv;
+    }
+    if (normalized == "spin") {
+        return ModelCheckerKind::SPIN;
+    }
+    if (normalized == "tlaplus" || normalized == "tla+" || normalized == "tla") {
+        return ModelCheckerKind::TLAPlus;
+    }
+    return std::nullopt;
+}
+
+std::string_view model_checker_kind_name(ModelCheckerKind kind) {
+    switch (kind) {
+    case ModelCheckerKind::NuSMV:
+        return "nusmv";
+    case ModelCheckerKind::NuXmv:
+        return "nuxmv";
+    case ModelCheckerKind::SPIN:
+        return "spin";
+    case ModelCheckerKind::TLAPlus:
+        return "tlaplus";
+    }
+    return "nuxmv";
+}
+
 bool is_formal_verification_success(const FormalVerificationResult &result) {
     return result.status == FormalVerificationStatus::Passed;
 }
@@ -218,6 +298,7 @@ bool is_formal_verification_success(const FormalVerificationResult &result) {
 FormalVerificationResult verify_program_with_smv_checker(const ir::Program &program,
                                                          const FormalCheckerOptions &options) {
     FormalVerificationResult result;
+    result.state_space_estimate = estimate_state_space(program);
 #if !defined(AHFL_ENABLE_BACKEND_FORMAL)
     (void)program;
     (void)options;
@@ -225,14 +306,27 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
     result.error_message = "SMV backend support is disabled in this build";
     return result;
 #else
-    const auto checker_path = resolve_checker_path(options);
-    if (!checker_path.has_value()) {
-        result.error_message =
-            "no SMV checker configured; pass --model-checker or set AHFL_SMV_CHECKER";
+    const auto checker = resolve_checker(options);
+    result.backend_kind = checker.backend_kind;
+    result.capabilities = checker.capabilities;
+    result.availability_status = checker.availability.status;
+    result.checker_timeout = options.checker_timeout;
+
+    if (checker.availability.status == ModelCheckerAvailabilityStatus::VerificationUnsupported) {
+        result.status = FormalVerificationStatus::VerificationUnsupported;
+        result.error_message = checker.availability.reason;
         return result;
     }
 
-    result.checker_path = *checker_path;
+    if (checker.availability.status == ModelCheckerAvailabilityStatus::MissingBinary) {
+        result.status = FormalVerificationStatus::CheckerUnavailable;
+        result.error_message = checker.availability.reason.empty()
+                                   ? "no compatible formal checker binary found"
+                                   : checker.availability.reason;
+        return result;
+    }
+
+    result.checker_path = checker.availability.binary_path;
     result.model_path = options.model_output_path.value_or(make_temp_model_path());
     result.model_path_retained = options.model_output_path.has_value();
 
@@ -265,9 +359,11 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
         model << model_text;
     }
 
-    const auto process = run_checker(result.checker_path, result.model_path);
+    const auto process =
+        run_checker(result.checker_path, result.model_path, options.checker_timeout);
     result.exit_code = process.exit_code;
     result.output = process.output;
+    result.checker_timed_out = process.timed_out;
     parse_checker_output(result, symbol_mappings);
 
     if (!result.model_path_retained) {
@@ -290,8 +386,17 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
         return result;
     }
 
+    if (result.checker_timed_out) {
+        result.status = FormalVerificationStatus::CheckerError;
+        result.availability_status = ModelCheckerAvailabilityStatus::Available;
+        result.error_message = "formal checker process timed out after " +
+                               std::to_string(result.checker_timeout.count()) + " second(s)";
+        return result;
+    }
+
     if (result.exit_code != 0) {
         result.status = FormalVerificationStatus::CheckerError;
+        result.availability_status = ModelCheckerAvailabilityStatus::Available;
         result.error_message = "formal checker process returned a non-zero exit code";
         return result;
     }
@@ -300,11 +405,13 @@ FormalVerificationResult verify_program_with_smv_checker(const ir::Program &prog
         result.proven_specifications.size() + result.failing_specifications.size();
     if (result.expected_specification_count > 0 && observed_specification_count == 0) {
         result.status = FormalVerificationStatus::CheckerError;
+        result.availability_status = ModelCheckerAvailabilityStatus::Available;
         result.error_message = "formal checker did not emit any specification result";
         return result;
     }
     if (observed_specification_count < result.expected_specification_count) {
         result.status = FormalVerificationStatus::CheckerError;
+        result.availability_status = ModelCheckerAvailabilityStatus::Available;
         result.error_message =
             "formal checker emitted fewer specification results than the generated SMV model";
         return result;
@@ -320,6 +427,9 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
     case FormalVerificationStatus::Passed:
         out << "ok: formal verification passed with " << result.proven_specifications.size()
             << " proven specification(s)\n";
+        out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
+        out << "checker_status: available\n";
+        print_state_space_estimate(result.state_space_estimate, out);
         out << "checker: " << result.checker_path << '\n';
         if (result.model_path_retained) {
             out << "model: " << result.model_path.string() << '\n';
@@ -328,6 +438,9 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
     case FormalVerificationStatus::Failed:
         out << "error: formal verification failed with " << result.failing_specifications.size()
             << " failing specification(s)\n";
+        out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
+        out << "checker_status: available\n";
+        print_state_space_estimate(result.state_space_estimate, out);
         out << "checker: " << result.checker_path << '\n';
         if (result.model_path_retained) {
             out << "model: " << result.model_path.string() << '\n';
@@ -356,14 +469,47 @@ void print_formal_verification_report(const FormalVerificationResult &result, st
             }
         }
         return;
+    case FormalVerificationStatus::CheckerUnavailable:
+        out << "error: formal checker unavailable";
+        if (!result.error_message.empty()) {
+            out << ": " << result.error_message;
+        }
+        out << '\n';
+        out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
+        out << "checker_status: missing_binary\n";
+        print_state_space_estimate(result.state_space_estimate, out);
+        if (!result.capabilities.required_binary.empty()) {
+            out << "required_binary: " << result.capabilities.required_binary << '\n';
+        }
+        return;
+    case FormalVerificationStatus::VerificationUnsupported:
+        out << "error: formal verification unsupported";
+        if (!result.error_message.empty()) {
+            out << ": " << result.error_message;
+        }
+        out << '\n';
+        out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
+        out << "checker_status: verification_unsupported\n";
+        print_state_space_estimate(result.state_space_estimate, out);
+        if (!result.capabilities.required_binary.empty()) {
+            out << "required_binary: " << result.capabilities.required_binary << '\n';
+        }
+        return;
     case FormalVerificationStatus::CheckerError:
         out << "error: formal checker failed";
         if (!result.error_message.empty()) {
             out << ": " << result.error_message;
         }
         out << '\n';
+        out << "formal_backend: " << model_checker_kind_name(result.backend_kind) << '\n';
+        out << "checker_status: checker_error\n";
+        print_state_space_estimate(result.state_space_estimate, out);
         if (!result.checker_path.empty()) {
             out << "checker: " << result.checker_path << '\n';
+        }
+        out << "checker_timeout_seconds: " << result.checker_timeout.count() << '\n';
+        if (result.checker_timed_out) {
+            out << "checker_timed_out: true\n";
         }
         if (result.model_path_retained) {
             out << "model: " << result.model_path.string() << '\n';
