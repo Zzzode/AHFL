@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <unordered_map>
 
 namespace {
 
@@ -42,12 +43,63 @@ TypeRef make_named_enum(const std::string &name) {
     return t;
 }
 
+TypeRef make_canonical_type(TypeRefKind kind, const std::string &canonical_name) {
+    TypeRef t;
+    t.kind = kind;
+    t.canonical_name = canonical_name;
+    return t;
+}
+
 TypeRef make_optional_of(TypeRefKind inner_kind) {
     TypeRef t;
     t.kind = TypeRefKind::Optional;
     t.first = std::make_unique<TypeRef>();
     t.first->kind = inner_kind;
     return t;
+}
+
+FieldDecl make_field(const std::string &name, TypeRef type_ref) {
+    FieldDecl field;
+    field.name = name;
+    field.type_ref = std::move(type_ref);
+    return field;
+}
+
+Program build_schema_program() {
+    Program program;
+
+    EnumDecl priority;
+    priority.name = "Priority";
+    priority.variants = {"Low", "High"};
+    program.declarations.push_back(std::move(priority));
+
+    StructDecl request;
+    request.name = "Request";
+    request.fields.push_back(make_field("message", make_type(TypeRefKind::String)));
+    request.fields.push_back(make_field("priority", make_named_enum("Priority")));
+    program.declarations.push_back(std::move(request));
+
+    return program;
+}
+
+std::unordered_map<std::string, Value> make_request_fields(Value message,
+                                                           std::string priority_variant) {
+    std::unordered_map<std::string, Value> fields;
+    fields.emplace("message", std::move(message));
+    fields.emplace("priority", make_enum("Priority", std::move(priority_variant)));
+    return fields;
+}
+
+std::unordered_map<std::string, Value> make_missing_priority_fields() {
+    std::unordered_map<std::string, Value> fields;
+    fields.emplace("message", make_string("hello"));
+    return fields;
+}
+
+std::unordered_map<std::string, Value> make_extra_request_fields() {
+    auto fields = make_request_fields(make_string("hello"), "Low");
+    fields.emplace("unexpected", make_string("extra"));
+    return fields;
 }
 
 // ============================================================================
@@ -108,6 +160,44 @@ void test_struct_validation() {
     check(!validate_value_against_schema(make_int(1), schema).valid, "struct.reject_int");
 }
 
+void test_program_struct_validation_rejects_missing_and_extra_fields() {
+    const auto program = build_schema_program();
+    const auto schema = make_named_struct("Request");
+
+    auto good = make_struct("Request", make_request_fields(make_string("hello"), "Low"));
+    check(validate_value_against_schema(good, schema, program).valid, "struct.program.valid");
+
+    auto missing = make_struct("Request", make_missing_priority_fields());
+    const auto missing_result = validate_value_against_schema(missing, schema, program);
+    check(!missing_result.valid, "struct.program.reject_missing_field");
+    check(missing_result.error.find("missing field 'priority'") != std::string::npos,
+          "struct.program.missing_field_message");
+
+    auto extra = make_struct("Request", make_extra_request_fields());
+    const auto extra_result = validate_value_against_schema(extra, schema, program);
+    check(!extra_result.valid, "struct.program.reject_extra_field");
+    check(extra_result.error.find("unexpected field 'unexpected'") != std::string::npos,
+          "struct.program.extra_field_message");
+}
+
+void test_program_struct_validation_rejects_nested_field_type_and_enum_variant() {
+    const auto program = build_schema_program();
+    const auto schema = make_named_struct("Request");
+
+    auto wrong_field_type = make_struct("Request", make_request_fields(make_int(7), "Low"));
+    const auto field_result = validate_value_against_schema(wrong_field_type, schema, program);
+    check(!field_result.valid, "struct.program.reject_field_type");
+    check(field_result.error.find("message: expected String but got Int") != std::string::npos,
+          "struct.program.field_type_message");
+
+    auto wrong_variant =
+        make_struct("Request", make_request_fields(make_string("hello"), "Medium"));
+    const auto variant_result = validate_value_against_schema(wrong_variant, schema, program);
+    check(!variant_result.valid, "struct.program.reject_enum_variant");
+    check(variant_result.error.find("unknown enum variant 'Medium'") != std::string::npos,
+          "struct.program.enum_variant_message");
+}
+
 void test_enum_validation() {
     auto schema = make_named_enum("Status");
     auto good = make_enum("Status", "Active");
@@ -115,7 +205,22 @@ void test_enum_validation() {
 
     check(validate_value_against_schema(good, schema).valid, "enum.name_match");
     check(!validate_value_against_schema(bad_name, schema).valid, "enum.name_mismatch");
-    check(!validate_value_against_schema(make_string("Active"), schema).valid, "enum.reject_string");
+    check(!validate_value_against_schema(make_string("Active"), schema).valid,
+          "enum.reject_string");
+}
+
+void test_canonical_name_validation() {
+    auto struct_schema = make_canonical_type(TypeRefKind::Struct, "pkg::Request");
+    check(validate_value_against_schema(make_struct("pkg::Request", {}), struct_schema).valid,
+          "struct.canonical_name_match");
+    check(!validate_value_against_schema(make_struct("Other", {}), struct_schema).valid,
+          "struct.canonical_name_mismatch");
+
+    auto enum_schema = make_canonical_type(TypeRefKind::Enum, "pkg::Status");
+    check(validate_value_against_schema(make_enum("pkg::Status", "Active"), enum_schema).valid,
+          "enum.canonical_name_match");
+    check(!validate_value_against_schema(make_enum("Other", "Active"), enum_schema).valid,
+          "enum.canonical_name_mismatch");
 }
 
 // ============================================================================
@@ -144,7 +249,8 @@ void test_duration_validation() {
     auto schema = make_type(TypeRefKind::Duration);
     auto good = make_duration("5s");
     check(validate_value_against_schema(good, schema).valid, "duration.valid");
-    check(!validate_value_against_schema(make_string("5s"), schema).valid, "duration.reject_string");
+    check(!validate_value_against_schema(make_string("5s"), schema).valid,
+          "duration.reject_string");
 }
 
 void test_decimal_validation() {
@@ -178,7 +284,10 @@ int main() {
     test_string_validation();
     test_unit_validation();
     test_struct_validation();
+    test_program_struct_validation_rejects_missing_and_extra_fields();
+    test_program_struct_validation_rejects_nested_field_type_and_enum_variant();
     test_enum_validation();
+    test_canonical_name_validation();
     test_optional_validation();
     test_list_validation();
     test_duration_validation();

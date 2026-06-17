@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -25,6 +26,15 @@ void check(bool condition, const std::string &test_name) {
     } else {
         std::cerr << "FAIL: " << test_name << "\n";
     }
+}
+
+bool diagnostic_message_contains(const DiagnosticBag &diagnostics, std::string_view fragment) {
+    for (const auto &entry : diagnostics.entries()) {
+        if (entry.message.find(fragment) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ============================================================================
@@ -525,6 +535,277 @@ void test_node_input_can_call_capability_inside_struct_literal() {
     check(output != nullptr && output->value == 123, "node_input_capability.output_123");
 }
 
+void test_node_input_capability_failure_fails_workflow_with_diagnostic() {
+    Program program;
+
+    program.declarations.push_back(make_echo_agent("InputEchoAgent"));
+    program.declarations.push_back(make_input_field_return_flow("InputEchoAgent", "value"));
+
+    WorkflowDecl workflow;
+    workflow.name = "CapabilityNodeInputFailureWorkflow";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+
+    WorkflowNode node;
+    node.name = "cap_node";
+    node.target_ref = make_agent_ref("InputEchoAgent");
+    StructLiteralExpr node_input;
+    node_input.type_name = "NodeInput";
+    CallExpr value_call;
+    value_call.callee = "make_node_value";
+    node_input.fields.push_back(StructFieldInit{
+        .name = "value",
+        .value = make_expr_ptr(std::move(value_call)),
+    });
+    node.input = make_expr_ptr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+    program.declarations.push_back(std::move(workflow));
+
+    WorkflowRuntimeConfig config;
+    config.capability_invoker = [](const std::string &name,
+                                   const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        if (name == "make_node_value") {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Timeout,
+                .value = {},
+                .error_message = "upstream deadline exceeded",
+                .attempts = 2,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = {},
+            .error_message = "unexpected capability",
+            .attempts = 1,
+        };
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("CapabilityNodeInputFailureWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::EvalError, "node_input_capability_failure.status");
+    check(result.has_errors(), "node_input_capability_failure.has_errors");
+    check(result.execution_order.size() == 1, "node_input_capability_failure.exec_order_size");
+    check(result.execution_order[0] == "cap_node", "node_input_capability_failure.exec_order");
+    check(result.node_results.size() == 1, "node_input_capability_failure.node_result_size");
+    check(result.node_results[0].status == AgentStatus::Failed,
+          "node_input_capability_failure.node_failed");
+    check(!result.output.has_value(), "node_input_capability_failure.no_output");
+    check(diagnostic_message_contains(
+              result.diagnostics,
+              "capability 'make_node_value' failed with status timeout: upstream deadline "
+              "exceeded (attempts=2)"),
+          "node_input_capability_failure.diagnostic");
+}
+
+void test_contextual_invoker_receives_node_input_context() {
+    Program program;
+
+    program.declarations.push_back(make_echo_agent("InputEchoAgent"));
+    program.declarations.push_back(make_input_field_return_flow("InputEchoAgent", "value"));
+
+    WorkflowDecl workflow;
+    workflow.name = "ContextualNodeInputWorkflow";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+
+    WorkflowNode node;
+    node.name = "ctx_input_node";
+    node.target_ref = make_agent_ref("InputEchoAgent");
+    StructLiteralExpr node_input;
+    node_input.type_name = "NodeInput";
+    CallExpr value_call;
+    value_call.callee = "make_node_value";
+    node_input.fields.push_back(StructFieldInit{
+        .name = "value",
+        .value = make_expr_ptr(std::move(value_call)),
+    });
+    node.input = make_expr_ptr(std::move(node_input));
+    workflow.nodes.push_back(std::move(node));
+    program.declarations.push_back(std::move(workflow));
+
+    std::vector<CapabilityInvocationContext> contexts;
+    WorkflowRuntimeConfig config;
+    config.contextual_capability_invoker =
+        [&contexts](const CapabilityInvocationContext &context,
+                    const std::string &name,
+                    const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        contexts.push_back(context);
+        if (name == "make_node_value") {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Success,
+                .value = make_int(321),
+                .error_message = {},
+                .attempts = 1,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = {},
+            .error_message = "unexpected capability",
+            .attempts = 1,
+        };
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("ContextualNodeInputWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::Completed, "context_node_input.status_completed");
+    check(contexts.size() == 1, "context_node_input.context_count");
+    if (!contexts.empty()) {
+        check(contexts[0].workflow_name == "ContextualNodeInputWorkflow",
+              "context_node_input.workflow");
+        check(contexts[0].workflow_node_name == "ctx_input_node", "context_node_input.node");
+        check(contexts[0].agent_name == "InputEchoAgent", "context_node_input.agent");
+        check(contexts[0].state_name.empty(), "context_node_input.no_state");
+        check(contexts[0].has_workflow_node_context, "context_node_input.has_node_context");
+        check(contexts[0].workflow_node_execution_index == 0, "context_node_input.node_index");
+    }
+}
+
+void test_contextual_invoker_receives_agent_state_context() {
+    Program program;
+
+    program.declarations.push_back(make_echo_agent("ContextAgent"));
+    FlowDecl flow;
+    flow.target_ref = make_agent_ref("ContextAgent");
+    StateHandler init_handler;
+    init_handler.state_name = "Init";
+    init_handler.body.statements.push_back(make_stmt_ptr(GotoStatement{"Done"}));
+    flow.state_handlers.push_back(std::move(init_handler));
+    StateHandler done_handler;
+    done_handler.state_name = "Done";
+    CallExpr call;
+    call.callee = "make_agent_value";
+    done_handler.body.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(std::move(call))}));
+    flow.state_handlers.push_back(std::move(done_handler));
+    program.declarations.push_back(std::move(flow));
+
+    WorkflowDecl workflow;
+    workflow.name = "ContextualAgentWorkflow";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+    workflow.nodes.push_back(make_node("ctx_agent_node", "ContextAgent"));
+    program.declarations.push_back(std::move(workflow));
+
+    std::vector<CapabilityInvocationContext> contexts;
+    WorkflowRuntimeConfig config;
+    config.contextual_capability_invoker =
+        [&contexts](const CapabilityInvocationContext &context,
+                    const std::string &name,
+                    const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        contexts.push_back(context);
+        if (name == "make_agent_value") {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::Success,
+                .value = make_int(654),
+                .error_message = {},
+                .attempts = 1,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = {},
+            .error_message = "unexpected capability",
+            .attempts = 1,
+        };
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("ContextualAgentWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::Completed, "context_agent.status_completed");
+    check(contexts.size() == 1, "context_agent.context_count");
+    if (!contexts.empty()) {
+        check(contexts[0].workflow_name == "ContextualAgentWorkflow", "context_agent.workflow");
+        check(contexts[0].workflow_node_name == "ctx_agent_node", "context_agent.node");
+        check(contexts[0].agent_name == "ContextAgent", "context_agent.agent");
+        check(contexts[0].state_name == "Done", "context_agent.state");
+        check(contexts[0].has_workflow_node_context, "context_agent.has_node_context");
+        check(contexts[0].workflow_node_execution_index == 0, "context_agent.node_index");
+    }
+}
+
+void test_agent_state_capability_failure_fails_workflow_with_contextual_diagnostic() {
+    Program program;
+
+    program.declarations.push_back(make_echo_agent("ContextAgent"));
+    FlowDecl flow;
+    flow.target_ref = make_agent_ref("ContextAgent");
+    StateHandler init_handler;
+    init_handler.state_name = "Init";
+    init_handler.body.statements.push_back(make_stmt_ptr(GotoStatement{"Done"}));
+    flow.state_handlers.push_back(std::move(init_handler));
+    StateHandler done_handler;
+    done_handler.state_name = "Done";
+    CallExpr call;
+    call.callee = "make_agent_value";
+    done_handler.body.statements.push_back(
+        make_stmt_ptr(ReturnStatement{make_expr_ptr(std::move(call))}));
+    flow.state_handlers.push_back(std::move(done_handler));
+    program.declarations.push_back(std::move(flow));
+
+    WorkflowDecl workflow;
+    workflow.name = "ContextualAgentFailureWorkflow";
+    workflow.input_type_ref = make_named_type_ref("Input");
+    workflow.output_type_ref = make_named_type_ref("Output");
+    workflow.nodes.push_back(make_node("ctx_agent_node", "ContextAgent"));
+    program.declarations.push_back(std::move(workflow));
+
+    std::vector<CapabilityInvocationContext> contexts;
+    WorkflowRuntimeConfig config;
+    config.contextual_capability_invoker =
+        [&contexts](const CapabilityInvocationContext &context,
+                    const std::string &name,
+                    const std::vector<Value> & /*args*/) -> CapabilityCallResult {
+        contexts.push_back(context);
+        if (name == "make_agent_value") {
+            return CapabilityCallResult{
+                .status = CapabilityCallStatus::RetryExhausted,
+                .value = {},
+                .error_message = "service unavailable",
+                .attempts = 3,
+            };
+        }
+        return CapabilityCallResult{
+            .status = CapabilityCallStatus::Error,
+            .value = {},
+            .error_message = "unexpected capability",
+            .attempts = 1,
+        };
+    };
+
+    WorkflowRuntime runtime(program, std::move(config));
+    auto result = runtime.run("ContextualAgentFailureWorkflow", make_none());
+
+    check(result.status == WorkflowStatus::NodeFailed, "agent_capability_failure.status");
+    check(result.has_errors(), "agent_capability_failure.has_errors");
+    check(result.execution_order.size() == 1, "agent_capability_failure.exec_order_size");
+    check(result.execution_order[0] == "ctx_agent_node", "agent_capability_failure.exec_order");
+    check(result.node_results.size() == 1, "agent_capability_failure.node_result_size");
+    check(result.node_results[0].status == AgentStatus::Failed,
+          "agent_capability_failure.node_failed");
+    check(!result.output.has_value(), "agent_capability_failure.no_output");
+    check(diagnostic_message_contains(
+              result.diagnostics,
+              "capability 'make_agent_value' failed with status retry_exhausted: service "
+              "unavailable (attempts=3)"),
+          "agent_capability_failure.diagnostic");
+
+    check(contexts.size() == 1, "agent_capability_failure.context_count");
+    if (!contexts.empty()) {
+        check(contexts[0].workflow_name == "ContextualAgentFailureWorkflow",
+              "agent_capability_failure.workflow");
+        check(contexts[0].workflow_node_name == "ctx_agent_node", "agent_capability_failure.node");
+        check(contexts[0].agent_name == "ContextAgent", "agent_capability_failure.agent");
+        check(contexts[0].state_name == "Done", "agent_capability_failure.state");
+        check(contexts[0].has_workflow_node_context, "agent_capability_failure.has_node_context");
+        check(contexts[0].workflow_node_execution_index == 0,
+              "agent_capability_failure.node_index");
+    }
+}
+
 // ============================================================================
 // Test: 空 workflow（无 nodes）
 // ============================================================================
@@ -631,6 +912,10 @@ int main() {
     test_return_value_eval_error_is_reported();
     test_return_value_can_call_capability_inside_composite_expression();
     test_node_input_can_call_capability_inside_struct_literal();
+    test_node_input_capability_failure_fails_workflow_with_diagnostic();
+    test_contextual_invoker_receives_node_input_context();
+    test_contextual_invoker_receives_agent_state_context();
+    test_agent_state_capability_failure_fails_workflow_with_contextual_diagnostic();
     test_empty_workflow();
     test_missing_agent_declaration();
     test_missing_workflow();

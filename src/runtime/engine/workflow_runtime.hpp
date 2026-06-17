@@ -48,6 +48,7 @@ struct WorkflowResult {
 struct WorkflowRuntimeConfig {
     QuotaConfig default_agent_quota;
     std::optional<CapabilityInvoker> capability_invoker;
+    std::optional<ContextualCapabilityInvoker> contextual_capability_invoker;
 };
 
 // Workflow Runtime
@@ -76,7 +77,8 @@ class WorkflowRuntime {
     [[nodiscard]] evaluator::EvalResult
     eval_workflow_expression(const ir::Expr &expr,
                              const Value &workflow_input,
-                             const std::unordered_map<std::string, Value> &node_outputs) const;
+                             const std::unordered_map<std::string, Value> &node_outputs,
+                             const CapabilityInvocationContext &context = {}) const;
 };
 
 } // namespace ahfl::runtime

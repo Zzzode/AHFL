@@ -4,8 +4,15 @@
 #include "runtime/engine/grpc_transport.hpp"
 #include "runtime/engine/http_transport.hpp"
 
+#include <optional>
+
 namespace ahfl::runtime {
 namespace {
+
+struct HeaderProjection {
+    std::vector<std::pair<std::string, std::string>> response_headers;
+    std::vector<std::pair<std::string, std::string>> trailers;
+};
 
 [[nodiscard]] ahfl::support::HttpRequest make_http_request(const HttpRequest &request) {
     ahfl::support::HttpRequest http_request;
@@ -18,6 +25,8 @@ namespace {
     if (!request.body.empty()) {
         http_request.body = request.body;
     }
+    http_request.tls_client_certificate_path = request.tls_client_certificate_path;
+    http_request.tls_client_key_path = request.tls_client_key_path;
     return http_request;
 }
 
@@ -38,15 +47,55 @@ make_http_request(const GrpcJsonTranscodingRequest &request) {
     http_request.version = request.endpoint.use_tls
                                ? ahfl::support::HttpVersion::Http2
                                : ahfl::support::HttpVersion::Http2PriorKnowledge;
+    http_request.capture_headers = true;
+    http_request.tls_client_certificate_path = request.tls_client_certificate_path;
+    http_request.tls_client_key_path = request.tls_client_key_path;
     return http_request;
 }
 
+[[nodiscard]] HeaderProjection project_header_blocks(const ahfl::support::HttpResponse &response) {
+    HeaderProjection projection;
+    if (response.response_header_blocks.empty()) {
+        projection.response_headers = response.response_headers;
+        return projection;
+    }
+
+    std::optional<std::size_t> final_response_header_block;
+    for (std::size_t index = 0; index < response.response_header_blocks.size(); ++index) {
+        if (response.response_header_blocks[index].has_status_line) {
+            final_response_header_block = index;
+        }
+    }
+
+    if (!final_response_header_block.has_value()) {
+        projection.response_headers = response.response_headers;
+        return projection;
+    }
+
+    projection.response_headers =
+        response.response_header_blocks[*final_response_header_block].headers;
+    for (std::size_t index = *final_response_header_block + 1;
+         index < response.response_header_blocks.size();
+         ++index) {
+        const auto &block = response.response_header_blocks[index];
+        if (block.has_status_line) {
+            continue;
+        }
+        projection.trailers.insert(
+            projection.trailers.end(), block.headers.begin(), block.headers.end());
+    }
+    return projection;
+}
+
 [[nodiscard]] WireTransportResponse to_wire_response(const ahfl::support::HttpResponse &response) {
+    const auto projection = project_header_blocks(response);
     return WireTransportResponse{
         .status_code = response.status_code,
         .body = response.body,
         .error = response.error,
         .timed_out = response.timed_out,
+        .response_headers = projection.response_headers,
+        .trailers = projection.trailers,
     };
 }
 

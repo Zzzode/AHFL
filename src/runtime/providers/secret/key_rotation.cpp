@@ -2,8 +2,39 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <iomanip>
+#include <sstream>
+#include <string_view>
 
 namespace ahfl::secret {
+
+namespace {
+
+[[nodiscard]] std::uint64_t fnv1a_hash(std::string_view value) {
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (char ch : value) {
+        hash ^= static_cast<unsigned char>(ch);
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+[[nodiscard]] std::string hex_hash(std::uint64_t value) {
+    std::ostringstream out;
+    out << std::hex << std::setfill('0') << std::setw(16) << value;
+    return out.str();
+}
+
+[[nodiscard]] std::string provider_prefix(std::string_view key) {
+    const auto separator = key.find(':');
+    if (separator == std::string_view::npos || separator == 0) {
+        return "unqualified";
+    }
+    return std::string(key.substr(0, separator));
+}
+
+} // namespace
 
 // ============================================================================
 // KeyRotationManager
@@ -68,19 +99,31 @@ RotationEvent KeyRotationManager::rotate_key(const std::string &key) {
     auto now = std::chrono::system_clock::now();
 
     auto old_value = provider_.resolve(key);
-    std::string old_version = old_value.value_or("");
+    std::optional<std::string> new_value;
+    const auto policy = get_policy(key);
+    const auto max_attempts =
+        std::max<std::size_t>(std::size_t{1}, policy.has_value() ? policy->max_retries + 1 : 1);
 
-    provider_.refresh(key);
-
-    auto new_value = provider_.resolve(key);
-    std::string new_version = new_value.value_or("");
+    std::size_t attempts = 0;
+    for (; attempts < max_attempts; ++attempts) {
+        provider_.refresh(key);
+        new_value = provider_.resolve(key);
+        if (new_value.has_value()) {
+            ++attempts;
+            break;
+        }
+    }
 
     RotationEvent event;
     event.key = key;
+    event.provider_prefix = provider_prefix(key);
+    event.key_fingerprint = hex_hash(fnv1a_hash(key));
     event.status = new_value.has_value() ? RotationStatus::Completed : RotationStatus::Failed;
     event.timestamp = now;
-    event.old_version = std::move(old_version);
-    event.new_version = std::move(new_version);
+    event.previous_value_present = old_value.has_value();
+    event.rotated_value_present = new_value.has_value();
+    event.attempts = attempts;
+    event.secret_free = true;
     if (!new_value.has_value()) {
         event.error_message = "secret provider returned no value for rotated key";
     }

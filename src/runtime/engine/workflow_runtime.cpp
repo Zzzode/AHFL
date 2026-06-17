@@ -66,7 +66,8 @@ WorkflowRuntime::topological_sort(const ir::WorkflowDecl &workflow) const {
 evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
     const ir::Expr &expr,
     const Value &workflow_input,
-    const std::unordered_map<std::string, Value> &node_outputs) const {
+    const std::unordered_map<std::string, Value> &node_outputs,
+    const CapabilityInvocationContext &context) const {
     evaluator::EvalContext ctx;
 
     // 将整体 workflow input 绑定为 local "input"，支持 `input` 作为简单路径解析
@@ -95,6 +96,10 @@ evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
         }
     }
 
+    if (config_.contextual_capability_invoker.has_value()) {
+        return eval_expr_with_capabilities(
+            expr, ctx, *config_.contextual_capability_invoker, context);
+    }
     if (config_.capability_invoker.has_value()) {
         return eval_expr_with_capabilities(expr, ctx, *config_.capability_invoker);
     }
@@ -123,8 +128,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     if (workflow->nodes.empty()) {
         if (workflow->return_value) {
             std::unordered_map<std::string, Value> empty_outputs;
+            CapabilityInvocationContext context;
+            context.workflow_name = workflow_name;
             auto return_result =
-                eval_workflow_expression(*workflow->return_value, input, empty_outputs);
+                eval_workflow_expression(*workflow->return_value, input, empty_outputs, context);
             if (return_result.has_errors()) {
                 result.status = WorkflowStatus::EvalError;
                 result.diagnostics.append(return_result.diagnostics);
@@ -183,8 +190,17 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
 
         // 步骤 4a：求值 node 的 input 表达式
         evaluator::Value node_input = evaluator::make_none();
+        CapabilityInvocationContext node_context{
+            .workflow_name = workflow_name,
+            .workflow_node_name = node->name,
+            .agent_name = target,
+            .state_name = {},
+            .workflow_node_execution_index = idx,
+            .has_workflow_node_context = true,
+        };
         if (node->input) {
-            auto eval_result = eval_workflow_expression(*node->input, input, node_outputs);
+            auto eval_result =
+                eval_workflow_expression(*node->input, input, node_outputs, node_context);
             if (eval_result.has_errors()) {
                 result.status = WorkflowStatus::EvalError;
                 result.diagnostics.append(eval_result.diagnostics);
@@ -225,7 +241,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
 
         // 步骤 4c：构建并运行 AgentRuntime
         AgentRuntime agent_rt(*agent_decl, *flow_decl, config_.default_agent_quota);
-        if (config_.capability_invoker.has_value()) {
+        agent_rt.set_invocation_context(node_context);
+        if (config_.contextual_capability_invoker.has_value()) {
+            agent_rt.set_contextual_capability_invoker(*config_.contextual_capability_invoker);
+        } else if (config_.capability_invoker.has_value()) {
             agent_rt.set_capability_invoker(*config_.capability_invoker);
         }
         AgentResult agent_result = agent_rt.run(std::move(node_input));
@@ -263,7 +282,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
 
     // 步骤 5：求值 workflow 返回值（仅在无错误时）
     if (result.status == WorkflowStatus::Completed && workflow->return_value) {
-        auto return_result = eval_workflow_expression(*workflow->return_value, input, node_outputs);
+        CapabilityInvocationContext context;
+        context.workflow_name = workflow_name;
+        auto return_result =
+            eval_workflow_expression(*workflow->return_value, input, node_outputs, context);
         if (return_result.has_errors()) {
             result.status = WorkflowStatus::EvalError;
             result.diagnostics.append(return_result.diagnostics);
