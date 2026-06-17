@@ -187,6 +187,9 @@ jobs:
       - name: Run V0.40-V0.42 Durable Provider Readiness Regression
         run: ctest --preset test-dev --output-on-failure -L 'ahfl-v0.(40|41|42)'
 
+      - name: Run V0.59 Quality Gates
+        run: ctest --preset test-dev --output-on-failure -L 'v0.59-quality-gates'
+
       - name: Run Full Tests
         run: ctest --preset test-dev --output-on-failure
 

@@ -1,0 +1,59 @@
+module ir::pass_productization;
+
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+predicate ready(value: String) -> Bool;
+capability Decide(request: Request) -> Response;
+
+agent PassAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Decide];
+    transition Init -> Done;
+}
+
+contract for PassAgent {
+    requires: true and ready(input.value);
+    ensures: false or ready(output.value);
+    invariant: always always called(Decide);
+}
+
+flow for PassAgent {
+    state Init {
+        let reply = Decide(input);
+        ctx.value = reply.value;
+        goto Done;
+    }
+
+    state Done {
+        return Response {
+            value: ctx.value,
+        };
+    }
+}
+
+workflow PassWorkflow {
+    input: Request;
+    output: Response;
+
+    node run: PassAgent(input);
+
+    safety: always always (not running(run) or completed(run));
+    liveness: eventually completed(run, Done);
+
+    return: run;
+}
