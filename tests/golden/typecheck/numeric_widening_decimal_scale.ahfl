@@ -1,0 +1,1 @@
+const RejectedDecimal: Decimal(4) = 1.23d;

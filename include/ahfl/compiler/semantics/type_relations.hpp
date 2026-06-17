@@ -96,8 +96,9 @@ struct TypeRelationOptions {
     bool allow_bounded_string_relaxation{true};
 
     // When true, numeric types follow widening rules: narrower numeric types
-    // are assignable to wider ones (e.g. Int -> Float). Default: true.
-    bool allow_numeric_widening{true};
+    // are assignable to wider ones (e.g. Int -> Float). Default: false —
+    // AHFL source-level subtyping does not include numeric promotion.
+    bool allow_numeric_widening{false};
 };
 
 // ---------------------------------------------------------------------------
@@ -108,18 +109,26 @@ struct TypeRelationOptions {
 // appends flat TypeRelationTraceStep records. This structure is designed for
 // direct consumption by diagnostics (see format_trace_notes below).
 
-enum class TypeRelationResult { Accepted, Rejected };
+enum class TypeRelationResult {
+    Accepted,
+    Rejected
+};
 
-enum class TypeRelationKind { Equivalent, Subtype, Assignable, ExactSchema };
+enum class TypeRelationKind {
+    Equivalent,
+    Subtype,
+    Assignable,
+    ExactSchema
+};
 
 struct TypeRelationTraceStep {
     TypeRelationKind kind{TypeRelationKind::Assignable};
     int depth{0};
-    std::string path;                // e.g. "list.element", "map.key"
-    std::string expected_describe;   // target type describe()
-    std::string actual_describe;     // source type describe()
+    std::string path;              // e.g. "list.element", "map.key"
+    std::string expected_describe; // target type describe()
+    std::string actual_describe;   // source type describe()
     TypeRelationResult result{TypeRelationResult::Rejected};
-    std::string reason;              // human readable note
+    std::string reason; // human readable note
 };
 
 struct RelationTrace {
@@ -131,9 +140,15 @@ struct RelationTrace {
     // diagnostics related notes.
     [[nodiscard]] std::vector<std::string> format_notes(std::size_t max_notes = 8) const;
 
-    [[nodiscard]] bool empty() const noexcept { return steps.empty(); }
-    [[nodiscard]] std::size_t size() const noexcept { return steps.size(); }
-    void clear() noexcept { steps.clear(); }
+    [[nodiscard]] bool empty() const noexcept {
+        return steps.empty();
+    }
+    [[nodiscard]] std::size_t size() const noexcept {
+        return steps.size();
+    }
+    void clear() noexcept {
+        steps.clear();
+    }
 };
 
 // ---- Forward declarations of 3-arg free function overloads -----------------
@@ -150,13 +165,15 @@ class TypeRelationContext;
 
 [[nodiscard]] bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext &ctx);
 [[nodiscard]] bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &ctx);
-[[nodiscard]] bool is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx);
-[[nodiscard]] bool is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx);
+[[nodiscard]] bool
+is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx);
+[[nodiscard]] bool
+is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx);
 
 // Holds per-call state shared by relation traversals. Intended as a stack
 // object that is threaded down through recursive comparisons.
 class TypeRelationContext {
-public:
+  public:
     explicit TypeRelationContext(TypeRelationOptions opts = {}) : options_(opts) {}
 
     [[nodiscard]] const TypeRelationOptions &options() const noexcept {
@@ -166,16 +183,24 @@ public:
     // ---- Flat trace API ------------------------------------------------------
 
     // Legacy-compatible setter. Mirrors TypeRelationOptions::enable_trace.
-    void enable_trace(bool v) noexcept { options_.enable_trace = v; }
+    void enable_trace(bool v) noexcept {
+        options_.enable_trace = v;
+    }
     // When enable_trace is true, also record steps whose outcome is
     // "satisfied". Mirrors TypeRelationOptions::include_success_steps.
-    void include_success_steps(bool v) noexcept { options_.include_success_steps = v; }
+    void include_success_steps(bool v) noexcept {
+        options_.include_success_steps = v;
+    }
     [[nodiscard]] bool trace_enabled() const noexcept {
         return options_.enable_trace;
     }
 
-    [[nodiscard]] const RelationTrace &trace() const noexcept { return flat_trace_; }
-    [[nodiscard]] RelationTrace &trace() noexcept { return flat_trace_; }
+    [[nodiscard]] const RelationTrace &trace() const noexcept {
+        return flat_trace_;
+    }
+    [[nodiscard]] RelationTrace &trace() noexcept {
+        return flat_trace_;
+    }
 
     // Record a flat trace step if: (1) enable_trace is on, (2) depth < max_depth,
     // and (3) either the step failed or include_success_steps is set.
@@ -229,7 +254,8 @@ public:
     }
 
     // Convenience builders.
-    TypeConstraintNode *push_and(std::string path = {}, std::string left = {}, std::string right = {}) {
+    TypeConstraintNode *
+    push_and(std::string path = {}, std::string left = {}, std::string right = {}) {
         TypeConstraintNode n;
         n.kind = TypeConstraintNode::Kind::And;
         n.path = std::move(path);
@@ -238,7 +264,8 @@ public:
         return push_node(std::move(n));
     }
 
-    TypeConstraintNode *push_or(std::string path = {}, std::string left = {}, std::string right = {}) {
+    TypeConstraintNode *
+    push_or(std::string path = {}, std::string left = {}, std::string right = {}) {
         TypeConstraintNode n;
         n.kind = TypeConstraintNode::Kind::Or;
         n.path = std::move(path);
@@ -247,11 +274,8 @@ public:
         return push_node(std::move(n));
     }
 
-    TypeConstraintNode *push_relation(std::string rel,
-                                      std::string path,
-                                      std::string left,
-                                      std::string right,
-                                      bool satisfied) {
+    TypeConstraintNode *push_relation(
+        std::string rel, std::string path, std::string left, std::string right, bool satisfied) {
         TypeConstraintNode n;
         n.kind = TypeConstraintNode::Kind::Relation;
         n.relation = std::move(rel);
@@ -262,10 +286,7 @@ public:
         return push_node(std::move(n));
     }
 
-    void add_leaf(std::string path,
-                  std::string left,
-                  std::string right,
-                  bool satisfied) {
+    void add_leaf(std::string path, std::string left, std::string right, bool satisfied) {
         TypeConstraintNode n;
         n.kind = TypeConstraintNode::Kind::Leaf;
         n.path = std::move(path);
@@ -276,7 +297,9 @@ public:
         pop_node(); // leaves have no children
     }
 
-    [[nodiscard]] bool stack_empty() const noexcept { return stack_.empty(); }
+    [[nodiscard]] bool stack_empty() const noexcept {
+        return stack_.empty();
+    }
 
     // ---- Member-method shortcuts (mirror the 3-arg free functions) -----------
     //
@@ -298,7 +321,7 @@ public:
         return ahfl::is_exact_schema_match(source, target, *this);
     }
 
-private:
+  private:
     TypeRelationOptions options_{};
     RelationTrace flat_trace_{};
     TypeConstraintSkeleton constraint_skeleton_{};
@@ -323,10 +346,12 @@ private:
 [[nodiscard]] bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &ctx);
 
 [[nodiscard]] bool is_assignable_to(const Type &source, const Type &target);
-[[nodiscard]] bool is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx);
+[[nodiscard]] bool
+is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx);
 
 [[nodiscard]] bool is_exact_schema_match(const Type &source, const Type &target);
-[[nodiscard]] bool is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx);
+[[nodiscard]] bool
+is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx);
 
 enum class SchemaBoundaryKind {
     AgentInput,
