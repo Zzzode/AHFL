@@ -54,15 +54,15 @@ src/tooling/cli
 
 当前编译主链路固定为：
 
-```text
-source file(s)
-  -> parse
-  -> AST lowering
-  -> resolve
-  -> typecheck
-  -> validate
-  -> IR lowering
-  -> backend emit
+```mermaid
+flowchart TD
+    Source["source file(s)"] --> Parse["parse"]
+    Parse --> ASTLowering["AST lowering"]
+    ASTLowering --> Resolve["resolve"]
+    Resolve --> Typecheck["typecheck"]
+    Typecheck --> Validate["validate"]
+    Validate --> IRLowering["IR lowering"]
+    IRLowering --> BackendEmit["backend emit"]
 ```
 
 单文件模式与 project-aware 模式共享后半段，只是在 frontend 的输入粒度不同：

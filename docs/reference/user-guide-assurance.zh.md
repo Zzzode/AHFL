@@ -96,18 +96,27 @@ ok: assurance validation ready
 
 ```bash
 ./build/dev/src/tooling/cli/ahflc verify \
+  --formal-backend nuxmv \
   --model-checker /path/to/nuXmv \
+  --checker-timeout-seconds 60 \
   --formal-model-out /tmp/refund_audit.smv \
   examples/refund_audit_core_v0_1.ahfl
 ```
 
-Checker 查找顺序：
+`--formal-backend` 当前支持 `nuxmv`、`nusmv`、`spin`、`tlaplus` 四个 capability matrix 条目；只有 `nuxmv` / `nusmv` 进入 AHFL SMV 外部验证路径。`spin` / `tlaplus` 当前只承诺模型 emission，`verify` 会以 `checker_status: verification_unsupported` 失败。`--checker-timeout-seconds` 控制外部 checker 进程上限；超时会以 `checker_status: checker_error` 和 `checker_timed_out: true` 失败，便于 CI 区分卡死与普通反例。
+
+NuSMV / nuXmv checker 查找顺序：
 
 1. `--model-checker <path>`。
 2. `AHFL_SMV_CHECKER` 环境变量。
-3. `PATH` 中的 `NuSMV`。
-4. `PATH` 中的 `nuXmv`。
-5. `PATH` 中的 `nuxmv`。
+3. backend-specific 环境变量，例如 `AHFL_NUXMV_PATH` 或 `AHFL_NUSMV_PATH`。
+4. `PATH` 中的 `NuSMV`、`nuXmv`、`nuxmv` 或 `nusmv`。
+
+CI 可以用稳定 `checker_status` 区分失败类型：`missing_binary` 表示没有 checker 二进制；`verification_unsupported` 表示 backend 不支持 AHFL property 外部验证；`checker_error` 表示 checker 进程或输出解析失败。
+
+`verify` report 还会输出状态空间估计字段：`state_space_estimate`、`state_space_agents`、`state_space_transitions`、`state_space_likely_tractable`。这些字段来自 IR agent 的 states/transitions/capabilities，用于在调用 checker 前提示状态空间规模；它不是 NuSMV/nuXmv 返回的 reachable-state 精确统计。
+
+NuSMV/nuXmv 输出解析覆盖四类稳定 fixture：全部 true、false/counterexample、parse/type error 和 timeout。timeout 会作为确定 checker failure 处理，不会被当成“没有 specification result”的普通未知输出。
 
 Formal backend 适合证明：
 

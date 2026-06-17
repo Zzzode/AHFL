@@ -73,13 +73,14 @@ ok: assurance validation ready
 
 `ahflc verify-formal <file.ahfl>` 必须先通过 parse、resolve、typecheck 和基础 validator，再降低到 IR、生成 SMV 模型、调用 SMV 兼容 model checker。
 
-Checker 选择顺序：
+`--formal-backend <name>` 可选择 checker backend。当前 `nuxmv` 与 `nusmv` 进入 AHFL SMV 外部验证路径；`spin` 与 `tlaplus` 只承诺模型 emission，不承诺 `verify-formal` 外部验证，命令必须以 `checker_status: verification_unsupported` 失败。
+
+NuSMV/nuXmv checker 选择顺序：
 
 1. `--model-checker <path>` 显式指定的可执行文件。
 2. `AHFL_SMV_CHECKER` 环境变量。
-3. `PATH` 中的 `NuSMV`。
-4. `PATH` 中的 `nuXmv`。
-5. `PATH` 中的 `nuxmv`。
+3. backend-specific 环境变量，例如 `AHFL_NUXMV_PATH` 或 `AHFL_NUSMV_PATH`。
+4. `PATH` 中的 `NuSMV`、`nuXmv`、`nuxmv` 或 `nusmv`。
 
 命令必须把生成的 SMV 文件作为 checker 的第一个参数。
 如果传入 `--formal-model-out <model.smv>`，命令必须把同一个 SMV 模型写入该路径，并使用该路径调用 checker，便于 CI 归档和本地复现。
@@ -92,6 +93,7 @@ Checker 输出解析规则：
 - 如果 checker 进程返回非零退出码且没有 failing specification，命令必须返回 checker error。
 - 如果生成的 SMV 模型包含 `LTLSPEC`，但 checker 没有输出对应 specification 结果，命令必须返回 checker error。
 - 如果输出包含 `counterexample`、`Trace Description` 或 `Trace Type`，命令失败报告必须保留 counterexample 摘要。
+- 命令报告必须包含稳定的 `checker_status` 字段。`missing_binary` 表示没有找到可用 checker；`verification_unsupported` 表示所选 backend 不支持 AHFL property 外部验证；`checker_error` 表示 checker 进程或输出解析失败。
 
 命令成功时必须输出：
 

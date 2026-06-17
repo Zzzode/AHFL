@@ -5,7 +5,7 @@
 | 文档类型 | reference |
 | 版本 | v0.1 |
 | 适用范围 | `tools/vscode` VS Code extension scaffold |
-| 当前状态 | 可本地打包，可手动发布 Marketplace |
+| 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test，workspace folder extension 序列仍需扩展验证 |
 
 ---
 
@@ -88,6 +88,14 @@ tools/vscode/dist/ahfl-language-<version>-<target>.vsix
 code --install-extension tools/vscode/dist/ahfl-language-<version>-<target>.vsix
 ```
 
+发布包内容预检与安装 smoke：
+
+```bash
+cd tools/vscode
+npm run test:package-inventory
+npm run test:vsix-install
+```
+
 如果只调试客户端扩展，可以从 `tools/vscode` 生成 client-only VSIX：
 
 ```bash
@@ -108,8 +116,10 @@ Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外
 
 1. 打开包含 `.ahfl` 文件的工作区。
 2. 对 platform VSIX，确认扩展可自动启动内置 `server/ahfl-lsp`。
-3. 在 `.ahfl` 文件中触发 diagnostics、hover、completion。
-4. 如需排查 server 输出，可临时设置环境变量 `AHFL_LSP_TRACE=1` 后启动 VS Code。
+3. 在 `.ahfl` 文件中触发 diagnostics、hover、completion。当前 server 同时支持 `textDocument/publishDiagnostics` 推送，以及 `textDocument/diagnostic` / `workspace/diagnostic` full report 拉取。
+4. 修改未打开的 imported `.ahfl` 文件后，确认 watched-files notification 会触发 workspace diagnostics 刷新。
+5. workspace folder 切换目前只有 server handler/protocol 级证据；extension-host 序列仍作为后续验证项。
+6. 如需排查 server 输出，可临时设置环境变量 `AHFL_LSP_TRACE=1` 后启动 VS Code。
 
 ## 五、Marketplace 手动发布
 
@@ -119,6 +129,8 @@ Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外
 2. 具有 Marketplace Manage 权限的 personal access token。
 3. `tools/vscode/package.json` 中的 `publisher` 与 Marketplace publisher 一致。
 4. 已通过 `scripts/package-vscode-vsix-release.sh` 生成对应平台 VSIX。
+5. 已通过 `npm run test:package-inventory` 验证 Marketplace 发布包清单。
+6. 已通过 `npm run test:vsix-install` 验证 platform VSIX 可安装且包含可执行 release `ahfl-lsp`。
 
 先从仓库根目录生成 platform VSIX：
 
@@ -136,8 +148,11 @@ npm run publish:vsix -- dist/ahfl-language-<version>-<target>.vsix --pat "$VSCE_
 如果只是预检扩展包内容，不发布 Marketplace，使用：
 
 ```bash
-npm run package
+npm run test:package-inventory
 ```
+
+当前本地 `vsce` 没有真正的 `publish --dry-run` 选项；该门禁使用 `vsce ls --no-dependencies`
+离线验证将进入 VSIX/Marketplace 包的文件清单。
 
 官方流程参考 Visual Studio Code 的 Publishing Extensions 文档：
 
@@ -150,8 +165,9 @@ https://code.visualstudio.com/api/working-with-extensions/publishing-extension
 `.github/workflows/vscode-extension.yml` 提供三种产物/入口：
 
 1. push / pull request：在 Linux/macOS runner 上构建 release LSP，并打包内置该 server 的 platform VSIX。
-2. push / pull request：上传 platform VSIX artifact。
-3. workflow dispatch：当输入 `publish=true` 且仓库配置了 `VSCE_PAT` secret 时，发布 platform VSIX 到 Marketplace。
+2. push / pull request：运行 Marketplace package inventory gate，确认发布清单包含 extension client、TextMate、snippet 与内置 release `ahfl-lsp`，且不包含 `src/`、`test/`、`dist/` 等开发产物。
+3. push / pull request：上传 platform VSIX artifact。
+4. workflow dispatch：当输入 `publish=true` 且仓库配置了 `VSCE_PAT` secret 时，发布 platform VSIX 到 Marketplace。
 
 手动发布前必须确认：
 
@@ -159,6 +175,7 @@ https://code.visualstudio.com/api/working-with-extensions/publishing-extension
 2. `tools/vscode/package.json` 的 `version` 已递增。
 3. `tools/vscode/CHANGELOG.md` 已更新。
 4. 对应版本的 platform VSIX 已包含 release `ahfl-lsp`。
+5. `npm run test:package-inventory` 与 `npm run test:vsix-install` 已通过。
 
 ## 七、验证门禁
 
@@ -174,6 +191,29 @@ scripts/package-vscode-vsix-release.sh
 cd tools/vscode
 npm ci
 npm run compile
+```
+
+验证 VS Code extension host 下的 hover、completion、rename、watched-files 与 diagnostics publish/recovery：
+
+```bash
+cmake --build --preset build-dev --target ahfl-lsp
+cd tools/vscode
+npm run test:extension
+```
+
+生成并校验 Problems diagnostics transcript：
+
+```bash
+cd tools/vscode
+npm run test:problems-transcript
+```
+
+验证 Marketplace package inventory 与 platform VSIX 安装：
+
+```bash
+cd tools/vscode
+npm run test:package-inventory
+npm run test:vsix-install
 ```
 
 仓库级变更还应运行：
