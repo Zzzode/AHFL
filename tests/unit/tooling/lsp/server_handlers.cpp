@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -63,6 +64,99 @@ std::string run_lsp_messages(const std::vector<std::string> &bodies) {
     LspServer server(in, out);
     server.run();
     return out.str();
+}
+
+struct LspMessageStep {
+    std::string body;
+    std::function<void()> before;
+};
+
+class HookedMessageBuffer : public std::streambuf {
+  public:
+    explicit HookedMessageBuffer(std::vector<LspMessageStep> steps) : steps_(std::move(steps)) {}
+
+  protected:
+    int_type underflow() override {
+        if (gptr() != nullptr && gptr() < egptr()) {
+            return traits_type::to_int_type(*gptr());
+        }
+        if (next_step_ >= steps_.size()) {
+            return traits_type::eof();
+        }
+
+        auto &step = steps_[next_step_++];
+        if (step.before) {
+            step.before();
+        }
+        current_ = make_frame(step.body);
+        setg(current_.data(), current_.data(), current_.data() + current_.size());
+        return traits_type::to_int_type(*gptr());
+    }
+
+  private:
+    std::vector<LspMessageStep> steps_;
+    std::size_t next_step_{0};
+    std::string current_;
+};
+
+std::string run_lsp_message_steps(std::vector<LspMessageStep> steps) {
+    HookedMessageBuffer buffer(std::move(steps));
+    std::istream in(&buffer);
+    std::ostringstream out;
+    LspServer server(in, out);
+    server.run();
+    return out.str();
+}
+
+std::string response_body_for_id(const std::string &output, int id) {
+    std::size_t cursor = 0;
+    const auto id_needle = "\"id\":" + std::to_string(id);
+    while (cursor < output.size()) {
+        const auto header = output.find("Content-Length: ", cursor);
+        if (header == std::string::npos) {
+            return {};
+        }
+        const auto value_start = header + std::string_view("Content-Length: ").size();
+        const auto value_end = output.find("\r\n", value_start);
+        if (value_end == std::string::npos) {
+            return {};
+        }
+        const auto body_start = output.find("\r\n\r\n", value_end);
+        if (body_start == std::string::npos) {
+            return {};
+        }
+
+        const auto length_text = output.substr(value_start, value_end - value_start);
+        const auto length = static_cast<std::size_t>(std::stoull(length_text));
+        const auto json_start = body_start + 4;
+        if (json_start + length > output.size()) {
+            return {};
+        }
+
+        auto body = output.substr(json_start, length);
+        if (body.find(id_needle) != std::string::npos) {
+            return body;
+        }
+        cursor = json_start + length;
+    }
+    return {};
+}
+
+std::size_t count_substring(std::string_view text, std::string_view needle) {
+    if (needle.empty()) {
+        return 0;
+    }
+
+    std::size_t count = 0;
+    std::size_t cursor = 0;
+    while (true) {
+        cursor = text.find(needle, cursor);
+        if (cursor == std::string_view::npos) {
+            return count;
+        }
+        ++count;
+        cursor += needle.size();
+    }
 }
 
 /// Helper: send initialize + didOpen + request, return response body
@@ -274,9 +368,29 @@ std::string did_open_body(const std::string &uri, int version, const std::string
            escape_json_string(text) + R"("}}})";
 }
 
+std::string did_change_body(const std::string &uri, int version, const std::string &text) {
+    return R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":")" +
+           uri + R"(","version":)" + std::to_string(version) + R"(},"contentChanges":[{"text":")" +
+           escape_json_string(text) + R"("}]}})";
+}
+
 std::string initialize_body(const std::filesystem::path &root) {
     return R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":")" +
            AnalysisService::uri_from_path(root) + R"("}})";
+}
+
+std::string initialize_workspace_folders_body(const std::vector<std::filesystem::path> &roots) {
+    std::string body =
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"workspaceFolders":[)";
+    for (std::size_t index = 0; index < roots.size(); ++index) {
+        if (index > 0) {
+            body += ",";
+        }
+        body += R"({"uri":")" + AnalysisService::uri_from_path(roots[index]) + R"(","name":"root)" +
+                std::to_string(index) + R"("})";
+    }
+    body += R"(]}})";
+    return body;
 }
 
 std::string diagnostics_output_for_source(const std::string &source) {
@@ -344,6 +458,49 @@ void test_rename_returns_workspace_edit() {
     check(output.find("\"id\"") != std::string::npos, "rename.has_response");
 }
 
+void test_prepare_rename_returns_range_or_null() {
+    const std::string source =
+        "struct Msg {\n    value: String;\n}\n\nstruct Envelope {\n    payload: Msg;\n}";
+
+    const std::string init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"renameProvider\"") != std::string::npos,
+          "prepareRename.capability_renames_object");
+    check(init_response.find("\"prepareProvider\":true") != std::string::npos,
+          "prepareRename.capability_prepare_provider");
+
+    const std::string decl_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":0,"character":7}})";
+    const auto decl_output =
+        run_handler_request(source, "textDocument/prepareRename", decl_params);
+    const auto decl_response = response_body_for_id(decl_output, 2);
+    check(decl_response.find("\"start\":{\"line\":0,\"character\":7}") != std::string::npos,
+          "prepareRename.declaration_start");
+    check(decl_response.find("\"end\":{\"line\":0,\"character\":10}") != std::string::npos,
+          "prepareRename.declaration_end");
+
+    const std::string ref_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":5,"character":13}})";
+    const auto ref_output =
+        run_handler_request(source, "textDocument/prepareRename", ref_params);
+    const auto ref_response = response_body_for_id(ref_output, 2);
+    check(ref_response.find("\"start\":{\"line\":5,\"character\":13}") != std::string::npos,
+          "prepareRename.reference_start");
+    check(ref_response.find("\"end\":{\"line\":5,\"character\":16}") != std::string::npos,
+          "prepareRename.reference_end");
+
+    const std::string invalid_params =
+        R"({"textDocument":{"uri":"file:///test.ahfl"},"position":{"line":1,"character":4}})";
+    const auto invalid_output =
+        run_handler_request(source, "textDocument/prepareRename", invalid_params);
+    const auto invalid_response = response_body_for_id(invalid_output, 2);
+    check(invalid_response.find("\"result\":null") != std::string::npos,
+          "prepareRename.invalid_position_null");
+}
+
 void test_analysis_snapshot_reuse_and_invalidation() {
     DocumentStore store;
     store.open(TextDocumentItem{
@@ -381,6 +538,266 @@ void test_diagnostics_publish_document_version() {
     const auto output = run_lsp_messages({init_body, did_open, did_change, shutdown_body});
     check(output.find("\"version\":1") != std::string::npos, "diagnostics.version_1_published");
     check(output.find("\"version\":2") != std::string::npos, "diagnostics.version_2_published");
+}
+
+void test_text_document_diagnostic_pull_report() {
+    const std::string init_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    const auto init_response = response_body_for_id(init_output, 1);
+    check(init_response.find("\"diagnosticProvider\"") != std::string::npos,
+          "textDocumentDiagnostic.capability_exists");
+    check(init_response.find("\"interFileDependencies\":true") != std::string::npos,
+          "textDocumentDiagnostic.capability_inter_file_dependencies");
+    check(init_response.find("\"workspaceDiagnostics\":true") != std::string::npos,
+          "textDocumentDiagnostic.capability_workspace_true");
+    check(init_response.find("\"workspaceFolders\"") != std::string::npos,
+          "workspaceFolders.capability_exists");
+    check(init_response.find("\"changeNotifications\":true") != std::string::npos,
+          "workspaceFolders.capability_change_notifications");
+
+    const std::string uri = "file:///diag-pull.ahfl";
+    const std::string pull_request =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+        uri + R"("}}})";
+    const auto broken_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Broken {\n    value: ;\n}\n"),
+        pull_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto broken_response = response_body_for_id(broken_output, 2);
+    check(broken_response.find("\"kind\":\"full\"") != std::string::npos,
+          "textDocumentDiagnostic.full_report");
+    check(broken_response.find("\"items\":[") != std::string::npos,
+          "textDocumentDiagnostic.items_array");
+    check(broken_response.find("parse.diagnostic") != std::string::npos,
+          "textDocumentDiagnostic.includes_parse_code");
+
+    const std::string fixed_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Broken {\n    value: ;\n}\n"),
+        did_change_body(uri, 2, "struct Fixed {\n    value: String;\n}\n"),
+        pull_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto fixed_response = response_body_for_id(fixed_output, 2);
+    check(fixed_response.find("\"kind\":\"full\"") != std::string::npos,
+          "textDocumentDiagnostic.recovery_full_report");
+    check(fixed_response.find("\"items\":[]") != std::string::npos,
+          "textDocumentDiagnostic.recovery_empty_items");
+}
+
+void test_workspace_diagnostic_reports_unopened_project_sources() {
+    const auto root = make_temp_project("workspace_diagnostic_project_sources");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-workspace-diagnostics\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path,
+               "module lib::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: Missing;\n"
+               "}\n");
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(response.find("\"items\":[") != std::string::npos,
+          "workspaceDiagnostic.items_array");
+    check(response.find(main_uri) != std::string::npos,
+          "workspaceDiagnostic.includes_open_entry");
+    check(response.find(types_uri) != std::string::npos,
+          "workspaceDiagnostic.includes_unopened_import");
+    check(response.find("\"version\":null") != std::string::npos,
+          "workspaceDiagnostic.unopened_version_null");
+    check(response.find("resolve.") != std::string::npos,
+          "workspaceDiagnostic.includes_unopened_resolve_diagnostic");
+}
+
+void test_watched_file_change_invalidates_project_source_graph() {
+    const auto root = make_temp_project("watched_file_source_graph");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-watched-source-graph\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string valid_types_source = "module lib::types;\n"
+                                           "\n"
+                                           "struct Msg {\n"
+                                           "    value: String;\n"
+                                           "}\n";
+    const std::string broken_types_source = "module lib::types;\n"
+                                            "\n"
+                                            "struct Msg {\n"
+                                            "    value: Missing;\n"
+                                            "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, valid_types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const std::string workspace_diagnostic_before =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})";
+    const std::string watched_change =
+        R"({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":")" +
+        types_uri + R"(","type":2}]}})";
+    const std::string workspace_diagnostic_after =
+        R"({"jsonrpc":"2.0","id":3,"method":"workspace/diagnostic","params":{}})";
+
+    const auto output = run_lsp_message_steps({
+        LspMessageStep{.body = initialize_body(root)},
+        LspMessageStep{.body = did_open_body(main_uri, 1, main_source)},
+        LspMessageStep{.body = workspace_diagnostic_before},
+        LspMessageStep{
+            .body = watched_change,
+            .before = [types_path, broken_types_source]() {
+                write_file(types_path, broken_types_source);
+            },
+        },
+        LspMessageStep{.body = workspace_diagnostic_after},
+        LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
+    });
+
+    const auto before_response = response_body_for_id(output, 2);
+    check(before_response.find(types_uri) != std::string::npos,
+          "watchedFileChange.before_includes_imported_source");
+    check(before_response.find("resolve.") == std::string::npos,
+          "watchedFileChange.before_has_no_resolve_diagnostic");
+
+    const auto after_response = response_body_for_id(output, 3);
+    check(after_response.find(types_uri) != std::string::npos,
+          "watchedFileChange.after_includes_imported_source");
+    check(after_response.find("resolve.") != std::string::npos,
+          "watchedFileChange.after_reanalyzes_changed_import");
+}
+
+void test_workspace_folder_change_switches_project_descriptor() {
+    const auto root = make_temp_project("workspace_folder_descriptor_switch");
+    const auto root_a = root / "workspace-a";
+    const auto root_b = root / "workspace-b";
+    const auto shared = root / "shared";
+    const auto main_path = shared / "app" / "main.ahfl";
+    const auto imports_a = root_a / "imports";
+    const auto imports_b = root_b / "imports";
+    const auto types_a_path = imports_a / "lib" / "types.ahfl";
+    const auto types_b_path = imports_b / "lib" / "types.ahfl";
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    write_file(types_a_path,
+               "module lib::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: String;\n"
+               "}\n");
+    write_file(types_b_path,
+               "module lib::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: Missing;\n"
+               "}\n");
+
+    const auto project_descriptor = [&](const std::filesystem::path &search_root) {
+        return "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-folder-switch\",\n"
+               "  \"search_roots\": [\"" +
+               escape_json_string(search_root.generic_string()) +
+               "\"],\n"
+               "  \"entry_sources\": [\"" +
+               escape_json_string(main_path.generic_string()) +
+               "\"]\n"
+               "}\n";
+    };
+    write_file(root_a / "project.json", project_descriptor(imports_a));
+    write_file(root_a / "ahfl.workspace.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
+               "  \"name\": \"workspace-a\",\n"
+               "  \"projects\": [\"project.json\"]\n"
+               "}\n");
+    write_file(root_b / "project.json", project_descriptor(imports_b));
+    write_file(root_b / "ahfl.workspace.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.workspace.v0.3\",\n"
+               "  \"name\": \"workspace-b\",\n"
+               "  \"projects\": [\"project.json\"]\n"
+               "}\n");
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_a_uri = AnalysisService::uri_from_path(types_a_path);
+    const auto types_b_uri = AnalysisService::uri_from_path(types_b_path);
+    const std::string before =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})";
+    const std::string folder_change =
+        R"({"jsonrpc":"2.0","method":"workspace/didChangeWorkspaceFolders","params":{"event":{"removed":[{"uri":")" +
+        AnalysisService::uri_from_path(root_a) +
+        R"(","name":"workspace-a"}],"added":[{"uri":")" +
+        AnalysisService::uri_from_path(root_b) + R"(","name":"workspace-b"}]}}})";
+    const std::string after =
+        R"({"jsonrpc":"2.0","id":3,"method":"workspace/diagnostic","params":{}})";
+
+    const auto output = run_lsp_message_steps({
+        LspMessageStep{.body = initialize_workspace_folders_body({root_a})},
+        LspMessageStep{.body = did_open_body(main_uri, 1, main_source)},
+        LspMessageStep{.body = before},
+        LspMessageStep{.body = folder_change},
+        LspMessageStep{.body = after},
+        LspMessageStep{.body = R"({"jsonrpc":"2.0","id":4,"method":"shutdown","params":{}})"},
+    });
+
+    const auto before_response = response_body_for_id(output, 2);
+    check(before_response.find(types_a_uri) != std::string::npos,
+          "workspaceFolderChange.before_uses_original_descriptor");
+    check(before_response.find(types_b_uri) == std::string::npos,
+          "workspaceFolderChange.before_excludes_new_descriptor");
+    check(before_response.find("resolve.") == std::string::npos,
+          "workspaceFolderChange.before_has_no_resolve_diagnostic");
+
+    const auto after_response = response_body_for_id(output, 3);
+    check(after_response.find(types_b_uri) != std::string::npos,
+          "workspaceFolderChange.after_uses_new_descriptor");
+    check(after_response.find("resolve.") != std::string::npos,
+          "workspaceFolderChange.after_reports_new_descriptor_diagnostic");
 }
 
 void test_diagnostics_cover_parse_resolve_typecheck_and_validation() {
@@ -494,6 +911,51 @@ void test_project_definition_workspace_symbol_and_rename_cross_file() {
     check(output.find(types_uri) != std::string::npos, "project.rename_edits_decl_uri");
 }
 
+void test_project_workspace_symbol_deduplicates_open_project_snapshots() {
+    const auto root = make_temp_project("project_workspace_symbol_dedup");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-project-dedup\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module lib::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const std::string workspace_symbol =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/symbol","params":{"query":"Msg"}})";
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        workspace_symbol,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    check(count_substring(response, "\"name\":\"Msg\"") == 1,
+          "project.workspace_symbol_deduplicates_symbol");
+    check(response.find(types_uri) != std::string::npos,
+          "project.workspace_symbol_dedup_preserves_location");
+}
+
 void test_project_open_document_overlay_drives_definition() {
     const auto root = make_temp_project("project_overlay");
     const auto main_path = root / "app" / "main.ahfl";
@@ -547,6 +1009,57 @@ void test_project_open_document_overlay_drives_definition() {
 
     check(output.find(types_uri) != std::string::npos,
           "project.overlay_definition_targets_unsaved_source");
+}
+
+void test_project_diagnostics_refresh_dependent_open_documents() {
+    const auto root = make_temp_project("project_diagnostics_refresh");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-diagnostics-refresh\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module lib::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    const std::string changed_types_source = "module lib::types;\n"
+                                             "\n"
+                                             "struct Draft {\n"
+                                             "    value: String;\n"
+                                             "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        did_change_body(types_uri, 2, changed_types_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+
+    check(output.find(main_uri) != std::string::npos,
+          "project.diagnostics_refresh.publishes_dependent_uri");
+    check(output.find("\"version\":2") != std::string::npos,
+          "project.diagnostics_refresh.publishes_changed_version");
+    check(output.find("unknown type 'types::Msg'") != std::string::npos,
+          "project.diagnostics_refresh.reports_dependent_unknown_type");
+    check(output.find("resolve.") != std::string::npos,
+          "project.diagnostics_refresh.uses_resolve_diagnostic");
 }
 
 void test_workspace_descriptor_selects_project_for_source() {
@@ -1350,14 +1863,21 @@ int main() {
     test_workspace_symbol_filters();
     test_references_returns_locations();
     test_rename_returns_workspace_edit();
+    test_prepare_rename_returns_range_or_null();
     test_signature_help_capability();
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_rename_rejects_keyword_and_conflict();
     test_document_symbol_hierarchy();
     test_diagnostics_publish_document_version();
+    test_text_document_diagnostic_pull_report();
+    test_workspace_diagnostic_reports_unopened_project_sources();
+    test_watched_file_change_invalidates_project_source_graph();
+    test_workspace_folder_change_switches_project_descriptor();
     test_diagnostics_cover_parse_resolve_typecheck_and_validation();
     test_project_definition_workspace_symbol_and_rename_cross_file();
+    test_project_workspace_symbol_deduplicates_open_project_snapshots();
     test_project_open_document_overlay_drives_definition();
+    test_project_diagnostics_refresh_dependent_open_documents();
     test_workspace_descriptor_selects_project_for_source();
     test_descriptorless_workspace_infers_module_root_for_imports();
     test_hover_renderer_detail_levels();

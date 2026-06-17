@@ -47,6 +47,7 @@ class Repl {
     void set_eval_handler(std::function<std::string(const std::string &)> handler);
     void set_type_handler(std::function<std::string(const std::string &)> handler);
     void set_verify_handler(std::function<std::string(const std::string &)> handler);
+    void set_simulate_handler(std::function<std::string(const std::string &)> handler);
 
   private:
     ReplConfig config_;
@@ -54,6 +55,7 @@ class Repl {
     std::function<std::string(const std::string &)> eval_handler_;
     std::function<std::string(const std::string &)> type_handler_;
     std::function<std::string(const std::string &)> verify_handler_;
+    std::function<std::string(const std::string &)> simulate_handler_;
 };
 
 } // namespace ahfl::repl

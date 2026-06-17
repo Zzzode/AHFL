@@ -9,9 +9,16 @@
 #include "verification/formal/bmc.hpp"
 #include "verification/formal/nuxmv_backend.hpp"
 
+#include <algorithm>
+#include <optional>
+#include <queue>
 #include <sstream>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace ahfl::repl {
 
@@ -131,6 +138,134 @@ std::string default_verify_handler(const std::string &input) {
     return result.str();
 }
 
+std::string join_strings(const std::vector<std::string> &values, std::string_view separator) {
+    std::ostringstream oss;
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) {
+            oss << separator;
+        }
+        oss << values[index];
+    }
+    return oss.str();
+}
+
+std::size_t outgoing_count(const ahfl::ir::AgentDecl &agent, std::string_view state) {
+    return static_cast<std::size_t>(std::count_if(agent.transitions.begin(),
+                                                  agent.transitions.end(),
+                                                  [&](const ahfl::ir::TransitionDecl &transition) {
+                                                      return transition.from_state == state;
+                                                  }));
+}
+
+std::vector<std::string> shortest_path_to_final(const ahfl::ir::AgentDecl &agent,
+                                                std::string &reached_final) {
+    std::unordered_set<std::string> final_states(agent.final_states.begin(),
+                                                 agent.final_states.end());
+    if (agent.initial_state.empty() || final_states.empty()) {
+        return {};
+    }
+
+    std::queue<std::string> work;
+    std::unordered_set<std::string> visited;
+    std::unordered_map<std::string, std::string> predecessor;
+    work.push(agent.initial_state);
+    visited.insert(agent.initial_state);
+
+    std::optional<std::string> found_final;
+    while (!work.empty()) {
+        const auto current = work.front();
+        work.pop();
+        if (final_states.contains(current)) {
+            found_final = current;
+            break;
+        }
+
+        for (const auto &transition : agent.transitions) {
+            if (transition.from_state != current || visited.contains(transition.to_state)) {
+                continue;
+            }
+            predecessor.emplace(transition.to_state, current);
+            visited.insert(transition.to_state);
+            work.push(transition.to_state);
+        }
+    }
+
+    if (!found_final.has_value()) {
+        return {};
+    }
+
+    reached_final = *found_final;
+    std::vector<std::string> path;
+    for (std::string cursor = *found_final;; cursor = predecessor.at(cursor)) {
+        path.push_back(cursor);
+        if (cursor == agent.initial_state) {
+            break;
+        }
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
+void print_agent_simulation(const ahfl::ir::AgentDecl &agent, std::ostream &out) {
+    out << "Agent " << agent.name << " simulation:\n";
+    if (agent.initial_state.empty()) {
+        out << "  result: cannot simulate because no initial state is declared\n";
+        return;
+    }
+    if (agent.final_states.empty()) {
+        out << "  step 0: enter " << agent.initial_state << '\n';
+        out << "  result: cannot simulate because no final states are declared\n";
+        return;
+    }
+
+    std::string reached_final;
+    const auto path = shortest_path_to_final(agent, reached_final);
+    if (path.empty()) {
+        out << "  step 0: enter " << agent.initial_state << '\n';
+        out << "  result: no path to final state(s) [" << join_strings(agent.final_states, ", ")
+            << "]\n";
+        return;
+    }
+
+    out << "  step 0: enter " << path.front() << '\n';
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        const auto branches = outgoing_count(agent, path[index - 1]);
+        out << "  step " << index << ": " << path[index - 1] << " -> " << path[index];
+        if (branches > 1) {
+            out << " (selected shortest path among " << branches << " outgoing transition(s))";
+        }
+        out << '\n';
+    }
+    out << "  result: reached final state " << reached_final << " in " << (path.size() - 1)
+        << " transition(s)\n";
+}
+
+std::string default_simulate_handler(const std::string &input) {
+    auto pipeline = run_pipeline(input);
+    if (!pipeline.success) {
+        return "Error: " + pipeline.error;
+    }
+
+    const auto ir_program = ahfl::lower_program_ir(
+        *pipeline.parse_result.program, pipeline.resolve_result, pipeline.typecheck_result);
+
+    std::ostringstream result;
+    bool found_agent = false;
+    for (const auto &decl : ir_program.declarations) {
+        const auto *agent = std::get_if<ahfl::ir::AgentDecl>(&decl);
+        if (agent == nullptr) {
+            continue;
+        }
+        found_agent = true;
+        print_agent_simulation(*agent, result);
+    }
+
+    if (!found_agent) {
+        return "No agent declarations found to simulate.";
+    }
+    return result.str();
+}
+
 std::string default_eval_handler(const std::string &input) {
     // Try to parse and evaluate as a program with a const expression
     std::string wrapped = "const __repl_result__ = " + input + ";";
@@ -227,8 +362,10 @@ ReplResult execute_command(const std::string &input) {
     }
     case ReplCommandKind::Simulate: {
         auto code = input.substr(input.find(' ') + 1);
-        result.output = default_verify_handler(code); // simulate uses same verify path
-        result.success = true;
+        result.output = default_simulate_handler(code);
+        result.success = !result.output.starts_with("Error:");
+        if (!result.success)
+            result.error = result.output;
         break;
     }
     case ReplCommandKind::Eval: {
@@ -250,6 +387,7 @@ Repl::Repl(ReplConfig config) : config_(std::move(config)) {
     eval_handler_ = default_eval_handler;
     type_handler_ = default_type_handler;
     verify_handler_ = default_verify_handler;
+    simulate_handler_ = default_simulate_handler;
 }
 
 ReplResult Repl::process_input(const std::string &input) {
@@ -277,14 +415,23 @@ ReplResult Repl::process_input(const std::string &input) {
         }
         break;
     }
-    case ReplCommandKind::Verify:
-    case ReplCommandKind::Simulate: {
+    case ReplCommandKind::Verify: {
         auto code = input.substr(input.find(' ') + 1);
         if (verify_handler_) {
             result.output = verify_handler_(code);
             result.success = true;
         } else {
             result.error = "verify handler not set";
+        }
+        break;
+    }
+    case ReplCommandKind::Simulate: {
+        auto code = input.substr(input.find(' ') + 1);
+        if (simulate_handler_) {
+            result.output = simulate_handler_(code);
+            result.success = !result.output.starts_with("Error:");
+        } else {
+            result.error = "simulate handler not set";
         }
         break;
     }
@@ -324,6 +471,10 @@ void Repl::set_type_handler(std::function<std::string(const std::string &)> hand
 
 void Repl::set_verify_handler(std::function<std::string(const std::string &)> handler) {
     verify_handler_ = std::move(handler);
+}
+
+void Repl::set_simulate_handler(std::function<std::string(const std::string &)> handler) {
+    simulate_handler_ = std::move(handler);
 }
 
 } // namespace ahfl::repl

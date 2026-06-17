@@ -43,6 +43,9 @@ target_link_libraries(ahflc
         ahfl_compiler_ir_opt
         ahfl_runtime
         ahfl_tooling_package
+        ahfl_tooling_formatter
+        ahfl_tooling_telemetry
+        ahfl_tooling_profiling
         ahfl_cli_command_catalog
 )
 

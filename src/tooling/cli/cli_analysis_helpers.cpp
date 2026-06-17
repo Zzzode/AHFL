@@ -8,13 +8,43 @@
 #include "compiler/assurance/assurance.hpp"
 #include "verification/formal/checker.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 
 namespace ahfl::cli {
+
+namespace {
+
+[[nodiscard]] std::optional<int> parse_positive_seconds(std::string_view value) {
+    if (value.empty()) {
+        return std::nullopt;
+    }
+
+    int seconds = 0;
+    for (const char character : value) {
+        if (character < '0' || character > '9') {
+            return std::nullopt;
+        }
+        constexpr int kMaxAllowedSeconds = 24 * 60 * 60;
+        seconds = (seconds * 10) + (character - '0');
+        if (seconds > kMaxAllowedSeconds) {
+            return std::nullopt;
+        }
+    }
+
+    if (seconds <= 0) {
+        return std::nullopt;
+    }
+    return seconds;
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // compile_to_ir — shared compile pipeline
@@ -73,6 +103,52 @@ to_executable_kind(ahfl::PackageAuthoringTargetKind kind) {
 
 } // namespace
 
+namespace {
+
+struct SmvSizeReport {
+    std::size_t bytes{0};
+    std::size_t lines{0};
+    std::size_t ltlspecs{0};
+};
+
+[[nodiscard]] SmvSizeReport measure_smv_output(std::string_view output) {
+    SmvSizeReport report{.bytes = output.size()};
+    std::string_view remaining = output;
+    while (!remaining.empty()) {
+        const auto newline = remaining.find('\n');
+        if (newline == std::string_view::npos) {
+            break;
+        }
+        ++report.lines;
+        remaining.remove_prefix(newline + 1);
+    }
+    if (!output.empty() && output.back() != '\n') {
+        ++report.lines;
+    }
+
+    std::size_t offset = 0;
+    while (offset < output.size()) {
+        const auto found = output.find("LTLSPEC", offset);
+        if (found == std::string_view::npos) {
+            break;
+        }
+        if (found == 0 || output[found - 1] == '\n') {
+            ++report.ltlspecs;
+        }
+        offset = found + std::string_view{"LTLSPEC"}.size();
+    }
+    return report;
+}
+
+void print_smv_size_report(const SmvSizeReport &report, std::ostream &err) {
+    err << "smv size report:\n"
+        << "  bytes: " << report.bytes << '\n'
+        << "  lines: " << report.lines << '\n'
+        << "  ltlspecs: " << report.ltlspecs << '\n';
+}
+
+} // namespace
+
 ahfl::handoff::PackageMetadata
 lower_package_metadata(const ahfl::PackageAuthoringDescriptor &descriptor) {
     ahfl::handoff::PackageMetadata metadata;
@@ -107,7 +183,9 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
                                      const ahfl::ResolveResult &resolve_result,
                                      const ahfl::TypeCheckResult &type_check_result,
                                      const ahfl::handoff::PackageMetadata *package_metadata,
-                                     std::ostream &out) {
+                                     const CommandLineOptions &options,
+                                     std::ostream &out,
+                                     std::ostream &err) {
     static_cast<void>(resolve_result);
     static_cast<void>(type_check_result);
 
@@ -116,15 +194,36 @@ std::optional<int> emit_core_backend(std::optional<CommandKind> effective_comman
         return std::nullopt;
     }
 
-    auto result = ahfl::emit_backend(*backend, program, out, package_metadata);
-    if (!result.has_value()) {
-        std::cerr << "internal error: core backend command ";
-        if (effective_command.has_value()) {
-            std::cerr << "'" << command_name(*effective_command) << "' ";
+    const bool needs_smv_size_report =
+        options.smv_size_report_requested && effective_command == CommandKind::EmitSmv;
+
+    if (!needs_smv_size_report) {
+        auto result = ahfl::emit_backend(*backend, program, out, package_metadata);
+        if (!result.has_value()) {
+            err << "internal error: core backend command ";
+            if (effective_command.has_value()) {
+                err << "'" << command_name(*effective_command) << "' ";
+            }
+            err << "failed: " << result.error() << "\n";
+            return 1;
         }
-        std::cerr << "failed: " << result.error() << "\n";
+        return 0;
+    }
+
+    std::ostringstream buffered_output;
+    auto result = ahfl::emit_backend(*backend, program, buffered_output, package_metadata);
+    if (!result.has_value()) {
+        err << "internal error: core backend command ";
+        if (effective_command.has_value()) {
+            err << "'" << command_name(*effective_command) << "' ";
+        }
+        err << "failed: " << result.error() << "\n";
         return 1;
     }
+
+    const auto output = buffered_output.str();
+    out << output;
+    print_smv_size_report(measure_smv_output(output), err);
 
     return 0;
 }
@@ -147,11 +246,23 @@ int validate_assurance_program(const ahfl::ir::Program &program) {
 
 int verify_formal_program(const ahfl::ir::Program &program, const CommandLineOptions &options) {
     ahfl::formal::FormalCheckerOptions formal_options;
+    if (options.formal_backend.has_value()) {
+        if (auto backend = ahfl::formal::parse_model_checker_kind(*options.formal_backend);
+            backend.has_value()) {
+            formal_options.backend_kind = *backend;
+        }
+    }
     if (options.model_checker.has_value()) {
         formal_options.checker_path = std::string(*options.model_checker);
     }
     if (options.formal_model_out.has_value()) {
         formal_options.model_output_path = std::filesystem::path(*options.formal_model_out);
+    }
+    if (options.checker_timeout_seconds.has_value()) {
+        if (const auto seconds = parse_positive_seconds(*options.checker_timeout_seconds);
+            seconds.has_value()) {
+            formal_options.checker_timeout = std::chrono::seconds{*seconds};
+        }
     }
     formal_options.explain = options.explain_requested;
 
