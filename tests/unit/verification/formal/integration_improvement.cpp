@@ -2,9 +2,12 @@
 #include "verification/formal/process_launcher.hpp"
 #include "verification/formal/state_space_estimator.hpp"
 
+#include "ahfl/compiler/ir/ir.hpp"
+
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -47,8 +50,7 @@ void test_launch_process_echo() {
 
     auto result = launch_process(config);
     check(result.exit_code == 0, "launch.echo_exit_0");
-    check(result.stdout_output.find("hello world") != std::string::npos,
-          "launch.echo_output");
+    check(result.stdout_output.find("hello world") != std::string::npos, "launch.echo_output");
     check(!result.timed_out, "launch.echo_no_timeout");
 }
 
@@ -178,6 +180,42 @@ void test_estimate_empty() {
     check(estimate.likely_tractable, "estimate_empty.tractable");
 }
 
+void test_estimate_from_ir_program() {
+    ahfl::ir::Program program;
+
+    ahfl::ir::AgentDecl first;
+    first.name = "FirstAgent";
+    first.states = {"Init", "Review", "Done"};
+    first.transitions = {
+        {"Init", "Review"},
+        {"Review", "Done"},
+    };
+    first.capability_refs.resize(1);
+    program.declarations.push_back(std::move(first));
+
+    ahfl::ir::AgentDecl second;
+    second.name = "SecondAgent";
+    second.states = {"Idle", "Running"};
+    second.transitions = {
+        {"Idle", "Running"},
+    };
+    second.capability_refs.resize(2);
+    program.declarations.push_back(std::move(second));
+
+    const auto metrics = collect_agent_metrics(program);
+    check(metrics.size() == 2, "estimate_ir.metrics_count");
+    check(metrics[0].agent_name == "FirstAgent", "estimate_ir.first_name");
+    check(metrics[0].capability_count == 1, "estimate_ir.first_capabilities");
+    check(metrics[1].capability_count == 2, "estimate_ir.second_capabilities");
+
+    const auto estimate = estimate_state_space(program);
+    check(estimate.estimated_states == 6, "estimate_ir.states_product");
+    check(estimate.num_agents == 2, "estimate_ir.agent_count");
+    check(estimate.max_states_per_agent == 3, "estimate_ir.max_states");
+    check(estimate.total_transitions == 3, "estimate_ir.transitions");
+    check(estimate.likely_tractable, "estimate_ir.tractable");
+}
+
 } // anonymous namespace
 
 int main() {
@@ -193,6 +231,7 @@ int main() {
     test_estimate_multiple_agents_tractable();
     test_estimate_intractable();
     test_estimate_empty();
+    test_estimate_from_ir_program();
 
     std::cout << pass_count << "/" << test_count << " tests passed\n";
     return (pass_count == test_count) ? EXIT_SUCCESS : EXIT_FAILURE;
