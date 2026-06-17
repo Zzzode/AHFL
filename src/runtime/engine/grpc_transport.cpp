@@ -193,6 +193,8 @@ execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) {
             .status_code = GrpcStatusCode::DeadlineExceeded,
             .body = {},
             .error_message = "gRPC JSON transcoding deadline exceeded",
+            .response_metadata = response.response_headers,
+            .trailers = response.trailers,
         };
     }
     if (response.status_code == 0 && !response.error.empty()) {
@@ -200,6 +202,8 @@ execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) {
             .status_code = GrpcStatusCode::Unavailable,
             .body = response.body,
             .error_message = response.error,
+            .response_metadata = response.response_headers,
+            .trailers = response.trailers,
         };
     }
 
@@ -212,6 +216,8 @@ execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) {
             .body = response.body,
             .error_message = std::string("gRPC ") + grpc_status_name(grpc_status) + " (HTTP " +
                              std::to_string(response.status_code) + ")",
+            .response_metadata = response.response_headers,
+            .trailers = response.trailers,
         };
     }
 
@@ -219,6 +225,8 @@ execute_grpc_json_transcoding(const GrpcJsonTranscodingRequest &request) {
         .status_code = GrpcStatusCode::Ok,
         .body = response.body,
         .error_message = {},
+        .response_metadata = response.response_headers,
+        .trailers = response.trailers,
     };
 }
 

@@ -52,6 +52,14 @@ void AgentRuntime::set_capability_invoker(CapabilityInvoker invoker) {
     capability_invoker_ = std::move(invoker);
 }
 
+void AgentRuntime::set_contextual_capability_invoker(ContextualCapabilityInvoker invoker) {
+    contextual_capability_invoker_ = std::move(invoker);
+}
+
+void AgentRuntime::set_invocation_context(CapabilityInvocationContext context) {
+    invocation_context_ = std::move(context);
+}
+
 // ============================================================================
 // Core Execution Loop
 // ============================================================================
@@ -71,7 +79,17 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
     evaluator::ExecContext exec_ctx;
 
     // 设置带 capability 调用支持的表达式求值器
-    if (capability_invoker_) {
+    if (contextual_capability_invoker_) {
+        auto invoker = contextual_capability_invoker_;
+        exec_ctx.expr_eval = [this, invoker, &result](
+                                 const ir::Expr &expr,
+                                 const evaluator::EvalContext &eval_ctx) -> evaluator::EvalResult {
+            auto context = invocation_context_;
+            context.agent_name = agent_.name;
+            context.state_name = result.current_state;
+            return eval_expr_with_capabilities(expr, eval_ctx, invoker, context);
+        };
+    } else if (capability_invoker_) {
         auto invoker = capability_invoker_;
         exec_ctx.expr_eval =
             [invoker](const ir::Expr &expr,

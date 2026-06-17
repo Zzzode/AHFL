@@ -23,6 +23,8 @@ struct ToolCall {
 struct ToolCallResult {
     std::string tool_call_id;
     std::string content;
+    bool success{true};
+    std::string error_message;
 };
 
 /// Build a request JSON body that includes tool definitions.

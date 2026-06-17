@@ -30,6 +30,10 @@ struct AuthConfig {
 struct ResolvedAuth {
     std::unordered_map<std::string, std::string> headers;
     std::vector<std::string> curl_flags;
+    std::string tls_client_certificate_path;
+    std::string tls_client_key_path;
+    bool success{true};
+    std::string error_message;
 };
 
 /// Resolve authentication configuration using the secret manager.

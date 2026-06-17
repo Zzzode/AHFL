@@ -26,10 +26,23 @@ namespace {
     curl_request.timeout_seconds = request.timeout_seconds;
     curl_request.http_version = to_curl_http_version(request.version);
     curl_request.capture_headers = request.capture_headers;
+    curl_request.tls_client_certificate_path = request.tls_client_certificate_path;
+    curl_request.tls_client_key_path = request.tls_client_key_path;
+    curl_request.tls_ca_certificate_path = request.tls_ca_certificate_path;
+    curl_request.verify_tls = request.verify_tls;
     return curl_request;
 }
 
 [[nodiscard]] HttpResponse to_http_response(const CurlResponse &response) {
+    std::vector<HttpHeaderBlock> header_blocks;
+    header_blocks.reserve(response.response_header_blocks.size());
+    for (const auto &block : response.response_header_blocks) {
+        header_blocks.push_back(HttpHeaderBlock{
+            .has_status_line = block.has_status_line,
+            .headers = block.headers,
+        });
+    }
+
     return HttpResponse{
         .status_code = response.status_code,
         .exit_code = response.exit_code,
@@ -37,6 +50,7 @@ namespace {
         .error = response.error,
         .timed_out = response.timed_out,
         .response_headers = response.response_headers,
+        .response_header_blocks = std::move(header_blocks),
     };
 }
 

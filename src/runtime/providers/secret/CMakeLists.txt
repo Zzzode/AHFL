@@ -1,6 +1,7 @@
 add_library(ahfl_runtime_provider_secret STATIC
     secret_provider.cpp
     auth_provider.cpp
+    cloud_secret_provider.cpp
     vault_provider.cpp
     key_rotation.cpp
 )

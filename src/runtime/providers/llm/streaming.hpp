@@ -5,6 +5,8 @@
 #include <string>
 #include <string_view>
 
+#include "runtime/providers/llm/http_client.hpp"
+
 namespace ahfl::llm_provider {
 
 /// Callback invoked for each streaming chunk.
@@ -41,6 +43,10 @@ class StreamingClient {
     explicit StreamingClient(std::string_view endpoint,
                              std::string_view api_key,
                              std::string_view model);
+    StreamingClient(std::string_view endpoint,
+                    std::string_view api_key,
+                    std::string_view model,
+                    HttpAuthConfig auth_config);
 
     /// Execute a streaming chat completion request.
     [[nodiscard]] StreamResult stream(const std::string &request_json, StreamChunkCallback cb);
@@ -49,6 +55,7 @@ class StreamingClient {
     std::string endpoint_;
     std::string api_key_;
     std::string model_;
+    HttpAuthConfig auth_config_;
 };
 
 } // namespace ahfl::llm_provider
