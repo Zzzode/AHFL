@@ -24,6 +24,14 @@ void set_capability_mocks(CommandLineOptions &opts, std::optional<std::string_vi
     opts.capability_mocks_descriptor = val;
 }
 
+void set_tool_catalog(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.tool_catalog_descriptor = val;
+}
+
+void set_capability_bindings(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.capability_bindings_descriptor = val;
+}
+
 void set_workspace(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.workspace_descriptor = val;
 }
@@ -44,6 +52,10 @@ void set_llm_config(CommandLineOptions &opts, std::optional<std::string_view> va
     opts.llm_config_descriptor = val;
 }
 
+void set_llm_observability(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.llm_observability_path = val;
+}
+
 void set_input_fixture(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.input_fixture = val;
 }
@@ -52,8 +64,16 @@ void set_run_id(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.run_id = val;
 }
 
+void set_formal_backend(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.formal_backend = val;
+}
+
 void set_model_checker(CommandLineOptions &opts, std::optional<std::string_view> val) {
     opts.model_checker = val;
+}
+
+void set_checker_timeout_seconds(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.checker_timeout_seconds = val;
 }
 
 void set_formal_model_out(CommandLineOptions &opts, std::optional<std::string_view> val) {
@@ -80,8 +100,36 @@ void set_optimize(CommandLineOptions &opts, std::optional<std::string_view>) {
     opts.optimize_requested = true;
 }
 
+void set_time_passes(CommandLineOptions &opts, std::optional<std::string_view>) {
+    opts.time_passes_requested = true;
+}
+
+void set_smv_size_report(CommandLineOptions &opts, std::optional<std::string_view>) {
+    opts.smv_size_report_requested = true;
+}
+
+void set_trace_export(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.trace_export_path = val;
+}
+
+void set_metrics_export(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.metrics_export_path = val;
+}
+
+void set_structured_log(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.structured_log_path = val;
+}
+
+void set_memory_report(CommandLineOptions &opts, std::optional<std::string_view> val) {
+    opts.memory_report_path = val;
+}
+
 void set_show_internal(CommandLineOptions &opts, std::optional<std::string_view>) {
     opts.show_internal_artifacts = true;
+}
+
+void set_format_check(CommandLineOptions &opts, std::optional<std::string_view>) {
+    opts.format_check_requested = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +153,19 @@ constexpr OptionSpec kOptionSpecs[] = {
      "",
      OptionArgKind::RequiredValue,
      set_capability_mocks,
-     "Path to capability mocks descriptor",
+     "Path to capability mocks descriptor; run exposes mocks as LLM tools",
+     "a descriptor path"},
+    {"--tool-catalog",
+     "",
+     OptionArgKind::RequiredValue,
+     set_tool_catalog,
+     "Path to LLM runtime tool catalog descriptor for run",
+     "a descriptor path"},
+    {"--capability-bindings",
+     "",
+     OptionArgKind::RequiredValue,
+     set_capability_bindings,
+     "Path to runtime HTTP/gRPC capability bindings descriptor for run",
      "a descriptor path"},
     {"--workspace",
      "",
@@ -137,6 +197,12 @@ constexpr OptionSpec kOptionSpecs[] = {
      set_llm_config,
      "LLM provider config for run",
      "a config path"},
+    {"--llm-observability",
+     "",
+     OptionArgKind::RequiredValue,
+     set_llm_observability,
+     "Write secret-free LLM provider observability JSON for run",
+     "an output path"},
     {"--input-fixture",
      "",
      OptionArgKind::RequiredValue,
@@ -144,12 +210,24 @@ constexpr OptionSpec kOptionSpecs[] = {
      "Input fixture string",
      "a fixture string"},
     {"--run-id", "", OptionArgKind::RequiredValue, set_run_id, "Run identifier", "an id string"},
+    {"--formal-backend",
+     "",
+     OptionArgKind::RequiredValue,
+     set_formal_backend,
+     "Formal checker backend: nuxmv, nusmv, spin, or tlaplus",
+     "a backend name"},
     {"--model-checker",
      "",
      OptionArgKind::RequiredValue,
      set_model_checker,
      "Path to model checker executable",
      "an executable path"},
+    {"--checker-timeout-seconds",
+     "",
+     OptionArgKind::RequiredValue,
+     set_checker_timeout_seconds,
+     "Formal checker timeout in seconds",
+     "seconds"},
     {"--formal-model-out",
      "",
      OptionArgKind::RequiredValue,
@@ -166,12 +244,49 @@ constexpr OptionSpec kOptionSpecs[] = {
     {"--dump-types", "", OptionArgKind::Flag, set_dump_types, "Dump type environment", ""},
     {"--explain", "", OptionArgKind::Flag, set_explain, "Enable structured explanations", ""},
     {"--optimize", "-O", OptionArgKind::Flag, set_optimize, "Enable optimization passes", ""},
+    {"--time-passes",
+     "",
+     OptionArgKind::Flag,
+     set_time_passes,
+     "Print optimization pass timings to stderr",
+     ""},
+    {"--smv-size-report",
+     "",
+     OptionArgKind::Flag,
+     set_smv_size_report,
+     "Print SMV output size statistics to stderr",
+     ""},
+    {"--trace-export",
+     "",
+     OptionArgKind::RequiredValue,
+     set_trace_export,
+     "Write CLI trace spans as JSON lines",
+     "an output path"},
+    {"--metrics-export",
+     "",
+     OptionArgKind::RequiredValue,
+     set_metrics_export,
+     "Write CLI metrics as JSON lines",
+     "an output path"},
+    {"--structured-log",
+     "",
+     OptionArgKind::RequiredValue,
+     set_structured_log,
+     "Write CLI structured logs as JSON lines",
+     "an output path"},
+    {"--memory-report",
+     "",
+     OptionArgKind::RequiredValue,
+     set_memory_report,
+     "Write CLI structural memory proxy report as JSON",
+     "an output path"},
     {"--show-hidden",
      "",
      OptionArgKind::Flag,
      set_show_internal,
      "Show hidden internal artifacts in help and allow their emission",
      ""},
+    {"--check", "", OptionArgKind::Flag, set_format_check, "Check formatting without writing", ""},
 };
 
 // ---------------------------------------------------------------------------
@@ -346,9 +461,15 @@ parse_options_from_table(std::span<const std::string_view> arguments, CommandLin
         }
 
         // Recognize standalone commands.
-        if ((argument == "check" || argument == "run") && can_select_action(options)) {
-            set_command_option(options,
-                               argument == "run" ? CommandKind::RunWorkflow : CommandKind::Check);
+        if ((argument == "check" || argument == "run" || argument == "fmt") &&
+            can_select_action(options)) {
+            if (argument == "run") {
+                set_command_option(options, CommandKind::RunWorkflow);
+            } else if (argument == "fmt") {
+                set_command_option(options, CommandKind::Format);
+            } else {
+                set_command_option(options, CommandKind::Check);
+            }
             continue;
         }
 
