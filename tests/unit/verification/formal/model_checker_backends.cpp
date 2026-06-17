@@ -1,8 +1,10 @@
 #include "verification/formal/model_checker_backend.hpp"
+#include "verification/formal/nuxmv_backend.hpp"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -71,6 +73,66 @@ void test_factory_nusmv_maps_to_nuxmv() {
 }
 
 // ============================================================================
+// Capability matrix tests
+// ============================================================================
+
+void test_nuxmv_capability_matrix() {
+    auto backend = create_backend(ModelCheckerKind::NuXmv);
+    auto capabilities = backend->capabilities();
+    check(capabilities.emits_model, "capabilities.nuxmv.emits_model");
+    check(capabilities.supports_external_verification,
+          "capabilities.nuxmv.supports_external_verification");
+    check(capabilities.supports_ahfl_smv_semantics,
+          "capabilities.nuxmv.supports_ahfl_smv_semantics");
+    check(capabilities.required_binary.find("NuSMV") != std::string::npos,
+          "capabilities.nuxmv.required_binary");
+    check(capabilities.property_semantics.size() >= 3, "capabilities.nuxmv.property_semantics");
+
+    auto availability = backend->availability();
+    if (availability.can_verify()) {
+        check(!availability.binary_path.empty(), "availability.nuxmv.binary_path");
+    } else {
+        check(availability.status == ModelCheckerAvailabilityStatus::MissingBinary,
+              "availability.nuxmv.missing_binary");
+        check(!availability.reason.empty(), "availability.nuxmv.reason");
+    }
+}
+
+void test_spin_capability_matrix_is_emit_only() {
+    auto backend = create_backend(ModelCheckerKind::SPIN);
+    auto capabilities = backend->capabilities();
+    check(capabilities.emits_model, "capabilities.spin.emits_model");
+    check(!capabilities.supports_external_verification,
+          "capabilities.spin.external_verification_not_wired");
+    check(!capabilities.supports_ahfl_smv_semantics, "capabilities.spin.no_ahfl_smv_semantics");
+    check(capabilities.required_binary == "spin", "capabilities.spin.required_binary");
+    check(!capabilities.skip_reason.empty(), "capabilities.spin.skip_reason");
+
+    auto availability = backend->availability();
+    check(!availability.can_verify(), "availability.spin.cannot_verify");
+    check(availability.status == ModelCheckerAvailabilityStatus::VerificationUnsupported,
+          "availability.spin.unsupported");
+    check(availability.reason == capabilities.skip_reason, "availability.spin.reason");
+}
+
+void test_tlaplus_capability_matrix_is_emit_only() {
+    auto backend = create_backend(ModelCheckerKind::TLAPlus);
+    auto capabilities = backend->capabilities();
+    check(capabilities.emits_model, "capabilities.tlaplus.emits_model");
+    check(!capabilities.supports_external_verification,
+          "capabilities.tlaplus.external_verification_not_wired");
+    check(!capabilities.supports_ahfl_smv_semantics, "capabilities.tlaplus.no_ahfl_smv_semantics");
+    check(capabilities.required_binary == "TLC", "capabilities.tlaplus.required_binary");
+    check(!capabilities.skip_reason.empty(), "capabilities.tlaplus.skip_reason");
+
+    auto availability = backend->availability();
+    check(!availability.can_verify(), "availability.tlaplus.cannot_verify");
+    check(availability.status == ModelCheckerAvailabilityStatus::VerificationUnsupported,
+          "availability.tlaplus.unsupported");
+    check(availability.reason == capabilities.skip_reason, "availability.tlaplus.reason");
+}
+
+// ============================================================================
 // NuXmv emission tests
 // ============================================================================
 
@@ -86,6 +148,58 @@ void test_nuxmv_emission() {
     check(result.model_text.find("idle") != std::string::npos, "nuxmv_emit.has_state_idle");
     check(result.model_text.find("INIT") != std::string::npos, "nuxmv_emit.has_init");
     check(result.model_text.find("TRANS") != std::string::npos, "nuxmv_emit.has_trans");
+}
+
+// ============================================================================
+// NuXmv output parser fixture matrix
+// ============================================================================
+
+void test_nuxmv_output_parser_true_fixture() {
+    constexpr std::string_view output = R"(-- specification G (state != bad)  is true
+-- LTL specification F (state = done)  is true
+)";
+
+    const auto parsed = parse_nuxmv_verification_output(output);
+    check(parsed.status == NuXmvOutputStatus::Passed, "nuxmv_parse_true.status_passed");
+    check(parsed.properties_checked == 2, "nuxmv_parse_true.checked_2");
+    check(parsed.properties_passed == 2, "nuxmv_parse_true.passed_2");
+    check(parsed.error.empty(), "nuxmv_parse_true.no_error");
+}
+
+void test_nuxmv_output_parser_false_fixture() {
+    constexpr std::string_view output = R"(-- specification G (state != bad)  is false
+-- as demonstrated by the following execution sequence
+Trace Description: LTL Counterexample
+-> State: 1.1 <-
+  state = bad
+)";
+
+    const auto parsed = parse_nuxmv_verification_output(output);
+    check(parsed.status == NuXmvOutputStatus::Failed, "nuxmv_parse_false.status_failed");
+    check(parsed.properties_checked == 1, "nuxmv_parse_false.checked_1");
+    check(parsed.properties_passed == 0, "nuxmv_parse_false.passed_0");
+    check(parsed.counterexample_trace.find("state = bad") != std::string::npos,
+          "nuxmv_parse_false.counterexample");
+}
+
+void test_nuxmv_output_parser_error_fixture() {
+    constexpr std::string_view output = R"(file model.smv: line 12: syntax error
+*** PARSE ERROR *** at token "LTLSPEC"
+)";
+
+    const auto parsed = parse_nuxmv_verification_output(output);
+    check(parsed.status == NuXmvOutputStatus::Error, "nuxmv_parse_error.status_error");
+    check(parsed.properties_checked == 0, "nuxmv_parse_error.checked_0");
+    check(parsed.properties_passed == 0, "nuxmv_parse_error.passed_0");
+    check(parsed.error.find("PARSE ERROR") != std::string::npos, "nuxmv_parse_error.message");
+}
+
+void test_nuxmv_output_parser_timeout_fixture() {
+    const auto parsed = parse_nuxmv_verification_output("", true);
+    check(parsed.status == NuXmvOutputStatus::Timeout, "nuxmv_parse_timeout.status_timeout");
+    check(parsed.properties_checked == 0, "nuxmv_parse_timeout.checked_0");
+    check(parsed.properties_passed == 0, "nuxmv_parse_timeout.passed_0");
+    check(parsed.error.find("timed out") != std::string::npos, "nuxmv_parse_timeout.message");
 }
 
 // ============================================================================
@@ -128,7 +242,14 @@ int main() {
     test_factory_creates_spin();
     test_factory_creates_tlaplus();
     test_factory_nusmv_maps_to_nuxmv();
+    test_nuxmv_capability_matrix();
+    test_spin_capability_matrix_is_emit_only();
+    test_tlaplus_capability_matrix_is_emit_only();
     test_nuxmv_emission();
+    test_nuxmv_output_parser_true_fixture();
+    test_nuxmv_output_parser_false_fixture();
+    test_nuxmv_output_parser_error_fixture();
+    test_nuxmv_output_parser_timeout_fixture();
     test_spin_emission();
     test_tlaplus_emission();
 

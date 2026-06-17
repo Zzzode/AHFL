@@ -1,8 +1,11 @@
 #include "verification/formal/state_space_estimator.hpp"
 
+#include "ahfl/compiler/ir/ir.hpp"
+
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <variant>
 
 namespace ahfl::formal {
 
@@ -64,6 +67,28 @@ constexpr std::size_t tractability_threshold = 1'000'000; // 10^6
     }
 
     return estimate;
+}
+
+std::vector<AgentMetrics> collect_agent_metrics(const ahfl::ir::Program &program) {
+    std::vector<AgentMetrics> agents;
+    for (const auto &declaration : program.declarations) {
+        const auto *agent = std::get_if<ahfl::ir::AgentDecl>(&declaration);
+        if (agent == nullptr) {
+            continue;
+        }
+
+        agents.push_back(AgentMetrics{
+            .agent_name = agent->name,
+            .state_count = agent->states.size(),
+            .transition_count = agent->transitions.size(),
+            .capability_count = agent->capability_refs.size(),
+        });
+    }
+    return agents;
+}
+
+StateSpaceEstimate estimate_state_space(const ahfl::ir::Program &program) {
+    return estimate_state_space(collect_agent_metrics(program));
 }
 
 } // namespace ahfl::formal

@@ -16,6 +16,29 @@ namespace ahfl::formal {
     return ".tla";
 }
 
+[[nodiscard]] ModelCheckerCapabilities TLAPlusBackend::capabilities() const {
+    return ModelCheckerCapabilities{
+        .emits_model = true,
+        .supports_external_verification = false,
+        .supports_ahfl_smv_semantics = false,
+        .required_binary = "TLC",
+        .property_semantics =
+            {
+                "state-machine control graph TLA+ emission",
+            },
+        .skip_reason =
+            "TLA+/TLC external verification is not wired for AHFL property semantics yet",
+    };
+}
+
+[[nodiscard]] ModelCheckerAvailability TLAPlusBackend::availability() const {
+    return ModelCheckerAvailability{
+        .status = ModelCheckerAvailabilityStatus::VerificationUnsupported,
+        .binary_path = {},
+        .reason = capabilities().skip_reason,
+    };
+}
+
 [[nodiscard]] ModelEmissionResult TLAPlusBackend::emit_model(const BmcStateMachine &machine) {
     ModelEmissionResult result;
 
