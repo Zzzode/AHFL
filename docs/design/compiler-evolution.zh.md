@@ -21,16 +21,16 @@
 
 对 AHFL 来说，大多数新增能力都应沿着同一条链路扩展：
 
-```text
-grammar
-  -> frontend AST/lowering
-  -> resolve
-  -> typecheck
-  -> validate
-  -> IR
-  -> backend
-  -> tests
-  -> docs
+```mermaid
+flowchart TD
+    Grammar["grammar"] --> Frontend["frontend AST / lowering"]
+    Frontend --> Resolve["resolve"]
+    Resolve --> Typecheck["typecheck"]
+    Typecheck --> Validate["validate"]
+    Validate --> IR["IR"]
+    IR --> Backend["backend"]
+    Backend --> Tests["tests"]
+    Tests --> Docs["docs"]
 ```
 
 并不是每次都要改到最末端，但默认应按这个顺序检查影响面。

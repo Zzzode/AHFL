@@ -21,13 +21,14 @@
 
 ## 当前口径摘要
 
-1. `ahflc` 是唯一用户态 CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
+1. `ahflc` 是主要编译、验证、artifact 与 runtime CLI 入口；真实 workflow 执行统一进入 `ahflc run`。
 2. project 输入统一支持 `<input.ahfl>`、`--search-root`、`--project`、`--workspace --project-name`。
 3. package authoring 仍通过独立 `--package <ahfl.package.json>` 输入进入 native package / review / runtime-adjacent artifact。
 4. Provider diagnostic artifact 使用内部入口 `emit-provider-artifact provider/<artifact>`；Internal artifact 必须显式传入 `--show-hidden`。
 5. Optimization IR 通过 `emit opt-ir` / `emit-opt-ir` 输出文本 artifact，通过 `emit opt-ir-json` / `emit-opt-ir-json` 输出 `AHFL_OPT_IR_V1` JSON artifact；普通 backend 路径仍消费 Semantic IR。
-6. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
-7. 新增 CLI 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
+6. `ahfl-repl` 与 `ahfl-dap` 是独立开发者工具入口，分别面向交互式求值和 Debug Adapter Protocol。
+7. 退出码稳定为 `0` 成功、`1` 编译/验证/runtime 错误、`2` 参数错误、`3` 内部错误。
+8. 新增 `ahflc` 选项必须维护 `OptionSpec` 声明式选项表，不再扩散手写解析逻辑。
 
 ## 总览
 
@@ -45,7 +46,10 @@
 
 ```text
 ahflc check <input-mode>
-ahflc run --workflow <name> --input '<json>' [--llm-config <path>] <input-mode>
+ahflc run --workflow <name> --input '<json>' [--llm-config <path>] [--tool-catalog <path>] <input-mode>
+ahflc fmt [--check] <input.ahfl|dir>...
+ahflc fmt [--check] --project <ahfl.project.json>
+ahflc fmt [--check] --workspace <ahfl.workspace.json> --project-name <name>
 ahflc dump-ast <input-mode>
 ahflc dump-types <input-mode>
 ahflc dump-project <input-mode>
@@ -64,10 +68,18 @@ ahflc emit-audit-report --package ... --capability-mocks ... --input-fixture ...
 ahflc emit-dry-run-trace --package ... --capability-mocks ... --input-fixture ... [--workflow ...] [--run-id ...] <input-mode>
 ahflc emit-package-review [--package <ahfl.package.json>] <input-mode>
 ahflc emit-summary <input-mode>
-ahflc emit-smv <input-mode>
+ahflc emit-smv [--smv-size-report] <input-mode>
 ahflc emit-assurance-json [--package <ahfl.package.json>] <input-mode>
 ahflc validate-assurance [--package <ahfl.package.json>] <input-mode>
-ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [--package ...] <input-mode>
+ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-checker <path>] [--formal-model-out <model.smv>] [--package ...] <input-mode>
+```
+
+开发者工具入口：
+
+```text
+ahfl-repl [--help]
+ahfl-dap [--help]
+ahfl-incremental [--help] <changed.ahfl>...
 ```
 
 ## 选项
@@ -81,23 +93,120 @@ ahflc verify-formal [--model-checker <path>] [--formal-model-out <model.smv>] [-
 | `--project-name` | `<name>` | 与 `--workspace` 配合选择目标 project |
 | `--search-root` | `<dir>` | 额外搜索根目录 (可重复) |
 | `--package` | `<ahfl.package.json>` | package authoring descriptor |
-| `--capability-mocks` | `<mocks.json>` | deterministic capability mock 输入 |
+| `--capability-mocks` | `<mocks.json>` | deterministic capability mock 输入；`run` 中作为 LLM function tools source |
+| `--tool-catalog` | `<tools.json>` | 仅 `run`：deterministic runtime tool catalog 输入，作为 LLM function tools source |
+| `--capability-bindings` | `<bindings.json>` | 仅 `run`：HTTP/gRPC JSON transcoding runtime capability binding 输入 |
 | `--input-fixture` | `<fixture>` | package fixture request 选择 |
 | `--run-id` | `<id>` | 稳定 run identity |
 | `--workflow` | `<canonical>` | 显式选择目标 workflow |
 | `--input` | `<json>` | `run` 命令的真实 runtime 输入 JSON |
 | `--llm-config` | `<path>` | `run` 命令的 LLM Provider 配置，默认 `~/.ahfl/llm_config.json` |
+| `--llm-observability` | `<llm-observability.json>` | 将 `run` 的 LLM cache / fallback / streaming / token usage / token budget / secret lifecycle secret-free 事件写入机器可读 JSON；usage 超过 `max_total_tokens` 时仍先写出该 artifact，再以 `runtime.LLM_TOKEN_BUDGET_EXCEEDED` 失败 |
 
 ### 输出控制选项
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
+| `--formal-backend` | `<nuxmv\|nusmv\|spin\|tlaplus>` | 仅 `verify-formal`: 选择形式化 backend。当前只有 `nuxmv` / `nusmv` 支持 AHFL SMV 外部验证；`spin` / `tlaplus` 会报告 `verification_unsupported` |
 | `--model-checker` | `<path>` | 仅 `verify-formal`: NuSMV/nuXmv checker 路径 |
+| `--checker-timeout-seconds` | `<seconds>` | 仅 `verify-formal`: 外部 checker 进程 timeout；超时会报告 `checker_status: checker_error` 与 `checker_timed_out: true` |
 | `--formal-model-out` | `<model.smv>` | 仅 `verify-formal`: 保留 SMV 模型文件 |
 | `--dump-ast` | - | 输出 AST outline |
 | `--dump-types` | - | 输出类型环境 |
 | `--explain` | - | 启用结构化解释 |
+| `--check` | - | 仅 `fmt`: 检查格式化状态，不写回文件 |
 | `-O` / `--optimize` | - | 启用优化 passes；普通 backend 路径运行 Semantic IR passes，`emit opt-ir` / `emit opt-ir-json` 输出 Opt IR passes 后的结果 |
+| `--time-passes` | - | 与 `-O` 配合使用，把 Semantic IR pass pipeline 耗时输出到 stderr |
+| `--smv-size-report` | - | 仅 `emit smv`: 把 SMV artifact 的 byte、line、LTLSPEC 数量输出到 stderr |
+| `--trace-export` | `<trace.jsonl>` | 将 CLI command span 以 JSONL 写入文件，不改变 stdout artifact |
+| `--metrics-export` | `<metrics.jsonl>` | 将 CLI duration / exit_code metrics 以 JSONL 写入文件，不改变 stdout artifact |
+| `--structured-log` | `<log.jsonl>` | 将 CLI command completion 结构化日志以 JSONL 写入文件，不改变 stdout artifact |
+| `--memory-report` | `<memory.json>` | 将 source、TypedProgram、IR 规模和结构性 memory proxy 写入 JSON 文件，不改变 stdout artifact |
+
+## Formatter
+
+`ahflc fmt <input.ahfl|dir>...` 使用 formatter library 格式化源文件并原地写回；目录输入会递归收集 `.ahfl` 文件并按路径稳定排序。`ahflc fmt --project <ahfl.project.json>` 和 `ahflc fmt --workspace <ahfl.workspace.json> --project-name <name>` 会格式化 descriptor 中声明的 `entry_sources`。
+
+`ahflc fmt --check ...` 只检查文件是否已经符合格式，不写回；如果需要改动，命令返回非零退出码。批量模式会继续检查所有可读取文件，并在 stderr 输出 `format failed for X of N input(s)` 作为 partial failure 汇总。
+
+配置文件名为 `.ahfl-format`，CLI 会从输入文件所在目录向上查找。当前支持：
+
+```text
+indent_width = 4
+use_tabs = false
+max_line_length = 100
+trailing_newline = true
+align_fields = true
+sort_imports = true
+```
+
+## REPL
+
+`ahfl-repl` 启动 AHFL 交互式 REPL；也支持通过 stdin 管道输入命令，便于 smoke test 或一次性诊断。
+
+```bash
+ahfl-repl
+printf ':help\n:quit\n' | ahfl-repl
+```
+
+当前命令：
+
+| 命令 | 用途 |
+|------|------|
+| `:type <expr>` | 输出表达式推导类型 |
+| `:verify <code>` | 对 agent 声明运行形式化验证路径 |
+| `:simulate <code>` | 对输入中的 agent 声明运行结构化状态机 step simulation，按 `initial` 到可达 `final` 的最短路径输出状态迁移 |
+| `:help` | 输出帮助 |
+| `:quit` | 退出 |
+| `<expr>` | 求值表达式或输出声明 IR 摘要 |
+
+## DAP
+
+`ahfl-dap` 启动 AHFL Debug Adapter Protocol server，通过 stdin/stdout 读写 `Content-Length` frame。当前入口暴露现有 DAP library handler：`initialize`、`launch`、`disconnect`、`configurationDone`、`setBreakpoints`、`threads`、`stackTrace`、`scopes`、`variables`、`continue`、`next`、`evaluate`。
+
+当前边界：
+
+1. `ahfl-dap` 已有进程级 smoke test。
+2. breakpoint、state inspector 与基础 command handler 已在库级测试覆盖。
+3. runtime state、capability breakpoint 与真实 step execution 仍属于 DAP 产品化后续工作。
+
+## Incremental
+
+`ahfl-incremental` 是当前 incremental compiler 的窄入口，接收一组 changed source paths，构建单层 dependency graph，运行 parse / resolve / typecheck / IR lowering，并输出模块状态和 cache stats。
+
+```bash
+ahfl-incremental tests/golden/ir/ok_workflow_value_flow.ahfl
+```
+
+当前边界：
+
+1. 入口使用进程内 `IrCache`，适合 smoke test 和 daemon-facing 原型验证，不提供跨进程持久缓存。
+2. 入口不会读取 project/workspace descriptor，也不会从 import graph 自动发现 transitive dependents；project-aware invalidation contract 仍是后续工作。
+
+## Profiling
+
+`--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 是当前已产品化的 CLI profiling / size-report / observability flag。它们都不改变 stdout artifact；`--time-passes` 和 `--smv-size-report` 报告写入 stderr，`--trace-export`、`--metrics-export`、`--structured-log` 和 `--memory-report` 写入侧路文件。
+
+```bash
+ahflc emit summary -O --time-passes examples/refund_audit_core_v0_1.ahfl
+ahflc emit smv --smv-size-report examples/refund_audit_core_v0_1.ahfl
+ahflc emit summary \
+  --trace-export trace.jsonl \
+  --metrics-export metrics.jsonl \
+  --structured-log ahflc.jsonl \
+  --memory-report memory.json \
+  examples/refund_audit_core_v0_1.ahfl
+```
+
+当前边界：
+
+1. `--time-passes` 必须与 `-O` / `--optimize` 一起使用。
+2. `--smv-size-report` 只适用于 `emit smv`，报告 byte、line、LTLSPEC 数量。
+3. `--trace-export` 输出 `ahflc.command` span，包含 command、exit_code 和 duration_ms attributes。
+4. `--metrics-export` 输出 `ahfl.cli.duration_ms` 与 `ahfl.cli.exit_code` metrics，包含 command label。
+5. `--structured-log` 输出 `ahflc command completed` 事件，包含 level、command、exit_code 和 duration_ms fields。
+6. `--memory-report` 输出 `ahfl.memory_report.v0` JSON，包含 source、TypedProgram、IR 规模和结构性 memory proxy；这不是 RSS / allocator 观测。
+7. Opt IR function-level optimization timing、pass-level trace schema 和平台可比 RSS / allocator memory report 仍是后续工作。
 
 ### V0.11 新增选项
 
@@ -130,9 +239,10 @@ ahflc emit opt-ir-json -O tests/golden/ir/ok_expr_temporal.ahfl
 
 1. `emit opt-ir` 是 artifact dump，不是 core backend contract。
 2. 普通 `emit-ir`、`emit-ir-json`、SMV、native / execution / assurance 输出仍以 `ir::Program` 为输入。
-3. `-O` 在普通 backend 路径中不会把 Opt IR 回降到 Semantic IR，也不会改变 backend 消费类型。
-4. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
-5. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 Semantic IR 时，仍应使用 `emit-ir-json`。
+3. `-O` 在普通 backend 路径中会先运行 Semantic IR pass pipeline，因此普通 backend 输出可以变化；当前回归测试已覆盖 `emit ir` 和 `emit smv` 的 before/after 差异。
+4. `-O` 不会把 Opt IR 回降到 Semantic IR，也不会改变 backend 消费类型。
+5. Opt IR 当前生产路径是 artifact-only：它不会让普通 backend 隐式直连 Opt IR。
+6. Opt IR 文本输出用于 golden、诊断和 pass 行为审查；机器消费 Opt IR 应使用 `AHFL_OPT_IR_V1` JSON。需要消费稳定 Semantic IR 时，仍应使用 `emit-ir-json`。
 
 ## Provider Artifact 可见性
 

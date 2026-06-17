@@ -86,21 +86,23 @@ Statement / temporal typed-tree 的 T1.6 触发条件：
 
 - 类型等价、子类型、赋值兼容和运行时边界 schema 匹配语义混杂。
 - 调用方无法从接口上区分“普通表达式赋值”和“agent / workflow 边界检查”。
-- 规范要求 `List<T>`、`Set<T>`、`Map<K,V>` 不变，但当前递归子类型规则会产生容器协变。
+- 旧计划曾把 `Optional<T>`、`List<T>`、`Set<T>`、`Map<K,V>` 全部不变作为目标；当前规范已明确为 `Optional/List/Set` 元素协变、`Map` key 不变且 value 协变，应以规范为准。
+- 数值 subtyping 曾默认允许 `Int <: Float`、`Int <: Decimal(p)`、`Decimal(p1) <: Decimal(p2)`，这与规范不一致。
 
 ### 5.2 名义类型 identity 依赖字符串
 
 现状：
 
-- `TypeKind::Struct` / `TypeKind::Enum` 通过 canonical name 描述类型身份。
-- `TypeEnvironment::find_struct` / `find_enum` 以字符串查找。
+- semantic `StructT` / `EnumT` / `EnumVariantT` 已携带 optional `SymbolId`，`type_relations` 的等价关系已优先使用 symbol identity，canonical name 只作为缺少 symbol 时的 fallback。
+- `TypeEnvironment::get_struct(Type)` / `get_enum(Type)` 已优先使用 type payload 里的 `SymbolId`；`find_struct` / `find_enum` 仍保留为 canonical name fallback 和展示/旧入口。
+- dump-types 已按 `SymbolId` 从 `TypeEnvironment` 查询声明；IR lowering 已通过 `SymbolRef.id` 保留 declaration/reference identity，`TypeRef` 仅作为 canonical 类型边界和可读输出，不承担内部名义 identity。
 
 问题：
 
 - 字符串适合展示，不适合作为 sema 内部 identity。
 - 跨模块 rename、diagnostics note、IR provenance 与 future incremental cache 都需要稳定 identity。
 
-### 5.3 exact schema boundary 未闭合
+### 5.3 exact schema boundary 已落地，后续转入维护矩阵
 
 规范要求以下边界采用精确 schema 匹配：
 
@@ -113,8 +115,10 @@ Statement / temporal typed-tree 的 T1.6 触发条件：
 
 现状：
 
-- workflow node input / workflow return 等路径仍主要通过 `check_assignable` 检查。
-- `is_exact_schema_match` 没有成为边界检查的强制接口。
+- `SchemaBoundaryKind` 已覆盖 agent input/output/context default、workflow input/output、workflow node input。
+- workflow node input、workflow output、agent output 和 agent context default 已通过 `check_exact_schema_boundary` 走 `is_exact_schema_match`。
+- agent input 与 workflow input 在编译期没有外部输入表达式；当前以声明级 schema boundary 校验它们必须解析为 struct type，并使用稳定 `typecheck.INVALID_AGENT_TYPE` diagnostic code 与 `SchemaBoundaryTypeRequiresStruct` message template。
+- typecheck golden 已覆盖 agent input 非 struct、agent context default exact mismatch、agent output exact mismatch、workflow input 非 struct、workflow output exact mismatch、workflow node input exact mismatch。
 
 ### 5.4 声明级 invariant 不完整
 
@@ -136,14 +140,18 @@ Statement / temporal typed-tree 的 T1.6 触发条件：
 
 现状：
 
-- 常量初始化器和结构体默认值主要检查类型与 purity。
-- 没有独立 `ConstSema` / `ConstEvaluator`。
+- 常量初始化器和结构体默认值已通过 `ConstSema` 语法 gate 与 `ExprEffect` gate 检查。
+- `ConstEvalOutcome` 已在 `const_sema.*` 边界区分并构造 `KnownConst`、`NotConst` 和 `Error`，`ConstEvalPipeline` 已编排 const gate、dependency scheduling 和 const value tree recording，`ConstExpressionDriver` 已编排 expression checker callback、const pipeline 和 diagnostic forwarding，`ConstValueTreeRecorder` 的 evaluate-and-record 已直接返回 outcome，const expr required diagnostic message/code/range 已由 `const_sema.*` 描述并随 pipeline diagnostic report 返回，`ConstDiagnosticEmitter` 已负责按当前 source 转发 const diagnostic report；expression checker 的 context/value/call contract、place/path-root helper、path resolution helper、flow narrowing helper、field access helper 和 value factory 已抽到 `expression_sema.*`，`ExpressionChecker` dispatch object、path/unary/member/index/binary/qualified-value/struct-literal/list-literal/set-literal/map-literal/call expression handler、对应旧 `TypeCheckPass` handler 声明/实现清理、`ExpressionCheckerServices` adapter、metadata query direct environment read、resolver/symbol snapshot direct read、assignability direct relation check、type symbol resolver callback、diagnostic sink callback、recursive checker callback、friend removal、field/flow helper 直连与具体 handler 已拆到 `typecheck_expr.cpp`，`TypeCheckPass` 现在保留 expression checker callback，并把结果转换为 `ConstCheckedExpression` 作为 const pipeline 输入；adapter 已不再持有或友元访问 `TypeCheckPass`，diagnostic 与 recursive `check_expr` 均通过 callback 转发，`TypeResolver` boundary 与 alias cache/cycle state 已移入 `type_resolver.*`，`ahfl.semantics.type_resolver_all` 已直接覆盖 alias cache/cycle，并接管 AST type syntax、type symbol、alias cache 与 alias cycle 处理，剩余 `TypeCheckPass` 行为依赖集中在 source/diagnostic context 注入与更上层 pass 调度。非纯 const expression 诊断会报告具体 effect，例如 capability call。
+- `TypedExpr::const_value` 已能为通过 `ConstSema` 的表达式记录可序列化 const value tree，覆盖 literal、enum variant、const reference、结构体字面量、容器字面量、`some` / `none`，并通过 Typed HIR JSON 往返测试。
+- `ConstSema` 已能递归求值前序、forward 与跨 source const initializer，做值内联，并折叠基础 bool / Int unary/binary、Float 算术与比较、同 scale Decimal `+` / `-` 与比较、String `+`、Duration 比较/等价、struct member access、list/map index access；Duration const value artifact 已规范化为毫秒单位，Set / Map const value 已按稳定 key 规范化，Typed HIR 已输出 `AHFL_CONST_VALUE_ARTIFACT_V1` schema gate 和直接 const dependency graph artifact，const 依赖循环会报告稳定 `typecheck.CONST_DEPENDENCY_CYCLE`。`ConstValue` child 构造、等价比较、稳定排序、Set/Map 规范化、Duration artifact、unary/binary/member/index folding、AST / Resolver 到 const value tree 的递归构造、TypedExpr const value tree evaluate-and-record 编排及其成功 outcome 返回、const dependency reference 收集、TypedProgram const dependency edge 写入、const value cache / active / failed 状态管理、const cycle begin result / failed-state 标记、assignable 后 const value cache commit 与 resolution finish 决策、const cache write / resolution success API 封装、effect/syntax const gate 分类、const expr required diagnostic message/code/range 与 pipeline diagnostic report、const diagnostic sink forwarding、const type-relation validator、const checked-expression pipeline input、const expression driver、expression checker context/value/call contract、expression place/path-root helper、expression path resolution helper、expression flow narrowing helper、expression field access helper、`ExpressionValueFactory`、`ExpressionChecker` dispatch object、path/unary/member/index/binary/qualified-value/struct-literal/list-literal/set-literal/map-literal/call expression handler、对应旧 `TypeCheckPass` handler 声明/实现清理、`ExpressionCheckerServices` adapter、metadata query direct environment read、resolver/symbol snapshot direct read、assignability direct relation check、type symbol resolver callback、diagnostic sink callback、recursive checker callback、friend removal、field/flow helper 直连与 handler implementation file、struct default expectation/schema-boundary policy、const eval outcome 构造，以及 const eval pipeline 编排边界、const dependency cycle diagnostic spec / code / range / related-note report、const initializer validation policy 和 struct default validation policy 已移入 `const_sema.*` / `expression_sema.*` / `typecheck_expr.cpp` 的 `ConstEvaluator` / `ConstValueTreeRecorder` / `ConstDependencyResolver` / `ConstDependencyScheduler` / `ConstEvalPipeline` / `ConstExpressionDriver` / `ConstValueResolutionState` / `ConstValueResolutionBeginResult` / `ConstExprGateResult` / `ConstTypeCheckDiagnostic` / `ConstDiagnosticReport` / `ConstDiagnosticEmitter` / `ConstTypeRelationValidator` / `ConstCheckedExpression` / `ExpressionContext` / `ExpressionValue` / `ExpressionCallContext` / `ExpressionValueFactory` / `ExpressionChecker` / `ExpressionCheckerServices` / `ConstExprRequiredDiagnostic` / `ConstEvalOutcome` / `ConstDependencyCycleDiagnostic` / `ConstInitializerValidationPolicy` / `ConstStructDefaultValidationPolicy`。
+- Const expression 的 evaluation / diagnostic 编排已进入 `const_sema.*`，expression checker 数据契约、place/path-root helper、path resolution helper、flow narrowing helper、field access helper 与 value factory 已进入 `expression_sema.*`，`ExpressionChecker` dispatch object、path/unary/member/index/binary/qualified-value/struct-literal/list-literal/set-literal/map-literal/call expression handler、`ExpressionCheckerServices` adapter、metadata query direct environment read、resolver/symbol snapshot direct read、assignability direct relation check、type symbol resolver callback、diagnostic sink callback、recursive checker callback、friend removal、field/flow helper 直连与具体 handler 已进入 `typecheck_expr.cpp`；当前 checker 已不直接友元访问 `TypeCheckPass`，且 literal / error value construction、path expression typing、unary expression typing、member access typing、index access typing、binary expression typing、qualified value typing、struct literal typing、list literal typing、set literal typing、map literal typing 与 call expression typing 已脱离 adapter，对应旧 `TypeCheckPass` handler 声明/实现已清理，adapter 中的 high-level expression handler 转发和旧 `TypeCheckPass` metadata query wrappers、旧 resolver/symbol lookup 转发、旧 assignability forwarding、旧 type symbol direct forwarding、旧 direct diagnostic forwarding、旧 direct recursive check forwarding、`TypeCheckPass::field_access` / `TypeCheckPass::apply_flow_narrowing` 薄包装已清理，剩余工作是继续剥离 source/diagnostic context 注入等 `TypeCheckPass` 状态依赖并补齐剩余语义测试矩阵。
 
 ### 5.6 Purity 表达力不足
 
 现状：
 
-- `ExpressionTypeInfo` 记录 `bool is_pure`。
+- `ExpressionTypeInfo` 已记录 `ExprEffect`，`bool is_pure` 保留为兼容派生状态。
+- 表达式 checker 已能区分 `Pure`、`ConstOnly`、`PredicateCall`、`CapabilityCall`、`ExternalEffect` 和 `Unknown`；const expression、contract、temporal embedded expression、if condition 和 assert condition 的非纯诊断已输出具体 effect 名称。
 
 问题：
 
@@ -155,7 +163,9 @@ Statement / temporal typed-tree 的 T1.6 触发条件：
 现状：
 
 - `diagnostics.hpp` 已定义 typecheck error code 和 message template。
-- `typecheck.cpp` / `validate.cpp` 大量直接拼接字符串。
+- type mismatch、exact schema、const expr、schema declaration、non-pure expression、bool semantic boundary、callable arity、capability gating、predicate argument purity、member/field access、struct literal field/target、qualified enum value、declaration duplicate field/variant、agent context default、index access（list index 与非集合目标）、empty literal、`none` context、expression operation、flow assignment target、unknown path root、unknown type / qualified value / callable missing-reference fallback、invalid type reference fallback、invalid callable reference fallback、missing callable metadata fallback、missing const/type metadata fallback 和 let shadowing warning 已有稳定 typecheck code 覆盖；schema declaration、missing-reference fallback、invalid type/callable reference fallback、missing callable/const/type metadata fallback 与 shadowed binding 也已迁移到 message template 并有单测覆盖，list/set/map 推断类型 mismatch 已能用 related note 指回首个推断元素/key/value。
+- validation agent/flow invalid-state、duplicate capability、workflow graph 和 temporal formula 已使用稳定 validation code 和 message template；duplicate capability 已从兜底 `validation.SEMANTIC_INVARIANT` 拆为 `validation.DUPLICATE_CAPABILITY` 并有单测覆盖。
+- `typecheck.cpp` / `validate.cpp` 中直接裸字符串诊断已明显收敛；当前 `validate.cpp` 不再有 in-tree `validation.SEMANTIC_INVARIANT` 发射路径，剩余重点转向 related notes 与测试矩阵一致性。
 
 问题：
 
@@ -195,7 +205,7 @@ flowchart TD
 
 | 模块 | 主要职责 | 建议文件 |
 |------|----------|----------|
-| `TypeResolver` | AST type syntax 到 semantic type，alias 展开，alias cache | `type_resolver.*` |
+| `TypeResolver` | AST type syntax 到 semantic type，type symbol resolution，alias 展开，alias cache/cycle state | `type_resolver.*` 与 `ahfl.semantics.type_resolver_all` 已落库 |
 | `TypeRelations` | equivalence、subtyping、assignability、exact schema | `type_relations.*` |
 | `ExpressionChecker` | 表达式 typing、contextual typing、effect 聚合 | `expression_checker.*` |
 | `DeclarationSema` | declaration-level invariant 与 signature 建模 | `declaration_sema.*` |
@@ -210,7 +220,8 @@ flowchart TD
 目标：
 
 - 建立类型关系的单一入口。
-- 修复容器协变偏差。
+- 固化规范定义的容器 variance。
+- 默认禁止规范未列出的数值子类型。
 - 为 exact schema boundary 铺路。
 
 任务：
@@ -218,16 +229,30 @@ flowchart TD
 1. 新增 `include/ahfl/compiler/semantics/type_relations.hpp`。
 2. 新增 `src/compiler/semantics/type_relations.cpp`。
 3. 迁移 `are_types_equivalent`、`is_subtype_of`、`is_exact_schema_match`。
-4. 将 `Optional<T>`、`List<T>`、`Set<T>`、`Map<K,V>` 按规范改为不变，除非后续规范明确放开。
-5. 增加 type relation 单元测试矩阵。
+4. 将 `Optional<T>`、`List<T>`、`Set<T>`、`Map<K,V>` 按 `docs/spec/core-language.zh.md` 固化：`Optional/List/Set` 元素协变，`Map` key 不变、value 协变。
+5. 默认关闭数值 widening：`Int` 不是 `Float` 或 `Decimal(p)` 的子类型，`Decimal(p1)` 不是 `Decimal(p2)` 的子类型。
+6. 增加 type relation 单元测试矩阵。
 
 验收：
 
 - `String(2, 8) <: String` 通过。
 - `String(2, 8) <: String(0, 16)` 通过。
-- `List<String(2,8)> <: List<String>` 不通过。
+- `List<String(2,8)> <: List<String>` 通过。
 - `Map<String(2,8), Int> <: Map<String, Int>` 不通过。
+- `Map<String, String(2,8)> <: Map<String, String>` 通过。
+- 源码级 `const` / empty container / `none` 路径通过 `TypeCheckPass::check_assignable` 消费上述 variance 规则。
+- CLI fail golden 覆盖 `Optional/List/Set<String> -> Optional/List/Set<String(2,8)>`
+  反向协变拒绝路径、`Map<String(2,8), Int> -> Map<String, Int>` key invariant
+  拒绝路径，以及 `Map<String, String> -> Map<String, String(2,8)>` value 反向协变拒绝路径。
 - `Decimal(2) <: Decimal(4)` 不通过。
+- CLI fail golden 覆盖 `Decimal(2) -> Decimal(4)` numeric widening 拒绝路径。
+- CLI fail golden 覆盖 `Decimal(4) -> Decimal(2)` scale narrowing 拒绝路径。
+- `Decimal(2) <: Float` 不通过。
+- CLI fail golden 覆盖 `Decimal(2) -> Float` 拒绝路径。
+- `Int <: Float` 不通过。
+- CLI fail golden 覆盖 `Int -> Float` numeric widening 拒绝路径。
+- `Int <: Decimal(2)` 不通过。
+- CLI fail golden 覆盖 `Int -> Decimal(2)` numeric widening 拒绝路径。
 
 ### Milestone 2：名义类型 identity 硬化
 
@@ -238,11 +263,11 @@ flowchart TD
 
 任务：
 
-1. 为 semantic `Type` 增加 nominal identity 字段，优先使用 `SymbolId`。
-2. 调整 struct / enum type 构造入口。
-3. 调整 `TypeEnvironment::get_struct` / `get_enum` 的主要查询路径。
+1. 已为 semantic `Type` 增加 nominal identity 字段，优先使用 `SymbolId`。
+2. 已调整 struct / enum / enum variant type 构造入口和 relation 等价规则。
+3. 已调整并回归覆盖 `TypeEnvironment::get_struct(Type)` / `get_enum(Type)` 的主要查询路径。
 4. 保留 name fallback，仅用于错误恢复或旧 IR 展示。
-5. 更新 dump-types 与 IR lowering 的类型来源。
+5. 已审计 dump-types 与 IR TypeRef/lowering 的类型来源：内部 identity 走 `SymbolId`/`SymbolRef.id`，`TypeRef` 输出 canonical name 供后端和诊断展示。
 
 验收：
 
@@ -254,28 +279,30 @@ flowchart TD
 
 目标：
 
-- 运行时边界全部使用明确的 exact schema relation。
+- 运行时边界全部使用明确的 exact schema relation；没有表达式 source 的 input 声明边界使用明确的 declaration-level schema 校验。
 
 任务：
 
-1. 新增 `SchemaBoundaryKind`：
+1. 已新增 `SchemaBoundaryKind`：
    - `AgentInput`
    - `AgentOutput`
    - `AgentContextDefault`
    - `WorkflowInput`
    - `WorkflowOutput`
    - `WorkflowNodeInput`
-2. 新增 `check_exact_schema_boundary(source, target, kind, range)`。
-3. 替换 workflow node input / workflow return 的普通 `check_assignable`。
-4. 检查 agent context 默认值与 field default 的 exact schema 语义。
-5. 为每类边界补 negative golden。
+2. 已新增 `check_exact_schema_boundary(source, target, kind, range)`。
+3. 已替换 workflow node input / workflow return 的普通 `check_assignable`。
+4. 已检查 agent context 默认值与 field default 的 exact schema 语义。
+5. 已为每类边界补 negative golden。
 
 验收：
 
 - 普通 let / assignment 仍可使用 `assignable`。
 - workflow node input 必须满足 exact schema。
 - workflow return 必须满足 exact schema。
-- 报错信息能指出具体边界类型。
+- agent context default 必须满足 exact schema。
+- agent input / workflow input 的声明类型必须解析为 struct type。
+- 报错信息能指出具体边界类型，并通过 message template 稳定输出。
 
 ### Milestone 4：声明级 invariant
 
@@ -309,15 +336,19 @@ flowchart TD
 
 任务：
 
-1. 新增 `ConstSema`。
-2. 定义 `ConstEvalResult`：
+1. 已新增 `ConstSema` 语法 gate。
+2. 已定义 `ConstEvalOutcome`：
    - `KnownConst`
    - `NotConst`
    - `Error`
 3. 支持 literal、enum variant、const reference、结构体字面量、容器字面量、`some` / `none`。
-4. 禁止 capability / predicate call。
-5. 禁止 `input`、`ctx`、`output` 和普通局部路径。
-6. 将 struct default 和 const initializer 改为消费 `ConstSema`。
+4. 已禁止 capability / predicate call；capability call 会优先报告具体 `ExprEffect`。
+5. 已禁止 `input`、`ctx`、`output` 和普通局部路径。
+6. 已将 struct default 和 const initializer 改为消费 `ConstSema` / `check_const_expr`。
+7. 已将 const expression 的结构化值写入 `TypedExpr::const_value`，并纳入 Typed HIR JSON 序列化/反序列化；Typed HIR JSON 已强制携带 `AHFL_CONST_VALUE_ARTIFACT_V1` schema。
+8. 已支持前序、forward 与跨 source const value inline、基础 bool / Int folding、Float/同 scale Decimal/String/Duration folding、Duration artifact 毫秒规范化、Set/Map const value 规范化、member access folding、list/map index folding 和直接 const dependency graph artifact；`ConstValue` 值层 helper、AST 到 const value tree 的递归 evaluator、TypedExpr const value tree evaluate-and-record 编排及其成功 outcome 返回、const dependency reference 收集、TypedProgram dependency edge 写入、const value resolution state 管理、const cycle begin result / failed-state 标记、assignable 后 const value cache commit 与 resolution finish 决策、const cache write / resolution success API 封装、effect/syntax const gate 分类、const expr required diagnostic message/code/range 与 pipeline diagnostic report、const diagnostic sink forwarding、const type-relation validator、const checked-expression pipeline input、const expression driver、expression checker context/value/call contract、expression place/path-root helper、expression path resolution helper、expression flow narrowing helper、expression field access helper、`ExpressionValueFactory`、`ExpressionChecker` dispatch object、path/unary/member/index/binary/qualified-value/struct-literal/list-literal/set-literal/map-literal/call expression handler、对应旧 `TypeCheckPass` handler 声明/实现清理、`ExpressionCheckerServices` adapter、metadata query direct environment read、resolver/symbol snapshot direct read、assignability direct relation check、type symbol resolver callback、diagnostic sink callback、recursive checker callback、friend removal、field/flow helper 直连与 handler implementation file、struct default expectation/schema-boundary policy、const eval outcome 构造、const eval pipeline 编排、const dependency cycle diagnostic spec / code / range / related-note report、const initializer validation policy 和 struct default validation policy 已移入 `const_sema.*` / `expression_sema.*` / `typecheck_expr.cpp`，并由 const initializer declared-type note 与 agent context default exact-schema note 回归覆盖。
+9. 已为 const dependency cycle 增加稳定 `typecheck.CONST_DEPENDENCY_CYCLE` 诊断。
+10. 待补完整独立 expression checker 服务边界；context/value/call contract、place/path-root helper、path resolution helper、flow narrowing helper、field access helper 与 value factory 已移入 `expression_sema.*`，`ExpressionChecker` dispatch object、path/unary/member/index/binary/qualified-value/struct-literal/list-literal/set-literal/map-literal/call expression handler、`ExpressionCheckerServices` adapter、metadata query direct environment read、resolver/symbol snapshot direct read、assignability direct relation check、type symbol resolver callback、diagnostic sink callback、recursive checker callback、friend removal、field/flow helper 直连与具体 handler 已移入 `typecheck_expr.cpp`，adapter 中的 high-level expression handler 转发和旧 `TypeCheckPass` metadata query wrappers、旧 resolver/symbol lookup 转发、旧 assignability forwarding、旧 type symbol direct forwarding、旧 direct diagnostic forwarding、旧 direct recursive check forwarding、`TypeCheckPass::field_access` / `TypeCheckPass::apply_flow_narrowing` 薄包装已清理，剩余是继续剥离 source/diagnostic context 注入等 `TypeCheckPass` 状态依赖并补齐剩余语义测试矩阵。
 
 验收：
 
@@ -334,17 +365,17 @@ flowchart TD
 
 任务：
 
-1. 定义 `ExprEffect`：
+1. 已定义 `ExprEffect`：
    - `Pure`
    - `ConstOnly`
    - `PredicateCall`
    - `CapabilityCall`
    - `ExternalEffect`
    - `Unknown`
-2. 定义 effect join 规则。
-3. `ExpressionTypeInfo` 增加 effect 字段。
-4. 保留 `is_pure` 作为派生字段或兼容 accessor。
-5. contract、assert、temporal、ConstSema 改为消费 effect。
+2. 已定义 effect join 规则。
+3. `ExpressionTypeInfo` 已增加 effect 字段。
+4. 已保留 `is_pure` 作为兼容状态。
+5. `ConstSema`、contract、assert、temporal embedded expression 和 if condition 已消费 effect 并通过 `typecheck.NON_PURE_EXPRESSION` 或 `typecheck.CONST_EXPR_REQUIRED` 报告具体 effect；assurance/formal 的复用仍需继续收口。
 
 验收：
 
@@ -360,9 +391,9 @@ flowchart TD
 
 任务：
 
-1. 为 typecheck / validate 所有错误补 error code。
-2. 将字符串拼接迁移到 message template。
-3. 类型不匹配诊断增加 note：
+1. 为 typecheck / validate 所有错误补 error code；当前 callable arity、capability gating、predicate argument purity、non-pure expression、bool semantic boundary、member/field access、struct literal field/target、qualified enum value、declaration duplicate field/variant、agent context default、index access、empty literal、`none` context、expression operation、flow assignment target、unknown path root、unknown type / qualified value / callable missing-reference fallback、invalid type reference fallback、invalid callable reference fallback、missing callable metadata fallback、missing const/type metadata fallback、let shadowing warning、validation agent/flow invalid-state、duplicate capability、workflow graph 和 temporal formula 已迁移。
+2. 将字符串拼接迁移到 message template；当前 callable、bool semantic boundary、member/field、declaration、literal、schema declaration、struct literal target、qualified enum value、unknown type / qualified value / callable missing-reference fallback、invalid type/callable reference fallback、missing callable/const/type metadata fallback、index access、expression operation、flow assignment target、unknown path root、shadowed binding warning 和 validation structural diagnostics 已开始使用模板。
+3. 类型不匹配诊断增加 note；当前 struct field、parameter、return、assignment、schema boundary、optional payload 和 list/set/map 推断元素/key/value 已覆盖：
    - expected type 来源。
    - actual type 来源。
    - boundary kind 或 expression kind。
@@ -383,7 +414,7 @@ flowchart TD
 任务：
 
 1. 先抽 `TypeRelations`，不改变 pass 调度。
-2. 再抽 `TypeResolver`，保留 alias cache 行为。
+2. 已抽 `TypeResolver`，并用 `ahfl.semantics.type_resolver_all` 覆盖 alias cache/cycle 行为。
 3. 再抽 `ExpressionChecker`，使 expression typing 可单测。
 4. 最后抽 `DeclarationSema` / `ConstSema` / `FlowWorkflowSema`。
 5. 每一步只移动一个逻辑模块，避免混合重构。
@@ -410,7 +441,8 @@ flowchart TD
    - const expr predicate call
    - const expr path reference
    - exact schema mismatch
-   - container invariance mismatch
+   - container variance mismatch（CLI fail golden 已覆盖 Optional/List/Set 反向协变、Map key invariant 与 Map value 反向协变）
+   - numeric widening mismatch（CLI fail golden 已覆盖 `Int -> Float`、`Int -> Decimal`、`Decimal -> Float`、Decimal scale widening/narrowing）
    - readonly input assignment
 3. 新增 project-aware integration：
    - cross-module nominal identity。
@@ -441,7 +473,7 @@ git diff --check
 9. `fix(diagnostics): attach structured sema diagnostic codes`
 10. `test(semantics): add type relation and sema matrix coverage`
 
-若 nominal type identity 或 container invariance 会改变用户可见行为，对应提交 footer 必须包含：
+若 nominal type identity、container variance 或 numeric relation 会改变用户可见行为，对应提交 footer 必须包含：
 
 ```text
 BREAKING CHANGE: <影响范围与迁移说明>
@@ -451,7 +483,7 @@ BREAKING CHANGE: <影响范围与迁移说明>
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| 容器不变性修复导致旧 golden 失败 | 旧程序可能被新 checker 拒绝 | 按规范接受 breaking change，补迁移说明 |
+| 容器 variance 或 numeric relation 修复导致旧 golden 失败 | 旧程序可能被新 checker 拒绝 | 按规范接受 breaking change，补迁移说明 |
 | Type identity 改动影响 IR 输出 | JSON / text IR golden 变化 | 先保留 display name，新增 identity 字段时分阶段更新 golden |
 | ConstExpr 规则收紧 | 旧默认值或 const 初始化失败 | 明确诊断，必要时分两步提交 |
 | effect model 影响 contract 判断 | 纯度判定行为变化 | 保留 `is_pure` 兼容 accessor，先让 effect 成为内部实现细节 |

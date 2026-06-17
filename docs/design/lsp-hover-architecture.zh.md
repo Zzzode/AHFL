@@ -44,7 +44,7 @@ flowchart TD
 
 | 能力 | 当前事实来源 |
 |------|--------------|
-| diagnostics | parse / resolve / typecheck / validate diagnostics with versioned publish |
+| diagnostics | parse / resolve / typecheck / validate diagnostics with versioned publish、`textDocument/diagnostic` full report 和 `workspace/diagnostic` full report；open/change/close 后刷新全部已打开文档，`workspace/didChangeWatchedFiles` 后失效 analysis cache，`workspace/didChangeWorkspaceFolders` 后更新 workspace roots，覆盖未保存跨文件依赖变化、未打开 imported source 修改和 project descriptor 切换 |
 | hover | `HoverTargetIndex` + `HoverService` + `HoverRenderer` |
 | completion | keyword / type / member / enum / state / workflow context |
 | definition / references / rename | resolver references and declaration ranges |

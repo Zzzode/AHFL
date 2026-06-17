@@ -118,11 +118,11 @@ diagnostics 的基础对象位于：
 
 单文件模式下，主要路径是：
 
-```text
-parse_file
-  -> ParseResult.diagnostics
-  -> resolve/typecheck/validate result.diagnostics
-  -> CLI render(std::cerr, parse_result.source)
+```mermaid
+flowchart TD
+    ParseFile["parse_file"] --> ParseDiagnostics["ParseResult.diagnostics"]
+    ParseDiagnostics --> SemanticDiagnostics["resolve / typecheck / validate result.diagnostics"]
+    SemanticDiagnostics --> Render["CLI render(std::cerr, parse_result.source)"]
 ```
 
 这里有两个层次：
@@ -153,13 +153,13 @@ parse_file
 
 project-aware 模式下，diagnostics 路径更长：
 
-```text
-parse_file(source A)
-  -> parse_result.diagnostics
-  -> parse_project.append_from_source(...)
-  -> ProjectParseResult.diagnostics
-  -> resolve/typecheck/validate
-  -> CLI render(std::cerr)
+```mermaid
+flowchart TD
+    ParseFile["parse_file(source A)"] --> ParseDiagnostics["parse_result.diagnostics"]
+    ParseDiagnostics --> Append["parse_project.append_from_source(...)"]
+    Append --> ProjectDiagnostics["ProjectParseResult.diagnostics"]
+    ProjectDiagnostics --> SemanticDiagnostics["resolve / typecheck / validate"]
+    SemanticDiagnostics --> Render["CLI render(std::cerr)"]
 ```
 
 与单文件模式最大的不同是：
