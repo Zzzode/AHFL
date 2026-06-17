@@ -35,8 +35,8 @@ class TempFile {
 
     [[nodiscard]] bool write(std::string_view content) {
         path_ = make_path();
-        const int fd = open(path_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC,
-                            S_IRUSR | S_IWUSR);
+        const int fd =
+            open(path_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             error_ = std::strerror(errno);
             return false;
@@ -120,9 +120,10 @@ using TempHeaderFile = TempFile;
     return quoted;
 }
 
-[[nodiscard]] std::string build_curl_config(const CurlRequest &request,
-                                            const std::optional<std::filesystem::path> &body_path,
-                                            const std::optional<std::filesystem::path> &header_path) {
+[[nodiscard]] std::string
+build_curl_config(const CurlRequest &request,
+                  const std::optional<std::filesystem::path> &body_path,
+                  const std::optional<std::filesystem::path> &header_path) {
     std::ostringstream config;
     config << "silent\n";
     config << "show-error\n";
@@ -151,40 +152,80 @@ using TempHeaderFile = TempFile;
     if (header_path.has_value()) {
         config << "dump-header = " << quote_config_value(header_path->string()) << "\n";
     }
+    if (!request.tls_client_certificate_path.empty()) {
+        config << "cert = " << quote_config_value(request.tls_client_certificate_path) << "\n";
+    }
+    if (!request.tls_client_key_path.empty()) {
+        config << "key = " << quote_config_value(request.tls_client_key_path) << "\n";
+    }
+    if (!request.tls_ca_certificate_path.empty()) {
+        config << "cacert = " << quote_config_value(request.tls_ca_certificate_path) << "\n";
+    }
+    if (!request.verify_tls) {
+        config << "insecure\n";
+    }
     return config.str();
 }
 
-[[nodiscard]] std::vector<std::pair<std::string, std::string>>
-parse_header_file(const std::filesystem::path &path) {
-    std::vector<std::pair<std::string, std::string>> headers;
+[[nodiscard]] std::vector<CurlHeaderBlock> parse_header_blocks(const std::filesystem::path &path) {
+    std::vector<CurlHeaderBlock> blocks;
     std::ifstream file(path);
     if (!file.is_open()) {
-        return headers;
+        return blocks;
     }
+
+    CurlHeaderBlock current;
+    bool has_current_block = false;
+
+    auto flush_current_block = [&]() {
+        if (!has_current_block) {
+            return;
+        }
+        blocks.push_back(std::move(current));
+        current = CurlHeaderBlock{};
+        has_current_block = false;
+    };
+
     std::string line;
     while (std::getline(file, line)) {
-        // Remove trailing \r if present (HTTP headers use \r\n)
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
-        // Skip empty lines and HTTP status lines (e.g. "HTTP/1.1 200 OK")
-        if (line.empty() || line.starts_with("HTTP/")) {
+        if (line.empty()) {
+            flush_current_block();
             continue;
         }
+        if (line.starts_with("HTTP/")) {
+            flush_current_block();
+            current.has_status_line = true;
+            has_current_block = true;
+            continue;
+        }
+
         const auto colon_pos = line.find(':');
         if (colon_pos == std::string::npos) {
             continue;
         }
         std::string key = line.substr(0, colon_pos);
         std::string value = line.substr(colon_pos + 1);
-        // Trim leading whitespace from value
         const auto value_start = value.find_first_not_of(" \t");
         if (value_start != std::string::npos) {
             value = value.substr(value_start);
         } else {
             value.clear();
         }
-        headers.emplace_back(std::move(key), std::move(value));
+        current.headers.emplace_back(std::move(key), std::move(value));
+        has_current_block = true;
+    }
+    flush_current_block();
+    return blocks;
+}
+
+[[nodiscard]] std::vector<std::pair<std::string, std::string>>
+flatten_header_blocks(const std::vector<CurlHeaderBlock> &blocks) {
+    std::vector<std::pair<std::string, std::string>> headers;
+    for (const auto &block : blocks) {
+        headers.insert(headers.end(), block.headers.begin(), block.headers.end());
     }
     return headers;
 }
@@ -253,7 +294,8 @@ CurlResponse execute_curl(const CurlRequest &request) {
             return CurlResponse{.status_code = 0,
                                 .exit_code = -1,
                                 .body = {},
-                                .error = "failed to create curl header file: " + header_file->error(),
+                                .error =
+                                    "failed to create curl header file: " + header_file->error(),
                                 .timed_out = false};
         }
         header_path = header_file->path();
@@ -269,7 +311,8 @@ CurlResponse execute_curl(const CurlRequest &request) {
     auto response = parse_curl_output(launch_process(process_config));
 
     if (request.capture_headers && header_path.has_value()) {
-        response.response_headers = parse_header_file(*header_path);
+        response.response_header_blocks = parse_header_blocks(*header_path);
+        response.response_headers = flatten_header_blocks(response.response_header_blocks);
     }
 
     return response;

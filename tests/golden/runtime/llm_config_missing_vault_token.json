@@ -1,0 +1,15 @@
+{
+  "endpoint": "https://api.example.com/v1",
+  "model": "test-model",
+  "api_key_secret": "vault:llm/api-key",
+  "secret_providers": [
+    {
+      "kind": "vault",
+      "prefix": "vault",
+      "address": "https://vault.example.com",
+      "token_env": "AHFL_TEST_MISSING_VAULT_TOKEN_DO_NOT_SET",
+      "mount_path": "kv",
+      "timeout_seconds": 1
+    }
+  ]
+}

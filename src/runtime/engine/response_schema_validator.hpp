@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/types.hpp"
 #include "runtime/evaluator/value.hpp"
 
@@ -11,13 +12,19 @@ struct SchemaValidationResult {
     bool valid{true};
     std::string error;
 
-    [[nodiscard]] static SchemaValidationResult ok() { return {true, {}}; }
+    [[nodiscard]] static SchemaValidationResult ok() {
+        return {true, {}};
+    }
     [[nodiscard]] static SchemaValidationResult fail(std::string msg) {
         return {false, std::move(msg)};
     }
 };
 
-[[nodiscard]] SchemaValidationResult
-validate_value_against_schema(const evaluator::Value &value, const ir::TypeRef &expected);
+[[nodiscard]] SchemaValidationResult validate_value_against_schema(const evaluator::Value &value,
+                                                                   const ir::TypeRef &expected);
+
+[[nodiscard]] SchemaValidationResult validate_value_against_schema(const evaluator::Value &value,
+                                                                   const ir::TypeRef &expected,
+                                                                   const ir::Program &program);
 
 } // namespace ahfl::runtime

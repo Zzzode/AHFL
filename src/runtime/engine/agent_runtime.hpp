@@ -62,6 +62,8 @@ class AgentRuntime {
 
     // 设置 capability invoker（用于执行 flow 中的 capability 调用）
     void set_capability_invoker(CapabilityInvoker invoker);
+    void set_contextual_capability_invoker(ContextualCapabilityInvoker invoker);
+    void set_invocation_context(CapabilityInvocationContext context);
 
     // 执行 agent，从初始状态开始
     [[nodiscard]] AgentResult run(Value input);
@@ -74,6 +76,8 @@ class AgentRuntime {
     const ir::FlowDecl &flow_;
     QuotaConfig quota_;
     CapabilityInvoker capability_invoker_;
+    ContextualCapabilityInvoker contextual_capability_invoker_;
+    CapabilityInvocationContext invocation_context_;
 
     // 查找 state handler
     [[nodiscard]] const ir::StateHandler *find_handler(const std::string &state_name) const;

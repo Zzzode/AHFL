@@ -58,6 +58,8 @@ struct GrpcJsonTranscodingRequest {
     std::string serialized_body; // JSON encoding of Value
     std::vector<std::pair<std::string, std::string>> metadata;
     std::chrono::seconds timeout{30};
+    std::string tls_client_certificate_path;
+    std::string tls_client_key_path;
 };
 
 /// HTTP/2 JSON-transcoding response mapped onto gRPC status codes.

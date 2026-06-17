@@ -11,6 +11,8 @@ struct HttpRequest {
     std::unordered_map<std::string, std::string> headers;
     std::string body;
     int timeout_seconds{30};
+    std::string tls_client_certificate_path;
+    std::string tls_client_key_path;
 };
 
 struct HttpResponse {
