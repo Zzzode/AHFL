@@ -15,7 +15,7 @@ TextDiagnosticConsumer::TextDiagnosticConsumer(std::ostream &out) : out_(out) {}
 void TextDiagnosticConsumer::consume(
     const ahfl::DiagnosticBag &bag,
     std::optional<std::reference_wrapper<const ahfl::SourceFile>> source) {
-    bag.render(out_, source);
+    bag.render(out_, source, /*include_code=*/true);
 }
 
 // ---------------------------------------------------------------------------

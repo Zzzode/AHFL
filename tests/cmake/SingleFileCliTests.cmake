@@ -766,6 +766,12 @@ ahfl_add_check_fail_test(
 )
 
 ahfl_add_check_fail_test(
+    ahflc.fail.numeric_operator_int_float
+    "${AHFL_TESTS_DIR}/golden/typecheck/numeric_operator_int_float.ahfl"
+    "typecheck.INVALID_OPERATION"
+)
+
+ahfl_add_check_fail_test(
     ahflc.fail.readonly_input_assignment
     "${AHFL_TESTS_DIR}/golden/typecheck/readonly_input_assignment.ahfl"
     "assignment target must be rooted at writable 'ctx'"

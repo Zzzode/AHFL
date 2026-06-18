@@ -724,12 +724,18 @@ V0.1 的运算符规则如下：
    - `Float × Float -> Float`
    - `Decimal(p)` 仅允许与相同 `p` 的 `Decimal(p)` 做 `+`、`-`
    - `String + String -> String`
+   - `Int` 与 `Float`、`Int` 与 `Decimal(p)`、不同 scale 的 `Decimal` 之间不存在隐式运算 promotion
+   - `Decimal(p) * Decimal(p)`、`Decimal(p) / Decimal(p)` 在 V0.1 中未定义
 2. 比较运算：
    - 两侧类型必须相同，或左侧为右侧子类型，或右侧为左侧子类型
 3. 逻辑运算：
    - `and` / `or` / `not` 仅作用于 `Bool`
 4. `=>`：
    - 仅作用于 `Bool`
+
+测试要求：混合 numeric operator、不同 scale `Decimal` 运算、`Decimal` 乘除、以及 `Int < Float` 必须以稳定诊断
+`typecheck.INVALID_OPERATION` 失败。`TypeRelationOptions::allow_numeric_widening` 仅可用于显式兼容或分析模式，
+不得改变源码表达式类型规则。
 
 ### 4.7 合同与时序公式类型规则
 
