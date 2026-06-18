@@ -3,7 +3,6 @@
 | 项目 | 内容 |
 |------|------|
 | 文档类型 | reference |
-| 版本 | v0.1 |
 | 适用范围 | `tools/vscode` VS Code extension scaffold |
 | 当前状态 | 可本地打包，可由 CI 产出 platform VSIX artifact，可手动发布 Marketplace；已有 Marketplace package inventory gate、platform VSIX install smoke、hover、completion、rename、watched-files、Problems diagnostics transcript 与 diagnostics publish/recovery extension test，workspace folder extension 序列仍需扩展验证 |
 
@@ -227,5 +226,5 @@ git diff --check
 ```bash
 cmake --build --preset build-release --target ahfl-lsp
 cmake --build --preset build-dev --target ahfl_tooling_lsp_json_rpc_tests ahfl_tooling_lsp_handler_tests
-ctest --preset test-dev --output-on-failure -L v0.58-lsp
+ctest --preset test-dev --output-on-failure -L ahfl-lsp
 ```

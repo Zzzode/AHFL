@@ -4,7 +4,7 @@
 
 ## 目标
 
-v0.1 提供一个端到端闭环：
+当前实现提供一个端到端闭环：
 
 1. DSL 允许 capability 显式声明副作用事实。
 2. AST/IR 保留这些事实，不依赖注释或名称猜测。
@@ -143,7 +143,7 @@ ahflc emit-assurance-json <file.ahfl>
 输出格式版本为：
 
 ```text
-ahfl.assurance-bundle.v0.1
+AHFL assurance bundle 格式
 ```
 
 该 backend 消费 IR，不直接读取 AST，不重跑 parser，也不替代 SMV backend。SMV backend 继续负责控制模型输出；assurance backend 负责生产级证据 bundle。
@@ -166,7 +166,7 @@ ahflc verify-formal [--formal-backend <nuxmv|nusmv|spin|tlaplus>] [--model-check
 
 ## 当前限制
 
-v0.1 实现编译期证据合成、JSON emission、production assurance validation gate 和 SMV checker invocation：
+当前版本实现编译期证据合成、JSON emission、production assurance validation gate 和 SMV checker invocation：
 
 - `verify-formal` 已可调用外部 NuSMV/nuXmv 兼容进程，但本仓库不捆绑 checker 二进制。
 - `ModelCheckerBackend` 暴露机器可读 capability/availability matrix：nuXmv/NuSMV 标记为当前 AHFL SMV 外部验证路径；SPIN/TLA+ 当前只承诺模型 emission，不承诺 AHFL property 外部验证；CLI/report 已输出 `missing_binary`、`verification_unsupported`、`checker_error` 的稳定状态。

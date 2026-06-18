@@ -162,8 +162,8 @@ AHFL 在本 RFC 下采取的策略**最接近 Swift `if let` 的隐式语义版*
 需要 reviewer 决议的开放问题：
 
 1. **是否突破 non-goal**：当前 hardening 文档明确把 narrowing 列为 non-goal。本 RFC 承认这是有意识的范围放宽，需 maintainer 显式批准。
-2. **`ctx.<field>` narrow 是否纳入 v0.1**：实现复杂度高于 Identifier narrow。可选先只支持 Identifier，下阶段再扩展。
-3. **else 分支 inverse narrow**：v0.1 不做。是否应作为 v0.2 milestone？
+2. **`ctx.<field>` narrow 是否纳入首版**：实现复杂度高于 Identifier narrow。可选先只支持 Identifier，下阶段再扩展。
+3. **else 分支 inverse narrow**：首版不做。是否应作为后续里程碑？
 4. **诊断 fallback note**：开 / 关 / 仅 verbose 模式开。
 5. **与 #11 任务里"先做最小可行版"的取舍**：是先落 Identifier-only narrow 再迭代，还是一次性把 `ctx.<field>` / `input.<field>` 一起做。
 

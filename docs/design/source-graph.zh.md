@@ -1,6 +1,6 @@
 # AHFL Source Graph
 
-本文冻结 AHFL Core V0.2 在 project/source graph 与 frontend 公共边界上的当前设计，作为 Issue 04、Issue 05、Issue 07 的实现约束。
+本文冻结 AHFL Core 在 project/source graph 与 frontend 公共边界上的当前设计，作为 Issue 04、Issue 05、Issue 07 的实现约束。
 
 适用范围：
 
@@ -14,7 +14,7 @@
 
 ## 目标
 
-1. 为 V0.2 定义稳定的 project/source graph 数据模型
+1. 定义稳定的 project/source graph 数据模型
 2. 扩展 frontend 公共边界，使其既能兼容单文件，也能承载 project-aware 装载
 3. 让 resolver/typecheck/validate 消费“已装载的源码集合”，而不是自行接触文件系统
 
@@ -28,7 +28,7 @@
 
 ## 分层后的对象模型
 
-V0.2 推荐引入三层对象，而不是继续用单个 `ParseResult` 同时承担所有角色。
+推荐引入三层对象，而不是继续用单个 `ParseResult` 同时承担所有角色。
 
 ### 1. Source Artifact
 
@@ -79,7 +79,7 @@ V0.2 推荐引入三层对象，而不是继续用单个 `ParseResult` 同时承
 
 本文不要求最终代码完全使用以下命名，但要求边界形状等价。
 
-在 `include/ahfl/base/support/source.hpp` 中，V0.2 可以新增：
+在 `include/ahfl/base/support/source.hpp` 中，可以新增：
 
 ```cpp
 struct SourceId {
@@ -99,7 +99,7 @@ struct ImportRequest {
 };
 ```
 
-在 `include/ahfl/compiler/frontend/frontend.hpp` 中，V0.2 可以新增：
+在 `include/ahfl/compiler/frontend/frontend.hpp` 中，可以新增：
 
 ```cpp
 struct SourceUnit {
@@ -135,12 +135,12 @@ struct ProjectParseResult {
 
 ## Frontend 公共入口的扩展方向
 
-当前 V0.1 入口是：
+当前单文件入口是：
 
 - `parse_file(path)`
 - `parse_text(name, text)`
 
-V0.2 推荐扩展为：
+推荐扩展为：
 
 1. 保留现有单文件入口，作为兼容 wrapper
 2. 新增 project-aware 入口，例如 `parse_project(ProjectInput)`
@@ -155,7 +155,7 @@ V0.2 推荐扩展为：
 
 ## 与现有六阶段流水线的关系
 
-V0.2 不改变大阶段顺序，仍然是：
+大阶段顺序保持不变，仍然是：
 
 1. `parse`
 2. `ast`
@@ -166,8 +166,8 @@ V0.2 不改变大阶段顺序，仍然是：
 
 变化在于输入粒度：
 
-1. V0.1 更接近“单 source -> AST”
-2. V0.2 变成“source graph -> 每个 source 的 AST -> 跨 source 语义阶段”
+1. 最初更接近”单 source -> AST”
+2. 后来演进为”source graph -> 每个 source 的 AST -> 跨 source 语义阶段”
 
 因此：
 
@@ -177,7 +177,7 @@ V0.2 不改变大阶段顺序，仍然是：
 
 ## CLI 边界
 
-V0.2 对 CLI 的约束是：
+对 CLI 的约束是：
 
 1. `src/tooling/cli/ahflc.cpp` 继续只负责参数分发和驱动流水线
 2. CLI 可以新增 project-aware 参数，例如 entry file 与 search root
@@ -192,7 +192,7 @@ V0.2 对 CLI 的约束是：
 1. 单个 source 内的 range 错误
 2. graph 级所有权/装载错误
 
-V0.2 约束：
+约束：
 
 1. graph 级错误仍应尽量附着到具体 source file 或 import range。
 2. 无法附着到具体源码片段时，至少附着到 entry source 或相关 owner source。
@@ -200,7 +200,7 @@ V0.2 约束：
 
 ## 所有权与生命周期
 
-V0.2 继续遵守：
+继续遵守：
 
 1. AST 的树状拥有关系使用 `Owned<T>`
 2. parse tree 生命周期只存在于 `frontend.cpp`
@@ -212,6 +212,6 @@ V0.2 继续遵守：
 Issue 04 之后，project/source graph 相关实现必须遵守以下规则：
 
 1. 不要把文件系统遍历逻辑扩散进 resolver/typecheck/validate。
-2. 不要让 `ParseResult` 在 V0.2 中继续膨胀成“单文件模式和项目模式的万能容器”。
-3. 单文件兼容模式应通过 wrapper 复用 V0.2 新边界，而不是平行维护两套完全不同的前端。
+2. 不要让 `ParseResult` 继续膨胀成”单文件模式和项目模式的万能容器”。
+3. 单文件兼容模式应通过 wrapper 复用新边界，而不是平行维护两套完全不同的前端。
 4. 若后续要增加 manifest、workspace 或 build graph，优先在 source graph 之上增量扩展，而不是推翻本层对象模型。

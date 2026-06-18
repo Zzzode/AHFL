@@ -1,6 +1,6 @@
 # AHFL CLI Commands
 
-本文是 `docs/reference` 中 CLI 命令参考的合并入口，统一覆盖原 `cli-commands-v0.2`、`v0.3`、`v0.5`、`v0.10` 与 `v0.11` 文档。当前维护口径以 V0.11 为准；旧版本仅作为演进背景纳入摘要，不再保留独立入口。
+本文是 `docs/reference` 中 CLI 命令参考的合并入口，统一覆盖原多版本文档。当前为唯一维护口径；历史版本内容仅作为演进背景纳入摘要，不再保留独立入口。
 
 关联文档：
 
@@ -11,13 +11,13 @@
 
 ## 合并范围
 
-| 历史版本 | 合并后保留的信息 |
+| 演进阶段 | 合并后保留的信息 |
 |----------|------------------|
-| V0.2 | core check / dump / emit / formal 命令族、基础输入模式、退出码。 |
-| V0.3 | project-aware 输入、`emit-native-json`、project/workspace 命令形态。 |
-| V0.5 | package authoring、`emit-package-review`、native package 路径。 |
-| V0.10 | runtime session / journal / replay / scheduler / persistence / store import 输出链路。 |
-| V0.11 | Provider artifact 可见性、声明式选项表、`CliDriver`、结构化 diagnostics 与 `run` 入口。 |
+| 早期 core 命令族 | core check / dump / emit / formal 命令族、基础输入模式、退出码。 |
+| Project-aware 扩展 | project-aware 输入、`emit-native-json`、project/workspace 命令形态。 |
+| Package authoring | package authoring、`emit-package-review`、native package 路径。 |
+| Runtime artifact 链 | runtime session / journal / replay / scheduler / persistence / store import 输出链路。 |
+| Provider 与选项表 | Provider artifact 可见性、声明式选项表、`CliDriver`、结构化 diagnostics 与 `run` 入口。 |
 
 ## 当前口径摘要
 
@@ -205,10 +205,10 @@ ahflc emit summary \
 3. `--trace-export` 输出 `ahflc.command` span，包含 command、exit_code 和 duration_ms attributes。
 4. `--metrics-export` 输出 `ahfl.cli.duration_ms` 与 `ahfl.cli.exit_code` metrics，包含 command label。
 5. `--structured-log` 输出 `ahflc command completed` 事件，包含 level、command、exit_code 和 duration_ms fields。
-6. `--memory-report` 输出 `ahfl.memory_report.v0` JSON，包含 source、TypedProgram、IR 规模和结构性 memory proxy；这不是 RSS / allocator 观测。
+6. `--memory-report` 输出 AHFL 内存报告格式 JSON，包含 source、TypedProgram、IR 规模和结构性 memory proxy；这不是 RSS / allocator 观测。
 7. Opt IR function-level optimization timing、pass-level trace schema 和平台可比 RSS / allocator memory report 仍是后续工作。
 
-### V0.11 新增选项
+### Provider 与选项表阶段新增选项
 
 | 选项 | 参数 | 说明 |
 |------|------|------|
@@ -246,7 +246,7 @@ ahflc emit opt-ir-json -O tests/golden/ir/ok_expr_temporal.ahfl
 
 ## Provider Artifact 可见性
 
-V0.11 将 62 个 provider artifact descriptor 分为两个可见性层级。Provider artifact 不再作为独立 `CommandKind` 暴露，也不再挂到用户态 `ahflc emit <artifact>` 命令面；CLI 只保留内部诊断入口 `ahflc emit-provider-artifact provider/<artifact>`：
+该阶段将 62 个 provider artifact descriptor 分为两个可见性层级。Provider artifact 不再作为独立 `CommandKind` 暴露，也不再挂到用户态 `ahflc emit <artifact>` 命令面；CLI 只保留内部诊断入口 `ahflc emit-provider-artifact provider/<artifact>`：
 
 - **Public (17 个)** — 代表 provider pipeline 的终端 diagnostic artifact，`emit-provider-artifact` 默认可解析。
 - **Internal (45 个)** — 代表 pipeline 内部中间节点，仅在 `--show-hidden` 模式下显示和解析。

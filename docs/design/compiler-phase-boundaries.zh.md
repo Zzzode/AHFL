@@ -1,6 +1,6 @@
 # AHFL Compiler Phase Boundaries
 
-本文冻结 AHFL Core V0.2 的编译阶段职责与中间表示边界，面向需要理解 `parse -> ast -> resolve -> typecheck -> validate -> emit` 主链的工程实现者。
+本文冻结 AHFL Core 的编译阶段职责与中间表示边界，面向需要理解 `parse -> ast -> resolve -> typecheck -> validate -> emit` 主链的工程实现者。
 
 关联文档：
 
