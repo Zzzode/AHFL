@@ -40,7 +40,7 @@
 | Incremental compiler library / executable | `src/tooling/incremental/`、`src/tooling/incremental/main.cpp`、`tests/unit/tooling/incremental/incremental.cpp`、`tests/scripts/incremental_smoke.py` | dependency graph、IR cache、changed compile 与独立 `ahfl-incremental` 入口存在；project-aware invalidation 和持久 cache contract 仍待做 |
 | Telemetry / profiling libraries / CLI timing | `src/tooling/telemetry/`、`src/tooling/profiling/`、`src/tooling/cli/cli_driver.cpp` | trace/metrics/logging/pass timing/hotspot/memory tracker 基础存在；`--time-passes`、`--smv-size-report`、`--trace-export`、`--metrics-export`、`--structured-log` 与 `--memory-report` 已接入 CLI |
 | WASM / K8s / OpenAPI / Terraform target backend | `src/compiler/backends/infra/`、`CommandKind::EmitWasm`、`EmitK8sCrd`、`EmitOpenApi`、`EmitTerraform` | 基础 generation 和 CLI 注册存在；仍需产品级语义和验收 |
-| Fuzz / bench / mutation target | `tests/fuzz/`、`tests/bench/`、`tests/mutation/` | 目录和 target 已存在；CI 显式运行 `v0.59-quality-gates`，覆盖 fuzz/property、真实 compile-time budget、memory proxy budget、bench smoke、mutation config report 与真实 `emit smv` size/spec budget；趋势化与真实 mutation score 仍未闭合 |
+| Fuzz / bench / mutation target | `tests/fuzz/`、`tests/bench/`、`tests/mutation/` | 目录和 target 已存在；CI 显式运行 `quality-gates`，覆盖 fuzz/property、真实 compile-time budget、memory proxy budget、bench smoke、mutation config report 与真实 `emit smv` size/spec budget；趋势化与真实 mutation score 仍未闭合 |
 
 ---
 
@@ -77,16 +77,16 @@
 - [x] 将 key rotation 从“保存旧/新 secret value 的内存 history”收口为 secret-free lifecycle：`RotationEvent` 只保留 provider prefix、key fingerprint、old/new value 是否存在、attempt count、status、error message 和 `secret_free` 标记，并让 `RotationPolicy::max_retries` 实际控制 refresh/resolve 重试次数。
 - [x] 为 HTTP/gRPC capability 认证边界补产品化闭环：缺 secret manager/secret fail closed，bearer/OAuth2/mTLS 解析失败给出确定诊断，mTLS cert/key path 传递到 transport request，并由 `ahfl.runtime.capability_bridge_all` 与 `ahfl.secret.provider_all` 覆盖。
 - [x] 补更完整真实失败路径矩阵：tool call invalid args/unknown tool 的 mock-backed CLI 级回归。
-- [x] 将 tool calling 从 mock-backed capability 扩展到 deterministic runtime tool catalog：`ahflc run --tool-catalog` 读取 `ahfl.llm_tool_catalog.v0`，暴露 OpenAI-compatible function tool，并在 tool loop 中返回 catalog result。
+- [x] 将 tool calling 从 mock-backed capability 扩展到 deterministic runtime tool catalog：`ahflc run --tool-catalog` 读取 AHFL LLM 工具目录格式，暴露 OpenAI-compatible function tool，并在 tool loop 中返回 catalog result。
 - [x] 为 runtime tool catalog 补齐 catalog schema negative、catalog-specific invalid args/unknown tool、tool timeout 和 tool failure 的诊断矩阵。
 - [x] 将 provider fallback 升级为 runtime machine artifact 可投影的 degradation 策略：`--llm-observability` 写出 `provider_degradation_summary`，包含 `fallback_selected` / `fallback_exhausted` outcome、degraded provider 列表、selected provider、attempt count 和 `secret_free` 标记，并由 `ahflc.run.llm_observability.smoke` 与 `ahflc.run.llm_failure_matrix.smoke` 覆盖真实多 provider 成功/失败矩阵。
 - [x] 将 token budget policy 深化到全局 + capability 粒度预算：`capability_token_budgets` 支持覆盖 `max_tokens` / `max_prompt_tokens` / `max_total_tokens` / `max_total_cost_usd` / `policy`，`token_budget_policy` 支持 `fail` / `warn`，并将 `usage_exceeded_budget`、`cost_exceeded_budget`、policy、成本上限和估算成本投影到 `--llm-observability`。
-- [x] 将 response cache 从进程内可选缓存升级为可审计 product feature：`response_cache_path` 支持 `ahfl.llm_response_cache.v0` 持久化 snapshot，snapshot 只保存 `key_fingerprint` / response / inserted timestamp，`key_version` 作为跨版本迁移边界，`--llm-observability` 投影 `snapshot_loaded` / `snapshot_persisted` / load-persist failed、`persistent` 和 `snapshot_entry_count`，并由跨进程 smoke 覆盖第二次 `ahflc run` 不再发起 HTTP。
+- [x] 将 response cache 从进程内可选缓存升级为可审计 product feature：`response_cache_path` 支持 AHFL LLM 响应缓存格式持久化 snapshot，snapshot 只保存 `key_fingerprint` / response / inserted timestamp，`key_version` 作为跨版本迁移边界，`--llm-observability` 投影 `snapshot_loaded` / `snapshot_persisted` / load-persist failed、`persistent` 和 `snapshot_entry_count`，并由跨进程 smoke 覆盖第二次 `ahflc run` 不再发起 HTTP。
 - [x] 将 token budget policy 继续深化为 workflow/node 级 runtime contract：runtime capability invocation context 暴露 workflow/node/agent/state/node index，LLM provider 按 workflow 与 node 维护累计 token/cost 账本，支持 `max_workflow_total_tokens` / `max_node_total_tokens` / `max_workflow_total_cost_usd` / `max_node_total_cost_usd`，并将累计 within/exceeded 事件、上下文和 fail/warn policy 投影到 `--llm-observability`。
 - [x] 为 gRPC JSON transcoding 补齐 response metadata/trailer capture 和 metadata/trailer `grpc-status` 语义回归：curl-backed default transport 开启 header capture 并区分 response metadata 与 trailers，capability 层对 trailer 或 metadata 中的非 OK `grpc-status` fail closed。
 - [x] 为 HTTP/gRPC JSON transcoding 补齐 capability 级 timeout、retry、schema mismatch、malformed JSON 失败矩阵：HTTP timeout 与 gRPC deadline 映射到 `Timeout`，HTTP 503 与 gRPC unavailable 触发 retry exhaustion，HTTP/gRPC malformed JSON 与 response schema mismatch 均 fail closed。
 - [x] 将 capability 失败面继续上推到 workflow runtime 回归，覆盖 workflow node input capability timeout 和 agent state capability retry exhaustion 时的 workflow 状态、node result、诊断与 invocation context。
-- [x] 为 `ahflc run` 增加 `--capability-bindings`，支持 `ahfl.runtime_capability_bindings.v0` HTTP/gRPC JSON transcoding binding descriptor；已注册 capability 优先走 runtime binding，未注册 capability 继续走 LLM provider，并由 `ahflc.run.capability_bindings.smoke` 覆盖 HTTP binding、gRPC JSON transcoding binding 的真实 curl-backed workflow 成功路径，以及 gRPC trailer 非 OK 的 workflow fail-closed 诊断路径。
+- [x] 为 `ahflc run` 增加 `--capability-bindings`，支持 AHFL 运行时能力绑定格式 HTTP/gRPC JSON transcoding binding descriptor；已注册 capability 优先走 runtime binding，未注册 capability 继续走 LLM provider，并由 `ahflc.run.capability_bindings.smoke` 覆盖 HTTP binding、gRPC JSON transcoding binding 的真实 curl-backed workflow 成功路径，以及 gRPC trailer 非 OK 的 workflow fail-closed 诊断路径。
 - [x] 将 HTTP/gRPC JSON transcoding 失败矩阵继续上推到 CLI 端到端回归，覆盖 binding auth negative、gRPC metadata 非 OK、timeout/retry、schema mismatch、malformed JSON 的诊断投影和 workflow 执行失败面。
 - [ ] 明确 native gRPC / Protobuf transport 是否进入近期目标；若进入，必须独立于 JSON transcoding seam。
 
@@ -223,20 +223,20 @@
 
 待办：
 
-- [x] 将 parser/typechecker/SMV fuzz target 纳入 CI：GitHub Actions 显式运行 `v0.59-quality-gates`。
+- [x] 将 parser/typechecker/SMV fuzz target 纳入 CI：GitHub Actions 显式运行 `quality-gates`。
 - [x] 为 compile time 建立初始真实前端管线 budget gate，覆盖 parse、resolve、typecheck、validate、IR lowering。
 - [x] 为 memory usage 建立初始结构性 proxy budget gate，覆盖真实 TypedProgram 与 IR 产物规模。
 - [ ] 将 memory usage 从结构性 proxy 扩展到平台可比的 RSS/allocator 观测。
 - [x] 为真实 `emit smv` 输出建立初始 size/spec budget CTest gate，覆盖 formal workflow、pass-productization fixture 和 refund audit example。
 - [ ] 将 compile time、memory proxy 与 SMV size budget 扩展为趋势报告、release-blocking 阈值和更多 state-space 代表样本。
-- [x] 将 mutation config/report plumbing 纳入 CTest 与 `v0.59-quality-gates`，输出机器可读 config report。
+- [x] 将 mutation config/report plumbing 纳入 CTest 与 `quality-gates`，输出机器可读 config report。
 - [ ] 将 mutation testing 从 config/report plumbing 升级为真实 runner job，输出 mutation score。
 - [ ] 为 fuzz crash corpus 和 minimized repro 建立保存位置。
 
 验收证据：
 
-- CI 已显式运行 `v0.59-quality-gates`；nightly 趋势数据仍待补齐。
-- `v0.59-quality-gates` 标签可运行 fuzz/property/bench smoke 和 mutation config report；真实 compile time、memory proxy、`emit smv` 输出超出 budget 时会 fail。
+- CI 已显式运行 `quality-gates`；nightly 趋势数据仍待补齐。
+- `quality-gates` 标签可运行 fuzz/property/bench smoke 和 mutation config report；真实 compile time、memory proxy、`emit smv` 输出超出 budget 时会 fail。
 - 性能/SMV size 超阈值会 fail 或至少生成 release-blocking report。
 
 ---

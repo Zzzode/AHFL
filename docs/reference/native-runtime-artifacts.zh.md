@@ -42,28 +42,28 @@ flowchart LR
 
 `DryRunTrace` 与 `AuditReport` 是旁路 projection。它们可以被人或 CI 消费，但不应作为后续 machine-facing artifact 的第一输入。
 
-## Format Version 总表
+## 格式标识总表
 
-| Artifact | 当前 format | 历史 baseline | 代码事实来源 |
-| --- | --- | --- | --- |
-| Package authoring descriptor | `ahfl.package-authoring.v0.5` | 无 | `ahfl::kPackageAuthoringFormatVersion` |
-| Native handoff package | `ahfl.native-package.v1` | 无 | `ahfl::handoff::kFormatVersion` |
-| ExecutionPlan | `ahfl.execution-plan.v1` | 无 | `ahfl::handoff::kExecutionPlanFormatVersion` |
-| DryRunTrace | `ahfl.dry-run-trace.v1` | 无 | `ahfl::dry_run::kTraceFormatVersion` |
-| RuntimeSession | `ahfl.runtime-session.v2` | `ahfl.runtime-session.v1` success-path baseline | `ahfl::runtime_session::kRuntimeSessionFormatVersion` |
-| ExecutionJournal | `ahfl.execution-journal.v2` | `ahfl.execution-journal.v1` success-path baseline | `ahfl::execution_journal::kExecutionJournalFormatVersion` |
-| ReplayView | `ahfl.replay-view.v2` | `ahfl.replay-view.v1` success-path baseline | `ahfl::replay_view::kReplayViewFormatVersion` |
-| AuditReport | `ahfl.audit-report.v2` | `ahfl.audit-report.v1` success-path baseline | `ahfl::audit_report::kAuditReportFormatVersion` |
-| SchedulerSnapshot | `ahfl.scheduler-snapshot.v1` | 无 | scheduler snapshot model |
-| SchedulerDecisionSummary | `ahfl.scheduler-review.v1` | 无 | scheduler review model |
-| CheckpointRecord | `ahfl.checkpoint-record.v1` | 无 | checkpoint model |
-| CheckpointReviewSummary | `ahfl.checkpoint-review.v1` | 无 | checkpoint review model |
-| CheckpointPersistenceDescriptor | `ahfl.persistence-descriptor.v1` | 无 | persistence descriptor model |
-| PersistenceReviewSummary | `ahfl.persistence-review.v1` | 无 | persistence review model |
-| PersistenceExportManifest | `ahfl.persistence-export-manifest.v1` | 无 | export manifest model |
-| PersistenceExportReviewSummary | `ahfl.persistence-export-review.v1` | 无 | export review model |
-| StoreImportDescriptor | `ahfl.store-import-descriptor.v1` | 无 | store import descriptor model |
-| StoreImportReviewSummary | `ahfl.store-import-review.v1` | 无 | store import review model |
+| Artifact | 格式标识 | 代码事实来源 |
+| --- | --- | --- |
+| Package authoring descriptor | AHFL Package Authoring 格式 | `ahfl::kPackageAuthoringFormatVersion` |
+| Native handoff package | AHFL Native Handoff Package 格式 | `ahfl::handoff::kFormatVersion` |
+| ExecutionPlan | AHFL Execution Plan 格式 | `ahfl::handoff::kExecutionPlanFormatVersion` |
+| DryRunTrace | AHFL Dry-Run Trace 格式 | `ahfl::dry_run::kTraceFormatVersion` |
+| RuntimeSession | AHFL Runtime Session 格式 | `ahfl::runtime_session::kRuntimeSessionFormatVersion` |
+| ExecutionJournal | AHFL Execution Journal 格式 | `ahfl::execution_journal::kExecutionJournalFormatVersion` |
+| ReplayView | AHFL Replay View 格式 | `ahfl::replay_view::kReplayViewFormatVersion` |
+| AuditReport | AHFL Audit Report 格式 | `ahfl::audit_report::kAuditReportFormatVersion` |
+| SchedulerSnapshot | AHFL Scheduler Snapshot 格式 | scheduler snapshot model |
+| SchedulerDecisionSummary | AHFL Scheduler Review 格式 | scheduler review model |
+| CheckpointRecord | AHFL Checkpoint Record 格式 | checkpoint model |
+| CheckpointReviewSummary | AHFL Checkpoint Review 格式 | checkpoint review model |
+| CheckpointPersistenceDescriptor | AHFL Persistence Descriptor 格式 | persistence descriptor model |
+| PersistenceReviewSummary | AHFL Persistence Review 格式 | persistence review model |
+| PersistenceExportManifest | AHFL Persistence Export Manifest 格式 | export manifest model |
+| PersistenceExportReviewSummary | AHFL Persistence Export Review 格式 | export review model |
+| StoreImportDescriptor | AHFL Store Import Descriptor 格式 | store import descriptor model |
+| StoreImportReviewSummary | AHFL Store Import Review 格式 | store import review model |
 
 ## Current Consumer Matrix
 

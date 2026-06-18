@@ -1,6 +1,6 @@
 # AHFL Module Loading
 
-本文冻结 AHFL Core V0.2 在多文件 `module` / `import` 方向的当前设计边界，作为 project-aware frontend、跨文件 resolver，以及后续 project-level regression 的统一约束。
+本文冻结 AHFL Core 在多文件 `module` / `import` 方向的当前设计边界，作为 project-aware frontend、跨文件 resolver，以及后续 project-level regression 的统一约束。
 
 关联文档：
 
@@ -20,7 +20,7 @@
 
 ## 目标
 
-1. 冻结 V0.2 的多文件装载模型
+1. 冻结当前的多文件装载模型
 2. 冻结 `module` / `import` 在 project-aware 模式下的装载与名称边界
 3. 明确哪些错误属于 loader，哪些错误继续属于 resolver / checker
 
@@ -53,25 +53,25 @@
 
 ### Project-Aware Mode
 
-不同于 V0.1 单文件 parse/check 的模式；frontend 需要从 entry source 出发，递归装载相关 source files，构建 source graph，再进入 resolve / typecheck / validate。
+不同于早期单文件 parse/check 的模式；frontend 需要从 entry source 出发，递归装载相关 source files，构建 source graph，再进入 resolve / typecheck / validate。
 
-## V0.2 的兼容性立场
+## 兼容性立场
 
-V0.2 保留两种编译入口：
+当前保留两种编译入口：
 
 1. 单文件兼容模式
 2. project-aware 模式
 
 兼容规则：
 
-1. 单文件兼容模式继续允许沿用 V0.1 的 `parse_file` / `check <file>` 心智模型。
-2. project-aware 模式是 V0.2 的新增正式能力。
+1. 单文件兼容模式继续允许沿用 `parse_file` / `check <file>` 心智模型。
+2. project-aware 模式是新增正式能力。
 3. 单文件兼容模式不自动递归装载其他源码。
 4. project-aware 模式不回退成“仅把 `import` 当注释”。
 
 ## Module Ownership 规则
 
-V0.2 在 project-aware 模式下固定采用以下规则：
+在 project-aware 模式下固定采用以下规则：
 
 1. 每个被装载进入 source graph 的 source file 必须且只能有一个 `module` 声明。
 2. 一个 module 只能有一个 module owner。
@@ -81,19 +81,19 @@ V0.2 在 project-aware 模式下固定采用以下规则：
 
 ## Module 到文件路径的映射
 
-V0.2 为了收窄实现复杂度，固定如下约定：
+为了收窄实现复杂度，固定如下约定：
 
 1. project-aware 模式从一个或多个 entry source 开始。
 2. 每个 entry source 都附带一个或多个 search root。
 3. 对 import 目标 `foo::bar`，loader 只尝试在 search root 下查找规范路径 `foo/bar.ahfl`。
-4. V0.2 不支持对同一 module 进行多候选路径猜测。
-5. V0.2 不支持在 project-aware 模式下通过“扫描整个目录树”隐式发现模块。
+4. 不支持对同一 module 进行多候选路径猜测。
+5. 不支持在 project-aware 模式下通过”扫描整个目录树”隐式发现模块。
 
 这样做的目的不是追求灵活，而是先冻结一个单义、可回归的装载规则。
 
 ## `import` 的语义
 
-V0.2 明确区分两类 `import`：
+明确区分两类 `import`：
 
 1. `import foo::bar;`
 2. `import foo::bar as baz;`
@@ -105,8 +105,8 @@ V0.2 明确区分两类 `import`：
 3. 不带 alias 的跨模块引用，仍应使用完整限定名，例如 `foo::bar::Order`。
 4. 带 alias 的 `import` 会在当前 source file 的本地导入表中引入一个局部别名。
 5. alias 只在声明它的 source file 内有效，不跨文件传播。
-6. V0.2 不支持 wildcard import。
-7. V0.2 不支持 re-export 语义。
+6. 不支持 wildcard import。
+7. 不支持 re-export 语义。
 
 这一点与当前 resolver 中已有的 alias-normalization 行为保持一致：alias 参与 qualified name 归一化，不带 alias 的 import 不生成额外本地名。
 
@@ -129,7 +129,7 @@ V0.2 明确区分两类 `import`：
 
 ## Diagnostics 分层
 
-V0.2 必须把以下错误留在 project-aware loader 层，而不是混进 resolver/typecheck：
+必须把以下错误留在 project-aware loader 层，而不是混进 resolver/typecheck：
 
 1. import 目标模块不存在
 2. module 到文件路径映射失败
@@ -147,7 +147,7 @@ V0.2 必须把以下错误留在 project-aware loader 层，而不是混进 reso
 
 ## 对 resolver 的约束
 
-进入 V0.2 后，resolver 不应再承担以下职责：
+进入 project-aware 模式后，resolver 不应再承担以下职责：
 
 1. 根据 import 目标去读文件
 2. 决定 module 到路径的映射
@@ -163,15 +163,15 @@ resolver 只消费已经冻结好的 source graph，并负责：
 
 ## 与单文件兼容模式的关系
 
-V0.2 明确保留以下兼容规则：
+明确保留以下兼容规则：
 
 1. 单文件入口仍可直接工作，不要求 module-path 文件布局。
 2. 只有在 project-aware 模式下，module owner 与 search root 规则才是强约束。
-3. 单文件兼容模式不是 V0.2 新能力的实现基础；它只是保留给现有示例、测试和调试用法的兼容入口。
+3. 单文件兼容模式不是新能力的实现基础；它只是保留给现有示例、测试和调试用法的兼容入口。
 
 ## 当前不承诺的能力
 
-以下能力明确不在 V0.2 的 module loading 设计承诺范围内：
+以下能力明确不在 module loading 设计承诺范围内：
 
 1. package manifest
 2. 多版本依赖解析
