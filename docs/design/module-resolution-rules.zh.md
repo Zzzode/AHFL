@@ -1,6 +1,6 @@
 # AHFL Module Resolution Rules
 
-本文冻结 AHFL Core V0.2 在 project-aware 模式下从 `import`、qualified name 到 canonical symbol 的解析规则，面向需要修改 resolver、跨文件 typecheck 或 project-aware IR lowering 的工程实现者。
+本文冻结 AHFL Core 在 project-aware 模式下从 `import`、qualified name 到 canonical symbol 的解析规则，面向需要修改 resolver、跨文件 typecheck 或 project-aware IR lowering 的工程实现者。
 
 关联文档：
 
@@ -46,7 +46,7 @@ flowchart TD
 
 ## 三种名字
 
-当前 V0.2 下，至少要区分三类名字：
+当前下，至少要区分三类名字：
 
 ### 1. Module Name
 

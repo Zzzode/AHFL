@@ -1,6 +1,6 @@
 # AHFL Frontend Lowering Architecture
 
-本文说明 AHFL Core V0.2 `frontend` 层中 hand-written AST lowering 的实现组织，重点解释 `ProgramBuilder`、表达式/时序表达式链式 lowering、source range 绑定，以及 project-aware 模式如何在 frontend 边界内完成 source graph 构建。
+本文说明 AHFL Core `frontend` 层中 hand-written AST lowering 的实现组织，重点解释 `ProgramBuilder`、表达式/时序表达式链式 lowering、source range 绑定，以及 project-aware 模式如何在 frontend 边界内完成 source graph 构建。
 
 关联文档：
 

@@ -1,6 +1,6 @@
 # AHFL Backend Extension Guide
 
-本文给出 AHFL Core V0.2 中新增 backend 的实现落地指南，面向需要在现有 `emit-ir` / `emit-ir-json` / `emit-smv` 之外增加新 backend，或扩展现有 backend 输出边界的工程实现者。
+本文给出 AHFL Core 中新增 backend 的实现落地指南，面向需要在现有 `emit-ir` / `emit-ir-json` / `emit-smv` 之外增加新 backend，或扩展现有 backend 输出边界的工程实现者。
 
 关联文档：
 
@@ -231,9 +231,9 @@ CLI 仍然不应理解：
 3. compatibility / versioning 文档
 4. consumer matrix 中的落点与使用边界
 
-## V0.5 Runtime-Adjacent 扩展模板
+## 早期 Runtime-Adjacent 扩展模板
 
-若新增的是 V0.5 runtime-adjacent consumer prototype，当前建议顺序为：
+若新增的是早期 runtime-adjacent consumer prototype，当前建议顺序为：
 
 ```mermaid
 flowchart TD
@@ -300,9 +300,9 @@ flowchart TD
 
 8. 单独的 boundary 文档
 
-## V0.6 Runtime-Adjacent 扩展模板
+## 规划阶段 Runtime-Adjacent 扩展模板
 
-若新增的是 V0.6 runtime-adjacent consumer prototype，当前建议顺序为：
+若新增的是规划阶段 runtime-adjacent consumer prototype，当前建议顺序为：
 
 ```mermaid
 flowchart TD

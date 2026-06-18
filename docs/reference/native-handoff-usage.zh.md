@@ -1,6 +1,6 @@
 # AHFL Native Handoff Usage
 
-本文是 `docs/reference` 中 native handoff usage 的合并入口，统一覆盖原 `native-handoff-usage-v0.4` 与 `v0.5` 文档。当前维护口径以 V0.5 为准；V0.4 的 handoff package 目标、输出边界和 consumer 角色已合并为背景，不再保留独立入口。
+本文是 `docs/reference` 中 native handoff usage 的合并入口，统一覆盖原多版本文档。历史版本的 handoff package 目标、输出边界和 consumer 角色已合并为背景，不再保留独立入口。
 
 关联文档：
 
@@ -11,10 +11,10 @@
 
 ## 合并范围
 
-| 历史版本 | 合并后保留的信息 |
-|----------|------------------|
-| V0.4 | handoff package 的目标、metadata 边界、consumer 类型、本地验证建议。 |
-| V0.5 | package authoring 输入、`emit-package-review` 调试面、reference consumer helper 接入路径。 |
+| 合并后保留的信息 |
+|------------------|
+| handoff package 的目标、metadata 边界、consumer 类型、本地验证建议。 |
+| package authoring 输入、`emit-package-review` 调试面、reference consumer helper 接入路径。 |
 
 ## 当前口径摘要
 
@@ -22,11 +22,11 @@
 2. package authoring 通过 `ahfl.package.json` 输入，再 lower 到 `handoff::PackageMetadata` / `handoff::Package`。
 3. `emit-native-json --package` 用于发射 package；`emit-package-review --package` 用于 authoring review。
 4. reference consumer helper 只消费 handoff package，并做 entry/export target、binding key、workflow dependency 的最小一致性检查。
-5. scheduler、retry、timeout、deployment、connector 语义不属于 V0.5 handoff usage 承诺。
+5. scheduler、retry、timeout、deployment、connector 语义不属于 handoff usage 承诺。
 
 ## 当前路径
 
-V0.5 当前推荐路径是：
+当前推荐路径是：
 
 ```mermaid
 flowchart TD
@@ -82,10 +82,10 @@ helper 当前保证：
 
 ## 本地验证建议
 
-只验证 V0.5 authoring + review + consumer bootstrap 时，优先跑：
+只验证 authoring + review + consumer bootstrap 时，优先跑：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L v0.5-package-authoring-validation
-ctest --preset test-dev --output-on-failure -L v0.5-package-review
-ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
+ctest --preset test-dev --output-on-failure -L package-authoring-validation
+ctest --preset test-dev --output-on-failure -L package-review
+ctest --preset test-dev --output-on-failure -L reference-consumer
 ```

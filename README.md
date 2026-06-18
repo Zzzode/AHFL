@@ -6,7 +6,6 @@
   <p align="center">
     <a href="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml"><img src="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
     <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg" alt="C++23">
-    <img src="https://img.shields.io/badge/CMake-3.22%2B-064F8C.svg" alt="CMake 3.22+">
     <img src="https://img.shields.io/badge/License-Apache--2.0-green.svg" alt="Apache-2.0">
   </p>
   <p align="center">
@@ -24,7 +23,7 @@ The repository contains the language grammar, a C++23 compiler (`ahflc`), runtim
 
 ## Project Status
 
-AHFL is active pre-1.0 compiler and tooling work. The current project state is **v0.59**. Breaking changes are allowed when they improve the language or compiler architecture; see the [migration policy](docs/reference/migration-policy.zh.md).
+AHFL is active compiler and tooling development. Breaking changes are allowed when they improve the language or compiler architecture; see the [migration policy](docs/reference/migration-policy.zh.md).
 
 Current baseline:
 
