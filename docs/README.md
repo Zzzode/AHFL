@@ -10,7 +10,7 @@ This directory uses a typed document taxonomy. The goal is to make document inte
 - `docs/design/`
   - Non-normative engineering design documents.
   - Use this for architecture, boundaries, repository layout, backend design, and implementation constraints.
-- `docs/plan/`
+- `docs/plans/`
   - Execution-facing planning documents.
   - Use this for roadmap, milestones, backlog, rollout plans, and issue breakdowns.
 - `docs/reference/`
@@ -40,7 +40,7 @@ Examples:
 
 - `docs/spec/core-language.zh.md`
 - `docs/design/compiler-phase-boundaries.zh.md`
-- `docs/plan/project-status.zh.md`
+- `docs/plans/project-status.zh.md`
 
 Avoid:
 
@@ -85,9 +85,10 @@ Avoid:
 
 ### Plan
 
-- [issue-backlog-global-gaps.zh.md](./plan/issue-backlog-global-gaps.zh.md)
-- [project-status.zh.md](./plan/project-status.zh.md)
-- [semantics-typecheck-hardening.zh.md](./plan/semantics-typecheck-hardening.zh.md)
+- [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
+- [project-status.zh.md](./plans/project-status.zh.md)
+- [semantics-typecheck-hardening.zh.md](./plans/semantics-typecheck-hardening.zh.md)
+- [semantics-typecheck-optimization-tasks.zh.md](./plans/semantics-typecheck-optimization-tasks.zh.md)
 
 ### Reference
 
