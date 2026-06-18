@@ -8,7 +8,7 @@
 - [native-handoff-usage.zh.md](../reference/native-handoff-usage.zh.md)
 - [project-usage.zh.md](../reference/project-usage.zh.md)
 - [durable-store-import-architecture.zh.md](./durable-store-import-architecture.zh.md)
-- [project-status.zh.md](../plan/project-status.zh.md)
+- [project-status.zh.md](../plans/project-status.zh.md)
 
 ## 设计目标
 

@@ -74,7 +74,7 @@ flowchart TD
 
 放架构、边界、实现约束和工程设计说明。
 
-### `docs/plan`
+### `docs/plans`
 
 放 roadmap、backlog、milestone 和执行计划。
 
@@ -226,7 +226,7 @@ flowchart TD
 
 1. 规范性语言规则进 `docs/spec`
 2. 实现边界与架构说明进 `docs/design`
-3. 路线图、backlog 和执行拆解进 `docs/plan`
+3. 路线图、backlog 和执行拆解进 `docs/plans`
 4. how-to 和命令参考进 `docs/reference`
 
 不要再向 `docs/` 根目录直接堆新文档；常规例外只保留：
