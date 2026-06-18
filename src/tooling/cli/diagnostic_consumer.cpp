@@ -15,7 +15,7 @@ TextDiagnosticConsumer::TextDiagnosticConsumer(std::ostream &out) : out_(out) {}
 void TextDiagnosticConsumer::consume(
     const ahfl::DiagnosticBag &bag,
     std::optional<std::reference_wrapper<const ahfl::SourceFile>> source) {
-    bag.render(out_, source);
+    bag.render(out_, source, /*include_code=*/true);
 }
 
 // ---------------------------------------------------------------------------
@@ -105,16 +105,16 @@ void JsonDiagnosticConsumer::finalize() {
 // Factory
 // ---------------------------------------------------------------------------
 
-std::unique_ptr<DiagnosticConsumer>
-make_diagnostic_consumer(std::string_view format, std::ostream &out) {
+std::unique_ptr<DiagnosticConsumer> make_diagnostic_consumer(std::string_view format,
+                                                             std::ostream &out) {
     if (format == "json") {
         return std::make_unique<JsonDiagnosticConsumer>(out);
     }
     if (format == "text" || format.empty()) {
         return std::make_unique<TextDiagnosticConsumer>(out);
     }
-    throw std::invalid_argument(
-        std::string("unknown diagnostic format: '") + std::string(format) + "'");
+    throw std::invalid_argument(std::string("unknown diagnostic format: '") + std::string(format) +
+                                "'");
 }
 
 } // namespace ahfl::cli
