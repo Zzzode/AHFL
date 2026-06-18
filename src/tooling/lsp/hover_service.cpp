@@ -51,6 +51,34 @@ namespace {
     return type != nullptr ? type->describe() : std::string{"<unknown>"};
 }
 
+[[nodiscard]] std::string source_text_for_range(const LspAnalysisSnapshot &snapshot,
+                                                std::optional<SourceId> source_id,
+                                                SourceRange range) {
+    if (range.end_offset <= range.begin_offset) {
+        return {};
+    }
+
+    const LspSourceSnapshot *source_snapshot = nullptr;
+    if (source_id.has_value()) {
+        source_snapshot = snapshot.source_for_id(*source_id);
+    } else if (snapshot.sources.size() == 1) {
+        source_snapshot = &snapshot.sources.front();
+    }
+    if (source_snapshot == nullptr || source_snapshot->source == nullptr) {
+        return {};
+    }
+
+    const auto &content = source_snapshot->source->content;
+    if (range.begin_offset >= content.size()) {
+        return {};
+    }
+    const auto end = std::min(range.end_offset, content.size());
+    if (end <= range.begin_offset) {
+        return {};
+    }
+    return content.substr(range.begin_offset, end - range.begin_offset);
+}
+
 [[nodiscard]] std::string symbol_detail(SymbolKind kind) {
     switch (kind) {
     case SymbolKind::Struct:
@@ -203,7 +231,11 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
         payload.signature = "type " + symbol.canonical_name;
         if (alias != nullptr) {
             payload.signature += " = " + type_description(alias->aliased_type);
-            add_primary_fact(payload, "Declared as", inline_code(alias->aliased_type_spelling));
+            const auto declared_spelling =
+                source_text_for_range(snapshot, symbol.source_id, alias->aliased_type_range);
+            if (!declared_spelling.empty()) {
+                add_primary_fact(payload, "Declared as", inline_code(declared_spelling));
+            }
         }
         break;
     }
