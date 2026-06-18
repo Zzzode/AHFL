@@ -8,7 +8,7 @@
 - [module-loading.zh.md](./module-loading.zh.md)
 - [module-resolution-rules.zh.md](./module-resolution-rules.zh.md)
 - [cli-pipeline-architecture.zh.md](./cli-pipeline-architecture.zh.md)
-- [project-status.zh.md](../plan/project-status.zh.md)
+- [project-status.zh.md](../plans/project-status.zh.md)
 
 适用范围：
 
