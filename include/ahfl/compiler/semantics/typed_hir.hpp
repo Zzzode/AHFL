@@ -98,7 +98,7 @@ struct TypedExpr;
 // TypedStatement kind enum (decoupled from ast::StatementSyntaxKind)
 // ----------------------------------------------------------------------------
 enum class TypedStmtKind : std::uint8_t {
-    None = 0, // sentinel
+    None = 0, // reserved zero value
     Let,
     Assign,
     If,
@@ -120,22 +120,19 @@ enum class TypedTemporalKind : std::uint8_t {
 // ----------------------------------------------------------------------------
 // Let type-ref strategy (how the let binding's type_ref was determined).
 // ----------------------------------------------------------------------------
-// The lowering pass reconstructs an ir::TypeRef from the typed record without
-// re-entering the AST by combining this enum with let_type_ref_spelling:
-//   * NoAnnotation       -> no type was written; fall back to initializer type.
-//   * FromSyntax         -> spelling carries the canonical source text of the
-//                           user's TypeSyntax (e.g. "Int", "Optional<Foo>",
-//                           "Map<String,BoundedString<5,100>>"); lowering can
-//                           re-parse or (preferred) look it up in the type
-//                           environment via canonical-name resolution.
-//   * FromInitializerType-> no annotation; the resolved initializer type was
-//                           captured (spelling unused, kept empty).
-//   * AnySentinel        -> error path; type-ref should be Any sentinel.
+// The lowering pass reconstructs an ir::TypeRef from typed records without
+// re-entering the AST or reparsing source spelling:
+//   * NoAnnotation       -> no type was written; use the initializer TypedExpr type.
+//   * FromSyntax         -> user wrote a type annotation; let_type carries the
+//                           resolved annotation type.
+//   * FromInitializerType-> no annotation; use the current initializer TypedExpr
+//                           type, with let_type as the captured typecheck result.
+//   * MissingType        -> error path; lowering rejects missing required type facts.
 enum class LetTypeRefStrategy : std::uint32_t {
     NoAnnotation = 0,
     FromSyntax,
     FromInitializerType,
-    AnySentinel,
+    MissingType,
 };
 
 // ----------------------------------------------------------------------------
@@ -156,11 +153,8 @@ enum class AssignTargetRootKind : std::uint8_t {
 // ----------------------------------------------------------------------------
 // TypedTemporalOp: a single enum covering every concrete temporal construct.
 // ----------------------------------------------------------------------------
-// Replaces the ad-hoc payload_spelling string concat for Unary/Binary (and
-// removes string-prefix parsing from the NameLiteral/StateLiteral branches of
-// lower_typed_temporal). payload_spelling is retained for NameLiteral/
-// StateLiteral as a human-readable fallback, but the lowering pass should
-// prefer this strongly-typed op enum for dispatch.
+// Replaces ad-hoc payload_spelling parsing for Unary/Binary. Literal payloads
+// still carry their domain data in TypedTemporalExpr::payload_spelling.
 enum class TypedTemporalOp : std::uint8_t {
     Atom = 0,
     // NameLiteral variants
@@ -284,12 +278,10 @@ struct TypedStatement {
     std::uint32_t then_block_index{UINT32_MAX};
     std::uint32_t else_block_index{UINT32_MAX};
 
-    // Let type annotation payload (T1.7 P1).
-    //   let_type_ref_strategy describes how the let binding's type_ref should
-    //   be reconstructed; let_type_ref_spelling carries the canonical source
-    //   text (spelling()) of the user's TypeSyntax when strategy == FromSyntax.
+    // Let type annotation payload. let_type is the canonical semantic input for
+    // Typed HIR -> Semantic IR lowering.
     LetTypeRefStrategy let_type_ref_strategy{LetTypeRefStrategy::NoAnnotation};
-    std::string let_type_ref_spelling;
+    TypePtr let_type{nullptr};
 
     // Assign target path root kind (T1.7 P1).
     // Mirrors ir::PathRootKind so typed-tree lowering builds an ir::Path
@@ -297,9 +289,8 @@ struct TypedStatement {
     AssignTargetRootKind assign_target_root_kind{AssignTargetRootKind::Identifier};
 
     // Assert message (T1.7 P1).
-    // Filled from AST assert_stmt->message when the AST carries one; kept
-    // empty for asserts without a message (current AssertStmtSyntax shape) so
-    // the field is future-proof for when messages are added to the AST.
+    // Current AssertStmtSyntax has no user-facing message field, so this remains
+    // empty and mirrors the current syntax model.
     std::string assert_message;
 };
 
@@ -315,9 +306,7 @@ struct TypedTemporalExpr {
     // Strongly-typed op enum (T1.7 P1): covers every concrete temporal
     // construct so lower_typed_temporal can dispatch without string-parsing.
     TypedTemporalOp op{TypedTemporalOp::Atom};
-    // NameLiteral/StateLiteral payload (T1.7 P1 – kept for diagnostic
-    // readability and as a backstop). For Unary/Binary the lowering pass
-    // prefers `op` over parsing payload_spelling.
+    // NameLiteral/StateLiteral payload data.
     //   Called:    canonical capability name (no "called:" prefix)
     //   Running:   node name
     //   Completed: "node_name|optional_state_name"
@@ -424,8 +413,7 @@ struct TypedProgram {
     [[nodiscard]] TypedExpr *find_expr(std::uint64_t node_id,
                                        std::optional<SourceId> source_id) noexcept;
 
-    // Range-based exact match. Equivalent to the legacy
-    // TypeCheckResult::find_expression_type(range, source_id).
+    // Range-based exact match used by type-aware tooling and diagnostics.
     [[nodiscard]] const TypedExpr *
     find_expr_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
     [[nodiscard]] TypedExpr *find_expr_by_range(SourceRange range,
@@ -437,12 +425,8 @@ struct TypedProgram {
     find_expr_containing(std::size_t offset, std::optional<SourceId> source_id) const noexcept;
 
     // Range-based exact match for blocks and statements.
-    // Used by the typed-tree IR lowering pass to bridge from AST structures
-    // (BlockSyntax / StatementSyntax) back into their flat typed-store
-    // counterparts. Falls back to nullptr when the typed record has not been
-    // recorded (e.g. legacy tests that build a TypedProgram without
-    // statement/block vectors) so the caller can transparently switch between
-    // the AST-fallback and typed-store paths.
+    // Used by type-aware consumers that need to map source ranges to flat
+    // typed-store records.
     [[nodiscard]] const TypedBlock *
     find_block_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
     [[nodiscard]] TypedBlock *find_block_by_range(SourceRange range,
@@ -453,12 +437,8 @@ struct TypedProgram {
         SourceRange range, TypedStmtKind kind, std::optional<SourceId> source_id) noexcept;
 
     // Range-based exact match for temporal expressions.
-    // Used by the typed-tree IR lowering pass to bridge from
-    // ast::TemporalExprSyntax* (handed out by contract/flow/workflow
-    // declaration structural walks) into the flat typed temporal store.
-    // Falls back to nullptr when the typed record has not been recorded
-    // so the caller can transparently fall back to the AST-based
-    // lower_temporal path.
+    // Used by type-aware consumers that need to map source ranges to flat
+    // typed temporal records.
     [[nodiscard]] const TypedTemporalExpr *
     find_temporal_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
     [[nodiscard]] TypedTemporalExpr *
@@ -476,8 +456,8 @@ struct TypedProgram {
 // lowering, post-typecheck rewrites, equality checks) can walk the typed
 // representation without pulling in the AST.
 //
-// Children ordering is guaranteed to match `ast::visit_expr_syntax` dispatch
-// semantics so lowering produces byte-identical IR to the legacy path:
+// Children ordering is guaranteed to match source AST construction semantics so
+// typed lowering preserves stable IR fingerprints:
 //   * Some           -> [Operand]
 //   * Call           -> [Argument, ...]          (each child.name == param name)
 //   * StructLiteral  -> [StructFieldValue, ...]  (each child.name == field name)

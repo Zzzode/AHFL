@@ -281,7 +281,6 @@ using Json = json::JsonValue;
         value->set("canonical_name", Json::make_string(info->canonical_name));
         value->set("local_name", Json::make_string(info->local_name));
         value->set("type", j_type(info->type));
-        value->set("type_spelling", Json::make_string(info->type_spelling));
         value->set("type_range", j_range(info->type_range));
         value->set("value_range", j_range(info->value_range));
         value->set("declaration_range", j_range(info->declaration_range));
@@ -296,7 +295,6 @@ using Json = json::JsonValue;
         value->set("canonical_name", Json::make_string(info->canonical_name));
         value->set("local_name", Json::make_string(info->local_name));
         value->set("aliased_type", j_type(info->aliased_type));
-        value->set("aliased_type_spelling", Json::make_string(info->aliased_type_spelling));
         value->set("aliased_type_range", j_range(info->aliased_type_range));
         value->set("declaration_range", j_range(info->declaration_range));
         object->set("kind", Json::make_string("TypeAlias"));
@@ -614,7 +612,7 @@ using Json = json::JsonValue;
     object->set("then_block_index", j_int(stmt.then_block_index));
     object->set("else_block_index", j_int(stmt.else_block_index));
     object->set("let_type_ref_strategy", j_enum(stmt.let_type_ref_strategy));
-    object->set("let_type_ref_spelling", Json::make_string(stmt.let_type_ref_spelling));
+    object->set("let_type", j_type(stmt.let_type));
     object->set("assign_target_root_kind", j_enum(stmt.assign_target_root_kind));
     object->set("assert_message", Json::make_string(stmt.assert_message));
     return object;
@@ -1026,7 +1024,6 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .canonical_name = reader.string_field(*value, "canonical_name"),
             .local_name = reader.string_field(*value, "local_name"),
             .type = reader.type_field(*value, "type"),
-            .type_spelling = reader.string_field(*value, "type_spelling"),
             .type_range = reader.range_field(*value, "type_range"),
             .value_range = reader.range_field(*value, "value_range"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
@@ -1039,7 +1036,6 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .canonical_name = reader.string_field(*value, "canonical_name"),
             .local_name = reader.string_field(*value, "local_name"),
             .aliased_type = reader.type_field(*value, "aliased_type"),
-            .aliased_type_spelling = reader.string_field(*value, "aliased_type_spelling"),
             .aliased_type_range = reader.range_field(*value, "aliased_type_range"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
         };
@@ -1371,7 +1367,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .else_block_index = reader.u32_field(object, "else_block_index"),
         .let_type_ref_strategy =
             static_cast<LetTypeRefStrategy>(reader.uint_field(object, "let_type_ref_strategy")),
-        .let_type_ref_spelling = reader.string_field(object, "let_type_ref_spelling"),
+        .let_type = reader.type_field(object, "let_type"),
         .assign_target_root_kind =
             static_cast<AssignTargetRootKind>(reader.uint_field(object, "assign_target_root_kind")),
         .assert_message = reader.string_field(object, "assert_message"),

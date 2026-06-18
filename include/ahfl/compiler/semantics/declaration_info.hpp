@@ -30,7 +30,6 @@ struct ConstDeclInfo {
     std::string canonical_name;
     std::string local_name;
     TypePtr type;
-    std::string type_spelling;
     SourceRange type_range;
     SourceRange value_range;
     SourceRange declaration_range;
@@ -41,7 +40,6 @@ struct TypeAliasDeclInfo {
     std::string canonical_name;
     std::string local_name;
     TypePtr aliased_type;
-    std::string aliased_type_spelling;
     SourceRange aliased_type_range;
     SourceRange declaration_range;
 };
