@@ -487,6 +487,171 @@ void copy_resolver_snapshot_to_typed_program(const ResolveResult &resolve_result
 
 } // namespace
 
+void TypeCheckState::build_source_unit_index(const SourceGraph *graph) {
+    source_units_by_id.clear();
+    if (graph == nullptr) {
+        return;
+    }
+    source_units_by_id.reserve(graph->sources.size());
+    for (const auto &source : graph->sources) {
+        source_units_by_id.emplace(source.id.value, &source);
+    }
+}
+
+void TypeCheckState::enter_source(const SourceUnit &source) {
+    current_source = &source;
+    current_source_id = source.id;
+    current_module_name = source.module_name;
+}
+
+void TypeCheckState::leave_source() {
+    current_source = nullptr;
+    current_source_id.reset();
+    current_module_name.clear();
+}
+
+MaybeCRef<SourceUnit> TypeCheckState::source_unit_for(const SourceGraph *graph, SourceId id) const {
+    if (graph == nullptr) {
+        return std::nullopt;
+    }
+
+    if (const auto found = source_units_by_id.find(id.value);
+        found != source_units_by_id.end() && found->second != nullptr) {
+        return std::cref(*found->second);
+    }
+
+    return std::nullopt;
+}
+
+void DiagnosticReporter::error(std::string message, SourceRange range) {
+    if (*current_source_ != nullptr) {
+        diagnostics_->error()
+            .code(error_codes::typecheck::SemanticError)
+            .message(std::move(message))
+            .range(range)
+            .source((*current_source_)->source)
+            .emit();
+    } else {
+        diagnostics_->error()
+            .code(error_codes::typecheck::SemanticError)
+            .message(std::move(message))
+            .range(range)
+            .emit();
+    }
+}
+
+void DiagnosticReporter::note(std::string message, SourceRange range) {
+    if (*current_source_ != nullptr) {
+        diagnostics_->note()
+            .message(std::move(message))
+            .range(range)
+            .source((*current_source_)->source)
+            .emit();
+    } else {
+        diagnostics_->note().message(std::move(message)).range(range).emit();
+    }
+}
+
+void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                         std::string message,
+                                         SourceRange range) {
+    if (*current_source_ != nullptr) {
+        diagnostics_->error()
+            .code(code)
+            .message(std::move(message))
+            .range(range)
+            .source((*current_source_)->source)
+            .emit();
+    } else {
+        diagnostics_->error().code(code).message(std::move(message)).range(range).emit();
+    }
+}
+
+void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                         std::string message,
+                                         SourceRange range,
+                                         std::vector<Diagnostic::Related> notes) {
+    Diagnostic diagnostic{
+        .severity = DiagnosticSeverity::Error,
+        .message = std::move(message),
+        .code = code.full_code(),
+        .range = range,
+        .source_name = std::nullopt,
+        .position = std::nullopt,
+        .related = std::move(notes),
+    };
+    if (*current_source_ != nullptr) {
+        diagnostic.source_name = (*current_source_)->source.display_name;
+        diagnostic.position = (*current_source_)->source.locate(range.begin_offset);
+    }
+    diagnostics_->add_diagnostic(std::move(diagnostic));
+}
+
+void EnvironmentBuilder::run() {
+    api_->build_type_environment();
+}
+
+void ConstSema::run() {
+    api_->check_const_semantics();
+}
+
+void ContractSema::run() {
+    api_->check_contract_semantics();
+}
+
+void FlowSema::run() {
+    api_->check_flow_semantics();
+}
+
+void WorkflowSema::run() {
+    api_->check_workflow_semantics();
+}
+
+void TypeCheckPhaseApi::build_type_environment() {
+    driver_->build_type_environment();
+}
+
+void TypeCheckPhaseApi::check_const_semantics() {
+    driver_->check_agent_context_defaults();
+    driver_->check_const_initializers();
+    driver_->check_struct_defaults();
+}
+
+void TypeCheckPhaseApi::check_contract_semantics() {
+    driver_->check_contracts();
+}
+
+void TypeCheckPhaseApi::check_flow_semantics() {
+    driver_->check_flows();
+}
+
+void TypeCheckPhaseApi::check_workflow_semantics() {
+    driver_->check_workflows();
+}
+
+void TypedHirBuilder::append_declaration(TypedDecl decl) {
+    program_->declarations.push_back(std::move(decl));
+}
+
+void TypedHirBuilder::append_expression(TypedExpr expr) {
+    program_->expressions.push_back(std::move(expr));
+}
+
+std::uint32_t TypedHirBuilder::append_temporal_expr(TypedTemporalExpr expr) {
+    program_->temporal_exprs.push_back(std::move(expr));
+    return static_cast<std::uint32_t>(program_->temporal_exprs.size() - 1);
+}
+
+std::uint32_t TypedHirBuilder::append_block(TypedBlock block) {
+    program_->blocks.push_back(std::move(block));
+    return static_cast<std::uint32_t>(program_->blocks.size() - 1);
+}
+
+std::uint32_t TypedHirBuilder::append_statement(TypedStatement statement) {
+    program_->statements.push_back(std::move(statement));
+    return static_cast<std::uint32_t>(program_->statements.size() - 1);
+}
+
 TypeCheckResult TypeCheckPass::run() {
     relations_.enable_trace(options_.trace_type_relations);
     // When tracing is on, also record success steps: the typical consumer of
@@ -497,52 +662,31 @@ TypeCheckResult TypeCheckPass::run() {
     relations_.include_success_steps(options_.trace_type_relations);
     build_source_unit_index();
     copy_resolver_snapshot_to_typed_program(resolve_result_, result_.typed_program);
-    index_declarations();
-    build_type_environment();
-    check_agent_context_defaults();
-    check_const_initializers();
-    check_struct_defaults();
-    check_contracts();
-    check_flows();
-    check_workflows();
+    TypeCheckPhaseApi phase_api{*this};
+    DeclarationIndexBuilder(session_, state_, declaration_index_, hir_builder_).run();
+    EnvironmentBuilder(phase_api).run();
+    ConstSema(phase_api).run();
+    ContractSema(phase_api).run();
+    FlowSema(phase_api).run();
+    WorkflowSema(phase_api).run();
     result_.relation_trace = relations_.trace();
     return std::move(result_);
 }
 
 void TypeCheckPass::build_source_unit_index() {
-    source_units_by_id_.clear();
-    if (graph_ == nullptr) {
-        return;
-    }
-    source_units_by_id_.reserve(graph_->sources.size());
-    for (const auto &source : graph_->sources) {
-        source_units_by_id_.emplace(source.id.value, &source);
-    }
+    state_.build_source_unit_index(graph_);
 }
 
 void TypeCheckPass::enter_source(const SourceUnit &source) {
-    current_source_ = &source;
-    current_source_id_ = source.id;
-    current_module_name_ = source.module_name;
+    state_.enter_source(source);
 }
 
 void TypeCheckPass::leave_source() {
-    current_source_ = nullptr;
-    current_source_id_.reset();
-    current_module_name_.clear();
+    state_.leave_source();
 }
 
 MaybeCRef<SourceUnit> TypeCheckPass::source_unit_for(SourceId id) const {
-    if (graph_ == nullptr) {
-        return std::nullopt;
-    }
-
-    if (const auto found = source_units_by_id_.find(id.value);
-        found != source_units_by_id_.end() && found->second != nullptr) {
-        return std::cref(*found->second);
-    }
-
-    return std::nullopt;
+    return state_.source_unit_for(graph_, id);
 }
 
 MaybeCRef<Symbol> TypeCheckPass::find_local_here(SymbolNamespace name_space,
@@ -560,67 +704,24 @@ MaybeCRef<ResolvedReference> TypeCheckPass::find_reference_here(ReferenceKind ki
 }
 
 void TypeCheckPass::error_here(std::string message, SourceRange range) {
-    if (current_source_ != nullptr) {
-        result_.diagnostics.error()
-            .code(error_codes::typecheck::SemanticError)
-            .message(std::move(message))
-            .range(range)
-            .source(current_source_->source)
-            .emit();
-    } else {
-        result_.diagnostics.error()
-            .code(error_codes::typecheck::SemanticError)
-            .message(std::move(message))
-            .range(range)
-            .emit();
-    }
+    reporter_.error(std::move(message), range);
 }
 
 void TypeCheckPass::note_here(std::string message, SourceRange range) {
-    if (current_source_ != nullptr) {
-        result_.diagnostics.note()
-            .message(std::move(message))
-            .range(range)
-            .source(current_source_->source)
-            .emit();
-    } else {
-        result_.diagnostics.note().message(std::move(message)).range(range).emit();
-    }
+    reporter_.note(std::move(message), range);
 }
 
 void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                                          std::string message,
                                          SourceRange range) {
-    if (current_source_ != nullptr) {
-        result_.diagnostics.error()
-            .code(code)
-            .message(std::move(message))
-            .range(range)
-            .source(current_source_->source)
-            .emit();
-    } else {
-        result_.diagnostics.error().code(code).message(std::move(message)).range(range).emit();
-    }
+    reporter_.typecheck_error(code, std::move(message), range);
 }
 
 void TypeCheckPass::typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                                          std::string message,
                                          SourceRange range,
                                          std::vector<Diagnostic::Related> notes) {
-    Diagnostic diagnostic{
-        .severity = DiagnosticSeverity::Error,
-        .message = std::move(message),
-        .code = code.full_code(),
-        .range = range,
-        .source_name = std::nullopt,
-        .position = std::nullopt,
-        .related = std::move(notes),
-    };
-    if (current_source_ != nullptr) {
-        diagnostic.source_name = current_source_->source.display_name;
-        diagnostic.position = current_source_->source.locate(range.begin_offset);
-    }
-    result_.diagnostics.add_diagnostic(std::move(diagnostic));
+    reporter_.typecheck_error(code, std::move(message), range, std::move(notes));
 }
 
 void TypeCheckPass::non_pure_error_here(std::string_view context_label,
@@ -725,7 +826,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         }
     }
 
-    result_.typed_program.expressions.push_back(TypedExpr{
+    hir_builder_.append_expression(TypedExpr{
         .kind = expr.kind,
         .range = expr.range,
         .source_id = current_source_id_,
@@ -1100,7 +1201,7 @@ void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
             contract_info.has_value()) {
             typed_decl.payload = contract_info->get();
         }
-        result_.typed_program.declarations.push_back(std::move(typed_decl));
+        hir_builder_.append_declaration(std::move(typed_decl));
 
         for (const auto &clause : decl.clauses) {
             if (!clause->expr && clause->temporal_expr) {
@@ -1276,8 +1377,7 @@ std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalEx
     }
     }
 
-    result_.typed_program.temporal_exprs.push_back(std::move(te));
-    return static_cast<std::uint32_t>(result_.typed_program.temporal_exprs.size() - 1);
+    return hir_builder_.append_temporal_expr(std::move(te));
 }
 
 void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
@@ -1311,7 +1411,7 @@ void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
             flow_info.has_value()) {
             typed_decl.payload = flow_info->get();
         }
-        result_.typed_program.declarations.push_back(std::move(typed_decl));
+        hir_builder_.append_declaration(std::move(typed_decl));
 
         for (const auto &handler : decl.state_handlers) {
             ValueContext context;
@@ -1487,12 +1587,11 @@ void TypeCheckPass::check_block(const ast::BlockSyntax &block,
                                 MaybeCRef<Type> expected_return_type,
                                 std::string_view state_name,
                                 std::optional<SourceRange> expected_return_origin) {
-    result_.typed_program.blocks.push_back(TypedBlock{
+    const auto my_block_idx = hir_builder_.append_block(TypedBlock{
         .range = block.range,
         .source_id = current_source_id_,
         .statement_indexes = {},
     });
-    const auto my_block_idx = result_.typed_program.blocks.size() - 1;
 
     for (const auto &statement : block.statements) {
         check_statement(
@@ -1599,7 +1698,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             let_strategy = LetTypeRefStrategy::FromInitializerType;
         }
 
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::Let,
             .range = statement.range,
             .source_id = current_source_id_,
@@ -1608,7 +1707,6 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .let_type_ref_strategy = let_strategy,
             .let_type_ref_spelling = std::move(let_type_spelling),
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Assign: {
@@ -1635,7 +1733,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                    expectation);
         }
 
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::Assign,
             .range = statement.range,
             .source_id = current_source_id_,
@@ -1646,7 +1744,6 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .target_name = path_spelling(*statement.assign_stmt->target),
             .assign_target_root_kind = assign_target_root_kind_of(*statement.assign_stmt->target),
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::If: {
@@ -1735,7 +1832,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                         expected_return_origin);
         }
 
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::If,
             .range = statement.range,
             .source_id = current_source_id_,
@@ -1745,7 +1842,6 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                     ? find_block_index_by_range(*statement.if_stmt->else_block)
                                     : UINT32_MAX,
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Goto: {
@@ -1755,13 +1851,12 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         // typed_hir_lower.cpp is now dead code (kept for T1.7 backward compat).
         const std::string target_state =
             statement.goto_stmt ? statement.goto_stmt->target_state : std::string{};
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::Goto,
             .range = statement.range,
             .source_id = current_source_id_,
             .goto_target_state = target_state,
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Return: {
@@ -1800,13 +1895,12 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             value_index = resolve_payload_expr_index(*statement.return_stmt->value);
         }
 
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::Return,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {value_index},
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Assert: {
@@ -1839,26 +1933,24 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         std::string assert_msg;
         (void)assert_msg; // silence unused warning when the AST lacks the field
 
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::Assert,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.assert_stmt->condition)},
             .assert_message = std::move(assert_msg),
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     case ast::StatementSyntaxKind::Expr: {
         (void)check_expr(*statement.expr_stmt->expr, context);
 
-        result_.typed_program.statements.push_back(TypedStatement{
+        last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
             .kind = TypedStmtKind::ExprStatement,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.expr_stmt->expr)},
         });
-        last_written_statement_index_ = result_.typed_program.statements.size() - 1;
         break;
     }
     }

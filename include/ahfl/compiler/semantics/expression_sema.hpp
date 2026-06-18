@@ -9,7 +9,6 @@
 #include "ahfl/compiler/semantics/types.hpp"
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -20,21 +19,13 @@ namespace ahfl {
 
 class TypeContext;
 class TypeEnvironment;
+class TypeRelationContext;
 namespace ast {
 struct ExprSyntax;
 struct PathSyntax;
 } // namespace ast
 
 using ExpressionBindingMap = std::unordered_map<std::string, TypePtr>;
-using ExpressionTypecheckErrorSink =
-    std::function<void(ErrorCode<DiagnosticCategory::TypeCheck>, std::string, SourceRange)>;
-using ExpressionTypecheckDiagnosticSink =
-    std::function<void(ErrorCode<DiagnosticCategory::TypeCheck>,
-                       std::string,
-                       SourceRange,
-                       std::vector<Diagnostic::Related>)>;
-using ExpressionTypeSymbolResolver = std::function<TypePtr(SymbolId, SourceRange)>;
-
 enum class ExpressionCallContext {
     PureOnly,
     Flow,
@@ -55,10 +46,49 @@ struct ExpressionContext {
     std::optional<SymbolId> current_agent;
 };
 
-using ExpressionNestedChecker = std::function<ExpressionValue(
-    const ast::ExprSyntax &, const ExpressionContext &, MaybeCRef<Type>)>;
-using ExpressionExpectedNestedChecker = std::function<ExpressionValue(
-    const ast::ExprSyntax &, const ExpressionContext &, const TypeExpectation &)>;
+class ExpressionSemaDelegate {
+  public:
+    virtual ~ExpressionSemaDelegate() = default;
+
+    virtual void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                 std::string message,
+                                 SourceRange range) = 0;
+    virtual void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                                 std::string message,
+                                 SourceRange range,
+                                 std::vector<Diagnostic::Related> notes) = 0;
+    [[nodiscard]] virtual ExpressionValue check_nested(const ast::ExprSyntax &expr,
+                                                       const ExpressionContext &context,
+                                                       MaybeCRef<Type> expected_type) = 0;
+    [[nodiscard]] virtual ExpressionValue check_nested(const ast::ExprSyntax &expr,
+                                                       const ExpressionContext &context,
+                                                       const TypeExpectation &expectation) = 0;
+    [[nodiscard]] virtual TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range) = 0;
+};
+
+struct ExpressionSemaServices {
+    const ResolveResult *resolve_result{nullptr};
+    std::optional<SourceId> current_source_id;
+    const TypeEnvironment *environment{nullptr};
+    TypeContext *types{nullptr};
+    TypeRelationContext *relations{nullptr};
+    ExpressionSemaDelegate *delegate{nullptr};
+};
+
+class ExpressionSema final {
+  public:
+    explicit ExpressionSema(ExpressionSemaServices services);
+
+    [[nodiscard]] ExpressionValue check(const ast::ExprSyntax &expr,
+                                        const ExpressionContext &context,
+                                        MaybeCRef<Type> expected_type = std::nullopt) const;
+    [[nodiscard]] ExpressionValue check(const ast::ExprSyntax &expr,
+                                        const ExpressionContext &context,
+                                        const TypeExpectation &expectation) const;
+
+  private:
+    ExpressionSemaServices services_;
+};
 
 class ExpressionValueFactory final {
   public:
@@ -99,12 +129,12 @@ class ExpressionValueFactory final {
                                                       SourceRange range,
                                                       const TypeEnvironment &environment,
                                                       TypeContext &types,
-                                                      const ExpressionTypecheckErrorSink &diagnose);
+                                                      ExpressionSemaDelegate &delegate);
 
 [[nodiscard]] ExpressionValue resolve_expression_path(const ast::PathSyntax &path,
                                                       const ExpressionContext &context,
                                                       const TypeEnvironment &environment,
                                                       TypeContext &types,
-                                                      const ExpressionTypecheckErrorSink &diagnose);
+                                                      ExpressionSemaDelegate &delegate);
 
 } // namespace ahfl
