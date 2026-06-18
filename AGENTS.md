@@ -5,8 +5,8 @@
 AHFL (Agent Handoff Flow Language) — 面向 AI Agent 工作流的强类型 DSL 编译器，支持状态机建模、行为契约、DAG 编排、形式化验证 (NuSMV) 与端到端执行。
 
 - **Language**: C++23
-- **Build**: CMake 3.22+ / Ninja
-- **Parser**: ANTLR4 4.13.1 (vendored in `third_party/antlr4/`)
+- **Build**: CMake / Ninja
+- **Parser**: ANTLR4 (vendored in `third_party/antlr4/`)
 - **License**: Apache-2.0
 
 ## Build & Test
@@ -21,8 +21,8 @@ cmake --build --preset build-dev
 # Test all
 ctest --preset test-dev --output-on-failure
 
-# Test specific version label
-ctest --preset test-dev --output-on-failure -L ahfl-v0.42
+# Filter tests by label
+ctest --preset test-dev --output-on-failure -L <label>
 
 # ASan build & test
 cmake --preset asan

@@ -1,6 +1,6 @@
 # AHFL Project Descriptor Architecture
 
-本文冻结 AHFL Core V0.3 在 `manifest` / `workspace` 方向的最小 project model，作为后续 frontend、CLI 和 project-aware regression 的统一设计约束。
+本文冻结 AHFL Core 在 `manifest` / `workspace` 方向的最小 project model，作为后续 frontend、CLI 和 project-aware regression 的统一设计约束。
 
 关联文档：
 
@@ -21,7 +21,7 @@
 
 ## 目标
 
-1. 为 V0.3 冻结最小可用的 project descriptor 模型。
+1. 冻结最小可用的 project descriptor 模型。
 2. 明确 `manifest` / `workspace` 与现有 `ProjectInput` / `SourceGraph` 的关系。
 3. 明确哪些职责属于 CLI，哪些属于 frontend loader，哪些不应进入 resolver/typecheck/validate。
 
@@ -37,7 +37,7 @@
 
 ## 设计立场
 
-V0.3 引入 `manifest` / `workspace` 的目的不是替换 V0.2 的 module loading 规则，而是把当前隐含在命令行里的项目输入显式化。
+引入 `manifest` / `workspace` 的目的不是替换 module loading 规则，而是把当前隐含在命令行里的项目输入显式化。
 
 换句话说：
 
@@ -92,23 +92,23 @@ flowchart TD
 
 ### Descriptor Root
 
-descriptor 文件所在目录。V0.3 中，descriptor 内的相对路径都相对于它解析。
+descriptor 文件所在目录。descriptor 内的相对路径都相对于它解析。
 
 ## 为什么需要这一层
 
-V0.2 的 project-aware 用法已经可用，但仍有三个问题：
+早期 project-aware 用法已经可用，但仍有三个问题：
 
 1. `--search-root` 和 entry source 只存在于命令行，难以复现和共享。
 2. 多入口 project 的编译意图没有稳定声明位置。
 3. CLI 当前通过参数组合隐式进入 project-aware 模式，不利于后续继续扩展。
 
-因此 V0.3 的最小目标不是“做复杂项目系统”，而是先把 project 输入模型显式化。
+因此最小目标不是”做复杂项目系统”，而是先把 project 输入模型显式化。
 
-## V0.3 的最小文件模型
+## 最小文件模型
 
 ### 1. 单 Project
 
-V0.3 约定单 project descriptor 文件名为：
+约定单 project descriptor 文件名为：
 
 - `ahfl.project.json`
 
@@ -116,7 +116,7 @@ V0.3 约定单 project descriptor 文件名为：
 
 ```json
 {
-  "format_version": "ahfl.project.v0.3",
+  "format_version": "ahfl.project",
   "name": "refund-audit",
   "search_roots": ["."],
   "entry_sources": ["app/main.ahfl"]
@@ -143,7 +143,7 @@ V0.3 约定单 project descriptor 文件名为：
 
 ### 2. Workspace
 
-V0.3 约定 workspace descriptor 文件名为：
+约定 workspace descriptor 文件名为：
 
 - `ahfl.workspace.json`
 
@@ -151,7 +151,7 @@ V0.3 约定 workspace descriptor 文件名为：
 
 ```json
 {
-  "format_version": "ahfl.workspace.v0.3",
+  "format_version": "ahfl.workspace",
   "name": "examples",
   "projects": [
     "examples/refund/ahfl.project.json",
@@ -177,7 +177,7 @@ V0.3 约定 workspace descriptor 文件名为：
 
 ## 为什么采用两层而不是一层
 
-V0.3 仍然保留 `project` 和 `workspace` 的区分，原因是：
+仍然保留 `project` 和 `workspace` 的区分，原因是：
 
 1. `project` 是 frontend loader 真正需要解析成 `ProjectInput` 的对象。
 2. `workspace` 只是多个 projects 的聚合与选择入口。
@@ -190,7 +190,7 @@ V0.3 仍然保留 `project` 和 `workspace` 的区分，原因是：
 
 ## 与现有 SourceGraph 的关系
 
-V0.3 不推翻 V0.2 的 `SourceGraph` / `ProjectInput` 模型，只在其上增加更高一层输入描述。
+不推翻 `SourceGraph` / `ProjectInput` 模型，只在其上增加更高一层输入描述。
 
 推荐转换链路：
 
@@ -209,13 +209,13 @@ flowchart TD
 
 ## 与 module loading 规则的关系
 
-V0.3 明确保持：
+明确保持：
 
 1. module -> path 规则仍然由 [module-loading.zh.md](./module-loading.zh.md) 定义。
 2. `manifest` 只提供 search roots 和 entry sources，不提供“某模块强制映射到某路径”的覆盖表。
 3. resolver 继续只消费 source graph，不消费 descriptor 文件。
 
-因此 V0.3 不允许：
+因此不允许：
 
 1. 在 manifest 中声明自定义 module 映射表
 2. 在 workspace 中注入新的 import 规则
@@ -223,7 +223,7 @@ V0.3 明确保持：
 
 ## CLI 边界
 
-V0.3 对 CLI 的约束是：
+对 CLI 的约束是：
 
 1. CLI 可以新增 `--project <path>` 或 `--workspace <path>` 一类入口。
 2. CLI 仍然只负责参数解析、descriptor 选择和驱动 frontend 入口。
@@ -231,13 +231,13 @@ V0.3 对 CLI 的约束是：
 
 兼容立场：
 
-1. V0.2 的 `--search-root ... <entry.ahfl>` 路径继续保留，作为兼容入口。
+1. 早期 `--search-root ... <entry.ahfl>` 路径继续保留，作为兼容入口。
 2. descriptor 驱动入口是新增正式能力，不要求立即移除兼容入口。
 3. 若用户同时提供 descriptor 和底层 `--search-root`，后续实现必须明确定义冲突规则，而不是隐式合并。
 
 ## Frontend 边界
 
-frontend 在 V0.3 中建议分成两步：
+frontend 建议分成两步：
 
 1. descriptor 解析
 2. `ProjectInput -> SourceGraph` 装载
@@ -280,7 +280,7 @@ struct WorkspaceDescriptor {
 
 ## Diagnostics 分层
 
-V0.3 需要新增一层 descriptor 级错误，但仍应与 source graph / resolver 错误分层：
+需要新增一层 descriptor 级错误，但仍应与 source graph / resolver 错误分层：
 
 ### Descriptor 错误
 
@@ -315,7 +315,7 @@ V0.3 需要新增一层 descriptor 级错误，但仍应与 source graph / resol
 
 ## Workspace 的刻意限制
 
-V0.3 workspace 明确保持极小：
+workspace 明确保持极小：
 
 1. 不负责 project 间依赖解析。
 2. 不负责统一 search root 继承。
@@ -329,7 +329,7 @@ V0.3 workspace 明确保持极小：
 
 ## 对仓库布局的影响
 
-V0.3 不强制仓库必须采用固定目录名，但建议：
+不强制仓库必须采用固定目录名，但建议：
 
 ```text
 repo/
@@ -353,7 +353,7 @@ repo/
 
 ```json
 {
-  "format_version": "ahfl.project.v0.3",
+  "format_version": "ahfl.project",
   "name": "refund-audit",
   "search_roots": ["."],
   "entry_sources": ["app/main.ahfl", "app/admin.ahfl"]
@@ -370,7 +370,7 @@ repo/
 
 ```json
 {
-  "format_version": "ahfl.workspace.v0.3",
+  "format_version": "ahfl.workspace",
   "name": "ahfl-examples",
   "projects": [
     "projects/refund/ahfl.project.json",
@@ -386,7 +386,7 @@ repo/
 
 ## 当前不承诺的能力
 
-以下能力明确不在 V0.3 的 project descriptor 设计承诺范围内：
+以下能力明确不在 project descriptor 设计承诺范围内：
 
 1. descriptor 内的 environment variable 插值
 2. 条件化 search root 或 target-specific root
@@ -405,7 +405,7 @@ Issue 02 之后，manifest / workspace 相关实现必须遵守以下规则：
 
 ## 当前状态
 
-本文冻结了 V0.3 的最小 project descriptor 设计边界；当前仓库已实现：
+本文冻结了最小 project descriptor 设计边界；当前仓库已实现：
 
 1. `ahfl.project.json` 的 frontend 解析与 diagnostics
 2. `ahfl.workspace.json` 的 frontend 解析与 project 选择

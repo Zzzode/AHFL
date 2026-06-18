@@ -1,6 +1,6 @@
 # AHFL CLI Pipeline Architecture
 
-本文说明 `ahflc` 在 V0.2 阶段的命令解析、模式分叉和流水线驱动方式，面向需要新增 CLI 子命令、扩展 project-aware 入口或调整编译阶段编排的工程实现者。
+本文说明 `ahflc` 的命令解析、模式分叉和流水线驱动方式，面向需要新增 CLI 子命令、扩展 project-aware 入口或调整编译阶段编排的工程实现者。
 
 关联文档：
 

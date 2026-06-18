@@ -30,7 +30,7 @@ Rules:
 1. `<class>` must be one of `spec`, `design`, `plan`, or `reference`.
 2. `<topic>` must be a short kebab-case noun phrase.
 3. `<topic>` must not repeat the document class word.
-4. Do not add document-version suffixes such as `-v0.1` or `-v1.0` to filenames.
+4. Do not add document-version suffixes to filenames.
 5. If a topic accumulates multiple historical docs, merge the useful content into the current topic file and delete the redundant files.
 6. `<lang>` uses a short language code such as `en` or `zh` and must reflect the dominant prose language.
 7. Internal document links should use relative Markdown links, not machine-local absolute paths.

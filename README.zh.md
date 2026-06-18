@@ -6,7 +6,6 @@
   <p align="center">
     <a href="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml"><img src="https://github.com/Zzzode/AHFL/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
     <img src="https://img.shields.io/badge/C%2B%2B-23-blue.svg" alt="C++23">
-    <img src="https://img.shields.io/badge/CMake-3.22%2B-064F8C.svg" alt="CMake 3.22+">
     <img src="https://img.shields.io/badge/License-Apache--2.0-green.svg" alt="Apache-2.0">
   </p>
   <p align="center">
@@ -24,7 +23,7 @@ AHFL（Agent Handoff Flow Language）是一门强类型 DSL，用于在 Agent �
 
 ## 项目状态
 
-AHFL 当前处于活跃的 pre-1.0 编译器与工具链阶段，项目状态为 **v0.59**。为了改进语言和编译器架构，当前不承诺 immature artifact 的前向兼容；迁移策略见 [migration policy](docs/reference/migration-policy.zh.md)。
+AHFL 当前处于活跃的编译器与工具链开发阶段。为了改进语言和编译器架构，当前不承诺 immature artifact 的前向兼容；迁移策略见 [migration policy](docs/reference/migration-policy.zh.md)。
 
 当前基线：
 

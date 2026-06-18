@@ -79,13 +79,11 @@ ctest --preset test-dev --output-on-failure
 Run the durable-store/provider area:
 
 ```sh
-ctest --preset test-dev --output-on-failure -L ahfl-v0.15
-ctest --preset test-dev --output-on-failure -L ahfl-v0.21
-ctest --preset test-dev --output-on-failure -L ahfl-v0.42
+ctest --preset test-dev --output-on-failure -L ahfl
 ctest --preset test-dev --output-on-failure -R 'ahflc\\.emit_durable_store_import_provider_.*with_package|ahfl\\.schema_compatibility|ahfl\\.cli\\.command_routing_all'
 ```
 
-Use the exact version label only when bisecting historical artifact behavior. For normal provider work, prefer the regex run above plus the full suite before publishing.
+For normal provider work, prefer the regex run above plus the full suite before publishing.
 
 ## 贡献检查清单
 

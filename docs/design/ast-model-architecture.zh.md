@@ -1,6 +1,6 @@
 # AHFL AST Model Architecture
 
-本文说明 AHFL Core V0.2 hand-written AST 的对象模型、节点分层、所有权规则和扩展方式，面向需要新增语法节点、阅读 `include/ahfl/compiler/frontend/ast.hpp` 或调整 lowering 输出形状的工程实现者。
+本文说明 AHFL Core hand-written AST 的对象模型、节点分层、所有权规则和扩展方式，面向需要新增语法节点、阅读 `include/ahfl/compiler/frontend/ast.hpp` 或调整 lowering 输出形状的工程实现者。
 
 关联文档：
 

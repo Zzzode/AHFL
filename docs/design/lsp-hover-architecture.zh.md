@@ -4,7 +4,6 @@
 |------|------|
 | 文档类型 | design |
 | 状态 | 核心实现已落地；VS Code extension-host hover 回归已落地 |
-| 版本 | v0.1 |
 | 目标模块 | `src/tooling/lsp/`、`tools/vscode/`、`tests/unit/tooling/lsp/` |
 | 当前审计日期 | 2026-06-15 |
 
@@ -89,25 +88,25 @@ Details: `lib::agents::AliasAgent.states` in `lib::agents`
 Source: `tests/integration/check_fail_state/lib/agents.ahfl`
 ````
 
-## 二、V0.1 范围与状态
+## 二、范围与状态
 
 本设计把 hover 能力拆成三层，避免把“核心协议正确性”和“VS Code 客户端回归”混在一起判断。
 
-| 层级 | 范围 | V0.1 状态 |
-|------|------|-----------|
+| 层级 | 范围 | 状态 |
+|------|------|------|
 | Core LSP semantics | token 定位、target index、payload 构造、diagnostic 降级、range 精确性 | 已落地 |
 | Content rendering | Markdown / plaintext、detail level、fact importance、默认隐藏调试元数据 | 已落地 |
 | Client wiring | VS Code extension 配置、`initializationOptions.hover`、client `contentFormat` 协商 | 已落地 |
 | Coverage hardening | 更多真实 fixture 的 symbol-bearing hover target 覆盖 | 已有 `HoverTargetIndex`-driven coverage helper，并覆盖 `tests/integration/check_ok` |
 | Client regression | VS Code extension host 中执行 `vscode.executeHoverProvider`，覆盖 schema label、state label、type alias、struct field、workflow node | 已落地 |
 
-V0.1 的非目标：
+非目标：
 
 1. 不自定义 VS Code hover DOM、CSS、颜色或 tooltip 组件。
 2. 不为 hover 引入 Semantic IR / Opt IR 查询路径。
 3. 不在 hover request 中重新 parse / resolve / typecheck。
 4. 不把 source path、canonical name、module 当成默认主视觉。
-5. 不把 VS Code tooltip 像素截图作为 v0.1 自动门禁；hover DOM/CSS 属于 VS Code 实现细节，稳定门禁使用 extension-host hover provider 结果。
+5. 不把 VS Code tooltip 像素截图作为自动门禁；hover DOM/CSS 属于 VS Code 实现细节，稳定门禁使用 extension-host hover provider 结果。
 
 当前实现状态对应的文件：
 
@@ -123,12 +122,12 @@ V0.1 的非目标：
 
 ## 三、外部调研基线
 
-本文以 LSP 3.18 与主流语言服务实践为基线。AHFL 仍兼容 LSP 3.17 hover 行为，因为 `textDocument/hover`、`MarkupContent` 和 `Hover.range` 的核心约束没有影响本设计的差异。
+本文以 LSP 与主流语言服务实践为基线。AHFL 仍兼容早期 LSP hover 行为，因为 `textDocument/hover`、`MarkupContent` 和 `Hover.range` 的核心约束没有影响本设计的差异。
 
 | 来源 | 对 AHFL 的约束或启发 |
 |------|----------------------|
-| [LSP 3.18 Hover Request](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_hover) | `textDocument/hover` 返回 `Hover | null`，`contents` 可为 `MarkupContent`，`range` 用于高亮 hover 对象。 |
-| [LSP 3.18 MarkupContent](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#markupContent) | client 可声明 `markdown` / `plaintext` 偏好，server 必须按能力降级。 |
+| [LSP Hover Request](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#textDocument_hover) | `textDocument/hover` 返回 `Hover | null`，`contents` 可为 `MarkupContent`，`range` 用于高亮 hover 对象。 |
+| [LSP MarkupContent](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.18/specification/#markupContent) | client 可声明 `markdown` / `plaintext` 偏好，server 必须按能力降级。 |
 | [VS Code Show Hovers](https://code.visualstudio.com/api/language-extensions/programmatic-language-features#show-hovers) | hover 应提供鼠标下 symbol/object 的类型、描述和上下文。 |
 | [VS Code Hover API](https://code.visualstudio.com/api/references/vscode-api#Hover) | VS Code hover 是内容集合，多个 provider 结果可能聚合，单个 provider 应短且低重复。 |
 | [VS Code Extension Capabilities](https://code.visualstudio.com/api/extension-capabilities/overview) | 扩展适合通过 language feature 提供 hover，但不应依赖重绘 VS Code 内置 UI。 |
@@ -650,7 +649,7 @@ Hover 是高频请求，必须遵守：
 ```bash
 cmake --build --preset build-dev --target ahfl_tooling_lsp_handler_tests ahfl-lsp
 ./build/dev/tests/ahfl_tooling_lsp_handler_tests
-ctest --preset test-dev --output-on-failure -L v0.58-lsp
+ctest --preset test-dev --output-on-failure -L lsp
 ctest --preset test-dev --output-on-failure
 npm run check --prefix tools/vscode
 npm run test:hover --prefix tools/vscode
