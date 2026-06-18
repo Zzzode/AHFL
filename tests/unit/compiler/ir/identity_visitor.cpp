@@ -16,6 +16,7 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <sstream>
 #include <string>
@@ -82,6 +83,34 @@ class RenameTemporalCalledRewriter final : public ahfl::ir::ProgramRewriter {
         .kind = ahfl::ir::TypeRefKind::Bool,
         .display_name = "Bool",
     };
+}
+
+[[nodiscard]] ahfl::ir::TypeRef unresolved_type(std::string display_name = "<invalid-type>") {
+    return ahfl::ir::TypeRef{
+        .kind = ahfl::ir::TypeRefKind::Unresolved,
+        .display_name = std::move(display_name),
+    };
+}
+
+[[nodiscard]] ahfl::ir::SymbolRef resolved_symbol(ahfl::ir::SymbolRefKind kind,
+                                                  std::string local_name,
+                                                  std::size_t id,
+                                                  std::string module_name = "pkg") {
+    const auto canonical_name = module_name + "::" + local_name;
+    return ahfl::ir::SymbolRef{
+        .kind = kind,
+        .canonical_name = canonical_name,
+        .local_name = std::move(local_name),
+        .module_name = std::move(module_name),
+        .id = id,
+    };
+}
+
+[[nodiscard]] ahfl::ir::ExprRef make_bool_literal(ahfl::ir::Program &program, bool value = true) {
+    return program.expr_arena.make(ahfl::ir::BoolLiteralExpr{.value = value},
+                                   {},
+                                   bool_type(),
+                                   static_cast<std::uint32_t>(program.expr_arena.size()));
 }
 
 [[nodiscard]] bool has_ir_diagnostic_containing(const ahfl::ir::VerificationResult &result,
@@ -987,8 +1016,130 @@ flow for VerifyAgent {
     REQUIRE_FALSE(type_result.has_errors());
 
     const auto ir = ahfl::lower_program_ir(*parse_result.program, resolve_result, type_result);
-    const auto result = ahfl::ir::verify_ir_program(ir);
-    CHECK_FALSE(result.has_errors());
+    const auto structural_result = ahfl::ir::verify_ir_program(ir);
+    CHECK_FALSE(structural_result.has_errors());
+
+    const auto backend_ready_result =
+        ahfl::ir::verify_ir_program(ir, ahfl::ir::IrVerificationMode::BackendReady);
+    CHECK_FALSE(backend_ready_result.has_errors());
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects missing symbol identity") {
+    ahfl::ir::Program program;
+    const auto expr = make_bool_literal(program);
+    program.declarations.push_back(ahfl::ir::ConstDecl{
+        .provenance = {},
+        .name = "BROKEN",
+        .value = expr,
+        .type_ref = bool_type(),
+        .symbol_ref = {},
+    });
+
+    const auto structural_result = ahfl::ir::verify_ir_program(program);
+    CHECK_FALSE(structural_result.has_errors());
+
+    const auto backend_ready_result =
+        ahfl::ir::verify_ir_program(program, ahfl::ir::IrVerificationMode::BackendReady);
+    CHECK(backend_ready_result.has_errors());
+    CHECK(has_ir_diagnostic_containing(backend_ready_result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "required symbol reference is missing id"));
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects unresolved type references") {
+    ahfl::ir::Program program;
+    const auto expr = make_bool_literal(program);
+    program.declarations.push_back(ahfl::ir::ConstDecl{
+        .provenance = {},
+        .name = "BROKEN",
+        .value = expr,
+        .type_ref = unresolved_type(),
+        .symbol_ref = resolved_symbol(ahfl::ir::SymbolRefKind::Const, "BROKEN", 1),
+    });
+
+    const auto result =
+        ahfl::ir::verify_ir_program(program, ahfl::ir::IrVerificationMode::BackendReady);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result, ahfl::ir::VerificationSeverity::Error, "required type reference is unresolved"));
+    CHECK(has_ir_diagnostic_containing(result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "type reference contains sentinel identity"));
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects wrong symbol kind") {
+    ahfl::ir::Program program;
+    program.declarations.push_back(ahfl::ir::AgentDecl{
+        .provenance = {},
+        .name = "BadAgent",
+        .states = {},
+        .initial_state = {},
+        .final_states = {},
+        .quota = {},
+        .transitions = {},
+        .input_type_ref = unit_type(),
+        .context_type_ref = unit_type(),
+        .output_type_ref = unit_type(),
+        .capability_refs =
+            {
+                resolved_symbol(ahfl::ir::SymbolRefKind::Agent, "Tool", 2),
+            },
+        .symbol_ref = resolved_symbol(ahfl::ir::SymbolRefKind::Agent, "BadAgent", 1),
+    });
+
+    const auto result =
+        ahfl::ir::verify_ir_program(program, ahfl::ir::IrVerificationMode::BackendReady);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "symbol reference has kind agent, expected capability"));
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects sentinel expression payloads") {
+    ahfl::ir::Program program;
+    const auto expr =
+        program.expr_arena.make(ahfl::ir::QualifiedValueExpr{.value = "<missing-typed-expr>"},
+                                {},
+                                bool_type(),
+                                static_cast<std::uint32_t>(program.expr_arena.size()));
+    program.declarations.push_back(ahfl::ir::ConstDecl{
+        .provenance = {},
+        .name = "BROKEN",
+        .value = expr,
+        .type_ref = bool_type(),
+        .symbol_ref = resolved_symbol(ahfl::ir::SymbolRefKind::Const, "BROKEN", 1),
+    });
+
+    const auto result =
+        ahfl::ir::verify_ir_program(program, ahfl::ir::IrVerificationMode::BackendReady);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "qualified value expression contains sentinel payload"));
+}
+
+TEST_CASE("Semantic IR backend-ready verifier rejects declaration symbol drift") {
+    ahfl::ir::Program program;
+    const auto expr = make_bool_literal(program);
+    program.declarations.push_back(ahfl::ir::ConstDecl{
+        .provenance = {},
+        .name = "BROKEN",
+        .value = expr,
+        .type_ref = bool_type(),
+        .symbol_ref = resolved_symbol(ahfl::ir::SymbolRefKind::Const, "OTHER", 1),
+    });
+
+    const auto result =
+        ahfl::ir::verify_ir_program(program, ahfl::ir::IrVerificationMode::BackendReady);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(
+        result,
+        ahfl::ir::VerificationSeverity::Error,
+        "declaration name 'BROKEN' drifts from symbol local name 'OTHER'"));
 }
 
 TEST_CASE("Semantic IR path root kinds print and serialize distinctly") {
@@ -1188,4 +1339,28 @@ TEST_CASE("Semantic IR verifier rejects marked stale analysis revision") {
     CHECK(result.has_errors());
     CHECK(has_ir_diagnostic_containing(
         result, ahfl::ir::VerificationSeverity::Error, "derived analyses are stale"));
+}
+
+TEST_CASE("Semantic IR verifier rejects analysis entries with mismatched owner or index") {
+    ahfl::ir::StateHandler handler;
+    handler.state_name = "Init";
+
+    ahfl::ir::FlowDecl flow;
+    flow.target_ref = resolved_symbol(ahfl::ir::SymbolRefKind::Agent, "Worker", 1);
+    flow.state_handlers.push_back(std::move(handler));
+
+    ahfl::ir::Program program;
+    program.declarations.push_back(std::move(flow));
+    ahfl::ir::recompute_derived_analyses(program);
+    REQUIRE(ahfl::ir::has_fresh_derived_analyses(program));
+    REQUIRE(program.analyses.state_handler_summaries.size() == 1);
+
+    program.analyses.state_handler_summaries.front().handler_index = 99;
+
+    const auto result = ahfl::ir::verify_ir_program(program);
+
+    CHECK(result.has_errors());
+    CHECK(has_ir_diagnostic_containing(result,
+                                       ahfl::ir::VerificationSeverity::Error,
+                                       "analysis entry has no matching declaration owner/index"));
 }
