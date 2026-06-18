@@ -84,6 +84,21 @@ namespace {
     return validation_result;
 }
 
+[[nodiscard]] ahfl::TypeCheckResult typecheck_source(std::string_view filename,
+                                                     std::string_view source) {
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text(std::string(filename), std::string(source));
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    return type_checker.check(*parse_result.program, resolve_result);
+}
+
 TEST_CASE("Expression effects distinguish predicate and capability calls") {
     const std::string source = R"AHFL(
 struct Request {
@@ -572,6 +587,66 @@ flow for OperationDiagnosticAgent {
     CHECK(diagnostics_contain(type_result.diagnostics,
                               "arithmetic operator is not defined for String and Int"));
     CHECK(diagnostics_contain(type_result.diagnostics, "operator '%' requires Int operands"));
+}
+
+TEST_CASE("Source arithmetic rejects implicit numeric promotion") {
+    const std::string source = R"AHFL(
+struct Request {
+    text: String;
+    count: Int;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent ArithmeticAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for ArithmeticAgent {
+    state Done {
+        let ok_int = input.count + 1;
+        let ok_float = 1.25 + 2.5;
+        let ok_decimal_add = 1.00d + 2.00d;
+        let ok_decimal_subtract = 2.00d - 1.00d;
+        let ok_string = input.text + "x";
+        let bad_int_float_add = input.count + 1.25;
+        let bad_int_decimal_add = input.count + 1.00d;
+        let bad_decimal_scale_add = 1.0d + 1.00d;
+        let bad_decimal_multiply = 1.00d * 2.00d;
+        let bad_int_float_compare = input.count < 1.25;
+        return Response {
+            value: ok_string,
+        };
+    }
+}
+)AHFL";
+
+    const auto type_result = typecheck_source("strict_arithmetic.ahfl", source);
+    REQUIRE(type_result.has_errors());
+
+    CHECK(diagnostic_count_with_code(type_result.diagnostics, "typecheck.INVALID_OPERATION") == 5);
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "operator '+' is not defined for Int and Float"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "operator '+' is not defined for Int and Decimal(2)"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "operator '+' is not defined for Decimal(1) and Decimal(2)"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "arithmetic operator is not defined for Decimal(2) and Decimal(2)"));
+    CHECK(diagnostics_contain(type_result.diagnostics,
+                              "comparison operands are not type-compatible: Int vs Float"));
 }
 
 TEST_CASE("Declaration diagnostics use stable typecheck codes") {

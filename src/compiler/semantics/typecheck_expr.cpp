@@ -966,7 +966,7 @@ class ExpressionChecker final {
                    is_subtype_of(*lhs.type, *rhs.type) || is_subtype_of(*rhs.type, *lhs.type);
         };
 
-        const auto promote_numeric = [&]() -> TypePtr {
+        const auto strict_arithmetic = [&](ast::ExprBinaryOp op) -> TypePtr {
             if (is_error_type(*lhs.type) || is_error_type(*rhs.type)) {
                 return values_.make_error_type();
             }
@@ -984,17 +984,9 @@ class ExpressionChecker final {
             if (lhs_float && rhs_float) {
                 return values_.make_type(TypeKind::Float);
             }
-            if ((lhs_int && rhs_float) || (lhs_float && rhs_int)) {
-                return values_.make_type(TypeKind::Float);
-            }
-            if (lhs_dec != nullptr && rhs_dec != nullptr && lhs_dec->scale == rhs_dec->scale) {
+            if ((op == ast::ExprBinaryOp::Add || op == ast::ExprBinaryOp::Subtract) &&
+                lhs_dec != nullptr && rhs_dec != nullptr && lhs_dec->scale == rhs_dec->scale) {
                 return lhs.type->clone();
-            }
-            if (lhs_dec != nullptr && rhs_int) {
-                return lhs.type->clone();
-            }
-            if (rhs_dec != nullptr && lhs_int) {
-                return rhs.type->clone();
             }
             return nullptr;
         };
@@ -1030,7 +1022,7 @@ class ExpressionChecker final {
                 return values_.typed_effect(values_.string_type(), effect);
             }
 
-            if (const auto result = promote_numeric(); result != nullptr) {
+            if (const auto result = strict_arithmetic(expr.binary_op); result != nullptr) {
                 return values_.typed_effect(result, effect);
             }
 
@@ -1042,7 +1034,7 @@ class ExpressionChecker final {
             }
             return values_.error_typed_effect(effect);
         case ast::ExprBinaryOp::Subtract:
-            if (const auto result = promote_numeric(); result != nullptr) {
+            if (const auto result = strict_arithmetic(expr.binary_op); result != nullptr) {
                 return values_.typed_effect(result, effect);
             }
 
@@ -1055,7 +1047,7 @@ class ExpressionChecker final {
             return values_.error_typed_effect(effect);
         case ast::ExprBinaryOp::Multiply:
         case ast::ExprBinaryOp::Divide:
-            if (const auto result = promote_numeric(); result != nullptr) {
+            if (const auto result = strict_arithmetic(expr.binary_op); result != nullptr) {
                 return values_.typed_effect(result, effect);
             }
 
