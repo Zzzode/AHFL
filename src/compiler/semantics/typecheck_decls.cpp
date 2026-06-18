@@ -21,16 +21,26 @@ namespace ahfl {
 
 using internal::ValueContext;
 
-void TypeCheckPass::index_program_declarations(const ast::Program &program) {
+MaybeCRef<Symbol> DeclarationIndexBuilder::find_local(SymbolNamespace name_space,
+                                                      std::string_view name) const {
+    if (!state_->current_module_name.empty()) {
+        return session_->resolve_result.symbol_table.find_local(
+            name_space, name, state_->current_module_name);
+    }
+
+    return session_->resolve_result.symbol_table.find_local(name_space, name);
+}
+
+void DeclarationIndexBuilder::index_program_declarations(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
         switch (declaration->kind) {
         case ast::NodeKind::ModuleDecl: {
             const auto &decl = static_cast<const ast::ModuleDecl &>(*declaration);
-            result_.typed_program.declarations.push_back(TypedDecl{
+            hir_->append_declaration(TypedDecl{
                 .kind = declaration->kind,
                 .symbol = {},
                 .range = declaration->range,
-                .source_id = current_source_id_,
+                .source_id = state_->current_source_id,
                 .payload =
                     ModuleDeclInfo{
                         .name = decl.name ? decl.name->spelling() : std::string{},
@@ -41,11 +51,11 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
         }
         case ast::NodeKind::ImportDecl: {
             const auto &decl = static_cast<const ast::ImportDecl &>(*declaration);
-            result_.typed_program.declarations.push_back(TypedDecl{
+            hir_->append_declaration(TypedDecl{
                 .kind = declaration->kind,
                 .symbol = {},
                 .range = declaration->range,
-                .source_id = current_source_id_,
+                .source_id = state_->current_source_id,
                 .payload =
                     ImportDeclInfo{
                         .target_module = decl.path ? decl.path->spelling() : std::string{},
@@ -57,112 +67,112 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
         }
         case ast::NodeKind::ConstDecl: {
             const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Consts, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Consts, decl.name);
                 symbol.has_value()) {
-                const_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->const_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::TypeAliasDecl: {
             const auto &decl = static_cast<const ast::TypeAliasDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
-                type_alias_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->type_alias_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::StructDecl: {
             const auto &decl = static_cast<const ast::StructDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
-                struct_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->struct_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::EnumDecl: {
             const auto &decl = static_cast<const ast::EnumDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Types, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
                 symbol.has_value()) {
-                enum_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->enum_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::CapabilityDecl: {
             const auto &decl = static_cast<const ast::CapabilityDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Capabilities, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Capabilities, decl.name);
                 symbol.has_value()) {
-                capability_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->capability_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::PredicateDecl: {
             const auto &decl = static_cast<const ast::PredicateDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Predicates, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Predicates, decl.name);
                 symbol.has_value()) {
-                predicate_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->predicate_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::AgentDecl: {
             const auto &decl = static_cast<const ast::AgentDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Agents, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Agents, decl.name);
                 symbol.has_value()) {
-                agent_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->agent_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
         }
         case ast::NodeKind::WorkflowDecl: {
             const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
-            if (const auto symbol = find_local_here(SymbolNamespace::Workflows, decl.name);
+            if (const auto symbol = find_local(SymbolNamespace::Workflows, decl.name);
                 symbol.has_value()) {
-                workflow_decls_.emplace(symbol->get().id.value, std::cref(decl));
-                result_.typed_program.declarations.push_back(TypedDecl{
+                index_->workflow_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
                     .kind = declaration->kind,
                     .symbol = symbol->get().id,
                     .range = declaration->range,
-                    .source_id = current_source_id_,
+                    .source_id = state_->current_source_id,
                 });
             }
             break;
@@ -175,18 +185,18 @@ void TypeCheckPass::index_program_declarations(const ast::Program &program) {
     }
 }
 
-void TypeCheckPass::index_declarations() {
-    if (graph_ != nullptr) {
-        for (const auto &source : graph_->sources) {
-            enter_source(source);
+void DeclarationIndexBuilder::run() {
+    if (session_->graph != nullptr) {
+        for (const auto &source : session_->graph->sources) {
+            state_->enter_source(source);
             index_program_declarations(
                 require(source.program.get(), "source graph program must exist before typecheck"));
-            leave_source();
+            state_->leave_source();
         }
         return;
     }
 
-    index_program_declarations(require(program_, "typecheck program must exist"));
+    index_program_declarations(require(session_->program, "typecheck program must exist"));
 }
 
 void TypeCheckPass::build_type_environment() {

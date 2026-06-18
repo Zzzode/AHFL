@@ -6,6 +6,8 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/validate.hpp"
 
+#include "compiler/semantics/typecheck_internal.hpp"
+
 #include <algorithm>
 #include <string>
 #include <string_view>
@@ -97,6 +99,123 @@ namespace {
 
     const ahfl::TypeChecker type_checker;
     return type_checker.check(*parse_result.program, resolve_result);
+}
+
+TEST_CASE("DiagnosticReporter preserves source-present and source-absent ranges") {
+    ahfl::DiagnosticBag diagnostics;
+    const ahfl::SourceUnit *current_source = nullptr;
+    ahfl::DiagnosticReporter reporter(diagnostics, current_source);
+
+    reporter.typecheck_error(ahfl::error_codes::typecheck::InvalidOperation,
+                             "source absent",
+                             ahfl::SourceRange{.begin_offset = 0, .end_offset = 5});
+    REQUIRE(diagnostics.entries().size() == 1);
+    CHECK_FALSE(diagnostics.entries().front().source_name.has_value());
+    CHECK_FALSE(diagnostics.entries().front().position.has_value());
+
+    ahfl::SourceUnit source_unit{
+        .id = ahfl::SourceId{1},
+        .path = "reporter.ahfl",
+        .module_name = "reporter",
+        .module_range = ahfl::SourceRange{},
+        .source =
+            ahfl::SourceFile{
+                .display_name = "reporter.ahfl",
+                .content = "const Value: Int = true;\n",
+            },
+        .program = nullptr,
+        .imports = {},
+    };
+    current_source = &source_unit;
+    reporter.typecheck_error(ahfl::error_codes::typecheck::InvalidOperation,
+                             "source present",
+                             ahfl::SourceRange{.begin_offset = 19, .end_offset = 23});
+
+    REQUIRE(diagnostics.entries().size() == 2);
+    const auto &with_source = diagnostics.entries().back();
+    REQUIRE(with_source.source_name.has_value());
+    CHECK(*with_source.source_name == "reporter.ahfl");
+    REQUIRE(with_source.position.has_value());
+    CHECK(with_source.position->line == 1);
+    CHECK(with_source.position->column == 20);
+}
+
+TEST_CASE("TypeCheckSession state gives single program and SourceGraph equivalent output") {
+    const std::string source = R"AHFL(
+struct Request {
+    value: String;
+}
+
+struct Context {
+    value: String = "pending";
+}
+
+struct Response {
+    value: String;
+}
+
+agent SmokeAgent {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Done];
+    initial: Done;
+    final: [Done];
+    capabilities: [];
+}
+
+flow for SmokeAgent {
+    state Done {
+        return Response {
+            value: input.value,
+        };
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto single_parse = frontend.parse_text("session_smoke.ahfl", source);
+    REQUIRE_FALSE(single_parse.has_errors());
+    REQUIRE(single_parse.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto single_resolve = resolver.resolve(*single_parse.program);
+    REQUIRE_FALSE(single_resolve.has_errors());
+
+    const ahfl::TypeChecker checker;
+    const auto single_typecheck = checker.check(*single_parse.program, single_resolve);
+    REQUIRE_FALSE(single_typecheck.has_errors());
+
+    auto graph_parse = frontend.parse_text("session_smoke.ahfl", source);
+    REQUIRE_FALSE(graph_parse.has_errors());
+    REQUIRE(graph_parse.program != nullptr);
+    ahfl::SourceGraph graph;
+    graph.entry_sources.push_back(ahfl::SourceId{1});
+    graph.sources.push_back(ahfl::SourceUnit{
+        .id = ahfl::SourceId{1},
+        .path = "session_smoke.ahfl",
+        .module_name = {},
+        .module_range = ahfl::SourceRange{},
+        .source = graph_parse.source,
+        .program = std::move(graph_parse.program),
+        .imports = {},
+    });
+
+    const auto graph_resolve = resolver.resolve(graph);
+    REQUIRE_FALSE(graph_resolve.has_errors());
+    const auto graph_typecheck = checker.check(graph, graph_resolve);
+    REQUIRE_FALSE(graph_typecheck.has_errors());
+
+    CHECK(single_typecheck.typed_program.declarations.size() ==
+          graph_typecheck.typed_program.declarations.size());
+    CHECK(single_typecheck.typed_program.expressions.size() ==
+          graph_typecheck.typed_program.expressions.size());
+    CHECK(single_typecheck.environment.structs().size() ==
+          graph_typecheck.environment.structs().size());
+    CHECK(single_typecheck.environment.agents().size() ==
+          graph_typecheck.environment.agents().size());
+    CHECK(single_typecheck.environment.flows().size() ==
+          graph_typecheck.environment.flows().size());
 }
 
 TEST_CASE("Expression effects distinguish predicate and capability calls") {
