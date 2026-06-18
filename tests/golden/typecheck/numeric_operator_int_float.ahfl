@@ -1,0 +1,1 @@
+const RejectedOperator: Int = 1 + 2.5;
