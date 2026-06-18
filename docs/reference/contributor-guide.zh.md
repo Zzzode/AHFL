@@ -1,6 +1,6 @@
 # AHFL Contributor Guide
 
-本文是 `docs/reference` 中 contributor guide 的合并入口，统一覆盖原 `contributor-guide-v0.3`、`v0.5` 到 `v0.14` 文档。当前维护口径以 V0.14 为准；旧版本的贡献路径、验证标签与扩展顺序已合并为摘要，不再保留独立入口。
+本文是 `docs/reference` 中 contributor guide 的合并入口，覆盖历史各版本贡献指南。当前维护最新口径；旧版本的贡献路径、验证标签与扩展顺序已合并为摘要，不再保留独立入口。
 
 关联文档：
 
@@ -9,23 +9,23 @@
 
 ## 合并范围
 
-| 历史版本 | 合并后保留的信息 |
-|----------|------------------|
-| V0.3 | project model、diagnostics、IR、backend extension 的基础贡献入口。 |
-| V0.5 | package authoring、native package、review / reference consumer helper。 |
-| V0.6 | execution plan、dry-run runner、trace 输出。 |
-| V0.7 | runtime session、execution journal。 |
-| V0.8 | replay view、audit report。 |
-| V0.9 | partial / failed session 与 failure-aware journal / replay / audit。 |
-| V0.10 | scheduler snapshot。 |
-| V0.11 | checkpoint record。 |
-| V0.12 | persistence descriptor。 |
-| V0.13 | export manifest / export review。 |
-| V0.14 | store import descriptor / review。 |
+| 合并后保留的信息 |
+|------------------|
+| project model、diagnostics、IR、backend extension 的基础贡献入口。 |
+| package authoring、native package、review / reference consumer helper。 |
+| execution plan、dry-run runner、trace 输出。 |
+| runtime session、execution journal。 |
+| replay view、audit report。 |
+| partial / failed session 与 failure-aware journal / replay / audit。 |
+| scheduler snapshot。 |
+| checkpoint record。 |
+| persistence descriptor。 |
+| export manifest / export review。 |
+| store import descriptor / review。 |
 
 ## 当前口径摘要
 
-1. 新贡献者应先跑通当前 V0.14 store-import-facing 路径，再回溯上游 consumer。
+1. 新贡献者应先跑通当前 store-import-facing 路径，再回溯上游 consumer。
 2. 改稳定 artifact 字段时，必须同步模型、validator、emitter、golden、compatibility 文档、consumer matrix、贡献指南和 CI 标签。
 3. 扩展顺序应沿 `plan -> session -> journal -> replay -> snapshot -> checkpoint -> persistence -> export-manifest -> store-import-descriptor -> store-import-review` 前进。
 4. Review / projection artifact 不能私造状态机；machine-facing artifact 是下游稳定依赖的第一事实来源。
@@ -63,9 +63,9 @@ cmake --build --preset build-dev --target ahflc ahfl_store_import_tests
   --capability-mocks tests/dry_run/project_workflow_value_flow.pending.mocks.json \
   --input-fixture fixture.request.partial \
   --run-id run-partial-001
-ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-(descriptor-model|descriptor-bootstrap|review-model)'
-ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-(emission|golden)'
-ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-.*'
+ctest --preset test-dev --output-on-failure -L 'store-import-(descriptor-model|descriptor-bootstrap|review-model)'
+ctest --preset test-dev --output-on-failure -L 'store-import-(emission|golden)'
+ctest --preset test-dev --output-on-failure -L 'store-import-.*'
 ```
 
 ## 按改动类型找入口
@@ -117,7 +117,7 @@ ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-.*'
 
 ## 推荐扩展顺序
 
-V0.14 当前推荐的 store-import-facing 扩展顺序是：
+当前推荐的 store-import-facing 扩展顺序是：
 
 1. 若扩 planning / dependency 语义
    - 先改 `ExecutionPlan`
@@ -149,7 +149,7 @@ V0.14 当前推荐的 store-import-facing 扩展顺序是：
 
 ## Future Durable Store Boundary Guidance
 
-V0.14 当前 future durable store adapter / recovery explorer guidance 是：
+当前 future durable store adapter / recovery explorer guidance 是：
 
 1. 允许 future explorer 依赖 `CheckpointRecord` 的 persistable prefix、resume blocker 与 checkpoint boundary kind
 2. 允许 future explorer 依赖 `CheckpointPersistenceDescriptor` 的 planned durable identity、exportable prefix、persistence blocker 与 basis kind
@@ -175,30 +175,30 @@ V0.14 当前 future durable store adapter / recovery explorer guidance 是：
 
 ## 最小验证清单
 
-只要触及 V0.14 store-import-facing 主链路，最低建议跑：
+只要触及 store-import-facing 主链路，最低建议跑：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L v0.14-store-import-descriptor-model
-ctest --preset test-dev --output-on-failure -L v0.14-store-import-descriptor-bootstrap
-ctest --preset test-dev --output-on-failure -L v0.14-store-import-review-model
-ctest --preset test-dev --output-on-failure -L v0.14-store-import-golden
+ctest --preset test-dev --output-on-failure -L store-import-descriptor-model
+ctest --preset test-dev --output-on-failure -L store-import-descriptor-bootstrap
+ctest --preset test-dev --output-on-failure -L store-import-review-model
+ctest --preset test-dev --output-on-failure -L store-import-golden
 ```
 
 若改动触及 store import CLI / output，建议再补：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L v0.14-store-import-emission
+ctest --preset test-dev --output-on-failure -L store-import-emission
 ```
 
-若想一次跑完整 V0.14 当前面：
+若想一次跑完整当前面：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L ahfl-v0.14
+ctest --preset test-dev --output-on-failure -L ahfl
 ```
 
 ## 当前反模式
 
-V0.14 当前明确不建议：
+当前明确不建议：
 
 1. 跳过 `StoreImportDescriptor`，直接在 `emit-store-import-review` / 外部脚本里私造 staging preview state machine
 2. 把 `DryRunTrace` 当 store import prototype / durable store explorer 的正式第一输入
@@ -208,7 +208,7 @@ V0.14 当前明确不建议：
 
 ## 文档与测试联动约束
 
-V0.14 当前要求文档、测试和实现保持同步：
+当前要求文档、测试和实现保持同步：
 
 1. 改 `StoreImportDescriptor` 稳定字段时，要同步更新 store import compatibility 文档与 `tests/store_import/*.store-import-descriptor.json`
 2. 改 `StoreImportReviewSummary` 稳定字段时，要同步更新 store import compatibility 文档与 `tests/store_import/*.store-import-review`

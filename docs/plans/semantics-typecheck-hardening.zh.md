@@ -4,7 +4,6 @@
 |------|------|
 | 文档类型 | plan |
 | 状态 | proposed |
-| 版本 | v0.1 |
 | 目标模块 | `src/compiler/semantics/`、`include/ahfl/compiler/semantics/`、语义相关 golden / unit / integration 测试 |
 | 关联规范 | [core-language.zh.md](../spec/core-language.zh.md) |
 | 关联设计 | [semantics-architecture.zh.md](../design/semantics-architecture.zh.md)、[compiler-phase-boundaries.zh.md](../design/compiler-phase-boundaries.zh.md)、[diagnostics-architecture.zh.md](../design/diagnostics-architecture.zh.md)、[testing-strategy.zh.md](../design/testing-strategy.zh.md) |
