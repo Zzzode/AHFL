@@ -74,17 +74,10 @@ class ExpressionCheckerServices final {
                               const TypeEnvironment &environment,
                               TypeContext &types,
                               TypeRelationContext &relations,
-                              ExpressionTypecheckErrorSink diagnose,
-                              ExpressionTypecheckDiagnosticSink diagnose_with_notes,
-                              ExpressionNestedChecker check_nested,
-                              ExpressionExpectedNestedChecker check_nested_expected,
-                              ExpressionTypeSymbolResolver resolve_type_symbol)
+                              ExpressionSemaDelegate &delegate)
         : resolve_result_(resolve_result), current_source_id_(current_source_id),
-          environment_(environment), types_(types), relations_(relations),
-          diagnose_(std::move(diagnose)), diagnose_with_notes_(std::move(diagnose_with_notes)),
-          check_nested_(std::move(check_nested)),
-          check_nested_expected_(std::move(check_nested_expected)),
-          resolve_type_symbol_(std::move(resolve_type_symbol)), values_(types_) {}
+          environment_(environment), types_(types), relations_(relations), delegate_(&delegate),
+          values_(types_) {}
 
     [[nodiscard]] const ExpressionValueFactory &values() const noexcept {
         return values_;
@@ -93,26 +86,26 @@ class ExpressionCheckerServices final {
     void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                               std::string message,
                               SourceRange range) const {
-        diagnose_(code, std::move(message), range);
+        delegate_->typecheck_error(code, std::move(message), range);
     }
 
     void typecheck_error_here(ErrorCode<DiagnosticCategory::TypeCheck> code,
                               std::string message,
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes) const {
-        diagnose_with_notes_(code, std::move(message), range, std::move(notes));
+        delegate_->typecheck_error(code, std::move(message), range, std::move(notes));
     }
 
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
                                         const ValueContext &context,
                                         MaybeCRef<Type> expected_type) const {
-        return check_nested_(expr, context, expected_type);
+        return delegate_->check_nested(expr, context, expected_type);
     }
 
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
                                         const ValueContext &context,
                                         const TypeExpectation &expectation) const {
-        return check_nested_expected_(expr, context, expectation);
+        return delegate_->check_nested(expr, context, expectation);
     }
 
     [[nodiscard]] bool check_assignable(const Type &source,
@@ -184,7 +177,7 @@ class ExpressionCheckerServices final {
     }
 
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range) const {
-        return resolve_type_symbol_(id, use_range);
+        return delegate_->resolve_type_symbol(id, use_range);
     }
 
     [[nodiscard]] MaybeCRef<EnumTypeInfo> get_enum(const Type &type) const {
@@ -210,12 +203,12 @@ class ExpressionCheckerServices final {
     [[nodiscard]] TypePtr
     field_access(const Type &base_type, std::string_view field_name, SourceRange range) const {
         return resolve_expression_field_access(
-            base_type, field_name, range, environment_, types_, diagnose_);
+            base_type, field_name, range, environment_, types_, *delegate_);
     }
 
     [[nodiscard]] TypedValue resolve_path(const ast::PathSyntax &path,
                                           const ValueContext &context) const {
-        return resolve_expression_path(path, context, environment_, types_, diagnose_);
+        return resolve_expression_path(path, context, environment_, types_, *delegate_);
     }
 
     [[nodiscard]] TypePtr
@@ -229,11 +222,7 @@ class ExpressionCheckerServices final {
     const TypeEnvironment &environment_;
     TypeContext &types_;
     TypeRelationContext &relations_;
-    ExpressionTypecheckErrorSink diagnose_;
-    ExpressionTypecheckDiagnosticSink diagnose_with_notes_;
-    ExpressionNestedChecker check_nested_;
-    ExpressionExpectedNestedChecker check_nested_expected_;
-    ExpressionTypeSymbolResolver resolve_type_symbol_;
+    ExpressionSemaDelegate *delegate_{nullptr};
     ExpressionValueFactory values_;
 };
 
@@ -1135,6 +1124,40 @@ class ExpressionChecker final {
     const ExpressionValueFactory &values_;
 };
 
+ExpressionSema::ExpressionSema(ExpressionSemaServices services) : services_(std::move(services)) {}
+
+ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
+                                      const ExpressionContext &context,
+                                      MaybeCRef<Type> expected_type) const {
+    ExpressionCheckerServices services{
+        *services_.resolve_result,
+        services_.current_source_id,
+        *services_.environment,
+        *services_.types,
+        *services_.relations,
+        *services_.delegate,
+    };
+    return ExpressionChecker{services, context, expected_type, nullptr}.check(expr);
+}
+
+ExpressionValue ExpressionSema::check(const ast::ExprSyntax &expr,
+                                      const ExpressionContext &context,
+                                      const TypeExpectation &expectation) const {
+    MaybeCRef<Type> expected_type = std::nullopt;
+    if (expectation.expected != nullptr) {
+        expected_type = std::cref(*expectation.expected);
+    }
+    ExpressionCheckerServices services{
+        *services_.resolve_result,
+        services_.current_source_id,
+        *services_.environment,
+        *services_.types,
+        *services_.relations,
+        *services_.delegate,
+    };
+    return ExpressionChecker{services, context, expected_type, &expectation}.check(expr);
+}
+
 TypedValue TypeCheckPass::check_expr(const ast::ExprSyntax &expr,
                                      const ValueContext &context,
                                      MaybeCRef<Type> expected_type) {
@@ -1160,48 +1183,100 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
                                           MaybeCRef<Type> expected_type,
                                           const TypeExpectation *expectation) {
     auto type_resolver = make_type_resolver();
-    ExpressionCheckerServices services{
-        resolve_result_,
-        current_source_id_,
-        result_.environment,
-        *types_,
-        relations_,
-        [this](ErrorCode<DiagnosticCategory::TypeCheck> code,
-               std::string message,
-               SourceRange range) { typecheck_error_here(code, std::move(message), range); },
-        [this](ErrorCode<DiagnosticCategory::TypeCheck> code,
-               std::string message,
-               SourceRange range,
-               std::vector<Diagnostic::Related> notes) {
-            typecheck_error_here(code, std::move(message), range, std::move(notes));
-        },
-        [this](const ast::ExprSyntax &nested_expr,
-               const ValueContext &nested_context,
-               MaybeCRef<Type> nested_expected) {
-            return check_expr(nested_expr, nested_context, nested_expected);
-        },
-        [this](const ast::ExprSyntax &nested_expr,
-               const ValueContext &nested_context,
-               const TypeExpectation &nested_expectation) {
-            return check_expr(nested_expr, nested_context, nested_expectation);
-        },
-        [&type_resolver](SymbolId id, SourceRange range) {
-            return type_resolver.resolve_type_symbol(id, range);
-        }};
-    return ExpressionChecker{services, context, expected_type, expectation}.check(expr);
+
+    class PassExpressionSemaDelegate final : public ExpressionSemaDelegate {
+      public:
+        PassExpressionSemaDelegate(TypeCheckPass &pass, TypeResolver &type_resolver)
+            : pass_(&pass), type_resolver_(&type_resolver) {}
+
+        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                             std::string message,
+                             SourceRange range) override {
+            pass_->typecheck_error_here(code, std::move(message), range);
+        }
+
+        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                             std::string message,
+                             SourceRange range,
+                             std::vector<Diagnostic::Related> notes) override {
+            pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
+        }
+
+        ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
+                                     const ExpressionContext &nested_context,
+                                     MaybeCRef<Type> nested_expected) override {
+            return pass_->check_expr(nested_expr, nested_context, nested_expected);
+        }
+
+        ExpressionValue check_nested(const ast::ExprSyntax &nested_expr,
+                                     const ExpressionContext &nested_context,
+                                     const TypeExpectation &nested_expectation) override {
+            return pass_->check_expr(nested_expr, nested_context, nested_expectation);
+        }
+
+        TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {
+            return type_resolver_->resolve_type_symbol(id, range);
+        }
+
+      private:
+        TypeCheckPass *pass_{nullptr};
+        TypeResolver *type_resolver_{nullptr};
+    };
+
+    PassExpressionSemaDelegate delegate{*this, type_resolver};
+    ExpressionSema sema{ExpressionSemaServices{
+        .resolve_result = &resolve_result_,
+        .current_source_id = current_source_id_,
+        .environment = &result_.environment,
+        .types = types_,
+        .relations = &relations_,
+        .delegate = &delegate,
+    }};
+    if (expectation != nullptr) {
+        return sema.check(expr, context, *expectation);
+    }
+    return sema.check(expr, context, expected_type);
 }
 
 TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueContext &context) {
-    return resolve_expression_path(path,
-                                   context,
-                                   result_.environment,
-                                   *types_,
-                                   [this](ErrorCode<DiagnosticCategory::TypeCheck> code,
-                                          std::string message,
-                                          SourceRange diagnostic_range) {
-                                       typecheck_error_here(
-                                           code, std::move(message), diagnostic_range);
-                                   });
+    class PathDelegate final : public ExpressionSemaDelegate {
+      public:
+        explicit PathDelegate(TypeCheckPass &pass) : pass_(&pass) {}
+
+        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                             std::string message,
+                             SourceRange range) override {
+            pass_->typecheck_error_here(code, std::move(message), range);
+        }
+
+        void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                             std::string message,
+                             SourceRange range,
+                             std::vector<Diagnostic::Related> notes) override {
+            pass_->typecheck_error_here(code, std::move(message), range, std::move(notes));
+        }
+
+        ExpressionValue
+        check_nested(const ast::ExprSyntax &, const ExpressionContext &, MaybeCRef<Type>) override {
+            return ExpressionValue{.type = pass_->make_error_type()};
+        }
+
+        ExpressionValue check_nested(const ast::ExprSyntax &,
+                                     const ExpressionContext &,
+                                     const TypeExpectation &) override {
+            return ExpressionValue{.type = pass_->make_error_type()};
+        }
+
+        TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {
+            return pass_->resolve_type_symbol(id, range);
+        }
+
+      private:
+        TypeCheckPass *pass_{nullptr};
+    };
+
+    PathDelegate delegate{*this};
+    return resolve_expression_path(path, context, result_.environment, *types_, delegate);
 }
 
 } // namespace ahfl
