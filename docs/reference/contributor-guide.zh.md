@@ -110,8 +110,8 @@ ctest --preset test-dev --output-on-failure -L 'v0.14-store-import-.*'
 
 - `docs/reference/native-runtime-artifacts.zh.md`
 - `docs/reference/contributor-guide.zh.md`
-- `docs/plan/project-status.zh.md`
-- `docs/plan/issue-backlog-global-gaps.zh.md`
+- `docs/plans/project-status.zh.md`
+- `docs/plans/issue-backlog-global-gaps.zh.md`
 - `README.md`
 - `docs/README.md`
 

@@ -12,7 +12,7 @@
 
 - `docs/spec/core-language.zh.md`
 - `docs/design/compiler-phase-boundaries.zh.md`
-- `docs/plan/project-status.zh.md`
+- `docs/plans/project-status.zh.md`
 - `include/ahfl/compiler/frontend/frontend.hpp`
 - `src/compiler/syntax/frontend/frontend.cpp`
 - `include/ahfl/compiler/semantics/resolver.hpp`
