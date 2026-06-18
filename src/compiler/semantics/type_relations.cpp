@@ -1,7 +1,8 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 
-#include <set>
+#include <functional>
 #include <sstream>
+#include <utility>
 
 namespace ahfl {
 
@@ -73,36 +74,6 @@ std::vector<std::string> RelationTrace::format_notes(std::size_t max_notes) cons
 }
 
 namespace {
-
-// ---- Cycle detection (occurs check) ----------------------------------------
-//
-// The relational traversals recurse into composite types (Optional, List, Set,
-// Map).  While the current type system has no way to form a true recursive
-// type (Struct/Enum payloads carry only names, not field pointers), deep or
-// adversarial nesting can still overflow the stack, and future type-system
-// extensions may introduce recursive type aliases.
-//
-// We protect every recursive call with a visited-set check keyed by the pair
-// of raw type pointers.  Because types are hash-consed, pointer identity is
-// equivalent to type identity, so a repeat of the same (lhs, rhs) pair means
-// we have re-entered the same sub-problem — a cycle.  We treat cycles
-// coinductively: a re-entrant query is answered as true ("assume it holds"),
-// which matches the greatest-fixed-point semantics of recursive types.
-
-using TypePairSet = std::set<std::pair<const Type *, const Type *>>;
-
-// Insert an ordered pair into the visited set.  Returns false if the pair
-// was already present (cycle detected), true if it was freshly inserted.
-static bool visited_insert(TypePairSet &visited, const Type *a, const Type *b) {
-    return visited.insert({a, b}).second;
-}
-
-std::string_view relation_name(std::string_view rel) noexcept {
-    if (rel.empty()) {
-        return "relation";
-    }
-    return rel;
-}
 
 // Helper to sync-record a flat trace step whenever a skeleton Relation/Leaf
 // node is emitted. Avoids scattering record_trace_step() calls everywhere.
@@ -191,6 +162,23 @@ struct FrameGuard {
         }
     }
 
+    FrameGuard(TypeRelationContext *c,
+               TypeConstraintNode::Kind kind,
+               const std::string &path,
+               const Type &lhs,
+               const Type &rhs)
+        : ctx(c), pushed(false) {
+        if (ctx != nullptr && ctx->options().emit_constraint_skeleton) {
+            TypeConstraintNode node;
+            node.kind = kind;
+            node.path = path;
+            node.left_describe = lhs.describe();
+            node.right_describe = rhs.describe();
+            ctx->push_node(std::move(node));
+            pushed = true;
+        }
+    }
+
     ~FrameGuard() {
         if (pushed) {
             ctx->pop_node();
@@ -201,25 +189,13 @@ struct FrameGuard {
     FrameGuard &operator=(const FrameGuard &) = delete;
 };
 
-TypeConstraintNode make_composite_node(TypeConstraintNode::Kind kind,
-                                       const std::string &path,
-                                       const Type &lhs,
-                                       const Type &rhs) {
-    TypeConstraintNode n;
-    n.kind = kind;
-    n.path = path;
-    n.left_describe = lhs.describe();
-    n.right_describe = rhs.describe();
-    return n;
-}
-
 // ---- Equivalence -----------------------------------------------------------
 
 bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
                      const std::string &path,
-                     TypePairSet *visited);
+                     MemoizedRelationSolver &solver);
 
 bool equivalent_leaf(const Type &lhs,
                      const Type &rhs,
@@ -245,13 +221,14 @@ bool equivalent_pairwise(const Type &lhs_a,
                          const Type &rhs_a,
                          const Type &lhs_b,
                          const Type &rhs_b,
-                         TypeRelationContext *ctx,
                          const std::string &base,
                          std::string_view seg_a,
                          std::string_view seg_b,
-                         TypePairSet *visited) {
-    const bool ok_a = equivalent_impl(lhs_a, rhs_a, ctx, join_path(base, seg_a), visited);
-    const bool ok_b = equivalent_impl(lhs_b, rhs_b, ctx, join_path(base, seg_b), visited);
+                         MemoizedRelationSolver &solver) {
+    const bool ok_a =
+        solver.solve(TypeRelationKind::Equivalent, lhs_a, rhs_a, join_path(base, seg_a));
+    const bool ok_b =
+        solver.solve(TypeRelationKind::Equivalent, lhs_b, rhs_b, join_path(base, seg_b));
     return ok_a && ok_b;
 }
 
@@ -269,16 +246,10 @@ bool equivalent_impl(const Type &lhs,
                      const Type &rhs,
                      TypeRelationContext *ctx,
                      const std::string &path,
-                     TypePairSet *visited) {
+                     MemoizedRelationSolver &solver) {
     // Pointer identity short-circuit.
     if (&lhs == &rhs) {
         return equivalent_leaf(lhs, rhs, ctx, path, true);
-    }
-
-    // Cycle detection (occurs check): if we've already started comparing
-    // this pair, assume success (greatest fixed point / coinductive rule).
-    if (visited != nullptr && !visited_insert(*visited, &lhs, &rhs)) {
-        return equivalent_leaf(lhs, rhs, ctx, join_path(path, "cycle"), true);
     }
 
     if (lhs.payload.index() != rhs.payload.index()) {
@@ -315,8 +286,7 @@ bool equivalent_impl(const Type &lhs,
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
 
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
 
             const bool name_ok =
                 nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
@@ -360,30 +330,33 @@ bool equivalent_impl(const Type &lhs,
             if (r == nullptr || l.inner == nullptr || r->inner == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_impl(
-                *l.inner, *r->inner, ctx, join_path(path, "optional.inner"), visited);
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            return solver.solve(TypeRelationKind::Equivalent,
+                                *l.inner,
+                                *r->inner,
+                                join_path(path, "optional.inner"));
         },
         [&](const types::ListT &l) {
             const auto *r = rhs.get_if<types::ListT>();
             if (r == nullptr || l.element == nullptr || r->element == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_impl(
-                *l.element, *r->element, ctx, join_path(path, "list.element"), visited);
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            return solver.solve(TypeRelationKind::Equivalent,
+                                *l.element,
+                                *r->element,
+                                join_path(path, "list.element"));
         },
         [&](const types::SetT &l) {
             const auto *r = rhs.get_if<types::SetT>();
             if (r == nullptr || l.element == nullptr || r->element == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
-            return equivalent_impl(
-                *l.element, *r->element, ctx, join_path(path, "set.element"), visited);
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            return solver.solve(TypeRelationKind::Equivalent,
+                                *l.element,
+                                *r->element,
+                                join_path(path, "set.element"));
         },
         [&](const types::MapT &l) {
             const auto *r = rhs.get_if<types::MapT>();
@@ -391,10 +364,9 @@ bool equivalent_impl(const Type &lhs,
                 r->value == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            FrameGuard guard(ctx,
-                             make_composite_node(TypeConstraintNode::Kind::And, path, lhs, rhs));
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
             return equivalent_pairwise(
-                *l.key, *r->key, *l.value, *r->value, ctx, path, "map.key", "map.value", visited);
+                *l.key, *r->key, *l.value, *r->value, path, "map.key", "map.value", solver);
         },
     });
 }
@@ -405,7 +377,7 @@ bool subtype_impl(const Type &source,
                   const Type &target,
                   TypeRelationContext *ctx,
                   const std::string &path,
-                  TypePairSet *visited);
+                  MemoizedRelationSolver &solver);
 
 bool subtype_leaf(const Type &source,
                   const Type &target,
@@ -431,27 +403,15 @@ bool subtype_impl(const Type &source,
                   const Type &target,
                   TypeRelationContext *ctx,
                   const std::string &path,
-                  TypePairSet *visited) {
+                  MemoizedRelationSolver &solver) {
     // Disjunction: subtype can succeed via equivalence, via top/bottom type
     // rules, via structural covariance, or via any of the specific
     // relaxations. Model this as an Or node when the skeleton is enabled.
-    FrameGuard or_guard(nullptr, TypeConstraintNode{});
-    TypeConstraintNode or_node;
-    or_node.kind = TypeConstraintNode::Kind::Or;
-    or_node.path = path;
-    or_node.left_describe = source.describe();
-    or_node.right_describe = target.describe();
-    FrameGuard real_guard(ctx, std::move(or_node));
+    FrameGuard real_guard(ctx, TypeConstraintNode::Kind::Or, path, source, target);
 
     // Pointer identity short-circuit.
     if (&source == &target) {
         return subtype_leaf(source, target, ctx, join_path(path, "identical"), true);
-    }
-
-    // Cycle detection (occurs check): if we've already started this pair,
-    // assume success (greatest fixed point / coinductive rule).
-    if (visited != nullptr && !visited_insert(*visited, &source, &target)) {
-        return subtype_leaf(source, target, ctx, join_path(path, "cycle"), true);
     }
 
     // Error propagation: Error is both top-and-bottom for error recovery — it is
@@ -471,10 +431,10 @@ bool subtype_impl(const Type &source,
         return subtype_leaf(source, target, ctx, join_path(path, "never-bottom"), true);
     }
 
-    // Branch 1: equivalence.  Use a separate visited set for the equivalence
-    // sub-query — cycle detection is per-relation, not cross-relation.
-    TypePairSet equiv_visited;
-    const bool eq = equivalent_impl(source, target, ctx, join_path(path, "equiv"), &equiv_visited);
+    // Branch 1: equivalence. Relation kind is part of the solver key, so
+    // equivalence and subtype cache entries stay separate.
+    const bool eq =
+        solver.solve(TypeRelationKind::Equivalent, source, target, join_path(path, "equiv"));
     if (eq) {
         return true;
     }
@@ -496,8 +456,8 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::OptionalT>();
         const auto *t = target.get_if<types::OptionalT>();
         if (s != nullptr && t != nullptr && s->inner && t->inner) {
-            return subtype_impl(
-                *s->inner, *t->inner, ctx, join_path(path, "optional.inner"), visited);
+            return solver.solve(
+                TypeRelationKind::Subtype, *s->inner, *t->inner, join_path(path, "optional.inner"));
         }
     }
     // List<A> <: List<B> if A <: B
@@ -505,8 +465,10 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::ListT>();
         const auto *t = target.get_if<types::ListT>();
         if (s != nullptr && t != nullptr && s->element && t->element) {
-            return subtype_impl(
-                *s->element, *t->element, ctx, join_path(path, "list.element"), visited);
+            return solver.solve(TypeRelationKind::Subtype,
+                                *s->element,
+                                *t->element,
+                                join_path(path, "list.element"));
         }
     }
     // Set<A> <: Set<B> if A <: B
@@ -514,8 +476,10 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::SetT>();
         const auto *t = target.get_if<types::SetT>();
         if (s != nullptr && t != nullptr && s->element && t->element) {
-            return subtype_impl(
-                *s->element, *t->element, ctx, join_path(path, "set.element"), visited);
+            return solver.solve(TypeRelationKind::Subtype,
+                                *s->element,
+                                *t->element,
+                                join_path(path, "set.element"));
         }
     }
     // Map<K1,V1> <: Map<K2,V2> if K1 equiv K2 AND V1 <: V2
@@ -523,13 +487,13 @@ bool subtype_impl(const Type &source,
         const auto *s = source.get_if<types::MapT>();
         const auto *t = target.get_if<types::MapT>();
         if (s != nullptr && t != nullptr && s->key && t->key && s->value && t->value) {
-            TypePairSet key_equiv_visited;
-            if (!equivalent_impl(
-                    *s->key, *t->key, ctx, join_path(path, "map.key"), &key_equiv_visited)) {
+            if (!solver.solve(
+                    TypeRelationKind::Equivalent, *s->key, *t->key, join_path(path, "map.key"))) {
                 return subtype_leaf(
                     source, target, ctx, join_path(path, "map.key-mismatch"), false);
             }
-            return subtype_impl(*s->value, *t->value, ctx, join_path(path, "map.value"), visited);
+            return solver.solve(
+                TypeRelationKind::Subtype, *s->value, *t->value, join_path(path, "map.value"));
         }
     }
 
@@ -606,17 +570,147 @@ std::string TypeConstraintSkeleton::to_string() const {
     return out.str();
 }
 
+std::size_t RelationKeyHash::operator()(const RelationKey &key) const noexcept {
+    std::size_t seed = std::hash<const Type *>{}(key.source);
+    const auto mix = [&seed](std::size_t value) noexcept {
+        seed ^= value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U);
+    };
+    mix(std::hash<const Type *>{}(key.target));
+    mix(std::hash<int>{}(static_cast<int>(key.kind)));
+    mix(std::hash<bool>{}(key.allow_bounded_string_relaxation));
+    mix(std::hash<bool>{}(key.allow_numeric_widening));
+    return seed;
+}
+
+RelationKey MemoizedRelationSolver::make_key(TypeRelationKind kind,
+                                             const Type &source,
+                                             const Type &target) const noexcept {
+    return RelationKey{
+        .kind = kind,
+        .source = &source,
+        .target = &target,
+        .allow_bounded_string_relaxation = ctx_->options().allow_bounded_string_relaxation,
+        .allow_numeric_widening = ctx_->options().allow_numeric_widening,
+    };
+}
+
+bool MemoizedRelationSolver::equivalent(const Type &lhs, const Type &rhs) {
+    return solve(TypeRelationKind::Equivalent, lhs, rhs);
+}
+
+bool MemoizedRelationSolver::subtype(const Type &source, const Type &target) {
+    return solve(TypeRelationKind::Subtype, source, target);
+}
+
+bool MemoizedRelationSolver::assignable(const Type &source, const Type &target) {
+    return solve(TypeRelationKind::Assignable, source, target);
+}
+
+bool MemoizedRelationSolver::exact_schema(const Type &source, const Type &target) {
+    return solve(TypeRelationKind::ExactSchema, source, target);
+}
+
+bool MemoizedRelationSolver::solve(TypeRelationKind kind,
+                                   const Type &source,
+                                   const Type &target,
+                                   std::string path) {
+    ++stats_.queries;
+    const auto key = make_key(kind, source, target);
+    if (const auto iter = memo_.find(key); iter != memo_.end()) {
+        switch (iter->second) {
+        case RelationState::Proven:
+            ++stats_.cache_hits;
+            return true;
+        case RelationState::Disproven:
+            ++stats_.cache_hits;
+            return false;
+        case RelationState::Visiting:
+            ++stats_.coinductive_assumptions;
+            if (ctx_->options().enable_trace) {
+                sync_trace(ctx_,
+                           kind,
+                           path,
+                           target.describe(),
+                           source.describe(),
+                           true,
+                           "coinductive relation assumption");
+            }
+            return true;
+        }
+    }
+
+    if (recursion_depth_ >= ctx_->options().max_solver_depth) {
+        ++stats_.depth_guard_rejections;
+        ++stats_.disproven;
+        memo_.emplace(key, RelationState::Disproven);
+        if (ctx_->options().enable_trace) {
+            sync_trace(ctx_,
+                       kind,
+                       path,
+                       target.describe(),
+                       source.describe(),
+                       false,
+                       "relation depth limit exceeded");
+        }
+        return false;
+    }
+
+    memo_.emplace(key, RelationState::Visiting);
+    ++recursion_depth_;
+    bool result = false;
+    switch (kind) {
+    case TypeRelationKind::Equivalent:
+        result = equivalent_impl(source, target, ctx_, path, *this);
+        break;
+    case TypeRelationKind::Subtype:
+        result = subtype_impl(source, target, ctx_, path, *this);
+        break;
+    case TypeRelationKind::Assignable:
+        result = subtype_impl(source, target, ctx_, path, *this);
+        if (ctx_->options().enable_trace) {
+            TypeRelationTraceStep step;
+            step.kind = TypeRelationKind::Assignable;
+            step.depth = 0;
+            step.path = path;
+            step.expected_describe = target.describe();
+            step.actual_describe = source.describe();
+            step.result = result ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
+            step.reason = "assignability delegated to subtype check";
+            ctx_->trace().steps.push_back(std::move(step));
+        }
+        break;
+    case TypeRelationKind::ExactSchema:
+        result = equivalent_impl(source, target, ctx_, path, *this);
+        if (ctx_->options().enable_trace) {
+            TypeRelationTraceStep step;
+            step.kind = TypeRelationKind::ExactSchema;
+            step.depth = 0;
+            step.path = path;
+            step.expected_describe = target.describe();
+            step.actual_describe = source.describe();
+            step.result = result ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
+            step.reason = "exact schema match implemented as equivalence";
+            ctx_->trace().steps.push_back(std::move(step));
+        }
+        break;
+    }
+    --recursion_depth_;
+
+    if (const auto iter = memo_.find(key); iter != memo_.end()) {
+        iter->second = result ? RelationState::Proven : RelationState::Disproven;
+    }
+    if (result) {
+        ++stats_.proven;
+    } else {
+        ++stats_.disproven;
+    }
+    return result;
+}
+
 // ---- Equivalence public API ------------------------------------------------
 
 bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext &ctx) {
-    // Pass ctx down whenever either skeleton or flat trace is enabled, so
-    // sync_trace() inside the impl functions can actually record steps.
-    // Previously ctx was passed only when emit_constraint_skeleton was true,
-    // which silently dropped all flat trace output when trace_type_relations
-    // was on but skeleton was off (the common case).
-    const bool wants_ctx = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace;
-
-    if (wants_ctx && ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
+    if (ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
         TypeConstraintNode top;
         top.kind = TypeConstraintNode::Kind::And;
         top.path = "";
@@ -625,18 +719,13 @@ bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext 
         ctx.push_node(std::move(top));
     }
 
-    TypePairSet visited;
-    const bool result = equivalent_impl(lhs,
-                                        rhs,
-                                        wants_ctx ? &ctx : nullptr,
-                                        /*path=*/"",
-                                        &visited);
+    MemoizedRelationSolver solver(ctx);
+    const bool result = solver.equivalent(lhs, rhs);
 
-    if (wants_ctx && ctx.options().emit_constraint_skeleton) {
+    if (ctx.options().emit_constraint_skeleton) {
         // pop the synthetic top-level And frame (it aggregates children).
         ctx.pop_node();
     }
-    (void)relation_name; // keep linkage tidy
     return result;
 }
 
@@ -648,11 +737,7 @@ bool are_types_equivalent(const Type &lhs, const Type &rhs) {
 // ---- Subtype public API ----------------------------------------------------
 
 bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &ctx) {
-    const bool wants_ctx = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace ||
-                           !ctx.options().allow_bounded_string_relaxation ||
-                           !ctx.options().allow_numeric_widening;
-
-    if (wants_ctx && ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
+    if (ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
         TypeConstraintNode top;
         top.kind = TypeConstraintNode::Kind::And;
         top.path = "";
@@ -661,14 +746,10 @@ bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &
         ctx.push_node(std::move(top));
     }
 
-    TypePairSet visited;
-    const bool result = subtype_impl(source,
-                                     target,
-                                     wants_ctx ? &ctx : nullptr,
-                                     /*path=*/"",
-                                     &visited);
+    MemoizedRelationSolver solver(ctx);
+    const bool result = solver.subtype(source, target);
 
-    if (wants_ctx && ctx.options().emit_constraint_skeleton) {
+    if (ctx.options().emit_constraint_skeleton) {
         ctx.pop_node();
     }
     return result;
@@ -682,13 +763,7 @@ bool is_subtype_of(const Type &source, const Type &target) {
 // ---- Assignable = subtype --------------------------------------------------
 
 bool is_assignable_to(const Type &source, const Type &target, TypeRelationContext &ctx) {
-    // Assignability is modelled as a subtype relation; let subtype_impl own
-    // the Or node (equiv path ∪ subtype relaxations).
-    const bool wants_ctx = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace ||
-                           !ctx.options().allow_bounded_string_relaxation ||
-                           !ctx.options().allow_numeric_widening;
-
-    if (wants_ctx && ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
+    if (ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
         TypeConstraintNode top;
         top.kind = TypeConstraintNode::Kind::And;
         top.path = "";
@@ -697,28 +772,10 @@ bool is_assignable_to(const Type &source, const Type &target, TypeRelationContex
         ctx.push_node(std::move(top));
     }
 
-    TypeRelationContext *maybe_ctx = wants_ctx ? &ctx : nullptr;
-    TypePairSet visited;
-    const bool result = subtype_impl(source, target, maybe_ctx, /*path=*/"", &visited);
+    MemoizedRelationSolver solver(ctx);
+    const bool result = solver.assignable(source, target);
 
-    // Record an Assignable kind at the top level so consumers of the flat
-    // trace can see which relation was actually requested at the API
-    // boundary (subtype_impl records its inner steps as Subtype).
-    // Top-level steps are always recorded (even on success) so callers can
-    // identify which API was exercised.
-    if (maybe_ctx != nullptr && ctx.options().enable_trace) {
-        TypeRelationTraceStep step;
-        step.kind = TypeRelationKind::Assignable;
-        step.depth = 0;
-        step.path = "";
-        step.expected_describe = target.describe();
-        step.actual_describe = source.describe();
-        step.result = result ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
-        step.reason = "assignability delegated to subtype check";
-        ctx.trace().steps.push_back(std::move(step));
-    }
-
-    if (wants_ctx && ctx.options().emit_constraint_skeleton) {
+    if (ctx.options().emit_constraint_skeleton) {
         ctx.pop_node();
     }
     return result;
@@ -732,23 +789,20 @@ bool is_assignable_to(const Type &source, const Type &target) {
 // ---- Exact schema match ----------------------------------------------------
 
 bool is_exact_schema_match(const Type &source, const Type &target, TypeRelationContext &ctx) {
-    const bool result = are_types_equivalent(source, target, ctx);
-    // Record an ExactSchema kind at the top level so consumers of the flat
-    // trace can see which relation was actually requested at the API
-    // boundary (are_types_equivalent records its inner steps as Equivalent).
-    // Top-level step is always recorded (even on success) so callers can
-    // identify which API was exercised.
-    const bool wants_trace = ctx.options().emit_constraint_skeleton || ctx.options().enable_trace;
-    if (wants_trace && ctx.options().enable_trace) {
-        TypeRelationTraceStep step;
-        step.kind = TypeRelationKind::ExactSchema;
-        step.depth = 0;
-        step.path = "";
-        step.expected_describe = target.describe();
-        step.actual_describe = source.describe();
-        step.result = result ? TypeRelationResult::Accepted : TypeRelationResult::Rejected;
-        step.reason = "exact schema match implemented as equivalence";
-        ctx.trace().steps.push_back(std::move(step));
+    if (ctx.stack_empty() && ctx.options().emit_constraint_skeleton) {
+        TypeConstraintNode top;
+        top.kind = TypeConstraintNode::Kind::And;
+        top.path = "";
+        top.left_describe = source.describe();
+        top.right_describe = target.describe();
+        ctx.push_node(std::move(top));
+    }
+
+    MemoizedRelationSolver solver(ctx);
+    const bool result = solver.exact_schema(source, target);
+
+    if (ctx.options().emit_constraint_skeleton) {
+        ctx.pop_node();
     }
     return result;
 }
