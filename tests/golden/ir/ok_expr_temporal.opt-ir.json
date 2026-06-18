@@ -59,7 +59,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": {
@@ -73,7 +77,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
-            "canonical_name": "ir::expr_temporal::Context"
+            "canonical_name": "ir::expr_temporal::Context",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -84,7 +92,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1209,7 +1221,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1220,7 +1236,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
-            "canonical_name": "ir::expr_temporal::Context"
+            "canonical_name": "ir::expr_temporal::Context",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1231,7 +1251,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1431,7 +1455,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1442,7 +1470,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
-            "canonical_name": "ir::expr_temporal::Context"
+            "canonical_name": "ir::expr_temporal::Context",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1453,7 +1485,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1652,7 +1688,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1663,7 +1703,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Context",
-            "canonical_name": "ir::expr_temporal::Context"
+            "canonical_name": "ir::expr_temporal::Context",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1674,7 +1718,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1873,7 +1921,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin": 1906,
+              "end": 2143
+            }
           },
           "is_temp": false,
           "source_range": {
@@ -1887,7 +1939,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1936,7 +1992,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin": 1906,
+              "end": 2143
+            }
           },
           "is_temp": false,
           "source_range": null
@@ -1947,7 +2007,11 @@
           "type": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin": 864,
+              "end": 1068
+            }
           },
           "is_temp": false,
           "source_range": {

@@ -22,11 +22,11 @@
 
 AHFL 当前仍处于快速演进阶段，本计划不维护不成熟语义的向前兼容。若实现与规范冲突，以规范和强类型可验证语义为准，必要时做 breaking change。
 
-## 二、当前问题
+## 二、执行前问题快照
 
 ### 2.1 `TypeCheckPass` Interface 过宽
 
-当前 `TypeCheckPass` 同时承担：
+执行前 `TypeCheckPass` 同时承担：
 
 - source cursor 与 current module 管理。
 - diagnostic 发射。
@@ -48,17 +48,17 @@ AHFL 当前仍处于快速演进阶段，本计划不维护不成熟语义的向
 - `Decimal(p)` 仅允许相同 `p` 的 `+` / `-`
 - `String + String -> String`
 
-当前 expression checker 中的 numeric promotion 更宽，允许 `Int + Float` 和 `Int + Decimal(p)`。这会把隐式精度语义带入 contract、IR 和形式化后端，不符合 AHFL 作为强类型 workflow DSL 的定位。
+执行前 expression checker 中的 numeric promotion 更宽，允许 `Int + Float` 和 `Int + Decimal(p)`。这会把隐式精度语义带入 contract、IR 和形式化后端，不符合 AHFL 作为强类型 workflow DSL 的定位。
 
 ### 2.3 Type relation 当前是 recursion guard，不是完整 solver
 
-当前 coinductive visited-pair 做法能防止递归比较爆栈，也能支持未来递归类型的最大不动点直觉。但它不记录最终求值状态，不区分 `Equivalent` / `Subtype` / `Assignable` / `ExactSchema` 的缓存结果，也不能复用失败结论。
+执行前 coinductive visited-pair 做法能防止递归比较爆栈，也能支持递归类型的最大不动点直觉。但它不记录最终求值状态，不区分 `Equivalent` / `Subtype` / `Assignable` / `ExactSchema` 的缓存结果，也不能复用失败结论。
 
-在当前有限类型系统下它基本可用；若后续引入递归 alias、泛型、trait-like constraints、union / intersection 或更复杂 schema relation，就需要 memoized three-state solver。
+在执行前的有限类型系统下它基本可用；若引入递归 alias、泛型、trait-like constraints、union / intersection 或更复杂 schema relation，就需要 memoized three-state solver。
 
 ### 2.4 Semantic IR canonical 边界未完全收口
 
-Semantic IR 的设计目标是让 backend 只消费结构化 `TypeRef` / `SymbolRef` / `ExprRef` / `AnalysisBundle`，不再回读 AST、source spelling 或 Typed HIR 内部表。但当前 lowering 仍存在几类兼容期痕迹：
+Semantic IR 的设计目标是让 backend 只消费结构化 `TypeRef` / `SymbolRef` / `ExprRef` / `AnalysisBundle`，不再回读 AST、source spelling 或 Typed HIR 内部表。但执行前 lowering 仍存在几类迁移期痕迹：
 
 - `TypedProgram` 还没有完全承载 module/import、稳定 declaration order 和全部 provenance；normal lowering 仍会借助 AST declaration order，并对 `ModuleDecl` / `ImportDecl` 使用 direct AST fallback。
 - `TypeRef` 构造仍存在从 type spelling 反解析的路径；这让源码展示文本重新变成结构化事实来源。
@@ -70,7 +70,7 @@ Semantic IR 的设计目标是让 backend 只消费结构化 `TypeRef` / `Symbol
 
 ### 2.5 Semantic IR verifier 仍偏结构安全网
 
-当前 `verify_ir_program(...)` 已能检查 `ExprRef` arena 一致性、重复 ID、复合 `TypeRef` child 完整性、source range 和 analysis freshness。但它仍偏向“IR 数据结构没有坏”，而不是“validate 后的 backend-ready IR 语义已经闭包”。
+执行前 `verify_ir_program(...)` 已能检查 `ExprRef` arena 一致性、重复 ID、复合 `TypeRef` child 完整性、source range 和 analysis freshness。但它仍偏向“IR 数据结构没有坏”，而不是“validate 后的 backend-ready IR 语义已经闭包”。
 
 需要变硬的点：
 
@@ -263,43 +263,38 @@ flowchart TD
 
 ## 五、完成证据
 
-本计划已完成实现，并通过 focused 验收与完整 dev preset 验证。关键落点如下：
+本计划已完成实现。关键落点如下：
 
 - P0 arithmetic typing：source-level expression checker 已禁止 mixed numeric promotion；新增 `numeric_operator_int_float` CLI errorcase，`core-language.zh.md` 已同步规则说明。
 - P1-P5 typecheck 分层：`TypeCheckSession`、`TypeCheckState`、`DiagnosticReporter`、`DeclarationIndexBuilder`、`EnvironmentBuilder`、`TypedHirBuilder`、`ExpressionSema`、`ConstSema`、`ContractSema`、`FlowSema`、`WorkflowSema` 已接入 `TypeCheckPass::run()` 阶段编排。
-- P1-P5 续审修正：declaration indexing 已从 `TypeCheckPass` 成员迁入 `DeclarationIndexBuilder`，后续 phase 通过 `TypeCheckPhaseApi` 的窄接口编排；`ExpressionSemaServices` 不再暴露多路裸回调，而是依赖 `ExpressionSemaDelegate`。
+- P3 环境构建收口：`EnvironmentBuilder::run()` 直接编排环境构建并返回 `EnvironmentBuildResult`，其中包含独立 `TypeEnvironment` 和 `DeclarationPayloadUpdate`；`TypeCheckPass::build_type_environment()` 已删除，`TypedHirBuilder::apply_declaration_payload_updates(...)` 是 declaration payload 回写唯一入口。
+- P5 phase 责任下沉：`TypeCheckPhaseApi` 已删除；`ConstSema` 自持 const value cache 与 const/default 检查；`ContractSema`、`FlowSema`、`WorkflowSema` 各自拥有 program traversal 与 domain check 方法，`TypeCheckPass` 退回阶段调度和共享服务宿主。
 - P6 relation solver：`MemoizedRelationSolver` 已提供 `Visiting` / `Proven` / `Disproven` 三态缓存，relation public entry 已迁移到 solver。
-- P7 canonical lowering：`lower_typed_program(const TypedProgram &)` 是 canonical lowering 入口；AST / SourceGraph overload 只保留兼容 API 形状，normal lowering 不再使用 `find_ast_decl` / `find_typed_decl_for_ast`。
+- P7 canonical lowering：`lower_typed_program(const TypedProgram &)` 是 canonical lowering 入口；AST / SourceGraph overload 只是 API adapter。`typed_hir_serialization` 已删除 `let_type_ref_spelling`、`type_spelling`、`aliased_type_spelling`；typed lowerer 已删除 AST declaration / expression / temporal / block bridge 与 type-spelling parser；`ir_lower.cpp` 的旧 AST lowerer 已删除，公开 `lower_program_ir(...)` 统一委托 typed lowering。
 - P8 backend-ready verifier：CLI backend 分发前已使用 `IrVerificationMode::BackendReady`；verifier 会拒绝 unresolved type、missing symbol id、wrong symbol kind、decl/ref drift、sentinel payload、analysis owner/index/count mismatch。
 
 本轮已执行的 focused 验收：
 
 ```bash
-cmake --build --preset build-dev --target ahfl_semantics_effects_tests ahfl_semantics_typed_hir_tests ahfl_semantics_type_relations_tests ahflc
-ctest --preset test-dev --output-on-failure -R 'ahfl\.semantics\.(type_relations_all|typed_hir_all|effects_all|flow_condition_all)'
-cmake --build --preset build-dev --target ahfl_compiler_ir_tests ahfl_semantics_typed_hir_tests ahflc
-ctest --preset test-dev --output-on-failure -R 'ahfl\.semantics\.typed_hir_all|ahfl\.ir\.(identity_visitor|opt\.lower_and_passes)|ahflc\.emit_ir\.'
+cmake --build --preset build-dev --target ahfl_compiler_ir_tests ahfl_semantics_typed_hir_tests ahfl_semantics_effects_tests ahfl_semantics_type_relations_tests ahflc
+ctest --preset test-dev --output-on-failure -R 'ahfl\.ir\.identity_visitor|ahflc\.emit_ir\.(alias_const|expr_temporal)'
+ctest --preset test-dev --output-on-failure -R 'ahfl\.semantics\.(type_relations_all|typed_hir_all|effects_all|flow_condition_all)|ahfl\.ir\.(identity_visitor|opt\.lower_and_passes)|ahflc\.emit_ir\.'
+ctest --preset test-dev --output-on-failure
+git diff --check
+clang-format --dry-run --Werror include/ahfl/compiler/semantics/declaration_info.hpp include/ahfl/compiler/semantics/typed_hir.hpp include/ahfl/compiler/ir/typed_hir_lower.hpp src/compiler/ir/ir_lower.cpp src/compiler/ir/typed_hir_lower.cpp src/compiler/semantics/typecheck.cpp src/compiler/semantics/typecheck_decls.cpp src/compiler/semantics/typecheck_internal.hpp src/compiler/semantics/typed_hir_serialization.cpp src/tooling/lsp/hover_service.cpp
 ```
+
+上述 focused 测试结果为 12 / 12 通过；完整 `ctest` 结果为 952 / 952 通过。
 
 自查命令：
 
 ```bash
 rg -n '<missing-|<invalid-|Unresolved' tests/golden tests/integration examples
-rg -n 'find_ast_decl\(|find_typed_decl_for_ast\(|type_ref_from_spelling_or_type|result_\.typed_program\.(declarations|expressions|temporal_exprs|blocks|statements)\.(push_back|emplace_back)' src include tests
+rg -n 'TypeCheckPhaseApi|friend class TypeCheckPhaseApi|check_contract_semantics|check_flow_semantics|check_workflow_semantics|TypeCheckPass::check_(contracts|flows|workflows|const|struct_defaults|agent_context_defaults)|let_type_ref_spelling|type_spelling|aliased_type_spelling|type_ref_from_type_or_spelling|type_ref_from_syntax|parse_type_ref_spelling|split_payload|parse_temporal|lower_declaration\(|lower_module\(|lower_import\(|lower_const\(|lower_type_alias\(|lower_struct\(|lower_enum\(|lower_capability\(|lower_predicate\(|lower_agent\(|lower_contract\(|lower_flow\(|lower_workflow\(' src include tests
+rg -n 'result_\.typed_program\.declarations\.(push_back|emplace_back)|result_\.typed_program\.(expressions|temporal_exprs|blocks|statements)\.(push_back|emplace_back)' src include tests
 ```
 
 上述自查命令均无命中。
-
-完整验收命令：
-
-```bash
-cmake --build --preset build-dev
-ctest --preset test-dev --output-on-failure
-git diff --check
-clang-format --dry-run --Werror include/ahfl/compiler/ir/typed_hir_lower.hpp include/ahfl/compiler/ir/verify.hpp include/ahfl/compiler/semantics/expression_sema.hpp include/ahfl/compiler/semantics/type_relations.hpp src/compiler/ir/typed_hir_lower.cpp src/compiler/ir/verify.cpp src/compiler/semantics/expression_sema.cpp src/compiler/semantics/type_relations.cpp src/compiler/semantics/typecheck.cpp src/compiler/semantics/typecheck_decls.cpp src/compiler/semantics/typecheck_expr.cpp src/compiler/semantics/typecheck_internal.hpp src/tooling/cli/cli_driver.cpp src/tooling/cli/diagnostic_consumer.cpp tests/bench/ir_pipeline.cpp tests/unit/compiler/ir/identity_visitor.cpp tests/unit/compiler/semantics/effects.cpp tests/unit/compiler/semantics/type_relations.cpp
-```
-
-完整 `ctest` 结果为 952 / 952 通过。仓库当前没有 `build-format-check` target，因此格式验收使用上述 touched C++ 文件的 `clang-format --dry-run --Werror` 命令。
 
 ## 六、算法与 IR 口径
 
