@@ -422,7 +422,7 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 //     identity.
 //   * literal_spelling uses the post-tokenisation "content" where it exists
 //     (integer_literal->spelling, duration_literal->spelling, ...) so typed-
-//     tree lowering matches legacy lowering exactly without needing AST.
+//     tree lowering can reproduce token payloads without needing AST.
 [[nodiscard]] std::string literal_spelling_for(const ast::ExprSyntax &expr) {
     switch (expr.kind) {
     case ast::ExprSyntaxKind::IntegerLiteral:
@@ -587,46 +587,22 @@ void DiagnosticReporter::typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck
     diagnostics_->add_diagnostic(std::move(diagnostic));
 }
 
-void EnvironmentBuilder::run() {
-    api_->build_type_environment();
-}
-
 void ConstSema::run() {
-    api_->check_const_semantics();
+    check_agent_context_defaults();
+    check_const_initializers();
+    check_struct_defaults();
 }
 
 void ContractSema::run() {
-    api_->check_contract_semantics();
+    check_contracts();
 }
 
 void FlowSema::run() {
-    api_->check_flow_semantics();
+    check_flows();
 }
 
 void WorkflowSema::run() {
-    api_->check_workflow_semantics();
-}
-
-void TypeCheckPhaseApi::build_type_environment() {
-    driver_->build_type_environment();
-}
-
-void TypeCheckPhaseApi::check_const_semantics() {
-    driver_->check_agent_context_defaults();
-    driver_->check_const_initializers();
-    driver_->check_struct_defaults();
-}
-
-void TypeCheckPhaseApi::check_contract_semantics() {
-    driver_->check_contracts();
-}
-
-void TypeCheckPhaseApi::check_flow_semantics() {
-    driver_->check_flows();
-}
-
-void TypeCheckPhaseApi::check_workflow_semantics() {
-    driver_->check_workflows();
+    check_workflows();
 }
 
 void TypedHirBuilder::append_declaration(TypedDecl decl) {
@@ -652,6 +628,22 @@ std::uint32_t TypedHirBuilder::append_statement(TypedStatement statement) {
     return static_cast<std::uint32_t>(program_->statements.size() - 1);
 }
 
+void TypedHirBuilder::apply_declaration_payload_updates(
+    std::vector<DeclarationPayloadUpdate> updates) {
+    for (auto &update : updates) {
+        if (update.declaration_index >= program_->declarations.size()) {
+            continue;
+        }
+        auto &decl = program_->declarations[update.declaration_index];
+        if (update.type != nullptr) {
+            decl.type = update.type;
+        }
+        if (!std::holds_alternative<std::monostate>(update.payload)) {
+            decl.payload = std::move(update.payload);
+        }
+    }
+}
+
 TypeCheckResult TypeCheckPass::run() {
     relations_.enable_trace(options_.trace_type_relations);
     // When tracing is on, also record success steps: the typical consumer of
@@ -662,13 +654,15 @@ TypeCheckResult TypeCheckPass::run() {
     relations_.include_success_steps(options_.trace_type_relations);
     build_source_unit_index();
     copy_resolver_snapshot_to_typed_program(resolve_result_, result_.typed_program);
-    TypeCheckPhaseApi phase_api{*this};
     DeclarationIndexBuilder(session_, state_, declaration_index_, hir_builder_).run();
-    EnvironmentBuilder(phase_api).run();
-    ConstSema(phase_api).run();
-    ContractSema(phase_api).run();
-    FlowSema(phase_api).run();
-    WorkflowSema(phase_api).run();
+    auto environment_result = EnvironmentBuilder(*this).run();
+    result_.environment = std::move(environment_result.environment);
+    hir_builder_.apply_declaration_payload_updates(
+        std::move(environment_result.declaration_updates));
+    ConstSema(*this).run();
+    ContractSema(*this).run();
+    FlowSema(*this).run();
+    WorkflowSema(*this).run();
     result_.relation_trace = relations_.trace();
     return std::move(result_);
 }
@@ -862,29 +856,30 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     }
 }
 
-void TypeCheckPass::remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value) {
-    if (auto *typed_expr = result_.typed_program.find_expr(expr.node_id, current_source_id_);
+void ConstSema::remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value) {
+    if (auto *typed_expr =
+            driver_->result_.typed_program.find_expr(expr.node_id, driver_->current_source_id_);
         typed_expr != nullptr) {
         typed_expr->const_value = value;
         return;
     }
 
     if (expr.node_id == 0) {
-        if (auto *typed_expr =
-                result_.typed_program.find_expr_by_range(expr.range, current_source_id_);
+        if (auto *typed_expr = driver_->result_.typed_program.find_expr_by_range(
+                expr.range, driver_->current_source_id_);
             typed_expr != nullptr) {
             typed_expr->const_value = value;
         }
     }
 }
 
-bool TypeCheckPass::ensure_const_value(SymbolId id, SourceRange use_range) {
+bool ConstSema::ensure_const_value(SymbolId id, SourceRange use_range) {
     ConstValueResolutionState resolution_state{
         const_values_,
         active_const_values_,
         failed_const_values_,
     };
-    const auto symbol = symbol_of(id);
+    const auto symbol = driver_->symbol_of(id);
     auto begin_result =
         resolution_state.begin(id, symbol.has_value() ? &symbol->get() : nullptr, use_range);
     if (begin_result.status == ConstValueResolutionStatus::Known) {
@@ -896,34 +891,34 @@ bool TypeCheckPass::ensure_const_value(SymbolId id, SourceRange use_range) {
 
     if (begin_result.status == ConstValueResolutionStatus::Cycle) {
         ConstDiagnosticEmitter{
-            result_.diagnostics,
-            current_source_ != nullptr ? &current_source_->source : nullptr,
+            driver_->result_.diagnostics,
+            driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
         }
             .emit_all(std::move(begin_result.diagnostics));
         return false;
     }
 
-    const auto decl = internal::find_decl_ref(const_decls_, id);
+    const auto decl = internal::find_decl_ref(driver_->const_decls_, id);
     if (!decl.has_value() || decl->get().value == nullptr || decl->get().type == nullptr) {
         return resolution_state.fail(id);
     }
 
-    const auto declared_type = result_.environment.get_const_type(id);
+    const auto declared_type = driver_->environment().get_const_type(id);
     if (!declared_type.has_value()) {
         return resolution_state.fail(id);
     }
 
-    return with_symbol_context(id, [&]() {
+    return driver_->with_symbol_context(id, [&]() {
         const ValueContext context;
         const auto validation = describe_const_initializer_validation(
             declared_type->get(), decl->get().type->range, decl->get().name);
         auto value = check_const_expr(
             *decl->get().value, context, declared_type, validation.context_label, id);
         ConstTypeRelationValidator const_relations{
-            relations_,
+            driver_->relations_,
             ConstDiagnosticEmitter{
-                result_.diagnostics,
-                current_source_ != nullptr ? &current_source_->source : nullptr,
+                driver_->result_.diagnostics,
+                driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
             },
         };
         const bool assignable = const_relations.check_assignable(*value.checked_expr.type,
@@ -1111,16 +1106,16 @@ void TypeCheckPass::check_schema_boundary_decl_type(const TypePtr &type,
         range);
 }
 
-ConstEvalResult TypeCheckPass::check_const_expr(const ast::ExprSyntax &expr,
-                                                const ValueContext &context,
-                                                MaybeCRef<Type> expected_type,
-                                                std::string_view context_label,
-                                                std::optional<SymbolId> source_const) {
+ConstEvalResult ConstSema::check_const_expr(const ast::ExprSyntax &expr,
+                                            const ValueContext &context,
+                                            MaybeCRef<Type> expected_type,
+                                            std::string_view context_label,
+                                            std::optional<SymbolId> source_const) {
     const ConstExpressionDriver const_expr{
         ConstEvalPipeline{
-            resolve_result_,
-            current_source_id_,
-            result_.typed_program.const_dependencies,
+            driver_->resolve_result_,
+            driver_->current_source_id_,
+            driver_->result_.typed_program.const_dependencies,
             const_values_,
             [this](SymbolId target, SourceRange use_range) {
                 return ensure_const_value(target, use_range);
@@ -1130,12 +1125,12 @@ ConstEvalResult TypeCheckPass::check_const_expr(const ast::ExprSyntax &expr,
             },
         },
         ConstDiagnosticEmitter{
-            result_.diagnostics,
-            current_source_ != nullptr ? &current_source_->source : nullptr,
+            driver_->result_.diagnostics,
+            driver_->current_source_ != nullptr ? &driver_->current_source_->source : nullptr,
         },
         [this, &context](const ast::ExprSyntax &checked_expr,
                          MaybeCRef<Type> expected_checked_type) {
-            auto value = check_expr(checked_expr, context, expected_checked_type);
+            auto value = driver_->check_expr(checked_expr, context, expected_checked_type);
             return ConstCheckedExpression{
                 .type = std::move(value.type),
                 .effect = value.effect,
@@ -1170,19 +1165,20 @@ TypedValue TypeCheckPass::error_typed_effect(ExprEffect effect) const {
     };
 }
 
-void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
+void ContractSema::check_contracts_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::ContractDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::ContractDecl &>(*declaration);
-        const auto target = find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
+        const auto target =
+            driver_->find_reference_here(ReferenceKind::ContractTarget, decl.target->range);
         if (!target.has_value()) {
             continue;
         }
 
-        const auto agent_info = result_.environment.get_agent(target->get().target);
+        const auto agent_info = driver_->environment().get_agent(target->get().target);
         if (!agent_info.has_value()) {
             continue;
         }
@@ -1194,36 +1190,36 @@ void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
             .kind = ast::NodeKind::ContractDecl,
             .symbol = target->get().target,
             .range = declaration->range,
-            .source_id = current_source_id_,
+            .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
         };
-        if (const auto contract_info = result_.environment.get_contract(target->get().target);
+        if (const auto contract_info = driver_->environment().get_contract(target->get().target);
             contract_info.has_value()) {
             typed_decl.payload = contract_info->get();
         }
-        hir_builder_.append_declaration(std::move(typed_decl));
+        driver_->hir_builder_.append_declaration(std::move(typed_decl));
 
         for (const auto &clause : decl.clauses) {
             if (!clause->expr && clause->temporal_expr) {
                 ValueContext context;
-                context.bindings.emplace("input",
-                                         clone_or_any(std::cref(*agent_info->get().input_type)));
-                check_temporal_embedded_exprs(*clause->temporal_expr, context);
+                context.bindings.emplace(
+                    "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                driver_->check_temporal_embedded_exprs(*clause->temporal_expr, context);
                 continue;
             }
 
-            const auto bool_type = make_type(TypeKind::Bool);
+            const auto bool_type = driver_->make_type(TypeKind::Bool);
             ValueContext context;
-            context.bindings.emplace("input",
-                                     clone_or_any(std::cref(*agent_info->get().input_type)));
+            context.bindings.emplace(
+                "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
             if (clause->kind == ast::ContractClauseKind::Ensures) {
-                context.bindings.emplace("output",
-                                         clone_or_any(std::cref(*agent_info->get().output_type)));
+                context.bindings.emplace(
+                    "output", driver_->clone_or_any(std::cref(*agent_info->get().output_type)));
             }
 
-            const auto value = check_expr(*clause->expr, context, std::cref(*bool_type));
+            const auto value = driver_->check_expr(*clause->expr, context, std::cref(*bool_type));
             if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
-                typecheck_error_here(
+                driver_->typecheck_error_here(
                     error_codes::typecheck::TypeMismatch,
                     messages::typecheck::BoolExpressionRequired.format_with("contract expression"),
                     clause->expr->range,
@@ -1233,24 +1229,25 @@ void TypeCheckPass::check_contracts_in_program(const ast::Program &program) {
                     }});
             }
             if (!value.is_pure) {
-                non_pure_error_here("contract expression", value.effect, clause->expr->range);
+                driver_->non_pure_error_here(
+                    "contract expression", value.effect, clause->expr->range);
             }
         }
     }
 }
 
-void TypeCheckPass::check_contracts() {
-    if (graph_ != nullptr) {
-        for (const auto &source : graph_->sources) {
-            enter_source(source);
+void ContractSema::check_contracts() {
+    if (driver_->graph_ != nullptr) {
+        for (const auto &source : driver_->graph_->sources) {
+            driver_->enter_source(source);
             check_contracts_in_program(
                 require(source.program.get(), "source graph program must exist before typecheck"));
-            leave_source();
+            driver_->leave_source();
         }
         return;
     }
 
-    check_contracts_in_program(require(program_, "typecheck program must exist"));
+    check_contracts_in_program(require(driver_->program_, "typecheck program must exist"));
 }
 
 std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalExprSyntax &expr,
@@ -1380,19 +1377,20 @@ std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalEx
     return hir_builder_.append_temporal_expr(std::move(te));
 }
 
-void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
+void FlowSema::check_flows_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::FlowDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::FlowDecl &>(*declaration);
-        const auto target = find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
+        const auto target =
+            driver_->find_reference_here(ReferenceKind::FlowTarget, decl.target->range);
         if (!target.has_value()) {
             continue;
         }
 
-        const auto agent_info = result_.environment.get_agent(target->get().target);
+        const auto agent_info = driver_->environment().get_agent(target->get().target);
         if (!agent_info.has_value()) {
             continue;
         }
@@ -1404,59 +1402,60 @@ void TypeCheckPass::check_flows_in_program(const ast::Program &program) {
             .kind = ast::NodeKind::FlowDecl,
             .symbol = target->get().target,
             .range = declaration->range,
-            .source_id = current_source_id_,
+            .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
         };
-        if (const auto flow_info = result_.environment.get_flow(target->get().target);
+        if (const auto flow_info = driver_->environment().get_flow(target->get().target);
             flow_info.has_value()) {
             typed_decl.payload = flow_info->get();
         }
-        hir_builder_.append_declaration(std::move(typed_decl));
+        driver_->hir_builder_.append_declaration(std::move(typed_decl));
 
         for (const auto &handler : decl.state_handlers) {
             ValueContext context;
             context.call_context = CallContext::Flow;
             context.current_agent = target->get().target;
-            context.bindings.emplace("input",
-                                     clone_or_any(std::cref(*agent_info->get().input_type)));
-            context.bindings.emplace("ctx",
-                                     clone_or_any(std::cref(*agent_info->get().context_type)));
-            check_block(*handler->body,
-                        context,
-                        std::cref(*agent_info->get().output_type),
-                        handler->state_name,
-                        agent_info->get().declaration_range);
+            context.bindings.emplace(
+                "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+            context.bindings.emplace(
+                "ctx", driver_->clone_or_any(std::cref(*agent_info->get().context_type)));
+            driver_->check_block(*handler->body,
+                                 context,
+                                 std::cref(*agent_info->get().output_type),
+                                 handler->state_name,
+                                 agent_info->get().declaration_range);
         }
     }
 }
 
-void TypeCheckPass::check_flows() {
-    if (graph_ != nullptr) {
-        for (const auto &source : graph_->sources) {
-            enter_source(source);
+void FlowSema::check_flows() {
+    if (driver_->graph_ != nullptr) {
+        for (const auto &source : driver_->graph_->sources) {
+            driver_->enter_source(source);
             check_flows_in_program(
                 require(source.program.get(), "source graph program must exist before typecheck"));
-            leave_source();
+            driver_->leave_source();
         }
         return;
     }
 
-    check_flows_in_program(require(program_, "typecheck program must exist"));
+    check_flows_in_program(require(driver_->program_, "typecheck program must exist"));
 }
 
-void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
+void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::WorkflowDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::WorkflowDecl &>(*declaration);
-        const auto workflow_symbol = find_local_here(SymbolNamespace::Workflows, decl.name);
+        const auto workflow_symbol =
+            driver_->find_local_here(SymbolNamespace::Workflows, decl.name);
         if (!workflow_symbol.has_value()) {
             continue;
         }
 
-        const auto workflow_info = result_.environment.get_workflow(workflow_symbol->get().id);
+        const auto workflow_info = driver_->environment().get_workflow(workflow_symbol->get().id);
         if (!workflow_info.has_value()) {
             continue;
         }
@@ -1464,37 +1463,37 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
         BindingMap all_node_outputs;
 
         for (const auto &node : decl.nodes) {
-            const auto target =
-                find_reference_here(ReferenceKind::WorkflowNodeTarget, node->target->range);
+            const auto target = driver_->find_reference_here(ReferenceKind::WorkflowNodeTarget,
+                                                             node->target->range);
             if (!target.has_value()) {
                 continue;
             }
 
-            const auto agent_info = result_.environment.get_agent(target->get().target);
+            const auto agent_info = driver_->environment().get_agent(target->get().target);
             if (!agent_info.has_value()) {
                 continue;
             }
 
-            all_node_outputs.emplace(node->name,
-                                     clone_or_any(std::cref(*agent_info->get().output_type)));
+            all_node_outputs.emplace(
+                node->name, driver_->clone_or_any(std::cref(*agent_info->get().output_type)));
         }
 
         for (const auto &node : decl.nodes) {
-            const auto target =
-                find_reference_here(ReferenceKind::WorkflowNodeTarget, node->target->range);
+            const auto target = driver_->find_reference_here(ReferenceKind::WorkflowNodeTarget,
+                                                             node->target->range);
             if (!target.has_value()) {
                 continue;
             }
 
-            const auto agent_info = result_.environment.get_agent(target->get().target);
+            const auto agent_info = driver_->environment().get_agent(target->get().target);
             if (!agent_info.has_value()) {
                 continue;
             }
 
             ValueContext context;
             context.call_context = CallContext::Workflow;
-            context.bindings.emplace("input",
-                                     clone_or_any(std::cref(*workflow_info->get().input_type)));
+            context.bindings.emplace(
+                "input", driver_->clone_or_any(std::cref(*workflow_info->get().input_type)));
 
             for (const auto &dependency : node->after) {
                 const auto dependency_type = find_binding(all_node_outputs, dependency);
@@ -1503,53 +1502,54 @@ void TypeCheckPass::check_workflows_in_program(const ast::Program &program) {
                 }
             }
 
-            const auto argument =
-                check_expr(*node->input, context, std::cref(*agent_info->get().input_type));
-            (void)check_exact_schema_boundary(*argument.type,
-                                              *agent_info->get().input_type,
-                                              SchemaBoundaryKind::WorkflowNodeInput,
-                                              node->input->range,
-                                              agent_info->get().declaration_range);
+            const auto argument = driver_->check_expr(
+                *node->input, context, std::cref(*agent_info->get().input_type));
+            (void)driver_->check_exact_schema_boundary(*argument.type,
+                                                       *agent_info->get().input_type,
+                                                       SchemaBoundaryKind::WorkflowNodeInput,
+                                                       node->input->range,
+                                                       agent_info->get().declaration_range);
         }
 
         ValueContext return_context;
         return_context.call_context = CallContext::Workflow;
-        return_context.bindings.emplace("input",
-                                        clone_or_any(std::cref(*workflow_info->get().input_type)));
+        return_context.bindings.emplace(
+            "input", driver_->clone_or_any(std::cref(*workflow_info->get().input_type)));
         for (const auto &[name, type] : all_node_outputs) {
-            return_context.bindings.emplace(name, type ? type->clone() : make_error_type());
+            return_context.bindings.emplace(name,
+                                            type ? type->clone() : driver_->make_error_type());
         }
 
         for (const auto &formula : decl.safety) {
-            check_temporal_embedded_exprs(*formula, return_context);
+            driver_->check_temporal_embedded_exprs(*formula, return_context);
         }
 
         for (const auto &formula : decl.liveness) {
-            check_temporal_embedded_exprs(*formula, return_context);
+            driver_->check_temporal_embedded_exprs(*formula, return_context);
         }
 
-        const auto return_value = check_expr(
+        const auto return_value = driver_->check_expr(
             *decl.return_value, return_context, std::cref(*workflow_info->get().output_type));
-        (void)check_exact_schema_boundary(*return_value.type,
-                                          *workflow_info->get().output_type,
-                                          SchemaBoundaryKind::WorkflowOutput,
-                                          decl.return_value->range,
-                                          workflow_info->get().declaration_range);
+        (void)driver_->check_exact_schema_boundary(*return_value.type,
+                                                   *workflow_info->get().output_type,
+                                                   SchemaBoundaryKind::WorkflowOutput,
+                                                   decl.return_value->range,
+                                                   workflow_info->get().declaration_range);
     }
 }
 
-void TypeCheckPass::check_workflows() {
-    if (graph_ != nullptr) {
-        for (const auto &source : graph_->sources) {
-            enter_source(source);
+void WorkflowSema::check_workflows() {
+    if (driver_->graph_ != nullptr) {
+        for (const auto &source : driver_->graph_->sources) {
+            driver_->enter_source(source);
             check_workflows_in_program(
                 require(source.program.get(), "source graph program must exist before typecheck"));
-            leave_source();
+            driver_->leave_source();
         }
         return;
     }
 
-    check_workflows_in_program(require(program_, "typecheck program must exist"));
+    check_workflows_in_program(require(driver_->program_, "typecheck program must exist"));
 }
 
 std::uint32_t
@@ -1679,23 +1679,20 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 initializer.type ? initializer.type->clone() : make_error_type();
         }
 
-        // Determine the let type-ref strategy and (optional) spelling string.
-        // The lowering pass reconstructs an ir::TypeRef from this pair plus
-        // the initializer's resolved type without consulting the AST:
-        //   * FromSyntax: user wrote a type annotation; spelling = canonical
-        //     TypeSyntax text (e.g. "Optional<Foo>").
-        //   * FromInitializerType: no annotation; binding type was inferred
-        //     from the initializer.
-        //   * AnySentinel: reserved for error paths.
+        // Determine the let type-ref strategy and structured semantic type.
+        // Lowering consumes let_type directly and never reparses annotation
+        // spelling.
         LetTypeRefStrategy let_strategy = LetTypeRefStrategy::FromInitializerType;
-        std::string let_type_spelling;
+        TypePtr let_type;
         if (statement.let_stmt->type) {
             let_strategy = LetTypeRefStrategy::FromSyntax;
-            let_type_spelling = statement.let_stmt->type->spelling();
+            let_type = annotated_type ? annotated_type->clone() : make_error_type();
         } else if (!initializer.type) {
-            let_strategy = LetTypeRefStrategy::AnySentinel;
+            let_strategy = LetTypeRefStrategy::MissingType;
+            let_type = make_error_type();
         } else {
             let_strategy = LetTypeRefStrategy::FromInitializerType;
+            let_type = initializer.type->clone();
         }
 
         last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
@@ -1705,7 +1702,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .children_expr_index = {resolve_payload_expr_index(*statement.let_stmt->initializer)},
             .target_name = statement.let_stmt->name,
             .let_type_ref_strategy = let_strategy,
-            .let_type_ref_spelling = std::move(let_type_spelling),
+            .let_type = std::move(let_type),
         });
         break;
     }
@@ -1847,8 +1844,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
     case ast::StatementSyntaxKind::Goto: {
         // GotoStmtSyntax::target_state is always populated by the parser; the
         // typed-record field mirrors it directly so lowering never needs to
-        // reach back into the AST. The empty-string fallback in
-        // typed_hir_lower.cpp is now dead code (kept for T1.7 backward compat).
+        // reach back into the AST.
         const std::string target_state =
             statement.goto_stmt ? statement.goto_stmt->target_state : std::string{};
         last_written_statement_index_ = hir_builder_.append_statement(TypedStatement{
@@ -1925,11 +1921,8 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                 "assert condition", condition.effect, statement.assert_stmt->condition->range);
         }
 
-        // Assert message: currently AssertStmtSyntax in the AST does not
-        // carry a user-facing message (field reserved for a future AST
-        // extension). We deliberately leave assert_message empty so the
-        // typed record remains forward-compatible: once the AST gains a
-        // message field the filling here will light up.
+        // AssertStmtSyntax currently does not carry a user-facing message, so
+        // the typed record mirrors the current AST shape with an empty message.
         std::string assert_msg;
         (void)assert_msg; // silence unused warning when the AST lacks the field
 

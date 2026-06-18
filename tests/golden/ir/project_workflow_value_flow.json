@@ -193,13 +193,21 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Request",
-        "canonical_name": "lib::types::Request"
+        "canonical_name": "lib::types::Request",
+        "source_range": {
+          "begin_offset": 257,
+          "end_offset": 551
+        }
       },
       "output_type": "lib::types::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Response",
-        "canonical_name": "lib::types::Response"
+        "canonical_name": "lib::types::Response",
+        "source_range": {
+          "begin_offset": 257,
+          "end_offset": 551
+        }
       },
       "nodes": [
         {
@@ -401,7 +409,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 41,
+              "end_offset": 55
+            }
           },
           "source_range": {
             "begin_offset": 41,
@@ -435,7 +447,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 80,
+              "end_offset": 106
+            }
           },
           "source_range": {
             "begin_offset": 80,
@@ -481,7 +497,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 132,
+              "end_offset": 146
+            }
           },
           "source_range": {
             "begin_offset": 132,
@@ -628,7 +648,11 @@
           "type_ref": {
             "kind": "struct",
             "display_name": "lib::types::Request",
-            "canonical_name": "lib::types::Request"
+            "canonical_name": "lib::types::Request",
+            "source_range": {
+              "begin_offset": 65,
+              "end_offset": 93
+            }
           },
           "source_range": {
             "begin_offset": 65,
@@ -640,7 +664,11 @@
       "return_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Response",
-        "canonical_name": "lib::types::Response"
+        "canonical_name": "lib::types::Response",
+        "source_range": {
+          "begin_offset": 49,
+          "end_offset": 119
+        }
       }
     },
     {
@@ -665,19 +693,31 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Request",
-        "canonical_name": "lib::types::Request"
+        "canonical_name": "lib::types::Request",
+        "source_range": {
+          "begin_offset": 121,
+          "end_offset": 360
+        }
       },
       "context_type": "lib::types::Context",
       "context_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Context",
-        "canonical_name": "lib::types::Context"
+        "canonical_name": "lib::types::Context",
+        "source_range": {
+          "begin_offset": 121,
+          "end_offset": 360
+        }
       },
       "output_type": "lib::types::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "lib::types::Response",
-        "canonical_name": "lib::types::Response"
+        "canonical_name": "lib::types::Response",
+        "source_range": {
+          "begin_offset": 121,
+          "end_offset": 360
+        }
       },
       "states": [
         "Init",

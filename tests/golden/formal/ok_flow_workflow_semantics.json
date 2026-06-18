@@ -49,7 +49,11 @@
           "type": "Bool",
           "type_ref": {
             "kind": "bool",
-            "display_name": "Bool"
+            "display_name": "Bool",
+            "source_range": {
+              "begin_offset": 52,
+              "end_offset": 75
+            }
           },
           "source_range": {
             "begin_offset": 52,
@@ -83,7 +87,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 100,
+              "end_offset": 121
+            }
           },
           "source_range": {
             "begin_offset": 100,
@@ -129,7 +137,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 147,
+              "end_offset": 159
+            }
           },
           "source_range": {
             "begin_offset": 147,
@@ -161,19 +173,31 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Request",
-        "canonical_name": "formal::flow_workflow::Request"
+        "canonical_name": "formal::flow_workflow::Request",
+        "source_range": {
+          "begin_offset": 163,
+          "end_offset": 512
+        }
       },
       "context_type": "formal::flow_workflow::Context",
       "context_type_ref": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Context",
-        "canonical_name": "formal::flow_workflow::Context"
+        "canonical_name": "formal::flow_workflow::Context",
+        "source_range": {
+          "begin_offset": 163,
+          "end_offset": 512
+        }
       },
       "output_type": "formal::flow_workflow::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Response",
-        "canonical_name": "formal::flow_workflow::Response"
+        "canonical_name": "formal::flow_workflow::Response",
+        "source_range": {
+          "begin_offset": 163,
+          "end_offset": 512
+        }
       },
       "states": [
         "Init",
@@ -475,13 +499,21 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Request",
-        "canonical_name": "formal::flow_workflow::Request"
+        "canonical_name": "formal::flow_workflow::Request",
+        "source_range": {
+          "begin_offset": 859,
+          "end_offset": 1217
+        }
       },
       "output_type": "formal::flow_workflow::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "formal::flow_workflow::Response",
-        "canonical_name": "formal::flow_workflow::Response"
+        "canonical_name": "formal::flow_workflow::Response",
+        "source_range": {
+          "begin_offset": 859,
+          "end_offset": 1217
+        }
       },
       "nodes": [
         {

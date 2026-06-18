@@ -162,7 +162,6 @@ struct DeclarationIndex {
 
 class TypeCheckPass;
 class TypedHirBuilder;
-class TypeCheckPhaseApi;
 
 class DeclarationIndexBuilder {
   public:
@@ -185,54 +184,90 @@ class DeclarationIndexBuilder {
                                                std::string_view name) const;
 };
 
+struct DeclarationPayloadUpdate {
+    std::size_t declaration_index{0};
+    TypePtr type{nullptr};
+    TypedDeclPayload payload;
+};
+
+struct EnvironmentBuildResult {
+    TypeEnvironment environment;
+    std::vector<DeclarationPayloadUpdate> declaration_updates;
+};
+
 class EnvironmentBuilder {
   public:
-    explicit EnvironmentBuilder(TypeCheckPhaseApi &api) : api_(&api) {}
+    explicit EnvironmentBuilder(TypeCheckPass &driver) : driver_(&driver) {}
 
-    void run();
+    [[nodiscard]] EnvironmentBuildResult run();
 
   private:
-    TypeCheckPhaseApi *api_{nullptr};
+    TypeCheckPass *driver_{nullptr};
 };
 
 class ConstSema {
   public:
-    explicit ConstSema(TypeCheckPhaseApi &api) : api_(&api) {}
+    explicit ConstSema(TypeCheckPass &driver) : driver_(&driver) {}
 
     void run();
 
   private:
-    TypeCheckPhaseApi *api_{nullptr};
+    TypeCheckPass *driver_{nullptr};
+    std::unordered_map<std::size_t, ConstValue> const_values_;
+    std::unordered_set<std::size_t> active_const_values_;
+    std::unordered_set<std::size_t> failed_const_values_;
+
+    void remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value);
+    [[nodiscard]] bool ensure_const_value(SymbolId id, SourceRange use_range);
+    [[nodiscard]] internal::ConstEvalResult
+    check_const_expr(const ast::ExprSyntax &expr,
+                     const internal::ValueContext &context,
+                     MaybeCRef<Type> expected_type,
+                     std::string_view context_label,
+                     std::optional<SymbolId> source_const = std::nullopt);
+    void check_const_initializers_in_program(const ast::Program &program);
+    void check_const_initializers();
+    void check_struct_defaults();
+    void check_agent_context_defaults();
 };
 
 class ContractSema {
   public:
-    explicit ContractSema(TypeCheckPhaseApi &api) : api_(&api) {}
+    explicit ContractSema(TypeCheckPass &driver) : driver_(&driver) {}
 
     void run();
 
   private:
-    TypeCheckPhaseApi *api_{nullptr};
+    TypeCheckPass *driver_{nullptr};
+
+    void check_contracts_in_program(const ast::Program &program);
+    void check_contracts();
 };
 
 class FlowSema {
   public:
-    explicit FlowSema(TypeCheckPhaseApi &api) : api_(&api) {}
+    explicit FlowSema(TypeCheckPass &driver) : driver_(&driver) {}
 
     void run();
 
   private:
-    TypeCheckPhaseApi *api_{nullptr};
+    TypeCheckPass *driver_{nullptr};
+
+    void check_flows_in_program(const ast::Program &program);
+    void check_flows();
 };
 
 class WorkflowSema {
   public:
-    explicit WorkflowSema(TypeCheckPhaseApi &api) : api_(&api) {}
+    explicit WorkflowSema(TypeCheckPass &driver) : driver_(&driver) {}
 
     void run();
 
   private:
-    TypeCheckPhaseApi *api_{nullptr};
+    TypeCheckPass *driver_{nullptr};
+
+    void check_workflows_in_program(const ast::Program &program);
+    void check_workflows();
 };
 
 class TypedHirBuilder {
@@ -248,23 +283,10 @@ class TypedHirBuilder {
     [[nodiscard]] std::uint32_t append_temporal_expr(TypedTemporalExpr expr);
     [[nodiscard]] std::uint32_t append_block(TypedBlock block);
     [[nodiscard]] std::uint32_t append_statement(TypedStatement statement);
+    void apply_declaration_payload_updates(std::vector<DeclarationPayloadUpdate> updates);
 
   private:
     TypedProgram *program_{nullptr};
-};
-
-class TypeCheckPhaseApi {
-  public:
-    explicit TypeCheckPhaseApi(TypeCheckPass &driver) : driver_(&driver) {}
-
-    void build_type_environment();
-    void check_const_semantics();
-    void check_contract_semantics();
-    void check_flow_semantics();
-    void check_workflow_semantics();
-
-  private:
-    TypeCheckPass *driver_{nullptr};
 };
 
 class TypeCheckPass final {
@@ -273,7 +295,8 @@ class TypeCheckPass final {
         : session_(std::move(session)), state_(), program_(session_.program),
           graph_(session_.graph), resolve_result_(session_.resolve_result), types_(&session_.types),
           options_(session_.options), result_(state_.result),
-          current_source_(state_.current_source), current_source_id_(state_.current_source_id),
+          environment_(&state_.result.environment), current_source_(state_.current_source),
+          current_source_id_(state_.current_source_id),
           current_module_name_(state_.current_module_name),
           source_units_by_id_(state_.source_units_by_id),
           reporter_(state_.result.diagnostics, state_.current_source),
@@ -325,7 +348,11 @@ class TypeCheckPass final {
     [[nodiscard]] TypeCheckResult run();
 
   private:
-    friend class TypeCheckPhaseApi;
+    friend class EnvironmentBuilder;
+    friend class ConstSema;
+    friend class ContractSema;
+    friend class FlowSema;
+    friend class WorkflowSema;
 
     // Re-export internal aliases inside the class so existing implementation
     // files can keep referring to them by their unqualified names.
@@ -345,6 +372,7 @@ class TypeCheckPass final {
     TypeCheckOptions &options_;
     TypeRelationContext relations_;
     TypeCheckResult &result_;
+    TypeEnvironment *environment_{nullptr};
     const SourceUnit *&current_source_;
     std::optional<SourceId> &current_source_id_;
     std::string &current_module_name_;
@@ -386,13 +414,16 @@ class TypeCheckPass final {
         &workflow_decls_;
     TypedHirBuilder hir_builder_;
 
-    std::unordered_map<std::size_t, ConstValue> const_values_;
-    std::unordered_set<std::size_t> active_const_values_;
-    std::unordered_set<std::size_t> failed_const_values_;
     TypeAliasResolutionState alias_resolution_;
 
+    [[nodiscard]] TypeEnvironment &environment() noexcept {
+        return *environment_;
+    }
+    [[nodiscard]] const TypeEnvironment &environment() const noexcept {
+        return *environment_;
+    }
+
     // Declaration indexing & environment building (typecheck_decls.cpp).
-    void build_type_environment();
     void build_const_types();
     void build_struct_types();
     void build_enum_types();
@@ -405,19 +436,6 @@ class TypeCheckPass final {
     void build_contract_types();
     void build_contract_types_in_program(const ast::Program &program);
 
-    // Declaration-level checks (typecheck_decls.cpp).
-    void check_const_initializers_in_program(const ast::Program &program);
-    void check_const_initializers();
-    void check_struct_defaults();
-    void check_agent_context_defaults();
-
-    // Contracts / flows / workflows (typecheck.cpp).
-    void check_contracts_in_program(const ast::Program &program);
-    void check_contracts();
-    void check_flows_in_program(const ast::Program &program);
-    void check_flows();
-    void check_workflows_in_program(const ast::Program &program);
-    void check_workflows();
     // Walks a temporal expression tree, type-checking every embedded Expr
     // (EmbeddedExpr leaves) against Bool and building a parallel flat-store
     // of TypedTemporalExpr records in result_.typed_program.temporal_exprs.
@@ -456,9 +474,6 @@ class TypeCheckPass final {
                               SourceRange range,
                               std::vector<Diagnostic::Related> notes);
     void non_pure_error_here(std::string_view context_label, ExprEffect effect, SourceRange range);
-    void remember_const_value(const ast::ExprSyntax &expr, const ConstValue &value);
-    [[nodiscard]] bool ensure_const_value(SymbolId id, SourceRange use_range);
-
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
     [[nodiscard]] TypeResolver make_type_resolver();
     [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
@@ -500,13 +515,6 @@ class TypeCheckPass final {
     void check_schema_boundary_decl_type(const TypePtr &type,
                                          SchemaBoundaryKind boundary,
                                          SourceRange range);
-    [[nodiscard]] ConstEvalResult
-    check_const_expr(const ast::ExprSyntax &expr,
-                     const ValueContext &context,
-                     MaybeCRef<Type> expected_type,
-                     std::string_view context_label,
-                     std::optional<SymbolId> source_const = std::nullopt);
-
     [[nodiscard]] TypedValue check_expr(const ast::ExprSyntax &expr,
                                         const ValueContext &context,
                                         MaybeCRef<Type> expected_type = std::nullopt);
