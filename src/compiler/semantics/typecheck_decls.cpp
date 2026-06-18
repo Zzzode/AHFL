@@ -16,6 +16,7 @@
 #include <string>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 
 namespace ahfl {
 
@@ -199,36 +200,58 @@ void DeclarationIndexBuilder::run() {
     index_program_declarations(require(session_->program, "typecheck program must exist"));
 }
 
-void TypeCheckPass::build_type_environment() {
-    build_const_types();
-    build_struct_types();
-    build_enum_types();
-    build_capability_types();
-    build_predicate_types();
-    build_agent_types();
-    build_workflow_types();
-    build_flow_types();
-    build_contract_types();
+EnvironmentBuildResult EnvironmentBuilder::run() {
+    EnvironmentBuildResult build_result;
 
-    for (auto &decl : result_.typed_program.declarations) {
-        if (const auto type = result_.environment.get_const_type(decl.symbol); type.has_value()) {
-            decl.type = type->get().clone();
+    struct EnvironmentScope {
+        TypeCheckPass &driver;
+        TypeEnvironment *previous;
+
+        ~EnvironmentScope() {
+            driver.environment_ = previous;
         }
+    };
+
+    EnvironmentScope scope{*driver_, driver_->environment_};
+    driver_->environment_ = &build_result.environment;
+
+    driver_->build_const_types();
+    driver_->build_struct_types();
+    driver_->build_enum_types();
+    driver_->build_capability_types();
+    driver_->build_predicate_types();
+    driver_->build_agent_types();
+    driver_->build_workflow_types();
+    driver_->build_flow_types();
+    driver_->build_contract_types();
+
+    build_result.declaration_updates.reserve(driver_->result_.typed_program.declarations.size());
+    for (std::size_t index = 0; index < driver_->result_.typed_program.declarations.size();
+         ++index) {
+        const auto &decl = driver_->result_.typed_program.declarations[index];
+        DeclarationPayloadUpdate update{
+            .declaration_index = index,
+            .type = nullptr,
+            .payload = {},
+        };
 
         // Copy structural payloads out of TypeEnvironment so TypedProgram can
         // be consumed without borrowing environment map storage.
         switch (decl.kind) {
         case ast::NodeKind::ConstDecl:
-            if (const auto ast_decl_iter = const_decls_.find(decl.symbol.value);
-                ast_decl_iter != const_decls_.end()) {
+            if (const auto type = driver_->environment().get_const_type(decl.symbol);
+                type.has_value()) {
+                update.type = type->get().clone();
+            }
+            if (const auto ast_decl_iter = driver_->const_decls_.find(decl.symbol.value);
+                ast_decl_iter != driver_->const_decls_.end()) {
                 const auto &ast_decl = ast_decl_iter->second.get();
-                const auto symbol = symbol_of(decl.symbol);
-                decl.payload = ConstDeclInfo{
+                const auto symbol = driver_->symbol_of(decl.symbol);
+                update.payload = ConstDeclInfo{
                     .canonical_name = symbol.has_value() ? symbol->get().canonical_name
                                                          : std::string(ast_decl.name),
                     .local_name = ast_decl.name,
-                    .type = decl.type,
-                    .type_spelling = ast_decl.type ? ast_decl.type->spelling() : std::string{},
+                    .type = update.type,
                     .type_range = ast_decl.type ? ast_decl.type->range : SourceRange{},
                     .value_range = ast_decl.value ? ast_decl.value->range : SourceRange{},
                     .declaration_range = ast_decl.range,
@@ -236,18 +259,16 @@ void TypeCheckPass::build_type_environment() {
             }
             break;
         case ast::NodeKind::TypeAliasDecl:
-            if (const auto ast_decl = alias_decl_of(decl.symbol); ast_decl.has_value()) {
+            if (const auto ast_decl = driver_->alias_decl_of(decl.symbol); ast_decl.has_value()) {
                 const auto &alias = ast_decl->get();
-                const auto symbol = symbol_of(decl.symbol);
-                decl.payload = TypeAliasDeclInfo{
+                const auto symbol = driver_->symbol_of(decl.symbol);
+                update.payload = TypeAliasDeclInfo{
                     .symbol = decl.symbol,
                     .canonical_name =
                         symbol.has_value() ? symbol->get().canonical_name : std::string(alias.name),
                     .local_name = alias.name,
-                    .aliased_type =
-                        alias.aliased_type ? resolve_type(*alias.aliased_type) : make_error_type(),
-                    .aliased_type_spelling =
-                        alias.aliased_type ? alias.aliased_type->spelling() : std::string{},
+                    .aliased_type = alias.aliased_type ? driver_->resolve_type(*alias.aliased_type)
+                                                       : driver_->make_error_type(),
                     .aliased_type_range =
                         alias.aliased_type ? alias.aliased_type->range : SourceRange{},
                     .declaration_range = alias.range,
@@ -255,39 +276,45 @@ void TypeCheckPass::build_type_environment() {
             }
             break;
         case ast::NodeKind::StructDecl:
-            if (auto info = result_.environment.get_struct(decl.symbol); info.has_value()) {
-                decl.payload = info->get();
+            if (auto info = driver_->environment().get_struct(decl.symbol); info.has_value()) {
+                update.payload = info->get();
             }
             break;
         case ast::NodeKind::EnumDecl:
-            if (auto info = result_.environment.get_enum(decl.symbol); info.has_value()) {
-                decl.payload = info->get();
+            if (auto info = driver_->environment().get_enum(decl.symbol); info.has_value()) {
+                update.payload = info->get();
             }
             break;
         case ast::NodeKind::CapabilityDecl:
-            if (auto info = result_.environment.get_capability(decl.symbol); info.has_value()) {
-                decl.payload = info->get();
+            if (auto info = driver_->environment().get_capability(decl.symbol); info.has_value()) {
+                update.payload = info->get();
             }
             break;
         case ast::NodeKind::PredicateDecl:
-            if (auto info = result_.environment.get_predicate(decl.symbol); info.has_value()) {
-                decl.payload = info->get();
+            if (auto info = driver_->environment().get_predicate(decl.symbol); info.has_value()) {
+                update.payload = info->get();
             }
             break;
         case ast::NodeKind::AgentDecl:
-            if (auto info = result_.environment.get_agent(decl.symbol); info.has_value()) {
-                decl.payload = info->get();
+            if (auto info = driver_->environment().get_agent(decl.symbol); info.has_value()) {
+                update.payload = info->get();
             }
             break;
         case ast::NodeKind::WorkflowDecl:
-            if (auto info = result_.environment.get_workflow(decl.symbol); info.has_value()) {
-                decl.payload = info->get();
+            if (auto info = driver_->environment().get_workflow(decl.symbol); info.has_value()) {
+                update.payload = info->get();
             }
             break;
         default:
             break;
         }
+
+        if (update.type != nullptr || !std::holds_alternative<std::monostate>(update.payload)) {
+            build_result.declaration_updates.push_back(std::move(update));
+        }
     }
+
+    return build_result;
 }
 
 void TypeCheckPass::build_const_types() {
@@ -297,7 +324,7 @@ void TypeCheckPass::build_const_types() {
                 return;
             }
 
-            result_.environment.const_types_.emplace(id, resolve_type(*decl.get().type));
+            environment().const_types_.emplace(id, resolve_type(*decl.get().type));
         });
     }
 }
@@ -336,7 +363,7 @@ void TypeCheckPass::build_struct_types() {
                 });
             }
 
-            result_.environment.index_struct(id, std::move(info));
+            environment().index_struct(id, std::move(info));
         });
     }
 }
@@ -371,7 +398,7 @@ void TypeCheckPass::build_enum_types() {
                 });
             }
 
-            result_.environment.index_enum(id, std::move(info));
+            environment().index_enum(id, std::move(info));
         });
     }
 }
@@ -423,7 +450,7 @@ void TypeCheckPass::build_capability_types() {
                     info.effect.policies.push_back(policy->spelling());
             }
 
-            result_.environment.capabilities_.emplace(id, std::move(info));
+            environment().capabilities_.emplace(id, std::move(info));
         });
     }
 }
@@ -451,7 +478,7 @@ void TypeCheckPass::build_predicate_types() {
                 });
             }
 
-            result_.environment.predicates_.emplace(id, std::move(info));
+            environment().predicates_.emplace(id, std::move(info));
         });
     }
 }
@@ -517,8 +544,6 @@ void TypeCheckPass::build_agent_types() {
                         value = item->integer_value->spelling;
                     else if (item->duration_value)
                         value = item->duration_value->spelling;
-                    else
-                        value = "<missing-quota-value>";
                     std::string name;
                     switch (item->kind) {
                     case ast::AgentQuotaItemKind::MaxToolCalls:
@@ -533,14 +558,14 @@ void TypeCheckPass::build_agent_types() {
                 }
             }
 
-            result_.environment.agents_.emplace(id, std::move(info));
+            environment().agents_.emplace(id, std::move(info));
 
             // Pre-compute agent context struct set for O(1) is_agent_context_struct queries.
-            const auto &stored = result_.environment.agents().at(id);
+            const auto &stored = environment().agents().at(id);
             if (stored.context_type) {
                 if (const auto *ctx = stored.context_type->get_if<types::StructT>();
                     ctx != nullptr && ctx->symbol.has_value()) {
-                    result_.environment.mark_agent_context_struct(*ctx->symbol);
+                    environment().mark_agent_context_struct(*ctx->symbol);
                 }
             }
         });
@@ -602,7 +627,7 @@ void TypeCheckPass::build_workflow_types() {
                 info.return_value_range = decl.get().return_value->range;
             }
 
-            result_.environment.workflows_.emplace(id, std::move(info));
+            environment().workflows_.emplace(id, std::move(info));
         });
     }
 }
@@ -681,7 +706,7 @@ void TypeCheckPass::build_flow_types_in_program(const ast::Program &program) {
             info.state_handlers.push_back(std::move(handler_info));
         }
 
-        result_.environment.flows_.emplace(target->get().target.value, std::move(info));
+        environment().flows_.emplace(target->get().target.value, std::move(info));
     }
 }
 
@@ -737,18 +762,18 @@ void TypeCheckPass::build_contract_types_in_program(const ast::Program &program)
             info.clauses.push_back(std::move(clause_info));
         }
 
-        result_.environment.contracts_.emplace(target->get().target.value, std::move(info));
+        environment().contracts_.emplace(target->get().target.value, std::move(info));
     }
 }
 
-void TypeCheckPass::check_const_initializers_in_program(const ast::Program &program) {
+void ConstSema::check_const_initializers_in_program(const ast::Program &program) {
     for (const auto &declaration : program.declarations) {
         if (declaration->kind != ast::NodeKind::ConstDecl) {
             continue;
         }
 
         const auto &decl = static_cast<const ast::ConstDecl &>(*declaration);
-        const auto symbol = find_local_here(SymbolNamespace::Consts, decl.name);
+        const auto symbol = driver_->find_local_here(SymbolNamespace::Consts, decl.name);
         if (!symbol.has_value()) {
             continue;
         }
@@ -758,30 +783,30 @@ void TypeCheckPass::check_const_initializers_in_program(const ast::Program &prog
     }
 }
 
-void TypeCheckPass::check_const_initializers() {
-    if (graph_ != nullptr) {
-        for (const auto &source : graph_->sources) {
-            enter_source(source);
+void ConstSema::check_const_initializers() {
+    if (driver_->graph_ != nullptr) {
+        for (const auto &source : driver_->graph_->sources) {
+            driver_->enter_source(source);
             check_const_initializers_in_program(
                 require(source.program.get(), "source graph program must exist before typecheck"));
-            leave_source();
+            driver_->leave_source();
         }
         return;
     }
 
-    check_const_initializers_in_program(require(program_, "typecheck program must exist"));
+    check_const_initializers_in_program(require(driver_->program_, "typecheck program must exist"));
 }
 
-void TypeCheckPass::check_struct_defaults() {
-    for (const auto &[id, decl] : struct_decls_) {
-        with_symbol_context(SymbolId{id}, [&]() {
-            const auto struct_info = result_.environment.get_struct(SymbolId{id});
+void ConstSema::check_struct_defaults() {
+    for (const auto &[id, decl] : driver_->struct_decls_) {
+        driver_->with_symbol_context(SymbolId{id}, [&]() {
+            const auto struct_info = driver_->environment().get_struct(SymbolId{id});
             if (!struct_info.has_value()) {
                 return;
             }
 
             const bool is_context_struct =
-                result_.environment.is_agent_context_struct(SymbolId{id});
+                driver_->environment().is_agent_context_struct(SymbolId{id});
             for (std::size_t index = 0; index < decl.get().fields.size(); ++index) {
                 const auto &field_decl = decl.get().fields[index];
                 if (!field_decl->default_value) {
@@ -797,10 +822,11 @@ void TypeCheckPass::check_struct_defaults() {
                                               std::cref(*field_info.type),
                                               default_policy.context_label);
                 ConstTypeRelationValidator const_relations{
-                    relations_,
+                    driver_->relations_,
                     ConstDiagnosticEmitter{
-                        result_.diagnostics,
-                        current_source_ != nullptr ? &current_source_->source : nullptr,
+                        driver_->result_.diagnostics,
+                        driver_->current_source_ != nullptr ? &driver_->current_source_->source
+                                                            : nullptr,
                     },
                 };
                 (void)const_relations.check_struct_default(*value.checked_expr.type,
@@ -812,9 +838,9 @@ void TypeCheckPass::check_struct_defaults() {
     }
 }
 
-void TypeCheckPass::check_agent_context_defaults() {
+void ConstSema::check_agent_context_defaults() {
     std::unordered_set<std::size_t> checked_contexts;
-    for (const auto &[id, agent] : result_.environment.agents()) {
+    for (const auto &[id, agent] : driver_->environment().agents()) {
         (void)id;
         if (!agent.context_type) {
             continue;
@@ -825,15 +851,15 @@ void TypeCheckPass::check_agent_context_defaults() {
             continue;
         }
 
-        const auto context_struct = result_.environment.get_struct(*ctx->symbol);
+        const auto context_struct = driver_->environment().get_struct(*ctx->symbol);
         if (!context_struct.has_value()) {
             continue;
         }
 
-        with_symbol_context(context_struct->get().symbol, [&]() {
+        driver_->with_symbol_context(context_struct->get().symbol, [&]() {
             for (const auto &field : context_struct->get().fields) {
                 if (!field.has_default) {
-                    typecheck_error_here(
+                    driver_->typecheck_error_here(
                         error_codes::typecheck::MissingField,
                         messages::typecheck::MissingAgentContextDefault.format_with(field.name),
                         field.declaration_range);

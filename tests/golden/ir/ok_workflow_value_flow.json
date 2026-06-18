@@ -38,7 +38,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 54,
+              "end_offset": 68
+            }
           },
           "source_range": {
             "begin_offset": 54,
@@ -72,7 +76,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 93,
+              "end_offset": 116
+            }
           },
           "source_range": {
             "begin_offset": 93,
@@ -118,7 +126,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 142,
+              "end_offset": 156
+            }
           },
           "source_range": {
             "begin_offset": 142,
@@ -150,19 +162,31 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "ir::workflow_value_flow::Request",
-        "canonical_name": "ir::workflow_value_flow::Request"
+        "canonical_name": "ir::workflow_value_flow::Request",
+        "source_range": {
+          "begin_offset": 160,
+          "end_offset": 358
+        }
       },
       "context_type": "ir::workflow_value_flow::Context",
       "context_type_ref": {
         "kind": "struct",
         "display_name": "ir::workflow_value_flow::Context",
-        "canonical_name": "ir::workflow_value_flow::Context"
+        "canonical_name": "ir::workflow_value_flow::Context",
+        "source_range": {
+          "begin_offset": 160,
+          "end_offset": 358
+        }
       },
       "output_type": "ir::workflow_value_flow::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "ir::workflow_value_flow::Response",
-        "canonical_name": "ir::workflow_value_flow::Response"
+        "canonical_name": "ir::workflow_value_flow::Response",
+        "source_range": {
+          "begin_offset": 160,
+          "end_offset": 358
+        }
       },
       "states": [
         "Init",
@@ -327,13 +351,21 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "ir::workflow_value_flow::Request",
-        "canonical_name": "ir::workflow_value_flow::Request"
+        "canonical_name": "ir::workflow_value_flow::Request",
+        "source_range": {
+          "begin_offset": 519,
+          "end_offset": 747
+        }
       },
       "output_type": "ir::workflow_value_flow::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "ir::workflow_value_flow::Response",
-        "canonical_name": "ir::workflow_value_flow::Response"
+        "canonical_name": "ir::workflow_value_flow::Response",
+        "source_range": {
+          "begin_offset": 519,
+          "end_offset": 747
+        }
       },
       "nodes": [
         {
