@@ -29,7 +29,7 @@ flowchart TB
 
 ```json
 {
-  "format_version": "ahfl.project.v0.3",
+  "format_version": "ahfl.project",
   "name": "workflow-value-flow",
   "search_roots": ["."],
   "entry_sources": ["app/main.ahfl"]
@@ -56,10 +56,9 @@ flowchart TB
 
 ```json
 {
-  "format_version": "ahfl.package-authoring.v0.5",
+  "format_version": "ahfl.package-authoring",
   "package": {
-    "name": "workflow-value-flow",
-    "version": "0.2.0"
+    "name": "workflow-value-flow"
   },
   "entry": {
     "kind": "workflow",
@@ -128,7 +127,7 @@ Mock 文件示例：
 
 ```json
 {
-  "format_version": "ahfl.capability-mocks.v0.6",
+  "format_version": "ahfl.capability-mocks",
   "mocks": [
     {
       "capability_name": "lib::agents::Echo",
@@ -294,21 +293,21 @@ Provider 会记录 secret-free token budget 事件，覆盖 `prompt_accepted`、
 
 `--llm-observability` JSON 当前包含 cache、provider health、provider degradation summary、streaming chunk、token usage、token budget 和 secret lifecycle。secret lifecycle 事件只记录 refresh/resolve kind、provider prefix、secret handle fingerprint、accessor、success 和 `secret_free` 标记，不写入 secret handle 原文、object path 或 secret value。token usage 事件只记录 provider 名、model、workflow/node/agent/state 上下文、prompt/completion/total token 数、可选估算成本和 `secret_free` 标记；token budget 事件只记录预算上限、累计 workflow/node token/cost、估算 token 数、usage token 数、成本上限、估算成本、policy、事件 kind、message、workflow/node/agent/state 上下文和 diagnostic code，不写入 prompt、response 正文或 secret value。若 provider 响应没有标准 `usage` 字段，则不会生成 token usage 事件，但仍会生成 prompt budget 评估事件。
 
-`stream: true` 会请求 OpenAI-compatible streaming response，并把 SSE `data:` chunks 合成为最终 response content 后再进入 AHFL return type 解析。stream 必须以 `data: [DONE]` 完成；HTTP 成功但 SSE 未完成会作为中断响应失败，不会把部分 content 当成成功结果继续解析。Provider 会记录 secret-free streaming chunk 事件，覆盖 chunk index、chunk bytes、累计 content bytes、completed 和 interrupted；`ahflc run` 仍只输出最终 workflow result，不输出逐 chunk 内容原文，但会输出 secret-free chunk 事件摘要。`--llm-observability <path>` 会把相同事件写入 `ahfl.llm_provider_observability.v0` JSON；更完整 streaming 失败矩阵仍属于后续产品化工作。
+`stream: true` 会请求 OpenAI-compatible streaming response，并把 SSE `data:` chunks 合成为最终 response content 后再进入 AHFL return type 解析。stream 必须以 `data: [DONE]` 完成；HTTP 成功但 SSE 未完成会作为中断响应失败，不会把部分 content 当成成功结果继续解析。Provider 会记录 secret-free streaming chunk 事件，覆盖 chunk index、chunk bytes、累计 content bytes、completed 和 interrupted；`ahflc run` 仍只输出最终 workflow result，不输出逐 chunk 内容原文，但会输出 secret-free chunk 事件摘要。`--llm-observability <path>` 会把相同事件写入 `ahfl.llm_provider_observability` JSON；更完整 streaming 失败矩阵仍属于后续产品化工作。
 
-`response_cache_enabled: true` 会启用 LRU response cache。cache key 由 key version、模型名、system prompt 和 user prompt 派生，但只落盘 `key_fingerprint`，不会把 prompt 或 secret value 写入 cache key；`response_cache_max_entries` 控制容量，`response_cache_ttl_seconds` 控制 TTL。cache 只作用于非 tool-calling 路径，并且只在 LLM response 成功解析为 AHFL return type 后写入；命中时不会再次发起 HTTP。设置 `response_cache_path` 后，provider 会用 `ahfl.llm_response_cache.v0` snapshot 在进程间持久化非过期 entry，并用 `key_version` 作为跨版本迁移边界；未设置时只使用进程内缓存。snapshot 会保存已解析的 LLM response content，因此该文件不应放入源码仓库，也应按运行产物权限管理。Provider 会记录 secret-free cache audit 事件，覆盖 miss、write、hit、invalidated、snapshot loaded/persisted/load failed/persist failed、cache key version、key fingerprint、prompt/response byte size、cache size、`persistent` 和 `snapshot_entry_count`；`ahflc run` 会输出 secret-free 文本摘要，`--llm-observability <path>` 会写出机器可读 JSON。
+`response_cache_enabled: true` 会启用 LRU response cache。cache key 由 key version、模型名、system prompt 和 user prompt 派生，但只落盘 `key_fingerprint`，不会把 prompt 或 secret value 写入 cache key；`response_cache_max_entries` 控制容量，`response_cache_ttl_seconds` 控制 TTL。cache 只作用于非 tool-calling 路径，并且只在 LLM response 成功解析为 AHFL return type 后写入；命中时不会再次发起 HTTP。设置 `response_cache_path` 后，provider 会用 `ahfl.llm_response_cache` snapshot 在进程间持久化非过期 entry，并用 `key_version` 作为跨版本迁移边界；未设置时只使用进程内缓存。snapshot 会保存已解析的 LLM response content，因此该文件不应放入源码仓库，也应按运行产物权限管理。Provider 会记录 secret-free cache audit 事件，覆盖 miss、write、hit、invalidated、snapshot loaded/persisted/load failed/persist failed、cache key version、key fingerprint、prompt/response byte size、cache size、`persistent` 和 `snapshot_entry_count`；`ahflc run` 会输出 secret-free 文本摘要，`--llm-observability <path>` 会写出机器可读 JSON。
 
-`--capability-mocks` 使用与 mock dry run 相同的 `ahfl.capability-mocks.v0.6` 文件。`run` 会把每个 mock selector 暴露为 OpenAI-compatible function tool：tool 名称以 `ahfl_` 开头，selector 中非字母、数字、`_`、`-` 的字符会替换为 `_`，超长名称会附加稳定 hash 后截断。LLM 发起 tool call 后，runtime 通过独立 `CapabilityRegistry` 返回 mock 的 `result_fixture`；这适合 deterministic 本地联调。mock-backed CLI 路径已对 invalid args 和 unknown tool fail closed。
+`--capability-mocks` 使用与 mock dry run 相同的 `ahfl.capability-mocks` 文件。`run` 会把每个 mock selector 暴露为 OpenAI-compatible function tool：tool 名称以 `ahfl_` 开头，selector 中非字母、数字、`_`、`-` 的字符会替换为 `_`，超长名称会附加稳定 hash 后截断。LLM 发起 tool call 后，runtime 通过独立 `CapabilityRegistry` 返回 mock 的 `result_fixture`；这适合 deterministic 本地联调。mock-backed CLI 路径已对 invalid args 和 unknown tool fail closed。
 
-`--tool-catalog` 使用 `ahfl.llm_tool_catalog.v0` 文件，把 deterministic runtime tool catalog 暴露为 OpenAI-compatible function tools。每个 tool 需要 `name`、可选 `description`、可选 `parameters` 或 `params_schema_json` JSON object，并且必须在 `result` AHFL value JSON 与 `failure` object 中二选一。`failure.kind` 支持 `error` 和 `timeout`；`error` 需要 `message`，`timeout` 需要正整数 `timeout_ms` 并可选 `message`。LLM 发起 tool call 后，runtime 解析 arguments JSON、调用 catalog tool，并把 `result` 作为 tool message 返回 provider；catalog schema negative、catalog-specific invalid args/unknown tool、tool timeout 和 tool failure 都会 fail closed。
+`--tool-catalog` 使用 `ahfl.llm_tool_catalog` 文件，把 deterministic runtime tool catalog 暴露为 OpenAI-compatible function tools。每个 tool 需要 `name`、可选 `description`、可选 `parameters` 或 `params_schema_json` JSON object，并且必须在 `result` AHFL value JSON 与 `failure` object 中二选一。`failure.kind` 支持 `error` 和 `timeout`；`error` 需要 `message`，`timeout` 需要正整数 `timeout_ms` 并可选 `message`。LLM 发起 tool call 后，runtime 解析 arguments JSON、调用 catalog tool，并把 `result` 作为 tool message 返回 provider；catalog schema negative、catalog-specific invalid args/unknown tool、tool timeout 和 tool failure 都会 fail closed。
 
-`--capability-bindings` 使用 `ahfl.runtime_capability_bindings.v0` 文件，把指定 capability 直接注册到 runtime `CapabilityRegistry`。已注册 capability 优先走 binding；未注册 capability 仍按现有 LLM provider 路径执行。HTTP binding 需要 `url`，可选 `method`、`headers`、`timeout_ms`、`retry`、`circuit_breaker` 和 `auth`；gRPC JSON transcoding binding 使用 `transport: "grpc_json_transcoding"`，需要 `endpoint`、`service` 和 `method`。`auth.scheme` 支持 `none`、`bearer`、`oauth2_client_credentials` 和 `mtls`，secret key 会复用 `--llm-config` 中配置的 secret provider 链解析。binding 响应必须是 AHFL value JSON，并会按 capability 返回类型做 schema 校验；HTTP/gRPC timeout、retry exhaustion、schema mismatch 和 malformed JSON 会通过 workflow runtime 诊断 fail closed。
+`--capability-bindings` 使用 `ahfl.runtime_capability_bindings` 文件，把指定 capability 直接注册到 runtime `CapabilityRegistry`。已注册 capability 优先走 binding；未注册 capability 仍按现有 LLM provider 路径执行。HTTP binding 需要 `url`，可选 `method`、`headers`、`timeout_ms`、`retry`、`circuit_breaker` 和 `auth`；gRPC JSON transcoding binding 使用 `transport: "grpc_json_transcoding"`，需要 `endpoint`、`service` 和 `method`。`auth.scheme` 支持 `none`、`bearer`、`oauth2_client_credentials` 和 `mtls`，secret key 会复用 `--llm-config` 中配置的 secret provider 链解析。binding 响应必须是 AHFL value JSON，并会按 capability 返回类型做 schema 校验；HTTP/gRPC timeout、retry exhaustion、schema mismatch 和 malformed JSON 会通过 workflow runtime 诊断 fail closed。
 
 最小 catalog 示例：
 
 ```json
 {
-  "schema": "ahfl.llm_tool_catalog.v0",
+  "schema": "ahfl.llm_tool_catalog",
   "tools": [
     {
       "name": "lookup_context",

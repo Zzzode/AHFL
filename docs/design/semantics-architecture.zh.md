@@ -1,6 +1,6 @@
 # AHFL Semantics Architecture
 
-本文说明 AHFL Core V0.2 `semantics` 层的实现组织，面向需要阅读 `resolver` / `typecheck` / `validate` 代码，或继续扩展静态语义能力的工程实现者。
+本文说明 AHFL Core `semantics` 层的实现组织，面向需要阅读 `resolver` / `typecheck` / `validate` 代码，或继续扩展静态语义能力的工程实现者。
 
 关联文档：
 
@@ -151,7 +151,7 @@ flowchart TD
 3. `module_name` + `source_id`
    - project-aware 模式下定位声明归属。
 
-V0.2 之后，不应再假设“名字 + range”足以确定引用目标。
+此后，不应再假设”名字 + range”足以确定引用目标。
 
 ### import alias 与 source-local 生命周期
 
@@ -243,7 +243,7 @@ flowchart TD
 - 表达式的静态类型
 - 表达式是否 pure
 
-这一步是 V0.2 很关键的公共边界，因为：
+这一步是很关键的公共边界，因为：
 
 1. `validate` 会复用它来检查 temporal embedded expr 的 `Bool` / purity 约束。
 2. IR lowering 与后续工具可以把“表达式的静态类型结果”视作稳定事实。

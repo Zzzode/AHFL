@@ -1,6 +1,6 @@
 # AHFL Durable Store Import 架构
 
-本文合并原先 V0.15 到 V0.45 的 `native-durable-store-*` 逐版本 bootstrap 设计文档，作为 durable-store-import 与 provider artifact pipeline 的当前设计入口。历史版本文档不再作为维护入口；当前实现以 `src/pipeline/persistence/durable_store_import/`、`src/tooling/cli/` 下的 registry 与 leaf header 为准。
+本文合并历史上各阶段的 `native-durable-store-*` bootstrap 设计文档，作为 durable-store-import 与 provider artifact pipeline 的当前设计入口。历史版本文档不再作为维护入口；当前实现以 `src/pipeline/persistence/durable_store_import/`、`src/tooling/cli/` 下的 registry 与 leaf header 为准。
 
 ## 设计目标
 

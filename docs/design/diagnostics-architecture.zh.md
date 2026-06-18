@@ -1,6 +1,6 @@
 # AHFL Diagnostics Architecture
 
-本文说明 AHFL Core V0.2 中 source-aware diagnostics 的对象模型、跨阶段传递方式和 project-aware 模式下的错误归属策略，面向需要修改前端、语义阶段或 CLI 输出的工程实现者。
+本文说明 AHFL Core 中 source-aware diagnostics 的对象模型、跨阶段传递方式和 project-aware 模式下的错误归属策略，面向需要修改前端、语义阶段或 CLI 输出的工程实现者。
 
 关联文档：
 

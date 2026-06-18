@@ -1,6 +1,6 @@
 # AHFL IR Format
 
-本文是 `docs/reference` 中 IR 格式参考的合并入口，统一覆盖原 `ir-format-v0.2` 与 `ir-format-v0.3` 文档。当前维护口径以 V0.3 为准；V0.2 的文本 / JSON IR 基础结构已合并到本文，不再保留独立入口。
+本文是 `docs/reference` 中 IR 格式参考的合并入口，统一覆盖原各版本 IR 格式文档。文本 / JSON IR 基础结构已合并到本文，不再保留独立入口。
 
 关联文档：
 
@@ -11,15 +11,15 @@
 
 ## 合并范围
 
-| 历史版本 | 合并后保留的信息 |
-|----------|------------------|
-| V0.2 | 文本 IR / JSON IR 双输出形态、顶层 program 结构、declaration provenance 与 declaration serialization。 |
-| V0.3 | project-aware provenance、`TypeRef` / `SymbolRef`、flow handler summary、workflow value summary、`formal_observations`。 |
+| 合并后保留的信息 |
+|------------------|
+| 文本 IR / JSON IR 双输出形态、顶层 program 结构、declaration provenance 与 declaration serialization。 |
+| project-aware provenance、`TypeRef` / `SymbolRef`、flow handler summary、workflow value summary、`formal_observations`。 |
 
 ## 当前口径摘要
 
 1. 机器消费应优先使用 JSON IR，而不是解析文本 IR 展示字符串。
-2. `format_version = "ahfl.ir.v1"` 是当前 IR 格式标识。
+2. AHFL IR 格式是当前稳定的 IR 格式标识。
 3. 旧字符串字段保留为展示/兼容入口；稳定身份应优先读 `*_ref.canonical_name`。
 4. flow / workflow summary 是下游 consumer 的受限摘要，不替代完整 expression / statement tree。
 5. `formal_observations` 是 IR 与 formal backend 的共享 observation registry，不属于某个 backend 私有格式。
@@ -32,13 +32,13 @@
 1. 它只消费 validate 之后的语义模型。
 2. 它不是 parse tree 的序列化。
 3. 它保留 declaration、expression、statement、temporal formula 与 `formal_observations` 的结构化信息。
-4. 在 V0.3 中，它还稳定暴露 declaration provenance、结构化类型/符号引用、flow summary 和 workflow value summary。
+4. 当前，它还稳定暴露 declaration provenance、结构化类型/符号引用、flow summary 和 workflow value summary。
 
-当前版本标识：
+当前格式标识：
 
-- `format_version = "ahfl.ir.v1"`
+- AHFL IR 格式
 
-readonly 当前不是 AHFL Core V0.1 的源码语法，也不是 Semantic IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、Semantic IR 与 JSON IR。
+readonly 当前不是源码语法，也不是 Semantic IR `TypeRef` / JSON IR 的稳定字段。容器 variance 由类型关系层内部处理；若未来引入 readonly 语言能力，必须单独扩展 spec、grammar、Typed HIR、Semantic IR 与 JSON IR。
 
 ## 两种输出形态
 
@@ -84,7 +84,7 @@ Opt IR JSON 顶层结构：
 ```json
 {
   "format": "AHFL_OPT_IR_V1",
-  "source_program_version": "ahfl.ir.v1",
+  "source_program_version": "ahfl.ir",
   "skipped_temporal": [],
   "functions": []
 }
@@ -106,7 +106,7 @@ IR program 当前包含三个稳定顶层字段：
 
 ```json
 {
-  "format_version": "ahfl.ir.v1",
+  "format_version": "ahfl.ir",
   "formal_observations": [],
   "declarations": []
 }
@@ -247,7 +247,7 @@ Typed HIR serialization、Semantic IR lowering、JSON IR、文本 IR、runtime a
 
 ## Flow Handler Summary
 
-V0.3 在 `flow.state_handlers[]` 上新增稳定摘要字段：
+在 `flow.state_handlers[]` 上新增稳定摘要字段：
 
 - `summary.goto_targets`
 - `summary.may_return`
@@ -274,7 +274,7 @@ V0.3 在 `flow.state_handlers[]` 上新增稳定摘要字段：
 
 ## Workflow Value Summary
 
-V0.3 在 workflow 上新增两类稳定摘要：
+在 workflow 上新增两类稳定摘要：
 
 - `nodes[].input_summary`
 - `return_summary`
@@ -347,20 +347,20 @@ Opt IR 对 temporal 的处理与 `formal_observations` 不同：embedded pure bo
 
 ## 版本与变更规则
 
-Semantic IR 当前稳定版本标识为：
+Semantic IR 当前稳定格式标识为：
 
-- `format_version = "ahfl.ir.v1"`
+- AHFL IR 格式
 
-该版本号同时出现在文本 IR 首行和 JSON IR 顶层字段。`include/ahfl/compiler/ir/ir.hpp` 中的 `ahfl::ir::kFormatVersion` 是实现侧事实来源。
+该格式标识同时出现在文本 IR 首行和 JSON IR 顶层字段。`include/ahfl/compiler/ir/ir.hpp` 中的 `ahfl::ir::kFormatVersion` 是实现侧事实来源。
 
-在不改变 `format_version` 的前提下，允许的普通扩展包括：
+在不改变格式标识的前提下，允许的普通扩展包括：
 
 1. 新增可忽略的 JSON 字段。
 2. 新增 text IR 展示行，但不改变既有字段语义。
 3. 新增 backend-private artifact，只要不改变 Semantic IR contract。
 4. 新增 summary / observation 时同时保留原字段含义。
 
-必须视为 format-version / golden / docs 同步事件的变化包括：
+必须视为格式标识 / golden / docs 同步事件的变化包括：
 
 1. 删除、重命名或改变 JSON IR machine-facing 字段语义。
 2. 改变 declaration、expression、statement、temporal formula 的结构含义。

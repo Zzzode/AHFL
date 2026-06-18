@@ -1,6 +1,6 @@
 # AHFL Release Evidence Archive
 
-本文冻结 AHFL V0.46 中 release evidence archive manifest 的最小边界。它消费 V0.42–V0.45 的 readiness、conformance、schema drift evidence 与 config bundle validation evidence，目标是生成可复现的 release evidence 汇总视图，明确证据缺失、过期或不兼容状态。
+本文定义 AHFL 中 release evidence archive manifest 的最小边界。它消费多版本 readiness、conformance、schema drift evidence 与 config bundle validation evidence，目标是生成可复现的 release evidence 汇总视图，明确证据缺失、过期或不兼容状态。
 
 关联文档：
 
@@ -41,7 +41,7 @@
 
 | 字段 | 类型 | 描述 |
 |------|------|------|
-| format_version | string | 固定为 `ahfl.durable-store-import-provider-release-evidence-archive-manifest.v1` |
+| format_version | string | 固定为 `ahfl.durable-store-import-provider-release-evidence-archive-manifest` |
 | workflow_canonical_name | string | 工作流标识 |
 | session_id | string | 会话 ID |
 | run_id | optional string | 运行 ID |
@@ -57,10 +57,10 @@
 
 `build_release_evidence_archive_manifest` 接收四个上游 artifact：
 
-1. `ProviderConformanceReport` (v0.43)
-2. `ProviderSchemaCompatibilityReport` (v0.44)
-3. `ProviderConfigBundleValidationReport` (v0.45)
-4. `ProviderProductionReadinessEvidence` (v0.42)
+1. `ProviderConformanceReport`
+2. `ProviderSchemaCompatibilityReport`
+3. `ProviderConfigBundleValidationReport`
+4. `ProviderProductionReadinessEvidence`
 
 从每个 artifact 提取 evidence item，计算 present/valid/missing/invalid 统计，生成汇总摘要，判定 `is_release_ready`。
 
@@ -86,7 +86,7 @@ ahflc emit-provider-artifact provider/release-evidence-archive-manifest \
 
 ## 完成定义
 
-V0.46 完成后：
-- `ctest --preset test-dev -L ahfl-v0.46` 全部通过。
+功能完成后：
+- `ctest --preset test-dev -L release-evidence-archive` 全部通过。
 - CLI 可输出 release evidence archive manifest。
 - 文档、golden 与测试标签就绪。

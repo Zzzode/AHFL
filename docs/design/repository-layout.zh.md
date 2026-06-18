@@ -144,7 +144,7 @@ flowchart TD
 
 ### `include/ahfl/compiler/handoff` + `src/compiler/handoff`
 
-放 V0.4 之后新增的 runtime-facing handoff package 模型与其 lowering：
+放后续新增的 runtime-facing handoff package 模型与其 lowering：
 
 - handoff package / package metadata 数据结构
 - 由稳定 IR 投影到 handoff package 的 lowering
@@ -260,4 +260,4 @@ flowchart TD
 1. `tests/` 目前仍是数据文件分组，后续若测试规模继续增大，可再拆成多个 `tests/*/CMakeLists.txt`
 2. backend API 已在 Issue 20 中抽象为独立 driver；后续新增 backend 应继续沿用该分层，而不是把分发逻辑重新塞回 `ahflc`
 3. 仓库不保留平铺兼容头；public header 必须直接落在 `include/ahfl/base` 或 `include/ahfl/compiler` 的真实领域路径下
-4. V0.4 已新增独立 `compiler/handoff` 层；后续 Native/runtime-facing 数据模型应优先落在该层，而不是继续堆进 `compiler/ir` 或 `compiler/backends`
+4. 已新增独立 `compiler/handoff` 层；后续 Native/runtime-facing 数据模型应优先落在该层，而不是继续堆进 `compiler/ir` 或 `compiler/backends`

@@ -1,6 +1,6 @@
 # AHFL Project Usage
 
-本文是 `docs/reference` 中 project usage 的合并入口，统一覆盖原 `project-usage-v0.2`、`v0.3` 与 `v0.5` 文档。当前维护口径以 V0.5 为准；V0.2/V0.3 的项目装载和 descriptor 规则已合并到本文，不再保留独立入口。
+本文是 `docs/reference` 中 project usage 的统一入口，整合了历史各版本的项目装载与 descriptor 规则，不再保留独立版本入口。
 
 关联文档：
 
@@ -12,11 +12,11 @@
 
 ## 合并范围
 
-| 历史版本 | 合并后保留的信息 |
-|----------|------------------|
-| V0.2 | search-root 输入、最小目录约定、ownership / search root 失败模式。 |
-| V0.3 | project / workspace descriptor、三种输入模式、project-aware CLI 支持矩阵。 |
-| V0.5 | package authoring descriptor、native package / package review / reference consumer 路径。 |
+| 合并后保留的信息 |
+|------------------|
+| search-root 输入、最小目录约定、ownership / search root 失败模式。 |
+| project / workspace descriptor、三种输入模式、project-aware CLI 支持矩阵。 |
+| package authoring descriptor、native package / package review / reference consumer 路径。 |
 
 ## 当前口径摘要
 
@@ -41,7 +41,7 @@
 
 ## 输入边界
 
-V0.5 当前把“项目输入”和“package authoring 输入”明确拆成两层：
+当前把项目输入和 package authoring 输入明确拆成两层：
 
 ```mermaid
 flowchart TD
@@ -62,7 +62,7 @@ flowchart TD
 
 ## 最小目录约定
 
-典型的 V0.5 project 目录可以像这样组织：
+典型的 project 目录可以像这样组织：
 
 ```text
 tests/project/workflow_value_flow/
@@ -81,7 +81,7 @@ tests/project/
 
 ```json
 {
-  "format_version": "ahfl.project.v0.3",
+  "format_version": "ahfl.project",
   "name": "workflow-value-flow",
   "entry_sources": ["app/main.ahfl"],
   "search_roots": ["."]
@@ -92,10 +92,10 @@ tests/project/
 
 ```json
 {
-  "format_version": "ahfl.package-authoring.v0.5",
+  "format_version": "ahfl.package-authoring",
   "package": {
     "name": "workflow-value-flow",
-    "version": "0.2.0"
+    "version": "x.y.z"
   },
   "entry": {
     "kind": "workflow",
@@ -124,7 +124,7 @@ tests/project/
 
 ```json
 {
-  "format_version": "ahfl.workspace.v0.3",
+  "format_version": "ahfl.workspace",
   "name": "handoff-workspace",
   "projects": ["workflow_value_flow/ahfl.project.json"]
 }
@@ -132,7 +132,7 @@ tests/project/
 
 ## 三种项目输入模式
 
-V0.5 仍保留三条等价的 project-aware 输入路径：
+仍保留三条等价的 project-aware 输入路径：
 
 1. `--search-root ... <entry.ahfl>`
    - 适合最小复现和快速实验。
@@ -143,7 +143,7 @@ V0.5 仍保留三条等价的 project-aware 输入路径：
 
 这三条路径最终都会进入同一条 compiler 主链路；差异只在 source graph 的定位方式，不在后续 handoff lowering 或 review / consumer bootstrap 语义。
 
-## 典型 V0.5 路径
+## 典型路径
 
 ### 1. 只验证 project-aware 输入
 
@@ -213,13 +213,13 @@ flowchart TD
 
 ## 最小验证建议
 
-只验证 V0.5 package authoring 路径时，建议至少跑：
+只验证 package authoring 路径时，建议至少跑：
 
 ```bash
-ctest --preset test-dev --output-on-failure -L v0.5-package-authoring-model
-ctest --preset test-dev --output-on-failure -L v0.5-package-authoring-validation
-ctest --preset test-dev --output-on-failure -L v0.5-package-review
-ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
+ctest --preset test-dev --output-on-failure -L package-authoring-model
+ctest --preset test-dev --output-on-failure -L package-authoring-validation
+ctest --preset test-dev --output-on-failure -L package-review
+ctest --preset test-dev --output-on-failure -L reference-consumer
 ```
 
 ## 对贡献者的含义
@@ -241,6 +241,6 @@ ctest --preset test-dev --output-on-failure -L v0.5-reference-consumer
 
 截至当前实现：
 
-1. V0.5 project-aware 输入路径仍复用 V0.3 的 project / workspace descriptor 形态。
+1. project-aware 输入路径仍复用当前 project / workspace descriptor 形态。
 2. `emit-native-json --package` 与 `emit-package-review --package` 已形成正式 authoring 入口。
 3. 仓库内已存在从 package authoring、review 到 reference consumer bootstrap 的完整最小路径。

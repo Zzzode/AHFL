@@ -67,7 +67,7 @@ ahfl-incremental [--help] <changed.ahfl>...
 
 ```json
 {
-  "format_version": "ahfl.project.v0.3",
+  "format_version": "ahfl.project",
   "name": "workflow-value-flow",
   "search_roots": ["."],
   "entry_sources": ["app/main.ahfl"]
@@ -78,7 +78,7 @@ Workspace descriptor 示例：
 
 ```json
 {
-  "format_version": "ahfl.workspace.v0.3",
+  "format_version": "ahfl.workspace",
   "name": "workspace-ok",
   "projects": ["check_ok/ahfl.project.json"]
 }
