@@ -40,12 +40,12 @@ ctest --preset test-asan --output-on-failure
 | `tests/` | All tests (golden-file + C++ unit tests) |
 | `docs/spec/` | Language specifications |
 | `docs/design/` | Architecture & design documents |
-| `docs/plan/` | Project status, roadmaps, implementation plans |
+| `docs/plans/` | Project status, roadmaps, implementation plans |
 | `docs/reference/` | CLI, IR format, contributor guides |
 | `examples/` | Example `.ahfl` programs |
 | `third_party/` | Vendored dependencies |
 
-**Important**: Use `docs/plan/` for ALL planning documents. Do NOT create `docs/plans/` or other variants.
+**Important**: Use `docs/plans/` for ALL planning documents. Do NOT create `docs/plan/` or other variants.
 
 ## Code Conventions
 
@@ -60,8 +60,8 @@ ctest --preset test-asan --output-on-failure
 
 ## Key Files
 
-- `docs/plan/project-status.zh.md` — 项目完整状态与演进记录
-- `docs/plan/issue-backlog-global-gaps.zh.md` — 未来工作清单
+- `docs/plans/project-status.zh.md` — 项目完整状态与演进记录
+- `docs/plans/issue-backlog-global-gaps.zh.md` — 未来工作清单
 - `grammar/AHFL.g4` — 语言文法定义
 - `include/ahfl/compiler/ir/ir.hpp` — IR 数据模型
 - `src/compiler/backends/driver.cpp` — 后端分发

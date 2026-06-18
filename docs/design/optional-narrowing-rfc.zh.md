@@ -7,7 +7,7 @@
 - [semantics-architecture.zh.md](./semantics-architecture.zh.md)
 - [compiler-phase-boundaries.zh.md](./compiler-phase-boundaries.zh.md)
 - [core-language.zh.md](../spec/core-language.zh.md)
-- [semantics-typecheck-hardening.zh.md](../plan/semantics-typecheck-hardening.zh.md)
+- [semantics-typecheck-hardening.zh.md](../plans/semantics-typecheck-hardening.zh.md)
 
 ## 1. 背景与动机
 
@@ -187,4 +187,4 @@ AHFL 在本 RFC 下采取的策略**最接近 Swift `if let` 的隐式语义版*
 
 ## 10. 决议
 
-**待 maintainer 评审**。批准后将更新 `docs/plan/semantics-typecheck-hardening.zh.md` 新增 Milestone 10「Optional Narrowing Phase 1」并启动实现。
+**待 maintainer 评审**。批准后将更新 `docs/plans/semantics-typecheck-hardening.zh.md` 新增 Milestone 10「Optional Narrowing Phase 1」并启动实现。

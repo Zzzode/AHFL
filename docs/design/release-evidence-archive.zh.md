@@ -4,8 +4,8 @@
 
 关联文档：
 
-- [project-status.zh.md](../plan/project-status.zh.md)
-- [issue-backlog-global-gaps.zh.md](../plan/issue-backlog-global-gaps.zh.md)
+- [project-status.zh.md](../plans/project-status.zh.md)
+- [issue-backlog-global-gaps.zh.md](../plans/issue-backlog-global-gaps.zh.md)
 
 ## 目标
 
