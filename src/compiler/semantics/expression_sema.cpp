@@ -210,23 +210,25 @@ TypePtr resolve_expression_field_access(const Type &base_type,
                                         SourceRange range,
                                         const TypeEnvironment &environment,
                                         TypeContext &types,
-                                        const ExpressionTypecheckErrorSink &diagnose) {
+                                        ExpressionSemaDelegate &delegate) {
     if (base_type.holds<types::ErrorT>()) {
         return types.error_type();
     }
 
     if (!base_type.holds<types::StructT>()) {
-        diagnose(error_codes::typecheck::InvalidMemberAccess,
-                 messages::typecheck::InvalidMemberAccess.format_with(base_type.describe()),
-                 range);
+        delegate.typecheck_error(
+            error_codes::typecheck::InvalidMemberAccess,
+            messages::typecheck::InvalidMemberAccess.format_with(base_type.describe()),
+            range);
         return types.error_type();
     }
 
     const auto struct_info = environment.get_struct(base_type);
     if (!struct_info.has_value()) {
-        diagnose(error_codes::typecheck::MissingTypeMetadata,
-                 messages::typecheck::StructTypeInfoMissing.format_with(base_type.describe()),
-                 range);
+        delegate.typecheck_error(
+            error_codes::typecheck::MissingTypeMetadata,
+            messages::typecheck::StructTypeInfoMissing.format_with(base_type.describe()),
+            range);
         return types.error_type();
     }
 
@@ -242,7 +244,7 @@ TypePtr resolve_expression_field_access(const Type &base_type,
         if (const auto suggestion = suggest_name(field_name, candidates); suggestion.has_value()) {
             message += "; did you mean '" + *suggestion + "'?";
         }
-        diagnose(error_codes::typecheck::UnknownField, std::move(message), range);
+        delegate.typecheck_error(error_codes::typecheck::UnknownField, std::move(message), range);
         return types.error_type();
     }
 
@@ -253,12 +255,12 @@ ExpressionValue resolve_expression_path(const ast::PathSyntax &path,
                                         const ExpressionContext &context,
                                         const TypeEnvironment &environment,
                                         TypeContext &types,
-                                        const ExpressionTypecheckErrorSink &diagnose) {
+                                        ExpressionSemaDelegate &delegate) {
     const auto root = context.bindings.find(path.root_name);
     if (root == context.bindings.end() || !root->second) {
-        diagnose(error_codes::typecheck::UnknownValue,
-                 messages::typecheck::UnknownValue.format_with(path.root_name),
-                 path.range);
+        delegate.typecheck_error(error_codes::typecheck::UnknownValue,
+                                 messages::typecheck::UnknownValue.format_with(path.root_name),
+                                 path.range);
         return ExpressionValue{
             .type = types.error_type(),
             .effect = ExprEffect::Pure,
@@ -270,7 +272,7 @@ ExpressionValue resolve_expression_path(const ast::PathSyntax &path,
     std::vector<std::string> traversed_members;
     for (const auto &member : path.members) {
         current = resolve_expression_field_access(
-            *current, member, path.range, environment, types, diagnose);
+            *current, member, path.range, environment, types, delegate);
         traversed_members.push_back(member);
     }
 
