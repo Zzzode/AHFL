@@ -75,7 +75,11 @@
       "type": "String",
       "type_ref": {
         "kind": "string",
-        "display_name": "String"
+        "display_name": "String",
+        "source_range": {
+          "begin_offset": 81,
+          "end_offset": 87
+        }
       },
       "value": {
         "kind": "string_literal",
@@ -119,6 +123,10 @@
             "element_type": {
               "kind": "int",
               "display_name": "Int"
+            },
+            "source_range": {
+              "begin_offset": 120,
+              "end_offset": 138
             }
           },
           "source_range": {
@@ -140,6 +148,10 @@
             "value_type": {
               "kind": "string",
               "display_name": "String"
+            },
+            "source_range": {
+              "begin_offset": 143,
+              "end_offset": 170
             }
           },
           "source_range": {
@@ -174,7 +186,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 195,
+              "end_offset": 229
+            }
           },
           "source_range": {
             "begin_offset": 195,
@@ -203,6 +219,10 @@
             "element_type": {
               "kind": "int",
               "display_name": "Int"
+            },
+            "source_range": {
+              "begin_offset": 234,
+              "end_offset": 265
             }
           },
           "source_range": {
@@ -276,6 +296,10 @@
             "element_type": {
               "kind": "string",
               "display_name": "String"
+            },
+            "source_range": {
+              "begin_offset": 270,
+              "end_offset": 313
             }
           },
           "source_range": {
@@ -340,6 +364,10 @@
             "value_type": {
               "kind": "string",
               "display_name": "String"
+            },
+            "source_range": {
+              "begin_offset": 318,
+              "end_offset": 380
             }
           },
           "source_range": {
@@ -402,7 +430,11 @@
           "type": "Int",
           "type_ref": {
             "kind": "int",
-            "display_name": "Int"
+            "display_name": "Int",
+            "source_range": {
+              "begin_offset": 385,
+              "end_offset": 417
+            }
           },
           "source_range": {
             "begin_offset": 385,
@@ -496,7 +528,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 422,
+              "end_offset": 485
+            }
           },
           "source_range": {
             "begin_offset": 422,
@@ -584,7 +620,11 @@
           "type_ref": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Response",
-            "canonical_name": "ir::expr_temporal::Response"
+            "canonical_name": "ir::expr_temporal::Response",
+            "source_range": {
+              "begin_offset": 490,
+              "end_offset": 592
+            }
           },
           "source_range": {
             "begin_offset": 490,
@@ -649,6 +689,10 @@
             "element_type": {
               "kind": "string",
               "display_name": "String"
+            },
+            "source_range": {
+              "begin_offset": 597,
+              "end_offset": 653
             }
           },
           "source_range": {
@@ -711,7 +755,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 679,
+              "end_offset": 692
+            }
           },
           "source_range": {
             "begin_offset": 679,
@@ -725,7 +773,11 @@
           "type_ref": {
             "kind": "enum",
             "display_name": "ir::expr_temporal::Status",
-            "canonical_name": "ir::expr_temporal::Status"
+            "canonical_name": "ir::expr_temporal::Status",
+            "source_range": {
+              "begin_offset": 697,
+              "end_offset": 712
+            }
           },
           "source_range": {
             "begin_offset": 697,
@@ -784,7 +836,11 @@
           "type_ref": {
             "kind": "struct",
             "display_name": "ir::expr_temporal::Request",
-            "canonical_name": "ir::expr_temporal::Request"
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin_offset": 792,
+              "end_offset": 808
+            }
           },
           "source_range": {
             "begin_offset": 792,
@@ -796,7 +852,11 @@
       "return_type_ref": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Response",
-        "canonical_name": "ir::expr_temporal::Response"
+        "canonical_name": "ir::expr_temporal::Response",
+        "source_range": {
+          "begin_offset": 774,
+          "end_offset": 822
+        }
       }
     },
     {
@@ -823,7 +883,11 @@
           "type": "String",
           "type_ref": {
             "kind": "string",
-            "display_name": "String"
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 839,
+              "end_offset": 852
+            }
           },
           "source_range": {
             "begin_offset": 839,
@@ -855,19 +919,31 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Request",
-        "canonical_name": "ir::expr_temporal::Request"
+        "canonical_name": "ir::expr_temporal::Request",
+        "source_range": {
+          "begin_offset": 864,
+          "end_offset": 1068
+        }
       },
       "context_type": "ir::expr_temporal::Context",
       "context_type_ref": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Context",
-        "canonical_name": "ir::expr_temporal::Context"
+        "canonical_name": "ir::expr_temporal::Context",
+        "source_range": {
+          "begin_offset": 864,
+          "end_offset": 1068
+        }
       },
       "output_type": "ir::expr_temporal::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Response",
-        "canonical_name": "ir::expr_temporal::Response"
+        "canonical_name": "ir::expr_temporal::Response",
+        "source_range": {
+          "begin_offset": 864,
+          "end_offset": 1068
+        }
       },
       "states": [
         "Init",
@@ -1730,13 +1806,21 @@
       "input_type_ref": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Request",
-        "canonical_name": "ir::expr_temporal::Request"
+        "canonical_name": "ir::expr_temporal::Request",
+        "source_range": {
+          "begin_offset": 1906,
+          "end_offset": 2143
+        }
       },
       "output_type": "ir::expr_temporal::Response",
       "output_type_ref": {
         "kind": "struct",
         "display_name": "ir::expr_temporal::Response",
-        "canonical_name": "ir::expr_temporal::Response"
+        "canonical_name": "ir::expr_temporal::Response",
+        "source_range": {
+          "begin_offset": 1906,
+          "end_offset": 2143
+        }
       },
       "nodes": [
         {
