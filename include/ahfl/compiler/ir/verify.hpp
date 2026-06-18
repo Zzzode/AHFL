@@ -26,6 +26,13 @@ struct VerificationResult {
     [[nodiscard]] bool has_warnings() const noexcept;
 };
 
+enum class IrVerificationMode {
+    Structural,
+    BackendReady,
+    SerializedArtifact,
+};
+
 [[nodiscard]] VerificationResult verify_ir_program(const Program &program);
+[[nodiscard]] VerificationResult verify_ir_program(const Program &program, IrVerificationMode mode);
 
 } // namespace ahfl::ir

@@ -25,26 +25,13 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// AST-dependency boundary (T1.8 P6 complete — declaration payloads migrated)
+// Typed HIR -> Semantic IR canonical boundary
 //
-// Expression lowering: 100% typed-tree based (T1.3).
-// Statement layer: 100% typed-store based (T1.7 P3).
-// Temporal layer: 100% typed-store based (T1.7 P3).
-// Declaration layer: 100% typed-store based (T1.8 P6). All structural
-//   payloads (struct fields, agent states/transitions/quota, capability
-//   effect spec, flow handlers/policy, workflow nodes/safety/liveness,
-//   contract clauses) come from TypeEnvironment info stores.
-//
-// Remaining AST references in lower_xxx functions:
-//   * node.range — source range for DeclarationProvenance
-//   * node.name — symbol lookup key
-//   * Sub-expression / block / temporal AST nodes — passed as .range
-//     carriers to the one-way bridge functions (lower_expr, lower_block,
-//     lower_temporal) which immediately switch to typed-store lookup.
-//   * Module / Import: name + path spellings (trivial, no structural walk).
-//
-// Live AST payload dereferences in declaration lowering = 0
-// (all structural data comes from TypeEnvironment typed stores).
+// Public overloads accepting ast::Program / SourceGraph are compatibility
+// shims only. Normal lowering consumes TypedProgram as the sole semantic fact
+// source: declarations, expressions, statements, temporal expressions,
+// resolver snapshots, module/import payloads, and source provenance all come
+// from the typed store.
 // ---------------------------------------------------------------------------
 
 namespace ahfl {
@@ -280,104 +267,26 @@ void push_unique_workflow_value_read(std::vector<ir::WorkflowValueRead> &values,
 
 class TypedIrLowerer final {
   public:
-    explicit TypedIrLowerer(const TypedProgram &typed_program)
-        : typed_program_(&typed_program), program_(nullptr), graph_(nullptr),
-          current_source_(nullptr) {}
-
-    TypedIrLowerer(const TypedProgram &typed_program, const ast::Program &program)
-        : typed_program_(&typed_program), program_(&program), graph_(nullptr),
-          current_source_(nullptr) {}
-
-    TypedIrLowerer(const TypedProgram &typed_program, const SourceGraph &graph)
-        : typed_program_(&typed_program), program_(nullptr), graph_(&graph),
-          current_source_(nullptr) {}
+    explicit TypedIrLowerer(const TypedProgram &typed_program) : typed_program_(&typed_program) {}
 
     [[nodiscard]] ir::Program lower() const {
         ir::Program program_ir;
         arena_ = &program_ir.expr_arena;
-        if (graph_ != nullptr) {
-            program_ir.declarations.reserve(typed_program_->declarations.size());
-            for (const auto &source : graph_->sources) {
-                if (!source.program)
-                    continue;
-                enter_source(source);
-                // Collect the subset of TypedDecls that belong to this source.
-                std::vector<const TypedDecl *> per_source;
-                per_source.reserve(typed_program_->declarations.size());
-                for (const auto &td : typed_program_->declarations) {
-                    if (td.source_id != current_source_id_)
-                        continue;
-                    per_source.push_back(&td);
-                }
-                // Emit them in the same order the owning AST stores them so
-                // the lowered IR stays byte-identical to the legacy AST-based
-                // path (T1.2 equivalence guarantee). We walk the AST decls
-                // once and, for each, emit the matching TypedDecl in-place.
-                // ModuleDecl / ImportDecl are deliberately never recorded in
-                // TypedProgram.declarations (they are parser-level metadata),
-                // so they get a short direct-AST fallback.
-                for (const auto &ast_decl : source.program->declarations) {
-                    const TypedDecl *td = find_typed_decl_for_ast(per_source, *ast_decl);
-                    if (td != nullptr) {
-                        const ast::Decl *resolved = find_ast_decl(*source.program, *td);
-                        if (resolved == nullptr)
-                            continue;
-                        program_ir.declarations.push_back(lower_declaration(*resolved, td));
-                        continue;
-                    }
-                    // TypedProgram doesn't carry ModuleDecl / ImportDecl —
-                    // emit them directly from the AST so output parity with
-                    // the legacy path (and other T1.2-equivalent tests) is
-                    // preserved.
-                    if (ast_decl->kind == ast::NodeKind::ModuleDecl ||
-                        ast_decl->kind == ast::NodeKind::ImportDecl) {
-                        program_ir.declarations.push_back(lower_declaration(*ast_decl));
-                    }
-                }
-                leave_source();
-            }
-            return program_ir;
+        program_ir.declarations.reserve(typed_program_->declarations.size());
+        for (const TypedDecl *typed_decl : ordered_typed_declarations()) {
+            if (typed_decl == nullptr)
+                continue;
+            current_source_id_ = typed_decl->source_id;
+            current_module_name_ = module_name_for(*typed_decl);
+            program_ir.declarations.push_back(lower_typed_declaration(*typed_decl));
         }
-        if (program_ != nullptr) {
-            program_ir.declarations.reserve(typed_program_->declarations.size());
-            // Emit TypedDecls in AST declaration order to preserve T1.2
-            // byte-identical IR output (see note above for SourceGraph path).
-            for (const auto &ast_decl : program_->declarations) {
-                const TypedDecl *td =
-                    find_typed_decl_for_ast(typed_program_->declarations, *ast_decl);
-                if (td != nullptr) {
-                    const ast::Decl *resolved = find_ast_decl(*program_, *td);
-                    if (resolved == nullptr)
-                        continue;
-                    program_ir.declarations.push_back(lower_declaration(*resolved, td));
-                    continue;
-                }
-                if (ast_decl->kind == ast::NodeKind::ModuleDecl ||
-                    ast_decl->kind == ast::NodeKind::ImportDecl) {
-                    program_ir.declarations.push_back(lower_declaration(*ast_decl));
-                }
-            }
-        }
-        if (program_ == nullptr && graph_ == nullptr) {
-            program_ir.declarations.reserve(typed_program_->declarations.size());
-            for (const TypedDecl *typed_decl : ordered_typed_declarations()) {
-                if (typed_decl == nullptr)
-                    continue;
-                current_source_id_ = typed_decl->source_id;
-                current_module_name_ = module_name_for(*typed_decl);
-                program_ir.declarations.push_back(lower_typed_declaration(*typed_decl));
-            }
-            current_source_id_.reset();
-            current_module_name_.clear();
-        }
+        current_source_id_.reset();
+        current_module_name_.clear();
         return program_ir;
     }
 
   private:
     const TypedProgram *typed_program_{nullptr};
-    const ast::Program *program_{nullptr};
-    const SourceGraph *graph_{nullptr};
-    mutable const SourceUnit *current_source_{nullptr};
     mutable std::optional<SourceId> current_source_id_;
     mutable std::string current_module_name_;
     mutable ir::ExprArena *arena_{nullptr};
@@ -410,11 +319,6 @@ class TypedIrLowerer final {
         if (const auto *module = payload_as<ModuleDeclInfo>(&decl); module != nullptr) {
             return module->name;
         }
-        if (decl.symbol.value != 0) {
-            if (const auto symbol = typed_program_->find_symbol(decl.symbol); symbol.has_value()) {
-                return symbol->get().module_name;
-            }
-        }
         for (const auto &candidate : typed_program_->declarations) {
             if (candidate.kind != ast::NodeKind::ModuleDecl ||
                 candidate.source_id != decl.source_id) {
@@ -422,6 +326,11 @@ class TypedIrLowerer final {
             }
             if (const auto *module = payload_as<ModuleDeclInfo>(&candidate); module != nullptr) {
                 return module->name;
+            }
+        }
+        if (decl.symbol.value != 0) {
+            if (const auto symbol = typed_program_->find_symbol(decl.symbol); symbol.has_value()) {
+                return symbol->get().module_name;
             }
         }
         return current_module_name_;
@@ -483,162 +392,22 @@ class TypedIrLowerer final {
     }
 
     // =====================================================================
-    // TypedDecl -> AST Decl bridge (T1.4 declaration iteration).
-    //
-    // TypedDecl records provenance metadata (kind / symbol / range / type).
-    // Full structural payloads (struct fields, agent states, flow handlers,
-    // workflow nodes, quotas, ...) still live in the owning AST. This helper
-    // resolves a TypedDecl back to its ast::Decl* by (range, kind) equality,
-    // disambiguating on canonical name via the symbol table when a range tie
-    // occurs. Returns nullptr if no match exists (shouldn't happen for a
-    // correctly-built TypedProgram; caller skips the declaration gracefully).
-    [[nodiscard]] const ast::Decl *find_ast_decl(const ast::Program &ast_program,
-                                                 const TypedDecl &td) const {
-        const ast::Decl *candidate = nullptr;
-        for (const auto &declaration : ast_program.declarations) {
-            if (declaration->range.begin_offset != td.range.begin_offset ||
-                declaration->range.end_offset != td.range.end_offset) {
-                continue;
-            }
-            // Exact kind match wins immediately.
-            if (declaration->kind == td.kind)
-                return declaration.get();
-            // Range collision with mismatched kind: keep as fallback and
-            // disambiguate via canonical_name + symbol_id if we end up with
-            // multiple candidates.
-            if (candidate == nullptr)
-                candidate = declaration.get();
-        }
-        if (candidate == nullptr)
-            return nullptr;
-        // Fallback: check if a candidate with mismatched kind actually maps
-        // to the same symbol (range-level collision shouldn't happen in well
-        // formed ASTs, but guard anyway for robustness).
-        if (td.symbol.value != 0) {
-            const auto sym = typed_program_->find_symbol(td.symbol);
-            if (sym.has_value()) {
-                // Walk AST decls again: prefer any decl whose local name
-                // matches the symbol's local_name when kind doesn't line up.
-                for (const auto &declaration : ast_program.declarations) {
-                    if (declaration->range.begin_offset != td.range.begin_offset ||
-                        declaration->range.end_offset != td.range.end_offset) {
-                        continue;
-                    }
-                    std::string_view decl_name = local_name_of(*declaration);
-                    if (!decl_name.empty() && decl_name == sym->get().local_name) {
-                        return declaration.get();
-                    }
-                }
-            }
-        }
-        return candidate;
-    }
-
-    // Extract the user-visible local name of a top-level AST declaration.
-    // Used only for the (rare) range-collision disambiguation path above.
-    //
-    // NOTE: For declarations whose name/target is stored as an owned
-    // QualifiedName (ModuleDecl/ImportDecl/ContractDecl/FlowDecl), the
-    // spelling() helper returns a freshly-allocated std::string by value.
-    // Using it in a std::string_view return would silently dangle, so we
-    // simply report empty names for those kinds here. In practice kind
-    // matches always come first in find_ast_decl, so the disambiguation
-    // path is never exercised for those declaration kinds anyway.
-    [[nodiscard]] static std::string_view local_name_of(const ast::Decl &declaration) noexcept {
-        switch (declaration.kind) {
-        case ast::NodeKind::ModuleDecl:
-        case ast::NodeKind::ImportDecl:
-        case ast::NodeKind::ContractDecl:
-        case ast::NodeKind::FlowDecl:
-            return {};
-        case ast::NodeKind::ConstDecl:
-            return static_cast<const ast::ConstDecl &>(declaration).name;
-        case ast::NodeKind::TypeAliasDecl:
-            return static_cast<const ast::TypeAliasDecl &>(declaration).name;
-        case ast::NodeKind::StructDecl:
-            return static_cast<const ast::StructDecl &>(declaration).name;
-        case ast::NodeKind::EnumDecl:
-            return static_cast<const ast::EnumDecl &>(declaration).name;
-        case ast::NodeKind::CapabilityDecl:
-            return static_cast<const ast::CapabilityDecl &>(declaration).name;
-        case ast::NodeKind::PredicateDecl:
-            return static_cast<const ast::PredicateDecl &>(declaration).name;
-        case ast::NodeKind::AgentDecl:
-            return static_cast<const ast::AgentDecl &>(declaration).name;
-        case ast::NodeKind::WorkflowDecl:
-            return static_cast<const ast::WorkflowDecl &>(declaration).name;
-        case ast::NodeKind::Program:
-            break;
-        }
-        return {};
-    }
-
-    // -----------------------------------------------------------------------
-    // Reverse bridge: AST -> TypedDecl.
-    //
-    // The lower() entry walks AST declarations *in AST order* and emits the
-    // TypedDecl whose (range, kind) matches. This keeps the lowered IR
-    // byte-identical to the legacy AST-tree lowering path (T1.2). The
-    // iteration still originates from TypedProgram.declarations — every
-    // declaration we emit was first present in the typed tree — but we
-    // reorder the output to match the AST source order. Declaration kinds
-    // that the typechecker does *not* record as TypedDecl entries
-    // (ModuleDecl / ImportDecl) are emitted directly from the AST by the
-    // caller via a short fallback that preserves byte-for-byte parity.
-    //
-    // Overload 1: accepts a span of pointer-to-TypedDecl (SourceGraph path
-    // where we've already filtered per-source).
-    [[nodiscard]] static const TypedDecl *
-    find_typed_decl_for_ast(const std::vector<const TypedDecl *> &candidates,
-                            const ast::Decl &ast_decl) noexcept {
-        for (const TypedDecl *td : candidates) {
-            if (td == nullptr)
-                continue;
-            if (td->range.begin_offset != ast_decl.range.begin_offset ||
-                td->range.end_offset != ast_decl.range.end_offset) {
-                continue;
-            }
-            if (td->kind == ast_decl.kind)
-                return td;
-        }
-        return nullptr;
-    }
-
-    // Overload 2: accepts the raw TypedProgram::declarations vector
-    // (single-program path where no filtering is needed).
-    [[nodiscard]] static const TypedDecl *
-    find_typed_decl_for_ast(const std::vector<TypedDecl> &candidates,
-                            const ast::Decl &ast_decl) noexcept {
-        for (const auto &td : candidates) {
-            if (td.range.begin_offset != ast_decl.range.begin_offset ||
-                td.range.end_offset != ast_decl.range.end_offset) {
-                continue;
-            }
-            if (td.kind == ast_decl.kind)
-                return &td;
-        }
-        return nullptr;
-    }
-
-    // =====================================================================
     // Source / provenance helpers
     // =====================================================================
 
     void enter_source(const SourceUnit &source) const {
-        current_source_ = &source;
         current_source_id_ = source.id;
         current_module_name_ = source.module_name;
     }
 
     void leave_source() const {
-        current_source_ = nullptr;
         current_source_id_.reset();
         current_module_name_.clear();
     }
 
     [[nodiscard]] ir::DeclarationProvenance
     current_provenance(std::optional<SourceRange> source_range = std::nullopt) const {
-        if (graph_ == nullptr || current_module_name_.empty()) {
+        if (!current_source_id_.has_value() || current_module_name_.empty()) {
             return ir::DeclarationProvenance{
                 .module_name = {},
                 .source_path = {},
@@ -846,19 +615,19 @@ class TypedIrLowerer final {
         return type_ref_from_type(type->get());
     }
 
-    [[nodiscard]] ir::TypeRef type_ref_from_spelling_or_type(std::string_view spelling,
-                                                             SourceRange source_range,
-                                                             TypePtr type) const {
+    [[nodiscard]] ir::TypeRef type_ref_from_type_or_spelling(TypePtr type,
+                                                             std::string_view spelling,
+                                                             SourceRange source_range) const {
+        if (type != nullptr) {
+            auto ref = type_ref_from_type(*type);
+            ref.source_range = source_range;
+            return ref;
+        }
         if (!spelling.empty()) {
             if (auto parsed = parse_type_ref_spelling(spelling); parsed.has_value()) {
                 parsed->source_range = source_range;
                 return std::move(*parsed);
             }
-        }
-        if (type != nullptr) {
-            auto ref = type_ref_from_type(*type);
-            ref.source_range = source_range;
-            return ref;
         }
         return ir::TypeRef{
             .kind = ir::TypeRefKind::Any, .display_name = "Any", .source_range = source_range};
@@ -1217,7 +986,8 @@ class TypedIrLowerer final {
             return self.make_expr(ir::NoneLiteralExpr{}, range);
         }
         ir::ExprRef visit_unknown(const TypedExpr &e) const {
-            return self.make_expr(ir::QualifiedValueExpr{.value = "<invalid-expr>"}, e.range);
+            (void)e;
+            return nullptr;
         }
     };
 
@@ -1245,14 +1015,14 @@ class TypedIrLowerer final {
         const TypedExpr *typed = typed_expr_for(ast_expr);
         if (typed != nullptr)
             return lower_typed_expr(*typed);
-        return make_expr(ir::QualifiedValueExpr{.value = "<missing-typed-expr>"}, ast_expr.range);
+        return nullptr;
     }
 
     [[nodiscard]] ir::ExprRef lower_expr_range(SourceRange range) const {
         const TypedExpr *typed = typed_program_->find_expr_by_range(range, current_source_id_);
         if (typed != nullptr)
             return lower_typed_expr(*typed);
-        return make_expr(ir::QualifiedValueExpr{.value = "<missing-typed-expr>"}, range);
+        return nullptr;
     }
 
     // =====================================================================
@@ -1267,8 +1037,7 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::TemporalExprPtr lower_temporal(const ast::TemporalExprSyntax &expr) const {
         const TypedTemporalExpr *tte = find_typed_temporal_by_range(expr.range, current_source_id_);
         if (tte == nullptr) {
-            return make_temporal(ir::CalledTemporalExpr{.capability = "<missing-typed-temporal>"},
-                                 expr.range);
+            return nullptr;
         }
         return lower_typed_temporal(*tte);
     }
@@ -1276,8 +1045,7 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::TemporalExprPtr lower_temporal_range(SourceRange range) const {
         const TypedTemporalExpr *tte = find_typed_temporal_by_range(range, current_source_id_);
         if (tte == nullptr) {
-            return make_temporal(ir::CalledTemporalExpr{.capability = "<missing-typed-temporal>"},
-                                 range);
+            return nullptr;
         }
         return lower_typed_temporal(*tte);
     }
@@ -1916,7 +1684,7 @@ class TypedIrLowerer final {
         case TypedTemporalKind::None:
             break;
         }
-        return make(ir::CalledTemporalExpr{.capability = "<invalid-typed-temporal>"});
+        return nullptr;
     }
 
     // T1.7 P2: let type_ref construction – 100% from typed payloads (AST
@@ -2058,14 +1826,10 @@ class TypedIrLowerer final {
         }
 
         ir::StatementPtr visit_goto_stmt(const TypedStatement &stmt) const {
-            // T1.7 P2: read directly from the typed payload; the typechecker
-            // guarantees goto_target_state is always populated (T1.2 tests enforce
-            // the invariant). An empty string falls back to the sentinel marker so
-            // detached test cases don't crash the compiler on malformed input.
+            // T1.7 P2: read directly from the typed payload. Empty malformed
+            // payloads remain empty so BackendReady verification reports the
+            // missing state instead of carrying sentinel text into IR.
             std::string target = stmt.goto_target_state;
-            if (target.empty()) {
-                target = "<missing-goto-target>";
-            }
             return self.make_statement(ir::GotoStatement{.target_state = std::move(target)}, range);
         }
 
@@ -2103,8 +1867,7 @@ class TypedIrLowerer final {
         ir::StatementPtr visit_unknown_stmt(const TypedStatement &stmt) const {
             return self.make_statement(
                 ir::ExprStatement{
-                    .expr = self.make_expr(ir::QualifiedValueExpr{.value = "<invalid-statement>"},
-                                           stmt.range),
+                    .expr = nullptr,
                 },
                 stmt.range);
         }
@@ -2467,9 +2230,9 @@ class TypedIrLowerer final {
                 .provenance = {},
                 .name = name,
                 .aliased_type_ref =
-                    info != nullptr ? type_ref_from_spelling_or_type(info->aliased_type_spelling,
-                                                                     info->aliased_type_range,
-                                                                     info->aliased_type)
+                    info != nullptr ? type_ref_from_type_or_spelling(info->aliased_type,
+                                                                     info->aliased_type_spelling,
+                                                                     info->aliased_type_range)
                                     : ir::TypeRef{},
                 .symbol_ref = symbol_ref_from_decl(decl, ir::SymbolRefKind::Type, name),
             },
@@ -2741,8 +2504,7 @@ class TypedIrLowerer final {
     }
 
     [[nodiscard]] ir::ModuleDecl lower_module(const ast::ModuleDecl &node) const {
-        if (graph_ == nullptr)
-            current_module_name_ = node.name->spelling();
+        current_module_name_ = node.name->spelling();
         return with_provenance(ir::ModuleDecl{.provenance = {}, .name = node.name->spelling()},
                                node.range);
     }
@@ -3350,19 +3112,8 @@ class FormalObservationCollector final {
 
 namespace {
 
-ir::Program lower_typed_program_impl(const TypedProgram &program,
-                                     const ast::Program *ast_prog,
-                                     const SourceGraph *source_graph) {
-    ir::Program program_ir;
-
-    if (source_graph != nullptr) {
-        program_ir = TypedIrLowerer(program, *source_graph).lower();
-    } else if (ast_prog != nullptr) {
-        program_ir = TypedIrLowerer(program, *ast_prog).lower();
-    } else {
-        program_ir = TypedIrLowerer(program).lower();
-    }
-
+ir::Program lower_typed_program_impl(const TypedProgram &program) {
+    auto program_ir = TypedIrLowerer(program).lower();
     ir::recompute_derived_analyses(program_ir, ir::ProgramPhase::Analyzed);
     return program_ir;
 }
@@ -3370,15 +3121,17 @@ ir::Program lower_typed_program_impl(const TypedProgram &program,
 } // anonymous namespace
 
 ir::Program lower_typed_program(const TypedProgram &program, const ast::Program &ast_program) {
-    return lower_typed_program_impl(program, &ast_program, nullptr);
+    (void)ast_program;
+    return lower_typed_program_impl(program);
 }
 
 ir::Program lower_typed_program(const TypedProgram &program, const SourceGraph &source_graph) {
-    return lower_typed_program_impl(program, nullptr, &source_graph);
+    (void)source_graph;
+    return lower_typed_program_impl(program);
 }
 
 ir::Program lower_typed_program(const TypedProgram &program) {
-    return lower_typed_program_impl(program, nullptr, nullptr);
+    return lower_typed_program_impl(program);
 }
 
 // NOTE: collect_formal_observations lives in ir_lower.cpp to avoid ODR
