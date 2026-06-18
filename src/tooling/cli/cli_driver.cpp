@@ -132,7 +132,8 @@ lower_verified_ir_or_report(const InputT &input,
                             const ahfl::TypeCheckResult &type_check_result,
                             std::ostream &err) {
     auto ir_program = ahfl::lower_program_ir(input, resolve_result, type_check_result);
-    const auto verification = ahfl::ir::verify_ir_program(ir_program);
+    const auto verification =
+        ahfl::ir::verify_ir_program(ir_program, ahfl::ir::IrVerificationMode::BackendReady);
     if (verification.has_errors()) {
         print_ir_verification_errors(verification, err);
         return std::nullopt;
