@@ -96,42 +96,237 @@ using ast::visit_expr_syntax;
 
 } // namespace internal
 
+struct TypeCheckSession {
+    const ast::Program *program{nullptr};
+    const SourceGraph *graph{nullptr};
+    const ResolveResult &resolve_result;
+    TypeContext &types;
+    TypeCheckOptions options;
+
+    TypeCheckSession(const ast::Program *program_arg,
+                     const SourceGraph *graph_arg,
+                     const ResolveResult &resolve_arg,
+                     TypeContext &types_arg,
+                     TypeCheckOptions options_arg)
+        : program(program_arg), graph(graph_arg), resolve_result(resolve_arg), types(types_arg),
+          options(options_arg) {}
+};
+
+struct TypeCheckState {
+    TypeCheckResult result;
+    const SourceUnit *current_source{nullptr};
+    std::optional<SourceId> current_source_id;
+    std::string current_module_name;
+    std::unordered_map<std::size_t, const SourceUnit *> source_units_by_id;
+
+    void build_source_unit_index(const SourceGraph *graph);
+    void enter_source(const SourceUnit &source);
+    void leave_source();
+    [[nodiscard]] MaybeCRef<SourceUnit> source_unit_for(const SourceGraph *graph,
+                                                        SourceId id) const;
+};
+
+class DiagnosticReporter {
+  public:
+    DiagnosticReporter(DiagnosticBag &diagnostics, const SourceUnit *const &current_source)
+        : diagnostics_(&diagnostics), current_source_(&current_source) {}
+
+    void error(std::string message, SourceRange range);
+    void note(std::string message, SourceRange range);
+    void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                         std::string message,
+                         SourceRange range);
+    void typecheck_error(ErrorCode<DiagnosticCategory::TypeCheck> code,
+                         std::string message,
+                         SourceRange range,
+                         std::vector<Diagnostic::Related> notes);
+
+  private:
+    DiagnosticBag *diagnostics_{nullptr};
+    const SourceUnit *const *current_source_{nullptr};
+};
+
+struct DeclarationIndex {
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::TypeAliasDecl>>
+        type_alias_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>> const_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>> struct_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>> enum_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::CapabilityDecl>>
+        capability_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::PredicateDecl>>
+        predicate_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> agent_decls;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>> workflow_decls;
+};
+
+class TypeCheckPass;
+class TypedHirBuilder;
+class TypeCheckPhaseApi;
+
+class DeclarationIndexBuilder {
+  public:
+    DeclarationIndexBuilder(const TypeCheckSession &session,
+                            TypeCheckState &state,
+                            DeclarationIndex &index,
+                            TypedHirBuilder &hir)
+        : session_(&session), state_(&state), index_(&index), hir_(&hir) {}
+
+    void run();
+
+  private:
+    const TypeCheckSession *session_{nullptr};
+    TypeCheckState *state_{nullptr};
+    DeclarationIndex *index_{nullptr};
+    TypedHirBuilder *hir_{nullptr};
+
+    void index_program_declarations(const ast::Program &program);
+    [[nodiscard]] MaybeCRef<Symbol> find_local(SymbolNamespace name_space,
+                                               std::string_view name) const;
+};
+
+class EnvironmentBuilder {
+  public:
+    explicit EnvironmentBuilder(TypeCheckPhaseApi &api) : api_(&api) {}
+
+    void run();
+
+  private:
+    TypeCheckPhaseApi *api_{nullptr};
+};
+
+class ConstSema {
+  public:
+    explicit ConstSema(TypeCheckPhaseApi &api) : api_(&api) {}
+
+    void run();
+
+  private:
+    TypeCheckPhaseApi *api_{nullptr};
+};
+
+class ContractSema {
+  public:
+    explicit ContractSema(TypeCheckPhaseApi &api) : api_(&api) {}
+
+    void run();
+
+  private:
+    TypeCheckPhaseApi *api_{nullptr};
+};
+
+class FlowSema {
+  public:
+    explicit FlowSema(TypeCheckPhaseApi &api) : api_(&api) {}
+
+    void run();
+
+  private:
+    TypeCheckPhaseApi *api_{nullptr};
+};
+
+class WorkflowSema {
+  public:
+    explicit WorkflowSema(TypeCheckPhaseApi &api) : api_(&api) {}
+
+    void run();
+
+  private:
+    TypeCheckPhaseApi *api_{nullptr};
+};
+
+class TypedHirBuilder {
+  public:
+    explicit TypedHirBuilder(TypedProgram &program) : program_(&program) {}
+
+    [[nodiscard]] TypedProgram &program() noexcept {
+        return *program_;
+    }
+
+    void append_declaration(TypedDecl decl);
+    void append_expression(TypedExpr expr);
+    [[nodiscard]] std::uint32_t append_temporal_expr(TypedTemporalExpr expr);
+    [[nodiscard]] std::uint32_t append_block(TypedBlock block);
+    [[nodiscard]] std::uint32_t append_statement(TypedStatement statement);
+
+  private:
+    TypedProgram *program_{nullptr};
+};
+
+class TypeCheckPhaseApi {
+  public:
+    explicit TypeCheckPhaseApi(TypeCheckPass &driver) : driver_(&driver) {}
+
+    void build_type_environment();
+    void check_const_semantics();
+    void check_contract_semantics();
+    void check_flow_semantics();
+    void check_workflow_semantics();
+
+  private:
+    TypeCheckPass *driver_{nullptr};
+};
+
 class TypeCheckPass final {
   public:
+    explicit TypeCheckPass(TypeCheckSession session)
+        : session_(std::move(session)), state_(), program_(session_.program),
+          graph_(session_.graph), resolve_result_(session_.resolve_result), types_(&session_.types),
+          options_(session_.options), result_(state_.result),
+          current_source_(state_.current_source), current_source_id_(state_.current_source_id),
+          current_module_name_(state_.current_module_name),
+          source_units_by_id_(state_.source_units_by_id),
+          reporter_(state_.result.diagnostics, state_.current_source),
+          type_alias_decls_(declaration_index_.type_alias_decls),
+          const_decls_(declaration_index_.const_decls),
+          struct_decls_(declaration_index_.struct_decls),
+          enum_decls_(declaration_index_.enum_decls),
+          capability_decls_(declaration_index_.capability_decls),
+          predicate_decls_(declaration_index_.predicate_decls),
+          agent_decls_(declaration_index_.agent_decls),
+          workflow_decls_(declaration_index_.workflow_decls),
+          hir_builder_(state_.result.typed_program) {}
     TypeCheckPass(const ast::Program &program, const ResolveResult &resolve_result)
-        : program_(&program), resolve_result_(resolve_result), types_(&TypeContext::global()) {}
+        : TypeCheckPass(TypeCheckSession(
+              &program, nullptr, resolve_result, TypeContext::global(), TypeCheckOptions{})) {}
     TypeCheckPass(const ast::Program &program,
                   const ResolveResult &resolve_result,
                   TypeCheckOptions options)
-        : program_(&program), resolve_result_(resolve_result), types_(&TypeContext::global()),
-          options_(options) {}
+        : TypeCheckPass(
+              TypeCheckSession(&program, nullptr, resolve_result, TypeContext::global(), options)) {
+    }
     TypeCheckPass(const ast::Program &program,
                   const ResolveResult &resolve_result,
                   TypeContext &types)
-        : program_(&program), resolve_result_(resolve_result), types_(&types) {}
+        : TypeCheckPass(
+              TypeCheckSession(&program, nullptr, resolve_result, types, TypeCheckOptions{})) {}
     TypeCheckPass(const ast::Program &program,
                   const ResolveResult &resolve_result,
                   TypeContext &types,
                   TypeCheckOptions options)
-        : program_(&program), resolve_result_(resolve_result), types_(&types), options_(options) {}
+        : TypeCheckPass(TypeCheckSession(&program, nullptr, resolve_result, types, options)) {}
     TypeCheckPass(const SourceGraph &graph, const ResolveResult &resolve_result)
-        : graph_(&graph), resolve_result_(resolve_result), types_(&TypeContext::global()) {}
+        : TypeCheckPass(TypeCheckSession(
+              nullptr, &graph, resolve_result, TypeContext::global(), TypeCheckOptions{})) {}
     TypeCheckPass(const SourceGraph &graph,
                   const ResolveResult &resolve_result,
                   TypeCheckOptions options)
-        : graph_(&graph), resolve_result_(resolve_result), types_(&TypeContext::global()),
-          options_(options) {}
+        : TypeCheckPass(
+              TypeCheckSession(nullptr, &graph, resolve_result, TypeContext::global(), options)) {}
     TypeCheckPass(const SourceGraph &graph, const ResolveResult &resolve_result, TypeContext &types)
-        : graph_(&graph), resolve_result_(resolve_result), types_(&types) {}
+        : TypeCheckPass(
+              TypeCheckSession(nullptr, &graph, resolve_result, types, TypeCheckOptions{})) {}
     TypeCheckPass(const SourceGraph &graph,
                   const ResolveResult &resolve_result,
                   TypeContext &types,
                   TypeCheckOptions options)
-        : graph_(&graph), resolve_result_(resolve_result), types_(&types), options_(options) {}
+        : TypeCheckPass(TypeCheckSession(nullptr, &graph, resolve_result, types, options)) {}
 
     [[nodiscard]] TypeCheckResult run();
 
   private:
+    friend class TypeCheckPhaseApi;
+
     // Re-export internal aliases inside the class so existing implementation
     // files can keep referring to them by their unqualified names.
     using BindingMap = internal::BindingMap;
@@ -141,17 +336,21 @@ class TypeCheckPass final {
     using ConstEvalResult = internal::ConstEvalResult;
     using ValueContext = internal::ValueContext;
 
-    const ast::Program *program_{nullptr};
-    const SourceGraph *graph_{nullptr};
+    TypeCheckSession session_;
+    TypeCheckState state_;
+    const ast::Program *&program_;
+    const SourceGraph *&graph_;
     const ResolveResult &resolve_result_;
     TypeContext *types_{nullptr};
-    TypeCheckOptions options_;
+    TypeCheckOptions &options_;
     TypeRelationContext relations_;
-    TypeCheckResult result_;
-    const SourceUnit *current_source_{nullptr};
-    std::optional<SourceId> current_source_id_;
-    std::string current_module_name_;
-    std::unordered_map<std::size_t, const SourceUnit *> source_units_by_id_;
+    TypeCheckResult &result_;
+    const SourceUnit *&current_source_;
+    std::optional<SourceId> &current_source_id_;
+    std::string &current_module_name_;
+    std::unordered_map<std::size_t, const SourceUnit *> &source_units_by_id_;
+    DiagnosticReporter reporter_;
+    DeclarationIndex declaration_index_;
 
     // After the most recent check_statement call completes, holds the index
     // of the TypedStatement that was just appended to
@@ -174,17 +373,18 @@ class TypeCheckPass final {
     find_block_index_by_range(const ast::BlockSyntax &block) const noexcept;
 
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::TypeAliasDecl>>
-        type_alias_decls_;
-    std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>> const_decls_;
-    std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>> struct_decls_;
-    std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>> enum_decls_;
+        &type_alias_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::ConstDecl>> &const_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::StructDecl>> &struct_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::EnumDecl>> &enum_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::CapabilityDecl>>
-        capability_decls_;
+        &capability_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::PredicateDecl>>
-        predicate_decls_;
-    std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> agent_decls_;
+        &predicate_decls_;
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> &agent_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>>
-        workflow_decls_;
+        &workflow_decls_;
+    TypedHirBuilder hir_builder_;
 
     std::unordered_map<std::size_t, ConstValue> const_values_;
     std::unordered_set<std::size_t> active_const_values_;
@@ -192,8 +392,6 @@ class TypeCheckPass final {
     TypeAliasResolutionState alias_resolution_;
 
     // Declaration indexing & environment building (typecheck_decls.cpp).
-    void index_program_declarations(const ast::Program &program);
-    void index_declarations();
     void build_type_environment();
     void build_const_types();
     void build_struct_types();
