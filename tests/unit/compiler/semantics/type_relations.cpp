@@ -382,6 +382,64 @@ TEST_CASE("TypeRelationOptions::allow_numeric_widening explicitly enables numeri
     }
 }
 
+TEST_CASE("MemoizedRelationSolver reuses proven and disproven relation states") {
+    using namespace ahfl;
+    auto &tc = TypeContext::global();
+    const auto bounded = tc.bounded_string(2, 8);
+    const auto string = tc.string();
+    const auto list_bounded = tc.list(bounded);
+    const auto list_string = tc.list(string);
+
+    TypeRelationContext ctx;
+    MemoizedRelationSolver solver(ctx);
+
+    CHECK(solver.subtype(*list_bounded, *list_string));
+    const auto memo_after_success = solver.memo_size();
+    const auto hits_after_success = solver.stats().cache_hits;
+    CHECK(solver.subtype(*list_bounded, *list_string));
+    CHECK(solver.memo_size() == memo_after_success);
+    CHECK(solver.stats().cache_hits > hits_after_success);
+
+    CHECK_FALSE(solver.subtype(*list_string, *list_bounded));
+    const auto memo_after_failure = solver.memo_size();
+    const auto hits_after_failure = solver.stats().cache_hits;
+    CHECK_FALSE(solver.subtype(*list_string, *list_bounded));
+    CHECK(solver.memo_size() == memo_after_failure);
+    CHECK(solver.stats().cache_hits > hits_after_failure);
+    CHECK(solver.stats().proven > 0);
+    CHECK(solver.stats().disproven > 0);
+}
+
+TEST_CASE("MemoizedRelationSolver applies coinductive visiting assumption") {
+    using namespace ahfl;
+
+    Type left;
+    Type right;
+    left.payload = types::ListT{.element = &left};
+    right.payload = types::ListT{.element = &right};
+
+    TypeRelationContext ctx;
+    MemoizedRelationSolver solver(ctx);
+
+    CHECK(solver.equivalent(left, right));
+    CHECK(solver.stats().coinductive_assumptions == 1);
+}
+
+TEST_CASE("MemoizedRelationSolver fails closed at depth guard") {
+    using namespace ahfl;
+    auto &tc = TypeContext::global();
+    const auto deep_int = tc.list(tc.list(tc.make(TypeKind::Int)));
+    const auto deep_string = tc.list(tc.list(tc.string()));
+
+    TypeRelationOptions opts;
+    opts.max_solver_depth = 1;
+    TypeRelationContext ctx(opts);
+    MemoizedRelationSolver solver(ctx);
+
+    CHECK_FALSE(solver.subtype(*deep_int, *deep_string));
+    CHECK(solver.stats().depth_guard_rejections > 0);
+}
+
 TEST_CASE("TypeRelationContext member methods delegate to free functions") {
     using namespace ahfl;
     auto &tc = TypeContext::global();

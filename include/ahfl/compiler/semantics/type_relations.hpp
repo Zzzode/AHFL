@@ -2,8 +2,10 @@
 
 #include "ahfl/compiler/semantics/types.hpp"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace ahfl {
@@ -99,6 +101,11 @@ struct TypeRelationOptions {
     // are assignable to wider ones (e.g. Int -> Float). Default: false —
     // AHFL source-level subtyping does not include numeric promotion.
     bool allow_numeric_widening{false};
+
+    // Maximum recursive relation depth before the memoized solver fails
+    // closed. This is independent from trace volume limits: relation
+    // evaluation still runs normally up to this bound even when traces are off.
+    int max_solver_depth{256};
 };
 
 // ---------------------------------------------------------------------------
@@ -162,6 +169,66 @@ struct RelationTrace {
 // out on arity / const-ref mismatch.
 
 class TypeRelationContext;
+
+struct RelationKey {
+    TypeRelationKind kind{TypeRelationKind::Assignable};
+    const Type *source{nullptr};
+    const Type *target{nullptr};
+    bool allow_bounded_string_relaxation{true};
+    bool allow_numeric_widening{false};
+
+    [[nodiscard]] friend bool operator==(const RelationKey &lhs,
+                                         const RelationKey &rhs) noexcept = default;
+};
+
+struct RelationKeyHash {
+    [[nodiscard]] std::size_t operator()(const RelationKey &key) const noexcept;
+};
+
+enum class RelationState {
+    Visiting,
+    Proven,
+    Disproven,
+};
+
+struct RelationSolverStats {
+    std::size_t queries{0};
+    std::size_t cache_hits{0};
+    std::size_t proven{0};
+    std::size_t disproven{0};
+    std::size_t coinductive_assumptions{0};
+    std::size_t depth_guard_rejections{0};
+};
+
+class MemoizedRelationSolver {
+  public:
+    explicit MemoizedRelationSolver(TypeRelationContext &ctx) : ctx_(&ctx) {}
+
+    [[nodiscard]] bool equivalent(const Type &lhs, const Type &rhs);
+    [[nodiscard]] bool subtype(const Type &source, const Type &target);
+    [[nodiscard]] bool assignable(const Type &source, const Type &target);
+    [[nodiscard]] bool exact_schema(const Type &source, const Type &target);
+
+    [[nodiscard]] bool
+    solve(TypeRelationKind kind, const Type &source, const Type &target, std::string path = {});
+
+    [[nodiscard]] const RelationSolverStats &stats() const noexcept {
+        return stats_;
+    }
+
+    [[nodiscard]] std::size_t memo_size() const noexcept {
+        return memo_.size();
+    }
+
+  private:
+    [[nodiscard]] RelationKey
+    make_key(TypeRelationKind kind, const Type &source, const Type &target) const noexcept;
+
+    TypeRelationContext *ctx_{nullptr};
+    std::unordered_map<RelationKey, RelationState, RelationKeyHash> memo_;
+    RelationSolverStats stats_{};
+    int recursion_depth_{0};
+};
 
 [[nodiscard]] bool are_types_equivalent(const Type &lhs, const Type &rhs, TypeRelationContext &ctx);
 [[nodiscard]] bool is_subtype_of(const Type &source, const Type &target, TypeRelationContext &ctx);
