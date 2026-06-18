@@ -171,7 +171,9 @@ int main() {
     auto [ir_program, lowering_timing] = measure("semantic ir lowering", [&]() {
         return ahfl::lower_program_ir(graph, resolve_result, type_result);
     });
-    check(!ahfl::ir::verify_ir_program(ir_program).has_errors(), "semantic IR verifies");
+    check(!ahfl::ir::verify_ir_program(ir_program, ahfl::ir::IrVerificationMode::BackendReady)
+               .has_errors(),
+          "semantic IR verifies");
     check(ir_program.expr_arena.size() >= type_result.typed_program.expressions.size() / 2,
           "ExprArena receives lowered expressions");
 
