@@ -376,6 +376,9 @@ using Json = json::JsonValue;
         value->set("output_type", j_type(info->output_type));
         value->set("capability_symbols", j_symbol_array(info->capability_symbols));
         value->set("declaration_range", j_range(info->declaration_range));
+        value->set("input_type_range", j_range(info->input_type_range));
+        value->set("context_type_range", j_range(info->context_type_range));
+        value->set("output_type_range", j_range(info->output_type_range));
         value->set("states", j_string_array(info->states));
         value->set("initial_state", Json::make_string(info->initial_state));
         value->set("final_states", j_string_array(info->final_states));
@@ -407,6 +410,8 @@ using Json = json::JsonValue;
         value->set("input_type", j_type(info->input_type));
         value->set("output_type", j_type(info->output_type));
         value->set("declaration_range", j_range(info->declaration_range));
+        value->set("input_type_range", j_range(info->input_type_range));
+        value->set("output_type_range", j_range(info->output_type_range));
         auto nodes = Json::make_array();
         for (const auto &node : info->nodes) {
             auto node_json = Json::make_object();
@@ -1104,6 +1109,9 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .output_type = reader.type_field(*value, "output_type"),
             .capability_symbols = reader.symbol_array_field(*value, "capability_symbols"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
+            .input_type_range = reader.range_field(*value, "input_type_range"),
+            .context_type_range = reader.range_field(*value, "context_type_range"),
+            .output_type_range = reader.range_field(*value, "output_type_range"),
             .states = reader.string_array_field(*value, "states"),
             .initial_state = reader.string_field(*value, "initial_state"),
             .final_states = reader.string_array_field(*value, "final_states"),
@@ -1140,6 +1148,8 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
             .input_type = reader.type_field(*value, "input_type"),
             .output_type = reader.type_field(*value, "output_type"),
             .declaration_range = reader.range_field(*value, "declaration_range"),
+            .input_type_range = reader.range_field(*value, "input_type_range"),
+            .output_type_range = reader.range_field(*value, "output_type_range"),
             .nodes = {},
             .safety_ranges = {},
             .liveness_ranges = {},
