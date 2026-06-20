@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ahfl/compiler/ir/opt/opt_ir.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "ahfl/compiler/ir/opt/opt_ir.hpp"
 
 namespace ahfl::ir::opt {
 

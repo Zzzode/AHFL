@@ -95,201 +95,206 @@ class AstInvariantValidator final {
     }
 
     void validate_type(const TypeSyntax &type) {
-        std::visit(Overloaded{
-            [&](const UnitType &) {},
-            [&](const BoolType &) {},
-            [&](const IntType &) {},
-            [&](const FloatType &) {},
-            [&](const StringType &) {},
-            [&](const BoundedStringType &) {
-                // BoundedString bounds are stored as value types — presence is guaranteed by variant
+        std::visit(
+            Overloaded{
+                [&](const UnitType &) {},
+                [&](const BoolType &) {},
+                [&](const IntType &) {},
+                [&](const FloatType &) {},
+                [&](const StringType &) {},
+                [&](const BoundedStringType &) {
+                    // BoundedString bounds are stored as value types — presence is guaranteed by variant
+                },
+                [&](const UuidType &) {},
+                [&](const TimestampType &) {},
+                [&](const DurationType &) {},
+                [&](const DecimalType &) {
+                    // Decimal scale is stored as value type — presence is guaranteed by variant
+                },
+                [&](const NamedType &t) {
+                    validate_qualified_name(t.name.get(), type.range, "NamedType.name");
+                },
+                [&](const OptionalType &t) {
+                    require(t.inner != nullptr, type.range, "OptionalType is missing inner");
+                    if (t.inner) {
+                        validate_type(*t.inner);
+                    }
+                },
+                [&](const ListType &t) {
+                    require(t.element != nullptr, type.range, "ListType is missing element");
+                    if (t.element) {
+                        validate_type(*t.element);
+                    }
+                },
+                [&](const SetType &t) {
+                    require(t.element != nullptr, type.range, "SetType is missing element");
+                    if (t.element) {
+                        validate_type(*t.element);
+                    }
+                },
+                [&](const MapType &t) {
+                    require(t.key_type != nullptr, type.range, "MapType is missing key type");
+                    require(t.value_type != nullptr, type.range, "MapType is missing value type");
+                    if (t.key_type) {
+                        validate_type(*t.key_type);
+                    }
+                    if (t.value_type) {
+                        validate_type(*t.value_type);
+                    }
+                },
             },
-            [&](const UuidType &) {},
-            [&](const TimestampType &) {},
-            [&](const DurationType &) {},
-            [&](const DecimalType &) {
-                // Decimal scale is stored as value type — presence is guaranteed by variant
-            },
-            [&](const NamedType &t) {
-                validate_qualified_name(t.name.get(), type.range, "NamedType.name");
-            },
-            [&](const OptionalType &t) {
-                require(t.inner != nullptr, type.range, "OptionalType is missing inner");
-                if (t.inner) {
-                    validate_type(*t.inner);
-                }
-            },
-            [&](const ListType &t) {
-                require(t.element != nullptr, type.range, "ListType is missing element");
-                if (t.element) {
-                    validate_type(*t.element);
-                }
-            },
-            [&](const SetType &t) {
-                require(t.element != nullptr, type.range, "SetType is missing element");
-                if (t.element) {
-                    validate_type(*t.element);
-                }
-            },
-            [&](const MapType &t) {
-                require(t.key_type != nullptr, type.range, "MapType is missing key type");
-                require(t.value_type != nullptr, type.range, "MapType is missing value type");
-                if (t.key_type) {
-                    validate_type(*t.key_type);
-                }
-                if (t.value_type) {
-                    validate_type(*t.value_type);
-                }
-            },
-        }, type.node);
+            type.node);
     }
 
     void validate_expr(const ExprSyntax &expr) {
-        std::visit(Overloaded{
-            [&](const NoneLiteralExpr &) {
-                // No payload fields — presence guaranteed by variant
-            },
-            [&](const BoolLiteralExpr &) {
-                // Value type — presence guaranteed by variant
-            },
-            [&](const IntegerLiteralExpr &e) {
-                require(e.literal != nullptr,
-                        expr.range,
-                        "IntegerLiteralExpr is missing literal");
-            },
-            [&](const FloatLiteralExpr &) {
-                // spelling is value type — presence guaranteed by variant
-            },
-            [&](const DecimalLiteralExpr &) {
-                // spelling is value type — presence guaranteed by variant
-            },
-            [&](const StringLiteralExpr &) {
-                // spelling is value type — presence guaranteed by variant
-            },
-            [&](const DurationLiteralExpr &e) {
-                require(e.literal != nullptr,
-                        expr.range,
-                        "DurationLiteralExpr is missing literal");
-            },
-            [&](const SomeExpr &e) {
-                require(e.value != nullptr, expr.range, "SomeExpr is missing value");
-                if (e.value) {
-                    validate_expr(*e.value);
-                }
-            },
-            [&](const PathExpr &e) {
-                require(e.path != nullptr, expr.range, "PathExpr is missing path");
-                if (e.path) {
-                    require(!e.path->root_name.empty(),
-                            e.path->range,
-                            "PathSyntax is missing root_name");
-                }
-            },
-            [&](const QualifiedValueExpr &e) {
-                validate_qualified_name(
-                    e.name.get(), expr.range, "QualifiedValueExpr.name");
-            },
-            [&](const CallExpr &e) {
-                validate_qualified_name(
-                    e.callee.get(), expr.range, "CallExpr.callee");
-                for (const auto &arg : e.arguments) {
-                    require(arg != nullptr, expr.range, "CallExpr.arguments contains null");
-                    if (arg) {
-                        validate_expr(*arg);
+        std::visit(
+            Overloaded{
+                [&](const NoneLiteralExpr &) {
+                    // No payload fields — presence guaranteed by variant
+                },
+                [&](const BoolLiteralExpr &) {
+                    // Value type — presence guaranteed by variant
+                },
+                [&](const IntegerLiteralExpr &e) {
+                    require(
+                        e.literal != nullptr, expr.range, "IntegerLiteralExpr is missing literal");
+                },
+                [&](const FloatLiteralExpr &) {
+                    // spelling is value type — presence guaranteed by variant
+                },
+                [&](const DecimalLiteralExpr &) {
+                    // spelling is value type — presence guaranteed by variant
+                },
+                [&](const StringLiteralExpr &) {
+                    // spelling is value type — presence guaranteed by variant
+                },
+                [&](const DurationLiteralExpr &e) {
+                    require(
+                        e.literal != nullptr, expr.range, "DurationLiteralExpr is missing literal");
+                },
+                [&](const SomeExpr &e) {
+                    require(e.value != nullptr, expr.range, "SomeExpr is missing value");
+                    if (e.value) {
+                        validate_expr(*e.value);
                     }
-                }
-            },
-            [&](const StructLiteralExpr &e) {
-                validate_qualified_name(
-                    e.type_name.get(), expr.range, "StructLiteralExpr.type_name");
-                for (const auto &field : e.fields) {
-                    require(field != nullptr, expr.range, "StructLiteralExpr.fields contains null");
-                    if (!field) {
-                        continue;
+                },
+                [&](const PathExpr &e) {
+                    require(e.path != nullptr, expr.range, "PathExpr is missing path");
+                    if (e.path) {
+                        require(!e.path->root_name.empty(),
+                                e.path->range,
+                                "PathSyntax is missing root_name");
                     }
-                    require(!field->field_name.empty(),
-                            field->range,
-                            "StructInitSyntax is missing field_name");
-                    require(field->value != nullptr,
-                            field->range,
-                            "StructInitSyntax is missing value");
-                    if (field->value) {
-                        validate_expr(*field->value);
+                },
+                [&](const QualifiedValueExpr &e) {
+                    validate_qualified_name(e.name.get(), expr.range, "QualifiedValueExpr.name");
+                },
+                [&](const CallExpr &e) {
+                    validate_qualified_name(e.callee.get(), expr.range, "CallExpr.callee");
+                    for (const auto &arg : e.arguments) {
+                        require(arg != nullptr, expr.range, "CallExpr.arguments contains null");
+                        if (arg) {
+                            validate_expr(*arg);
+                        }
                     }
-                }
-            },
-            [&](const ListLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    require(item != nullptr, expr.range, "ListLiteralExpr.items contains null");
-                    if (item) {
-                        validate_expr(*item);
+                },
+                [&](const StructLiteralExpr &e) {
+                    validate_qualified_name(
+                        e.type_name.get(), expr.range, "StructLiteralExpr.type_name");
+                    for (const auto &field : e.fields) {
+                        require(
+                            field != nullptr, expr.range, "StructLiteralExpr.fields contains null");
+                        if (!field) {
+                            continue;
+                        }
+                        require(!field->field_name.empty(),
+                                field->range,
+                                "StructInitSyntax is missing field_name");
+                        require(field->value != nullptr,
+                                field->range,
+                                "StructInitSyntax is missing value");
+                        if (field->value) {
+                            validate_expr(*field->value);
+                        }
                     }
-                }
-            },
-            [&](const SetLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    require(item != nullptr, expr.range, "SetLiteralExpr.items contains null");
-                    if (item) {
-                        validate_expr(*item);
+                },
+                [&](const ListLiteralExpr &e) {
+                    for (const auto &item : e.items) {
+                        require(item != nullptr, expr.range, "ListLiteralExpr.items contains null");
+                        if (item) {
+                            validate_expr(*item);
+                        }
                     }
-                }
-            },
-            [&](const MapLiteralExpr &e) {
-                for (const auto &entry : e.entries) {
-                    require(entry != nullptr, expr.range, "MapLiteralExpr.entries contains null");
-                    if (!entry) {
-                        continue;
+                },
+                [&](const SetLiteralExpr &e) {
+                    for (const auto &item : e.items) {
+                        require(item != nullptr, expr.range, "SetLiteralExpr.items contains null");
+                        if (item) {
+                            validate_expr(*item);
+                        }
                     }
-                    require(entry->key != nullptr, entry->range, "MapEntrySyntax is missing key");
-                    require(entry->value != nullptr, entry->range, "MapEntrySyntax is missing value");
-                    if (entry->key) {
-                        validate_expr(*entry->key);
+                },
+                [&](const MapLiteralExpr &e) {
+                    for (const auto &entry : e.entries) {
+                        require(
+                            entry != nullptr, expr.range, "MapLiteralExpr.entries contains null");
+                        if (!entry) {
+                            continue;
+                        }
+                        require(
+                            entry->key != nullptr, entry->range, "MapEntrySyntax is missing key");
+                        require(entry->value != nullptr,
+                                entry->range,
+                                "MapEntrySyntax is missing value");
+                        if (entry->key) {
+                            validate_expr(*entry->key);
+                        }
+                        if (entry->value) {
+                            validate_expr(*entry->value);
+                        }
                     }
-                    if (entry->value) {
-                        validate_expr(*entry->value);
+                },
+                [&](const UnaryExpr &e) {
+                    require(e.operand != nullptr, expr.range, "UnaryExpr is missing operand");
+                    if (e.operand) {
+                        validate_expr(*e.operand);
                     }
-                }
+                },
+                [&](const BinaryExpr &e) {
+                    require(e.lhs != nullptr, expr.range, "BinaryExpr is missing lhs");
+                    require(e.rhs != nullptr, expr.range, "BinaryExpr is missing rhs");
+                    if (e.lhs) {
+                        validate_expr(*e.lhs);
+                    }
+                    if (e.rhs) {
+                        validate_expr(*e.rhs);
+                    }
+                },
+                [&](const MemberAccessExpr &e) {
+                    require(e.base != nullptr, expr.range, "MemberAccessExpr is missing base");
+                    require(!e.member.empty(), expr.range, "MemberAccessExpr is missing member");
+                    if (e.base) {
+                        validate_expr(*e.base);
+                    }
+                },
+                [&](const IndexAccessExpr &e) {
+                    require(e.base != nullptr, expr.range, "IndexAccessExpr is missing base");
+                    require(e.index != nullptr, expr.range, "IndexAccessExpr is missing index");
+                    if (e.base) {
+                        validate_expr(*e.base);
+                    }
+                    if (e.index) {
+                        validate_expr(*e.index);
+                    }
+                },
+                [&](const GroupExpr &e) {
+                    require(e.inner != nullptr, expr.range, "GroupExpr is missing inner");
+                    if (e.inner) {
+                        validate_expr(*e.inner);
+                    }
+                },
             },
-            [&](const UnaryExpr &e) {
-                require(e.operand != nullptr, expr.range, "UnaryExpr is missing operand");
-                if (e.operand) {
-                    validate_expr(*e.operand);
-                }
-            },
-            [&](const BinaryExpr &e) {
-                require(e.lhs != nullptr, expr.range, "BinaryExpr is missing lhs");
-                require(e.rhs != nullptr, expr.range, "BinaryExpr is missing rhs");
-                if (e.lhs) {
-                    validate_expr(*e.lhs);
-                }
-                if (e.rhs) {
-                    validate_expr(*e.rhs);
-                }
-            },
-            [&](const MemberAccessExpr &e) {
-                require(e.base != nullptr, expr.range, "MemberAccessExpr is missing base");
-                require(!e.member.empty(), expr.range, "MemberAccessExpr is missing member");
-                if (e.base) {
-                    validate_expr(*e.base);
-                }
-            },
-            [&](const IndexAccessExpr &e) {
-                require(e.base != nullptr, expr.range, "IndexAccessExpr is missing base");
-                require(e.index != nullptr, expr.range, "IndexAccessExpr is missing index");
-                if (e.base) {
-                    validate_expr(*e.base);
-                }
-                if (e.index) {
-                    validate_expr(*e.index);
-                }
-            },
-            [&](const GroupExpr &e) {
-                require(e.inner != nullptr, expr.range, "GroupExpr is missing inner");
-                if (e.inner) {
-                    validate_expr(*e.inner);
-                }
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void validate_statement(const StatementSyntax &statement) {
@@ -420,53 +425,58 @@ class AstInvariantValidator final {
     }
 
     void validate_temporal(const TemporalExprSyntax &expr) {
-        std::visit(Overloaded{
-            [&](const EmbeddedTemporalExpr &e) {
-                require(e.expr != nullptr,
-                        expr.range,
-                        "EmbeddedExpr TemporalExprSyntax is missing expr");
-                if (e.expr) {
-                    validate_expr(*e.expr);
-                }
+        std::visit(
+            Overloaded{
+                [&](const EmbeddedTemporalExpr &e) {
+                    require(e.expr != nullptr,
+                            expr.range,
+                            "EmbeddedExpr TemporalExprSyntax is missing expr");
+                    if (e.expr) {
+                        validate_expr(*e.expr);
+                    }
+                },
+                [&](const CalledTemporalExpr &e) {
+                    require(!e.name.empty(),
+                            expr.range,
+                            std::string("Called") + " TemporalExprSyntax is missing name");
+                },
+                [&](const InStateTemporalExpr &e) {
+                    require(!e.name.empty(),
+                            expr.range,
+                            std::string("InState") + " TemporalExprSyntax is missing name");
+                },
+                [&](const RunningTemporalExpr &e) {
+                    require(!e.name.empty(),
+                            expr.range,
+                            std::string("Running") + " TemporalExprSyntax is missing name");
+                },
+                [&](const CompletedTemporalExpr &e) {
+                    require(!e.name.empty(),
+                            expr.range,
+                            std::string("Completed") + " TemporalExprSyntax is missing name");
+                },
+                [&](const UnaryTemporalExpr &e) {
+                    require(e.operand != nullptr,
+                            expr.range,
+                            "Unary TemporalExprSyntax is missing operand");
+                    if (e.operand) {
+                        validate_temporal(*e.operand);
+                    }
+                },
+                [&](const BinaryTemporalExpr &e) {
+                    require(
+                        e.lhs != nullptr, expr.range, "Binary TemporalExprSyntax is missing lhs");
+                    require(
+                        e.rhs != nullptr, expr.range, "Binary TemporalExprSyntax is missing rhs");
+                    if (e.lhs) {
+                        validate_temporal(*e.lhs);
+                    }
+                    if (e.rhs) {
+                        validate_temporal(*e.rhs);
+                    }
+                },
             },
-            [&](const CalledTemporalExpr &e) {
-                require(!e.name.empty(),
-                        expr.range,
-                        std::string("Called") + " TemporalExprSyntax is missing name");
-            },
-            [&](const InStateTemporalExpr &e) {
-                require(!e.name.empty(),
-                        expr.range,
-                        std::string("InState") + " TemporalExprSyntax is missing name");
-            },
-            [&](const RunningTemporalExpr &e) {
-                require(!e.name.empty(),
-                        expr.range,
-                        std::string("Running") + " TemporalExprSyntax is missing name");
-            },
-            [&](const CompletedTemporalExpr &e) {
-                require(!e.name.empty(),
-                        expr.range,
-                        std::string("Completed") + " TemporalExprSyntax is missing name");
-            },
-            [&](const UnaryTemporalExpr &e) {
-                require(
-                    e.operand != nullptr, expr.range, "Unary TemporalExprSyntax is missing operand");
-                if (e.operand) {
-                    validate_temporal(*e.operand);
-                }
-            },
-            [&](const BinaryTemporalExpr &e) {
-                require(e.lhs != nullptr, expr.range, "Binary TemporalExprSyntax is missing lhs");
-                require(e.rhs != nullptr, expr.range, "Binary TemporalExprSyntax is missing rhs");
-                if (e.lhs) {
-                    validate_temporal(*e.lhs);
-                }
-                if (e.rhs) {
-                    validate_temporal(*e.rhs);
-                }
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void validate_params(const std::vector<Owned<ParamDeclSyntax>> &params, SourceRange range) {
@@ -846,19 +856,35 @@ std::string PathSyntax::spelling() const {
 namespace {
 
 struct TypeSyntaxSpellingVisitor {
-    std::string operator()(const UnitType &) const { return "Unit"; }
-    std::string operator()(const BoolType &) const { return "Bool"; }
-    std::string operator()(const IntType &) const { return "Int"; }
-    std::string operator()(const FloatType &) const { return "Float"; }
-    std::string operator()(const StringType &) const { return "String"; }
+    std::string operator()(const UnitType &) const {
+        return "Unit";
+    }
+    std::string operator()(const BoolType &) const {
+        return "Bool";
+    }
+    std::string operator()(const IntType &) const {
+        return "Int";
+    }
+    std::string operator()(const FloatType &) const {
+        return "Float";
+    }
+    std::string operator()(const StringType &) const {
+        return "String";
+    }
     std::string operator()(const BoundedStringType &t) const {
         std::ostringstream builder;
         builder << "String(" << t.min_length << ", " << t.max_length << ")";
         return builder.str();
     }
-    std::string operator()(const UuidType &) const { return "UUID"; }
-    std::string operator()(const TimestampType &) const { return "Timestamp"; }
-    std::string operator()(const DurationType &) const { return "Duration"; }
+    std::string operator()(const UuidType &) const {
+        return "UUID";
+    }
+    std::string operator()(const TimestampType &) const {
+        return "Timestamp";
+    }
+    std::string operator()(const DurationType &) const {
+        return "Duration";
+    }
     std::string operator()(const DecimalType &t) const {
         std::ostringstream builder;
         builder << "Decimal(" << int(t.scale) << ")";

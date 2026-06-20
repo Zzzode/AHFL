@@ -21,7 +21,8 @@ using Json = json::JsonValue;
     return Json::make_int(static_cast<std::int64_t>(value));
 }
 
-[[nodiscard]] std::optional<std::string> read_optional_string(const Json &value, std::string_view key) {
+[[nodiscard]] std::optional<std::string> read_optional_string(const Json &value,
+                                                              std::string_view key) {
     const auto *field = value.get(key);
     if (field == nullptr || field->is_null()) {
         return std::nullopt;
@@ -278,8 +279,7 @@ std::optional<Diagnostic> deserialize_diagnostic_json(const json::JsonValue &val
 // DiagnosticReport serialization
 // ============================================================================
 
-std::unique_ptr<json::JsonValue>
-serialize_diagnostic_report_value(const DiagnosticReport &report) {
+std::unique_ptr<json::JsonValue> serialize_diagnostic_report_value(const DiagnosticReport &report) {
     auto obj = Json::make_object();
 
     obj->set("schema_version", Json::make_string(std::string(kDiagnosticReportSchemaVersion)));
@@ -309,8 +309,7 @@ std::string serialize_diagnostic_report_json(const DiagnosticReport &report) {
     return json::serialize_json(*value);
 }
 
-std::optional<DiagnosticReport>
-deserialize_diagnostic_report_value(const json::JsonValue &value) {
+std::optional<DiagnosticReport> deserialize_diagnostic_report_value(const json::JsonValue &value) {
     if (!value.is_object()) {
         return std::nullopt;
     }
@@ -365,8 +364,7 @@ deserialize_diagnostic_report_value(const json::JsonValue &value) {
     return report;
 }
 
-std::optional<DiagnosticReport>
-deserialize_diagnostic_report_json(std::string_view json_text) {
+std::optional<DiagnosticReport> deserialize_diagnostic_report_json(std::string_view json_text) {
     auto parsed = json::parse_json(json_text);
     if (!parsed.has_value()) {
         return std::nullopt;

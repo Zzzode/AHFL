@@ -711,8 +711,7 @@ bool ProgramRewriter::rewrite_temporal_expr(TemporalExpr &expr) {
                        [](RunningTemporalExpr &) { return false; },
                        [](CompletedTemporalExpr &) { return false; },
                        [&](TemporalUnaryExpr &value) {
-                           return value.operand != nullptr &&
-                                  rewrite_temporal_expr(*value.operand);
+                           return value.operand != nullptr && rewrite_temporal_expr(*value.operand);
                        },
                        [&](TemporalBinaryExpr &value) {
                            bool changed = false;

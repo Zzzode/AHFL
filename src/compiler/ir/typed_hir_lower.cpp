@@ -1,11 +1,11 @@
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
-#include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -42,6 +42,20 @@ namespace {
 [[nodiscard]] bool workflow_value_reads_equal(const ir::WorkflowValueRead &lhs,
                                               const ir::WorkflowValueRead &rhs) {
     return lhs.kind == rhs.kind && lhs.root_name == rhs.root_name && lhs.members == rhs.members;
+}
+
+[[nodiscard]] ir::TypeRef make_type_ref_value(ir::TypeRefKind kind, std::string display_name) {
+    return ir::TypeRef{
+        .kind = kind,
+        .display_name = std::move(display_name),
+        .canonical_name = {},
+        .variant_name = {},
+        .string_bounds = std::nullopt,
+        .decimal_scale = std::nullopt,
+        .source_range = std::nullopt,
+        .first = nullptr,
+        .second = nullptr,
+    };
 }
 
 [[nodiscard]] std::string logical_source_path(std::string_view module_name) {
@@ -417,98 +431,85 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::TypeRef type_ref_from_type(const Type &type) const {
         return type.visit(types::Overloads{
             [&](const types::AnyT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Any, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Any, type.describe());
             },
             [&](const types::NeverT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Never, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Never, type.describe());
             },
             [&](const types::ErrorT &) -> ir::TypeRef {
                 throw std::logic_error(
                     "TypedProgram contains an error type at the IR lowering boundary");
             },
             [&](const types::UnitT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Unit, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Unit, type.describe());
             },
             [&](const types::BoolT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Bool, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Bool, type.describe());
             },
             [&](const types::IntT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Int, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Int, type.describe());
             },
             [&](const types::FloatT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Float, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Float, type.describe());
             },
             [&](const types::StringT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::String,
-                                   .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::String, type.describe());
             },
             [&](const types::BoundedStringT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::BoundedString,
-                    .display_name = type.describe(),
-                    .string_bounds = std::make_pair(value.minimum, value.maximum),
-                };
+                auto ref = make_type_ref_value(ir::TypeRefKind::BoundedString, type.describe());
+                ref.string_bounds = std::make_pair(value.minimum, value.maximum);
+                return ref;
             },
             [&](const types::UUIDT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::UUID, .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::UUID, type.describe());
             },
             [&](const types::TimestampT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Timestamp,
-                                   .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Timestamp, type.describe());
             },
             [&](const types::DurationT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Duration,
-                                   .display_name = type.describe()};
+                return make_type_ref_value(ir::TypeRefKind::Duration, type.describe());
             },
             [&](const types::DecimalT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Decimal,
-                    .display_name = type.describe(),
-                    .decimal_scale = value.scale,
-                };
+                auto ref = make_type_ref_value(ir::TypeRefKind::Decimal, type.describe());
+                ref.decimal_scale = value.scale;
+                return ref;
             },
             [&](const types::StructT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Struct,
-                    .display_name = type.describe(),
-                    .canonical_name = value.canonical_name,
-                };
+                auto ref = make_type_ref_value(ir::TypeRefKind::Struct, type.describe());
+                ref.canonical_name = value.canonical_name;
+                return ref;
             },
             [&](const types::EnumT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Enum,
-                    .display_name = type.describe(),
-                    .canonical_name = value.canonical_name,
-                };
+                auto ref = make_type_ref_value(ir::TypeRefKind::Enum, type.describe());
+                ref.canonical_name = value.canonical_name;
+                return ref;
             },
             [&](const types::EnumVariantT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Enum,
-                    .display_name = type.describe(),
-                    .canonical_name = value.canonical_name,
-                    .variant_name = value.variant_name,
-                };
+                auto ref = make_type_ref_value(ir::TypeRefKind::Enum, type.describe());
+                ref.canonical_name = value.canonical_name;
+                ref.variant_name = value.variant_name;
+                return ref;
             },
             [&](const types::OptionalT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::Optional, .display_name = type.describe()};
+                auto ref = make_type_ref_value(ir::TypeRefKind::Optional, type.describe());
                 if (value.inner != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.inner));
                 return ref;
             },
             [&](const types::ListT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::List, .display_name = type.describe()};
+                auto ref = make_type_ref_value(ir::TypeRefKind::List, type.describe());
                 if (value.element != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.element));
                 return ref;
             },
             [&](const types::SetT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::Set, .display_name = type.describe()};
+                auto ref = make_type_ref_value(ir::TypeRefKind::Set, type.describe());
                 if (value.element != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.element));
                 return ref;
             },
             [&](const types::MapT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::Map, .display_name = type.describe()};
+                auto ref = make_type_ref_value(ir::TypeRefKind::Map, type.describe());
                 if (value.key != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.key));
                 if (value.value != nullptr)

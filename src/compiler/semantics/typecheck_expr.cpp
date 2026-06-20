@@ -24,13 +24,11 @@ using internal::ValueContext;
 
 namespace {
 
-template <typename... Ts>
-struct overloaded : Ts... {
+template <typename... Ts> struct overloaded : Ts... {
     using Ts::operator()...;
 };
 
-template <typename... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
+template <typename... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
 [[nodiscard]] std::int64_t parse_decimal_scale(std::string_view text) {
     const auto dot_index = text.find('.');
@@ -245,28 +243,30 @@ class ExpressionChecker final {
           expectation_(expectation), values_(services.values()) {}
 
     [[nodiscard]] TypedValue check(const ast::ExprSyntax &expr) const {
-        return std::visit(overloaded{
-            [&](const ast::NoneLiteralExpr &) { return visit_none_literal(expr); },
-            [&](const ast::BoolLiteralExpr &) { return visit_bool_literal(expr); },
-            [&](const ast::IntegerLiteralExpr &) { return visit_integer_literal(expr); },
-            [&](const ast::FloatLiteralExpr &) { return visit_float_literal(expr); },
-            [&](const ast::DecimalLiteralExpr &) { return visit_decimal_literal(expr); },
-            [&](const ast::StringLiteralExpr &) { return visit_string_literal(expr); },
-            [&](const ast::DurationLiteralExpr &) { return visit_duration_literal(expr); },
-            [&](const ast::SomeExpr &) { return visit_some(expr); },
-            [&](const ast::PathExpr &) { return visit_path(expr); },
-            [&](const ast::QualifiedValueExpr &) { return visit_qualified_value(expr); },
-            [&](const ast::CallExpr &) { return visit_call(expr); },
-            [&](const ast::StructLiteralExpr &) { return visit_struct_literal(expr); },
-            [&](const ast::ListLiteralExpr &) { return visit_list_literal(expr); },
-            [&](const ast::SetLiteralExpr &) { return visit_set_literal(expr); },
-            [&](const ast::MapLiteralExpr &) { return visit_map_literal(expr); },
-            [&](const ast::UnaryExpr &) { return visit_unary(expr); },
-            [&](const ast::BinaryExpr &) { return visit_binary(expr); },
-            [&](const ast::MemberAccessExpr &) { return visit_member_access(expr); },
-            [&](const ast::IndexAccessExpr &) { return visit_index_access(expr); },
-            [&](const ast::GroupExpr &) { return visit_group(expr); },
-        }, expr.node);
+        return std::visit(
+            overloaded{
+                [&](const ast::NoneLiteralExpr &) { return visit_none_literal(expr); },
+                [&](const ast::BoolLiteralExpr &) { return visit_bool_literal(expr); },
+                [&](const ast::IntegerLiteralExpr &) { return visit_integer_literal(expr); },
+                [&](const ast::FloatLiteralExpr &) { return visit_float_literal(expr); },
+                [&](const ast::DecimalLiteralExpr &) { return visit_decimal_literal(expr); },
+                [&](const ast::StringLiteralExpr &) { return visit_string_literal(expr); },
+                [&](const ast::DurationLiteralExpr &) { return visit_duration_literal(expr); },
+                [&](const ast::SomeExpr &) { return visit_some(expr); },
+                [&](const ast::PathExpr &) { return visit_path(expr); },
+                [&](const ast::QualifiedValueExpr &) { return visit_qualified_value(expr); },
+                [&](const ast::CallExpr &) { return visit_call(expr); },
+                [&](const ast::StructLiteralExpr &) { return visit_struct_literal(expr); },
+                [&](const ast::ListLiteralExpr &) { return visit_list_literal(expr); },
+                [&](const ast::SetLiteralExpr &) { return visit_set_literal(expr); },
+                [&](const ast::MapLiteralExpr &) { return visit_map_literal(expr); },
+                [&](const ast::UnaryExpr &) { return visit_unary(expr); },
+                [&](const ast::BinaryExpr &) { return visit_binary(expr); },
+                [&](const ast::MemberAccessExpr &) { return visit_member_access(expr); },
+                [&](const ast::IndexAccessExpr &) { return visit_index_access(expr); },
+                [&](const ast::GroupExpr &) { return visit_group(expr); },
+            },
+            expr.node);
     }
 
     [[nodiscard]] TypedValue visit_bool_literal(const ast::ExprSyntax &) const {
@@ -282,8 +282,8 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue visit_decimal_literal(const ast::ExprSyntax &expr) const {
-        return values_.typed(values_.decimal_type(
-            parse_decimal_scale(expr.as<ast::DecimalLiteralExpr>().spelling)));
+        return values_.typed(
+            values_.decimal_type(parse_decimal_scale(expr.as<ast::DecimalLiteralExpr>().spelling)));
     }
 
     [[nodiscard]] TypedValue visit_string_literal(const ast::ExprSyntax &) const {
@@ -411,13 +411,13 @@ class ExpressionChecker final {
             return values_.typed_effect(const_type->get().clone(), ExprEffect::ConstOnly);
         }
 
-        const auto owner_reference = services_.find_reference(
-            ReferenceKind::QualifiedValueOwnerType, qualified.name->range);
+        const auto owner_reference =
+            services_.find_reference(ReferenceKind::QualifiedValueOwnerType, qualified.name->range);
         if (!owner_reference.has_value()) {
-            services_.typecheck_error_here(error_codes::typecheck::UnknownQualifiedValue,
-                                           messages::typecheck::UnknownQualifiedValue.format_with(
-                                               qualified.name->spelling()),
-                                           expr.range);
+            services_.typecheck_error_here(
+                error_codes::typecheck::UnknownQualifiedValue,
+                messages::typecheck::UnknownQualifiedValue.format_with(qualified.name->spelling()),
+                expr.range);
             return values_.error_typed();
         }
 
@@ -442,8 +442,8 @@ class ExpressionChecker final {
 
         const auto &segments = qualified.name->segments;
         if (segments.empty() || !enum_info->get().has_variant(segments.back())) {
-            std::string message = messages::typecheck::UnknownEnumVariant.format_with(
-                qualified.name->spelling());
+            std::string message =
+                messages::typecheck::UnknownEnumVariant.format_with(qualified.name->spelling());
             if (!segments.empty()) {
                 std::vector<std::string> candidates;
                 candidates.reserve(enum_info->get().variants.size());
@@ -817,17 +817,16 @@ class ExpressionChecker final {
         if (!capability.has_value()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::MissingCallableMetadata,
-                messages::typecheck::CapabilityTypeInfoMissing.format_with(
-                    call.callee->spelling()),
+                messages::typecheck::CapabilityTypeInfoMissing.format_with(call.callee->spelling()),
                 expr.range);
             return values_.error_typed(false);
         }
 
         if (context_.call_context != CallContext::Flow) {
-            services_.typecheck_error_here(error_codes::typecheck::CapabilityNotAllowed,
-                                           messages::typecheck::CapabilityNotAllowed.format_with(
-                                               call.callee->spelling()),
-                                           expr.range);
+            services_.typecheck_error_here(
+                error_codes::typecheck::CapabilityNotAllowed,
+                messages::typecheck::CapabilityNotAllowed.format_with(call.callee->spelling()),
+                expr.range);
         }
 
         if (context_.current_agent.has_value()) {
@@ -865,7 +864,8 @@ class ExpressionChecker final {
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
             };
-            const auto argument = services_.check_expr(*call.arguments[index], context_, expectation);
+            const auto argument =
+                services_.check_expr(*call.arguments[index], context_, expectation);
             (void)services_.check_assignable(*argument.type,
                                              *param.type,
                                              call.arguments[index]->range,
@@ -886,8 +886,7 @@ class ExpressionChecker final {
         if (!predicate.has_value()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::MissingCallableMetadata,
-                messages::typecheck::PredicateTypeInfoMissing.format_with(
-                    call.callee->spelling()),
+                messages::typecheck::PredicateTypeInfoMissing.format_with(call.callee->spelling()),
                 expr.range);
             return values_.error_typed();
         }
@@ -912,7 +911,8 @@ class ExpressionChecker final {
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
             };
-            const auto argument = services_.check_expr(*call.arguments[index], context_, expectation);
+            const auto argument =
+                services_.check_expr(*call.arguments[index], context_, expectation);
             effect = join_effects(effect, argument.effect);
             if (!argument.is_pure) {
                 services_.typecheck_error_here(
@@ -963,11 +963,9 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue check_binary_expr(const ast::ExprSyntax &expr) const {
         const auto &binary = expr.as<ast::BinaryExpr>();
-        if ((binary.op == ast::ExprBinaryOp::Equal ||
-             binary.op == ast::ExprBinaryOp::NotEqual) &&
+        if ((binary.op == ast::ExprBinaryOp::Equal || binary.op == ast::ExprBinaryOp::NotEqual) &&
             binary.lhs && binary.rhs &&
-            (binary.lhs->is<ast::NoneLiteralExpr>() ||
-             binary.rhs->is<ast::NoneLiteralExpr>())) {
+            (binary.lhs->is<ast::NoneLiteralExpr>() || binary.rhs->is<ast::NoneLiteralExpr>())) {
             const auto &none_operand =
                 binary.lhs->is<ast::NoneLiteralExpr>() ? *binary.lhs : *binary.rhs;
             const auto &value_operand =
@@ -1299,13 +1297,23 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
 
         ExpressionValue
         check_nested(const ast::ExprSyntax &, const ExpressionContext &, MaybeCRef<Type>) override {
-            return ExpressionValue{.type = pass_->make_error_type()};
+            return ExpressionValue{
+                .type = pass_->make_error_type(),
+                .effect = ExprEffect::Pure,
+                .is_pure = true,
+                .path_root_kind = std::nullopt,
+            };
         }
 
         ExpressionValue check_nested(const ast::ExprSyntax &,
                                      const ExpressionContext &,
                                      const TypeExpectation &) override {
-            return ExpressionValue{.type = pass_->make_error_type()};
+            return ExpressionValue{
+                .type = pass_->make_error_type(),
+                .effect = ExprEffect::Pure,
+                .is_pure = true,
+                .path_root_kind = std::nullopt,
+            };
         }
 
         TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {

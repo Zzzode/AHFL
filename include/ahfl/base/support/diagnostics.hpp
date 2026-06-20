@@ -763,9 +763,8 @@ struct DiagnosticReport {
     }
 
     /// Build a DiagnosticReport from a DiagnosticBag, copying all entries.
-    [[nodiscard]] static DiagnosticReport from_bag(const DiagnosticBag &bag,
-                                                   std::string result_id = {},
-                                                   std::string kind = "full") {
+    [[nodiscard]] static DiagnosticReport
+    from_bag(const DiagnosticBag &bag, std::string result_id = {}, std::string kind = "full") {
         DiagnosticReport report;
         report.result_id = std::move(result_id);
         report.kind = std::move(kind);
@@ -776,9 +775,7 @@ struct DiagnosticReport {
     /// Append another report's diagnostics into this one.
     /// Does not change result_id or kind of the receiving report.
     void append(const DiagnosticReport &other) {
-        diagnostics.insert(diagnostics.end(),
-                           other.diagnostics.begin(),
-                           other.diagnostics.end());
+        diagnostics.insert(diagnostics.end(), other.diagnostics.begin(), other.diagnostics.end());
     }
 };
 

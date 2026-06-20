@@ -1,8 +1,8 @@
 #include "tooling/lsp/semantic_tokens.hpp"
 
-#include "ahfl/compiler/frontend/ast.hpp"
-#include "ahfl/base/support/source.hpp"
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/frontend/ast.hpp"
 #include "tooling/lsp/analysis_service.hpp"
 
 #include <algorithm>
@@ -34,9 +34,8 @@ namespace {
 
 /// Find the exact range of an identifier within a larger source range.
 /// Returns an empty range if the name cannot be found.
-[[nodiscard]] SourceRange find_name_in_range(const SourceFile &source,
-                                             SourceRange outer_range,
-                                             std::string_view name) {
+[[nodiscard]] SourceRange
+find_name_in_range(const SourceFile &source, SourceRange outer_range, std::string_view name) {
     if (name.empty() || outer_range.empty()) {
         return {};
     }
@@ -156,38 +155,40 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                                 const SourceFile &source,
                                 std::vector<TokenEntry> &tokens) {
     std::visit(Overloaded{
-        [&](const ast::NamedType &t) {
-            if (t.name != nullptr) {
-                collect_qualified_name_tokens(*t.name, source, tokens, SemanticTokenType::Type);
-            }
-        },
-        [&](const ast::OptionalType &t) {
-            if (t.inner != nullptr) {
-                collect_type_syntax_tokens(*t.inner, source, tokens);
-            }
-        },
-        [&](const ast::ListType &t) {
-            if (t.element != nullptr) {
-                collect_type_syntax_tokens(*t.element, source, tokens);
-            }
-        },
-        [&](const ast::SetType &t) {
-            if (t.element != nullptr) {
-                collect_type_syntax_tokens(*t.element, source, tokens);
-            }
-        },
-        [&](const ast::MapType &t) {
-            if (t.key_type != nullptr) {
-                collect_type_syntax_tokens(*t.key_type, source, tokens);
-            }
-            if (t.value_type != nullptr) {
-                collect_type_syntax_tokens(*t.value_type, source, tokens);
-            }
-        },
-        [](const auto &) {
-            // Built-in types — no tokens for now (could add Keyword/Type later)
-        },
-    }, type.node);
+                   [&](const ast::NamedType &t) {
+                       if (t.name != nullptr) {
+                           collect_qualified_name_tokens(
+                               *t.name, source, tokens, SemanticTokenType::Type);
+                       }
+                   },
+                   [&](const ast::OptionalType &t) {
+                       if (t.inner != nullptr) {
+                           collect_type_syntax_tokens(*t.inner, source, tokens);
+                       }
+                   },
+                   [&](const ast::ListType &t) {
+                       if (t.element != nullptr) {
+                           collect_type_syntax_tokens(*t.element, source, tokens);
+                       }
+                   },
+                   [&](const ast::SetType &t) {
+                       if (t.element != nullptr) {
+                           collect_type_syntax_tokens(*t.element, source, tokens);
+                       }
+                   },
+                   [&](const ast::MapType &t) {
+                       if (t.key_type != nullptr) {
+                           collect_type_syntax_tokens(*t.key_type, source, tokens);
+                       }
+                       if (t.value_type != nullptr) {
+                           collect_type_syntax_tokens(*t.value_type, source, tokens);
+                       }
+                   },
+                   [](const auto &) {
+                       // Built-in types — no tokens for now (could add Keyword/Type later)
+                   },
+               },
+               type.node);
 }
 
 // ---- Parameters ----
@@ -220,8 +221,7 @@ void collect_struct_field_tokens(const ast::StructFieldDeclSyntax &field,
 void collect_enum_variant_tokens(const ast::EnumVariantDeclSyntax &variant,
                                  const SourceFile &source,
                                  std::vector<TokenEntry> &tokens) {
-    add_token_for_name(
-        tokens, source, variant.range, variant.name, SemanticTokenType::EnumMember);
+    add_token_for_name(tokens, source, variant.range, variant.name, SemanticTokenType::EnumMember);
 }
 
 // ---- Expressions ----
@@ -230,134 +230,141 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                          const SourceFile &source,
                          std::vector<TokenEntry> &tokens) {
     std::visit(Overloaded{
-        [&](const ast::NoneLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::BoolLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::IntegerLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::FloatLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::DecimalLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::StringLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::DurationLiteralExpr &) {
-            // no tokens for literals (could add later)
-        },
-        [&](const ast::SomeExpr &e) {
-            if (e.value != nullptr) {
-                collect_expr_tokens(*e.value, source, tokens);
-            }
-        },
-        [&](const ast::PathExpr &e) {
-            // Path root identifier — treated as variable reference
-            if (e.path != nullptr) {
-                add_token_for_name(tokens, source, e.path->range, e.path->root_name,
-                                   SemanticTokenType::Variable);
-            }
-        },
-        [&](const ast::QualifiedValueExpr &e) {
-            if (e.name != nullptr) {
-                collect_qualified_name_tokens(
-                    *e.name, source, tokens, SemanticTokenType::EnumMember);
-            }
-        },
-        [&](const ast::CallExpr &e) {
-            // Call target name — could be a capability or predicate
-            // Without semantic resolution we mark it as Function; the analysis
-            // service could refine this later.
-            if (e.callee != nullptr) {
-                collect_qualified_name_tokens(
-                    *e.callee, source, tokens, SemanticTokenType::Function);
-            }
-            for (const auto &arg : e.arguments) {
-                if (arg != nullptr) {
-                    collect_expr_tokens(*arg, source, tokens);
-                }
-            }
-        },
-        [&](const ast::StructLiteralExpr &e) {
-            if (e.type_name != nullptr) {
-                collect_qualified_name_tokens(
-                    *e.type_name, source, tokens, SemanticTokenType::Type);
-            }
-            for (const auto &field : e.fields) {
-                if (field != nullptr) {
-                    add_token_for_name(tokens, source, field->range, field->field_name,
-                                       SemanticTokenType::Property);
-                    if (field->value != nullptr) {
-                        collect_expr_tokens(*field->value, source, tokens);
-                    }
-                }
-            }
-        },
-        [&](const ast::ListLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (item != nullptr) {
-                    collect_expr_tokens(*item, source, tokens);
-                }
-            }
-        },
-        [&](const ast::SetLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (item != nullptr) {
-                    collect_expr_tokens(*item, source, tokens);
-                }
-            }
-        },
-        [&](const ast::MapLiteralExpr &e) {
-            for (const auto &entry : e.entries) {
-                if (entry != nullptr) {
-                    if (entry->key != nullptr) {
-                        collect_expr_tokens(*entry->key, source, tokens);
-                    }
-                    if (entry->value != nullptr) {
-                        collect_expr_tokens(*entry->value, source, tokens);
-                    }
-                }
-            }
-        },
-        [&](const ast::UnaryExpr &e) {
-            if (e.operand != nullptr) {
-                collect_expr_tokens(*e.operand, source, tokens);
-            }
-        },
-        [&](const ast::BinaryExpr &e) {
-            if (e.lhs != nullptr) {
-                collect_expr_tokens(*e.lhs, source, tokens);
-            }
-            if (e.rhs != nullptr) {
-                collect_expr_tokens(*e.rhs, source, tokens);
-            }
-        },
-        [&](const ast::MemberAccessExpr &e) {
-            if (e.base != nullptr) {
-                collect_expr_tokens(*e.base, source, tokens);
-            }
-            add_token_for_name(
-                tokens, source, expr.range, e.member, SemanticTokenType::Property);
-        },
-        [&](const ast::IndexAccessExpr &e) {
-            if (e.base != nullptr) {
-                collect_expr_tokens(*e.base, source, tokens);
-            }
-            if (e.index != nullptr) {
-                collect_expr_tokens(*e.index, source, tokens);
-            }
-        },
-        [&](const ast::GroupExpr &e) {
-            if (e.inner != nullptr) {
-                collect_expr_tokens(*e.inner, source, tokens);
-            }
-        },
-    }, expr.node);
+                   [&](const ast::NoneLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::BoolLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::IntegerLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::FloatLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::DecimalLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::StringLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::DurationLiteralExpr &) {
+                       // no tokens for literals (could add later)
+                   },
+                   [&](const ast::SomeExpr &e) {
+                       if (e.value != nullptr) {
+                           collect_expr_tokens(*e.value, source, tokens);
+                       }
+                   },
+                   [&](const ast::PathExpr &e) {
+                       // Path root identifier — treated as variable reference
+                       if (e.path != nullptr) {
+                           add_token_for_name(tokens,
+                                              source,
+                                              e.path->range,
+                                              e.path->root_name,
+                                              SemanticTokenType::Variable);
+                       }
+                   },
+                   [&](const ast::QualifiedValueExpr &e) {
+                       if (e.name != nullptr) {
+                           collect_qualified_name_tokens(
+                               *e.name, source, tokens, SemanticTokenType::EnumMember);
+                       }
+                   },
+                   [&](const ast::CallExpr &e) {
+                       // Call target name — could be a capability or predicate
+                       // Without semantic resolution we mark it as Function; the analysis
+                       // service could refine this later.
+                       if (e.callee != nullptr) {
+                           collect_qualified_name_tokens(
+                               *e.callee, source, tokens, SemanticTokenType::Function);
+                       }
+                       for (const auto &arg : e.arguments) {
+                           if (arg != nullptr) {
+                               collect_expr_tokens(*arg, source, tokens);
+                           }
+                       }
+                   },
+                   [&](const ast::StructLiteralExpr &e) {
+                       if (e.type_name != nullptr) {
+                           collect_qualified_name_tokens(
+                               *e.type_name, source, tokens, SemanticTokenType::Type);
+                       }
+                       for (const auto &field : e.fields) {
+                           if (field != nullptr) {
+                               add_token_for_name(tokens,
+                                                  source,
+                                                  field->range,
+                                                  field->field_name,
+                                                  SemanticTokenType::Property);
+                               if (field->value != nullptr) {
+                                   collect_expr_tokens(*field->value, source, tokens);
+                               }
+                           }
+                       }
+                   },
+                   [&](const ast::ListLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           if (item != nullptr) {
+                               collect_expr_tokens(*item, source, tokens);
+                           }
+                       }
+                   },
+                   [&](const ast::SetLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           if (item != nullptr) {
+                               collect_expr_tokens(*item, source, tokens);
+                           }
+                       }
+                   },
+                   [&](const ast::MapLiteralExpr &e) {
+                       for (const auto &entry : e.entries) {
+                           if (entry != nullptr) {
+                               if (entry->key != nullptr) {
+                                   collect_expr_tokens(*entry->key, source, tokens);
+                               }
+                               if (entry->value != nullptr) {
+                                   collect_expr_tokens(*entry->value, source, tokens);
+                               }
+                           }
+                       }
+                   },
+                   [&](const ast::UnaryExpr &e) {
+                       if (e.operand != nullptr) {
+                           collect_expr_tokens(*e.operand, source, tokens);
+                       }
+                   },
+                   [&](const ast::BinaryExpr &e) {
+                       if (e.lhs != nullptr) {
+                           collect_expr_tokens(*e.lhs, source, tokens);
+                       }
+                       if (e.rhs != nullptr) {
+                           collect_expr_tokens(*e.rhs, source, tokens);
+                       }
+                   },
+                   [&](const ast::MemberAccessExpr &e) {
+                       if (e.base != nullptr) {
+                           collect_expr_tokens(*e.base, source, tokens);
+                       }
+                       add_token_for_name(
+                           tokens, source, expr.range, e.member, SemanticTokenType::Property);
+                   },
+                   [&](const ast::IndexAccessExpr &e) {
+                       if (e.base != nullptr) {
+                           collect_expr_tokens(*e.base, source, tokens);
+                       }
+                       if (e.index != nullptr) {
+                           collect_expr_tokens(*e.index, source, tokens);
+                       }
+                   },
+                   [&](const ast::GroupExpr &e) {
+                       if (e.inner != nullptr) {
+                           collect_expr_tokens(*e.inner, source, tokens);
+                       }
+                   },
+               },
+               expr.node);
 }
 
 // ---- Statements ----
@@ -368,7 +375,10 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
     switch (stmt.kind) {
     case ast::StatementSyntaxKind::Let:
         if (stmt.let_stmt != nullptr) {
-            add_token_for_name(tokens, source, stmt.let_stmt->range, stmt.let_stmt->name,
+            add_token_for_name(tokens,
+                               source,
+                               stmt.let_stmt->range,
+                               stmt.let_stmt->name,
                                SemanticTokenType::Variable);
             if (stmt.let_stmt->type != nullptr) {
                 collect_type_syntax_tokens(*stmt.let_stmt->type, source, tokens);
@@ -381,7 +391,9 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
     case ast::StatementSyntaxKind::Assign:
         if (stmt.assign_stmt != nullptr) {
             if (stmt.assign_stmt->target != nullptr) {
-                add_token_for_name(tokens, source, stmt.assign_stmt->target->range,
+                add_token_for_name(tokens,
+                                   source,
+                                   stmt.assign_stmt->target->range,
                                    stmt.assign_stmt->target->root_name,
                                    SemanticTokenType::Variable);
             }
@@ -405,8 +417,11 @@ void collect_statement_tokens(const ast::StatementSyntax &stmt,
         break;
     case ast::StatementSyntaxKind::Goto:
         if (stmt.goto_stmt != nullptr) {
-            add_token_for_name(tokens, source, stmt.goto_stmt->range,
-                               stmt.goto_stmt->target_state, SemanticTokenType::Variable);
+            add_token_for_name(tokens,
+                               source,
+                               stmt.goto_stmt->range,
+                               stmt.goto_stmt->target_state,
+                               SemanticTokenType::Variable);
         }
         break;
     case ast::StatementSyntaxKind::Return:
@@ -446,29 +461,25 @@ void collect_decl_tokens(const ast::Decl &decl,
     case ast::NodeKind::ModuleDecl: {
         const auto &mod = static_cast<const ast::ModuleDecl &>(decl);
         if (mod.name != nullptr) {
-            collect_qualified_name_tokens(
-                *mod.name, source, tokens, SemanticTokenType::Namespace);
+            collect_qualified_name_tokens(*mod.name, source, tokens, SemanticTokenType::Namespace);
         }
         break;
     }
     case ast::NodeKind::ImportDecl: {
         const auto &imp = static_cast<const ast::ImportDecl &>(decl);
         if (imp.path != nullptr) {
-            collect_qualified_name_tokens(
-                *imp.path, source, tokens, SemanticTokenType::Namespace);
+            collect_qualified_name_tokens(*imp.path, source, tokens, SemanticTokenType::Namespace);
         }
         if (!imp.alias.empty()) {
-            add_token_for_name(tokens, source, imp.range, imp.alias,
-                               SemanticTokenType::Namespace);
+            add_token_for_name(tokens, source, imp.range, imp.alias, SemanticTokenType::Namespace);
         }
         break;
     }
     case ast::NodeKind::ConstDecl: {
         const auto &con = static_cast<const ast::ConstDecl &>(decl);
-        const auto readonly_mod =
-            static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
-        add_token_for_name(tokens, source, con.range, con.name, SemanticTokenType::Variable,
-                           readonly_mod);
+        const auto readonly_mod = static_cast<std::uint32_t>(SemanticTokenModifier::Readonly);
+        add_token_for_name(
+            tokens, source, con.range, con.name, SemanticTokenType::Variable, readonly_mod);
         if (con.type != nullptr) {
             collect_type_syntax_tokens(*con.type, source, tokens);
         }
@@ -553,8 +564,8 @@ void collect_decl_tokens(const ast::Decl &decl,
         }
         for (const auto &node : wf.nodes) {
             if (node != nullptr) {
-                add_token_for_name(tokens, source, node->range, node->name,
-                                   SemanticTokenType::Variable);
+                add_token_for_name(
+                    tokens, source, node->range, node->name, SemanticTokenType::Variable);
                 if (node->target != nullptr) {
                     collect_qualified_name_tokens(
                         *node->target, source, tokens, SemanticTokenType::Class);
@@ -580,12 +591,14 @@ void collect_decl_tokens(const ast::Decl &decl,
     case ast::NodeKind::FlowDecl: {
         const auto &flow = static_cast<const ast::FlowDecl &>(decl);
         if (flow.target != nullptr) {
-            collect_qualified_name_tokens(
-                *flow.target, source, tokens, SemanticTokenType::Class);
+            collect_qualified_name_tokens(*flow.target, source, tokens, SemanticTokenType::Class);
         }
         for (const auto &handler : flow.state_handlers) {
             if (handler != nullptr) {
-                add_token_for_name(tokens, source, handler->range, handler->state_name,
+                add_token_for_name(tokens,
+                                   source,
+                                   handler->range,
+                                   handler->state_name,
                                    SemanticTokenType::Variable);
                 if (handler->body != nullptr) {
                     collect_block_tokens(*handler->body, source, tokens);
@@ -604,8 +617,7 @@ void collect_decl_tokens(const ast::Decl &decl,
 // Delta encoding
 // ---------------------------------------------------------------------------
 
-[[nodiscard]] std::vector<SemanticToken>
-delta_encode_tokens(std::vector<TokenEntry> &tokens) {
+[[nodiscard]] std::vector<SemanticToken> delta_encode_tokens(std::vector<TokenEntry> &tokens) {
     std::sort(tokens.begin(), tokens.end(), compare_tokens);
 
     std::vector<SemanticToken> result;
@@ -616,8 +628,7 @@ delta_encode_tokens(std::vector<TokenEntry> &tokens) {
 
     for (const auto &entry : tokens) {
         const std::uint32_t delta_line = entry.line - prev_line;
-        const std::uint32_t delta_start =
-            delta_line == 0 ? entry.start - prev_start : entry.start;
+        const std::uint32_t delta_start = delta_line == 0 ? entry.start - prev_start : entry.start;
 
         result.push_back(SemanticToken{
             .delta_line = delta_line,
@@ -640,8 +651,7 @@ delta_encode_tokens(std::vector<TokenEntry> &tokens) {
 // Public API
 // ---------------------------------------------------------------------------
 
-SemanticTokens compute_semantic_tokens(const std::string &source,
-                                       const AnalysisService &analysis) {
+SemanticTokens compute_semantic_tokens(const std::string &source, const AnalysisService &analysis) {
     SemanticTokens result;
 
     // snapshot_for_uri performs lazy computation with internal caching.

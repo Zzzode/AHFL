@@ -34,11 +34,9 @@ class TypeContext {
     [[nodiscard]] TypePtr enum_type(std::string canonical_name);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, SymbolId symbol);
     [[nodiscard]] TypePtr enum_type(std::string canonical_name, std::optional<SymbolId> symbol);
-    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
-                                            std::string variant_name);
-    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
-                                            std::string variant_name,
-                                            SymbolId symbol);
+    [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name, std::string variant_name);
+    [[nodiscard]] TypePtr
+    enum_variant_type(std::string canonical_name, std::string variant_name, SymbolId symbol);
     [[nodiscard]] TypePtr enum_variant_type(std::string canonical_name,
                                             std::string variant_name,
                                             std::optional<SymbolId> symbol);

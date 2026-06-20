@@ -17,22 +17,22 @@ enum class ProviderStatus {
 
 /// An entry in the provider registry.
 struct ProviderEntry {
-    std::string name;
-    std::string endpoint;
-    std::string api_key;
-    std::string api_key_secret;
-    std::string oauth2_token_secret;
-    std::string mtls_client_cert_path;
-    std::string mtls_client_key_path;
-    std::string mtls_ca_cert_path;
-    std::string mtls_client_cert_secret;
-    std::string mtls_client_key_secret;
-    std::string mtls_ca_cert_secret;
+    std::string name{};
+    std::string endpoint{};
+    std::string api_key{};
+    std::string api_key_secret{};
+    std::string oauth2_token_secret{};
+    std::string mtls_client_cert_path{};
+    std::string mtls_client_key_path{};
+    std::string mtls_ca_cert_path{};
+    std::string mtls_client_cert_secret{};
+    std::string mtls_client_key_secret{};
+    std::string mtls_ca_cert_secret{};
     bool mtls_verify_tls{true};
     bool mtls_verify_tls_set{false};
-    std::string auth_scheme;
-    std::string auth_header;
-    std::string model;
+    std::string auth_scheme{};
+    std::string auth_header{};
+    std::string model{};
     int priority{0};
     ProviderStatus status{ProviderStatus::Available};
 };

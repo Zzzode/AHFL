@@ -250,9 +250,9 @@ struct WorkflowExprSummary {
 
 /// Workflow node: node name: AgentType(input_expr) [after [dep1, dep2]];
 struct WorkflowNode {
-    std::string name;                  // Node name
-    ExprRef input;                     // Input expression passed to the agent
-    std::vector<std::string> after;    // DAG dependencies (predecessor node names)
+    std::string name;               // Node name
+    ExprRef input;                  // Input expression passed to the agent
+    std::vector<std::string> after; // DAG dependencies (predecessor node names)
     SymbolRef target_ref;
     SourceRangeOpt source_range;
 };

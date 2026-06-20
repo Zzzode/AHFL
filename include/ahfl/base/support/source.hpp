@@ -31,11 +31,11 @@ struct SourceRange {
 };
 
 struct SourceFile {
-    std::string display_name;
-    std::string content;
+    std::string display_name{};
+    std::string content{};
     // Cached line-start offsets for locate/offset_of hot paths.
     // Source content is treated as immutable after loading.
-    mutable std::vector<std::size_t> line_starts_cache;
+    mutable std::vector<std::size_t> line_starts_cache{};
     mutable const char *line_starts_content_data{nullptr};
     mutable std::size_t line_starts_content_size{0};
 
