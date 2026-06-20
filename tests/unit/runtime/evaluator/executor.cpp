@@ -51,10 +51,6 @@ TypeRef make_int_type_ref() {
         .kind = TypeRefKind::Int,
         .display_name = "Int",
         .canonical_name = "Int",
-        .string_bounds = {},
-        .decimal_scale = {},
-        .first = nullptr,
-        .second = nullptr,
     };
 }
 
