@@ -29,7 +29,7 @@ struct CapabilityInvocationContext {
     bool has_workflow_node_context{false};
 };
 
-// Capability 调用状态
+// Capability call status
 enum class CapabilityCallStatus {
     Success,
     Error,
@@ -38,7 +38,7 @@ enum class CapabilityCallStatus {
     CircuitOpen,
 };
 
-// Capability 调用结果
+// Capability call result
 struct CapabilityCallResult {
     CapabilityCallStatus status{CapabilityCallStatus::Error};
     std::optional<Value> value;
@@ -58,26 +58,26 @@ enum class CapabilityResponseFormat {
     TextPlain,
 };
 
-// Retry 配置
+// Retry configuration
 struct RetryConfig {
     std::size_t max_retries{0};
     std::chrono::milliseconds initial_delay{100};
     double backoff_multiplier{2.0};
 };
 
-// Timeout 配置
+// Timeout configuration
 struct TimeoutConfig {
     std::chrono::milliseconds deadline{30000};
 };
 
-// Circuit Breaker 配置
+// Circuit breaker configuration
 struct CircuitBreakerConfig {
     std::size_t failure_threshold{5};
     std::chrono::seconds recovery_window{30};
     bool enabled{false};
 };
 
-// Circuit Breaker 状态（线程安全，通过 shared_ptr 共享给 handler lambda）
+// Circuit breaker state (thread-safe, shared with handler lambdas via shared_ptr)
 class CircuitBreakerState {
   public:
     enum class State {
@@ -100,7 +100,7 @@ class CircuitBreakerState {
     std::chrono::steady_clock::time_point opened_at_{};
 };
 
-// 单个 Capability 的绑定定义
+// Binding definition for a single capability
 struct CapabilityBinding {
     std::string name;
     std::function<CapabilityCallResult(const std::vector<Value> &args)> handler;
@@ -110,7 +110,7 @@ struct CapabilityBinding {
     std::shared_ptr<CircuitBreakerState> circuit_state;
 };
 
-// Capability 注册中心
+// Capability registry
 class CapabilityRegistry {
   public:
     void register_capability(CapabilityBinding binding);
@@ -136,7 +136,7 @@ class CapabilityRegistry {
                                                          const std::vector<Value> &args);
 };
 
-// HTTP Capability 工厂
+// HTTP capability factory
 struct HTTPCapabilityConfig {
     std::string url;
     std::string method{"POST"};

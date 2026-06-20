@@ -1,4 +1,4 @@
-// prompt_builder.cpp - LLM Prompt 构建
+// prompt_builder.cpp - LLM Prompt builder
 
 #include "runtime/providers/llm/prompt_builder.hpp"
 
@@ -24,7 +24,7 @@ const ir::EnumDecl *PromptBuilder::find_enum(const std::string &name) const {
 }
 
 std::string PromptBuilder::describe_type_schema(const std::string &type_name) const {
-    // 基本类型
+    // Basic types
     if (type_name == "String") {
         return "string";
     }
@@ -38,7 +38,7 @@ std::string PromptBuilder::describe_type_schema(const std::string &type_name) co
         return "boolean";
     }
 
-    // 枚举类型
+    // Enum types
     if (const auto *enum_decl = find_enum(type_name)) {
         std::ostringstream oss;
         oss << "enum, one of: [";
@@ -52,7 +52,7 @@ std::string PromptBuilder::describe_type_schema(const std::string &type_name) co
         return oss.str();
     }
 
-    // 结构体类型
+    // Struct types
     if (const auto *struct_decl = find_struct(type_name)) {
         std::ostringstream oss;
         oss << "object with fields: { ";
@@ -140,7 +140,7 @@ std::string PromptBuilder::build_system_prompt(const std::string &capability_nam
     oss << "You are an AI assistant implementing the capability \"" << capability_name << "\".\n";
     oss << "You MUST respond with a valid JSON object.\n\n";
 
-    // 参数描述
+    // Parameter descriptions
     if (!cap->params.empty()) {
         oss << "Input parameters:\n";
         for (const auto &param : cap->params) {
@@ -151,7 +151,7 @@ std::string PromptBuilder::build_system_prompt(const std::string &capability_nam
         oss << "\n";
     }
 
-    // 返回类型描述
+    // Return type description
     oss << "Required output format (JSON):\n";
     oss << "  "
         << describe_type_schema(std::string(ir::type_canonical_name(cap->return_type_ref, "Any")))

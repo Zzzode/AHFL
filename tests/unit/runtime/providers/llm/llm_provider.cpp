@@ -1,6 +1,6 @@
-// llm_provider.cpp - LLM Provider 单元测试
+// llm_provider.cpp - LLM Provider unit tests
 //
-// 验证 PromptBuilder、ResponseParser、LLMProviderConfig、LLMCapabilityProvider 的功能
+// Validates the functionality of PromptBuilder, ResponseParser, LLMProviderConfig, and LLMCapabilityProvider
 
 #include "ahfl/compiler/ir/ir.hpp"
 #include "base/json/json_value.hpp"
@@ -33,7 +33,7 @@ using namespace ahfl::ir;
 using namespace ahfl::llm_provider;
 using namespace ahfl::runtime;
 
-// 测试统计
+// Test statistics
 int test_count = 0;
 int pass_count = 0;
 
@@ -83,20 +83,20 @@ ir::TypeRef make_type_ref(const std::string &name) {
 }
 
 // ============================================================================
-// 构建测试用 IR Program（模拟 ClassifyMessage capability）
+// Build a test IR Program (simulating the ClassifyMessage capability)
 // ============================================================================
 
 ir::Program build_test_program() {
     ir::Program program;
     program.format_version = std::string(kFormatVersion);
 
-    // 枚举: Category { General, Technical, Billing }
+    // Enum: Category { General, Technical, Billing }
     ir::EnumDecl category_enum;
     category_enum.name = "Category";
     category_enum.variants = {"General", "Technical", "Billing"};
     program.declarations.push_back(std::move(category_enum));
 
-    // 结构体: ClassifyResult { category: Category, confidence: String }
+    // Struct: ClassifyResult { category: Category, confidence: String }
     ir::StructDecl classify_result;
     classify_result.name = "ClassifyResult";
     classify_result.fields.push_back(ir::FieldDecl{
@@ -124,7 +124,7 @@ ir::Program build_test_program() {
     classify_cap.return_type_ref = make_type_ref("ClassifyResult");
     program.declarations.push_back(std::move(classify_cap));
 
-    // 结构体: SupportResult { response: String, resolved: Bool }
+    // Struct: SupportResult { response: String, resolved: Bool }
     ir::StructDecl support_result;
     support_result.name = "SupportResult";
     support_result.fields.push_back(ir::FieldDecl{
@@ -163,7 +163,7 @@ void test_prompt_builder() {
     auto program = build_test_program();
     PromptBuilder builder(program);
 
-    // system prompt 应包含 capability 名和返回类型描述
+    // system prompt should contain the capability name and return type description
     std::string system = builder.build_system_prompt("ClassifyMessage");
     check(system.find("ClassifyMessage") != std::string::npos,
           "prompt_builder.system_prompt_contains_capability_name");
@@ -175,7 +175,7 @@ void test_prompt_builder() {
           "prompt_builder.system_prompt_contains_enum_variant_2");
     check(system.find("JSON") != std::string::npos, "prompt_builder.system_prompt_mentions_json");
 
-    // user prompt 应包含参数值
+    // user prompt should contain argument values
     std::vector<Value> args;
     args.push_back(make_string("My server is down"));
     std::string user = builder.build_user_prompt("ClassifyMessage", args);
@@ -184,20 +184,20 @@ void test_prompt_builder() {
     check(user.find("message") != std::string::npos,
           "prompt_builder.user_prompt_contains_param_name");
 
-    // 不存在的 capability
+    // Non-existent capability
     std::string unknown = builder.build_system_prompt("UnknownCapability");
     check(!unknown.empty(), "prompt_builder.unknown_capability_returns_default");
 }
 
 // ============================================================================
-// Test: ResponseParser - 解析 struct
+// Test: ResponseParser - parse struct
 // ============================================================================
 
 void test_response_parser_struct() {
     auto program = build_test_program();
     ResponseParser parser(program);
 
-    // 解析有效 JSON → ClassifyResult
+    // Parse valid JSON -> ClassifyResult
     std::string json = R"({"category": "Technical", "confidence": "high"})";
     auto result = parser.parse(json, "ClassifyResult");
 
@@ -208,7 +208,7 @@ void test_response_parser_struct() {
         if (sv != nullptr) {
             check(sv->type_name == "ClassifyResult", "response_parser.struct_type_name");
 
-            // 检查 category 字段
+            // Check the category field
             auto it_cat = sv->fields.find("category");
             check(it_cat != sv->fields.end(), "response_parser.struct_has_category");
             if (it_cat != sv->fields.end() && it_cat->second) {
@@ -220,7 +220,7 @@ void test_response_parser_struct() {
                 }
             }
 
-            // 检查 confidence 字段
+            // Check the confidence field
             auto it_conf = sv->fields.find("confidence");
             check(it_conf != sv->fields.end(), "response_parser.struct_has_confidence");
             if (it_conf != sv->fields.end() && it_conf->second) {
@@ -235,7 +235,7 @@ void test_response_parser_struct() {
 }
 
 // ============================================================================
-// Test: ResponseParser - 解析枚举
+// Test: ResponseParser - parse enum
 // ============================================================================
 
 void test_response_parser_enum() {
@@ -284,7 +284,7 @@ void test_response_parser_rejects_missing_struct_field() {
 }
 
 // ============================================================================
-// Test: ResponseParser - 解析 bool 字段
+// Test: ResponseParser - parse bool field
 // ============================================================================
 
 void test_response_parser_bool_field() {
@@ -378,15 +378,15 @@ void test_parse_tool_calls_uses_json_dom() {
 }
 
 // ============================================================================
-// Test: LLMProviderConfig - 环境变量展开
+// Test: LLMProviderConfig - environment variable expansion
 // ============================================================================
 
 void test_config_env_expansion() {
-    // 设置测试环境变量
+    // Set test environment variables
     setenv("AHFL_TEST_API_KEY", "sk-test-12345", 1);
     setenv("AHFL_TEST_ENDPOINT", "https://api.example.com/v1", 1);
 
-    // 测试 expand_env_vars
+    // Test expand_env_vars
     std::string input = "key=${AHFL_TEST_API_KEY}, url=${AHFL_TEST_ENDPOINT}";
     std::string expanded = expand_env_vars(input);
     check(expanded.find("sk-test-12345") != std::string::npos, "config.env_expansion_api_key");
@@ -394,12 +394,12 @@ void test_config_env_expansion() {
           "config.env_expansion_endpoint");
     check(expanded.find("${") == std::string::npos, "config.env_expansion_no_remaining_vars");
 
-    // 未定义的环境变量应被清除
+    // Undefined environment variables should be cleared
     std::string with_unknown = "prefix_${AHFL_UNDEFINED_VAR_12345}_suffix";
     std::string result = expand_env_vars(with_unknown);
     check(result == "prefix__suffix", "config.env_expansion_undefined_var_cleared");
 
-    // 测试 load_config
+    // Test load_config
     std::string json = R"({
         "endpoint": "${AHFL_TEST_ENDPOINT}",
         "model": "glm-4",
@@ -538,7 +538,7 @@ void test_config_env_expansion() {
     }
     check(!validate_config(config).has_value(), "config.validate_budget_ok");
 
-    // 清理
+    // Cleanup
     unsetenv("AHFL_TEST_API_KEY");
     unsetenv("AHFL_TEST_ENDPOINT");
 }
@@ -941,11 +941,11 @@ void test_http_client_omits_auth_header_for_mtls() {
 }
 
 // ============================================================================
-// Test: LLMCapabilityProvider 端到端（使用 mock HTTP）
+// Test: LLMCapabilityProvider end-to-end (using mock HTTP)
 // ============================================================================
 
 void test_llm_capability_provider_register() {
-    // 验证 register_all 将 capability 注册到 registry
+    // Verify register_all registers the capability into the registry
     auto program = build_test_program();
     LLMProviderConfig config;
     config.endpoint = "http://localhost:9999";
@@ -956,7 +956,7 @@ void test_llm_capability_provider_register() {
     CapabilityRegistry registry;
     provider.register_all(registry);
 
-    // 验证 capability 已注册
+    // Verify the capability is registered
     check(registry.has("ClassifyMessage"), "provider.register_classify_message");
     check(registry.has("HandleTechnical"), "provider.register_handle_technical");
 }

@@ -1,4 +1,4 @@
-// response_parser.cpp - LLM JSON 响应 → AHFL Value 解析
+// response_parser.cpp - Parse LLM JSON response into AHFL Value
 
 #include "runtime/providers/llm/response_parser.hpp"
 
@@ -98,9 +98,9 @@ ResponseParseResult ResponseParser::parse_primitive(const std::string &value_str
         return parse_error("expected Bool but got '" + value_str + "'");
     }
 
-    // 枚举类型
+    // Enum type
     if (const auto *enum_decl = find_enum(type_name)) {
-        // 验证 variant 是否合法
+        // Validate whether the variant is legal
         for (const auto &variant : enum_decl->variants) {
             if (variant == value_str) {
                 return parse_success(evaluator::make_enum(type_name, value_str));
@@ -143,7 +143,7 @@ ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
 
         const auto field_type = std::string(ir::type_canonical_name(field.type_ref, "Any"));
 
-        // 检查是否是结构体类型
+        // Check whether this is a struct type
         if (const auto *nested_struct = find_struct(field_type)) {
             auto nested_val = parse_struct(raw_value, *nested_struct);
             if (nested_val.success()) {
@@ -154,7 +154,7 @@ ResponseParseResult ResponseParser::parse_struct(const std::string &json_obj,
             continue;
         }
 
-        // 解析基本类型
+        // Parse primitive type
         auto field_val = parse_primitive(raw_value, field_type);
         if (field_val.success()) {
             fields.emplace(field.name, std::move(*field_val.value));
@@ -177,19 +177,19 @@ std::optional<evaluator::Value> ResponseParser::parse(const std::string &json_st
 
 ResponseParseResult ResponseParser::parse_with_diagnostics(const std::string &json_str,
                                                            const std::string &expected_type) const {
-    // 基本类型
+    // Primitive type
     if (expected_type == "String" || expected_type == "Int" || expected_type == "Float" ||
         expected_type == "Bool") {
         return parse_primitive(json_str, expected_type);
     }
 
-    // 枚举类型
+    // Enum type
     if (find_enum(expected_type) != nullptr) {
-        // 如果 json_str 是一个 JSON 对象中某个字段的值，直接作为枚举
+        // If json_str is the value of a field inside a JSON object, treat it directly as an enum
         return parse_primitive(json_str, expected_type);
     }
 
-    // 结构体类型
+    // Struct type
     if (const auto *struct_decl = find_struct(expected_type)) {
         return parse_struct(json_str, *struct_decl);
     }

@@ -14,21 +14,21 @@ namespace ahfl::durable_store_import {
 inline constexpr std::string_view kProviderConfigBundleValidationReportFormatVersion =
     "ahfl.durable-store-import-provider-config-bundle-validation-report.v1";
 
-// 校验单项的状态
+// Status of a single validation item
 enum class ConfigValidationStatus {
     Valid,
     Invalid,
     Missing
 };
 
-// Provider reference 校验条目
+// Provider reference validation entry
 struct ProviderReferenceCheck {
     std::string provider_name;
     ConfigValidationStatus status{ConfigValidationStatus::Missing};
     std::optional<std::string> validation_error;
 };
 
-// Secret handle 校验条目（不读取 secret value）
+// Secret handle validation entry (does not read the secret value)
 struct SecretHandleCheck {
     std::string secret_name;
     std::string secret_scope;
@@ -37,20 +37,20 @@ struct SecretHandleCheck {
     bool has_redaction_policy{false};
 };
 
-// Endpoint shape 校验条目
+// Endpoint shape validation entry
 struct EndpointShapeCheck {
     std::string endpoint_name;
     std::string expected_shape;
     ConfigValidationStatus status{ConfigValidationStatus::Missing};
 };
 
-// Environment binding 校验条目
+// Environment binding validation entry
 struct EnvironmentBindingCheck {
     std::string binding_name;
     ConfigValidationStatus status{ConfigValidationStatus::Missing};
 };
 
-// Config bundle validation 完整报告
+// Full config bundle validation report
 struct ProviderConfigBundleValidationReport {
     std::string format_version{std::string(kProviderConfigBundleValidationReportFormatVersion)};
     std::string source_durable_store_import_provider_selection_plan_format_version{
@@ -64,24 +64,24 @@ struct ProviderConfigBundleValidationReport {
     std::string config_bundle_identity;
     std::string durable_store_import_provider_selection_plan_identity;
     std::string durable_store_import_provider_config_snapshot_identity;
-    // 校验结果
+    // Validation results
     std::vector<ProviderReferenceCheck> provider_references;
     std::vector<SecretHandleCheck> secret_handles;
     std::vector<EndpointShapeCheck> endpoint_shapes;
     std::vector<EnvironmentBindingCheck> environment_bindings;
-    // 汇总计数
+    // Summary counts
     int valid_count{0};
     int invalid_count{0};
     int missing_count{0};
     std::string validation_summary;
     std::string blocking_summary;
-    // 安全约束标记
+    // Safety constraint flags
     bool reads_secret_value{false};
     bool opens_network_connection{false};
     bool generates_production_config{false};
 };
 
-// Validation result 包装
+// Validation result wrapper
 struct ProviderConfigBundleValidationReportValidationResult {
     DiagnosticBag diagnostics;
     [[nodiscard]] bool has_errors() const noexcept {
@@ -97,12 +97,12 @@ struct ProviderConfigBundleValidationReportResult {
     }
 };
 
-// 校验已有报告结构的合法性
+// Validate the legality of an existing report structure
 [[nodiscard]] ProviderConfigBundleValidationReportValidationResult
 validate_provider_config_bundle_validation_report(
     const ProviderConfigBundleValidationReport &report);
 
-// 基于 selection plan 和 config snapshot 构建 validation report
+// Build a validation report from a selection plan and config snapshot
 [[nodiscard]] ProviderConfigBundleValidationReportResult
 build_provider_config_bundle_validation_report(
     const ProviderSelectionPlan &selection_plan,
