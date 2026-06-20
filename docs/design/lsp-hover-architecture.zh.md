@@ -651,8 +651,8 @@ cmake --build --preset build-dev --target ahfl_tooling_lsp_handler_tests ahfl-ls
 ./build/dev/tests/ahfl_tooling_lsp_handler_tests
 ctest --preset test-dev --output-on-failure -L lsp
 ctest --preset test-dev --output-on-failure
-npm run check --prefix tools/vscode
-npm run test:hover --prefix tools/vscode
+pnpm --dir tools/vscode run check
+pnpm --dir tools/vscode run test:hover
 git diff --check
 ```
 
