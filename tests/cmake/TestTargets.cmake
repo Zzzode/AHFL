@@ -351,6 +351,16 @@ target_link_libraries(ahfl_base_json_value_tests
 )
 ahfl_apply_project_warnings(ahfl_base_json_value_tests)
 
+add_executable(ahfl_base_diagnostic_serialization_tests
+    unit/base/support/diagnostic_serialization.cpp
+)
+target_link_libraries(ahfl_base_diagnostic_serialization_tests
+    PRIVATE
+        ahfl_base_support
+        ahfl_base_json
+)
+ahfl_apply_project_warnings(ahfl_base_diagnostic_serialization_tests)
+
 add_executable(ahfl_runtime_provider_secret_provider_tests
     unit/runtime/providers/secret/secret_provider.cpp
 )
@@ -728,6 +738,7 @@ foreach(_tgt
     ahfl_http_transport_tests
     ahfl_grpc_transport_tests
     ahfl_base_json_value_tests
+    ahfl_base_diagnostic_serialization_tests
     ahfl_runtime_provider_secret_provider_tests
     ahfl_vault_rotation_tests
     ahfl_pass_manager_tests

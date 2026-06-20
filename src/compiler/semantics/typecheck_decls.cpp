@@ -499,6 +499,9 @@ void TypeCheckPass::build_agent_types() {
                 .output_type = resolve_type(*decl.get().output_type),
                 .capability_symbols = {},
                 .declaration_range = decl.get().range,
+                .input_type_range = decl.get().input_type->range,
+                .context_type_range = decl.get().context_type->range,
+                .output_type_range = decl.get().output_type->range,
             };
 
             check_schema_boundary_decl_type(
@@ -586,6 +589,8 @@ void TypeCheckPass::build_workflow_types() {
                 .input_type = resolve_type(*decl.get().input_type),
                 .output_type = resolve_type(*decl.get().output_type),
                 .declaration_range = decl.get().range,
+                .input_type_range = decl.get().input_type->range,
+                .output_type_range = decl.get().output_type->range,
             };
 
             check_schema_boundary_decl_type(

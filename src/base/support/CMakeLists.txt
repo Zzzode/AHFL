@@ -1,5 +1,6 @@
 add_library(ahfl_base_support STATIC
     curl.cpp
+    diagnostic_serialization.cpp
     http.cpp
     process.cpp
     thread_pool.cpp
@@ -10,6 +11,8 @@ add_library(ahfl_base_support STATIC
 target_link_libraries(ahfl_base_support
     PUBLIC
         ahfl_base_public
+    PRIVATE
+        ahfl_base_json
 )
 
 find_package(Threads REQUIRED)

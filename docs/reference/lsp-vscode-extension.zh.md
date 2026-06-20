@@ -115,7 +115,7 @@ Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外
 
 1. 打开包含 `.ahfl` 文件的工作区。
 2. 对 platform VSIX，确认扩展可自动启动内置 `server/ahfl-lsp`。
-3. 在 `.ahfl` 文件中触发 diagnostics、hover、completion。当前 server 同时支持 `textDocument/publishDiagnostics` 推送，以及 `textDocument/diagnostic` / `workspace/diagnostic` full report 拉取。
+3. 在 `.ahfl` 文件中触发 diagnostics、hover、completion。Server 通过 `textDocument/diagnostic` 和 `workspace/diagnostic` full report 的 pull 模式提供诊断，并通过 `$/diagnostic/refresh` 通知客户端拉取更新。
 4. 修改未打开的 imported `.ahfl` 文件后，确认 watched-files notification 会触发 workspace diagnostics 刷新。
 5. workspace folder 切换目前只有 server handler/protocol 级证据；extension-host 序列仍作为后续验证项。
 6. 如需排查 server 输出，可临时设置环境变量 `AHFL_LSP_TRACE=1` 后启动 VS Code。
