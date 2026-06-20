@@ -34,7 +34,8 @@ class ProgramIndex {
     /// Convenience: resolve a SymbolRef's optional ID for O(1) lookup, falling
     /// back to nullptr if the ref has no numeric ID or the ID is not indexed.
     [[nodiscard]] const Decl *find_decl_by_symbol_ref(const SymbolRef &ref) const {
-        if (!ref.id.has_value()) return nullptr;
+        if (!ref.id.has_value())
+            return nullptr;
         return find_decl_by_id(*ref.id);
     }
 

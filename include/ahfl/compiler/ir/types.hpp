@@ -153,10 +153,10 @@ enum class TypeRefKind {
 /// local/module are used for diagnostics and display.
 struct SymbolRef {
     SymbolRefKind kind{SymbolRefKind::Unknown};
-    std::string canonical_name;
-    std::string local_name;
-    std::string module_name;
-    std::optional<std::size_t> id; // Numeric symbol ID for O(1) cross-declaration lookup
+    std::string canonical_name{};
+    std::string local_name{};
+    std::string module_name{};
+    std::optional<std::size_t> id{}; // Numeric symbol ID for O(1) cross-declaration lookup
 };
 
 /// Resolved or structured type reference.
@@ -165,14 +165,14 @@ using TypeRefPtr = Owned<TypeRef>;
 
 struct TypeRef {
     TypeRefKind kind{TypeRefKind::Unresolved};
-    std::string display_name;
-    std::string canonical_name;
-    std::string variant_name;
-    std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds;
-    std::optional<std::int64_t> decimal_scale;
-    std::optional<SourceRange> source_range;
-    TypeRefPtr first;
-    TypeRefPtr second;
+    std::string display_name{};
+    std::string canonical_name{};
+    std::string variant_name{};
+    std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds{};
+    std::optional<std::int64_t> decimal_scale{};
+    std::optional<SourceRange> source_range{};
+    TypeRefPtr first{};
+    TypeRefPtr second{};
 };
 
 } // namespace ahfl::ir

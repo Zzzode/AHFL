@@ -498,8 +498,8 @@ struct RuntimeToolCatalogEntry {
 
     struct Outcome {
         OutcomeKind kind{OutcomeKind::Result};
-        std::optional<ahfl::evaluator::Value> result;
-        std::string error_message;
+        std::optional<ahfl::evaluator::Value> result{};
+        std::string error_message{};
         std::chrono::milliseconds timeout{0};
     };
 

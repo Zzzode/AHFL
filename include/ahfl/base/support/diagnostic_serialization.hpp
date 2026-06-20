@@ -21,7 +21,8 @@ inline constexpr std::string_view kDiagnosticReportSchemaVersion = "AHFL_DIAGNOS
 // ---------------------------------------------------------------------------
 
 /// Serialize a single Diagnostic to a JSON value.
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_diagnostic_json(const Diagnostic &diagnostic);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_diagnostic_json(const Diagnostic &diagnostic);
 
 /// Deserialize a single Diagnostic from a JSON value.
 /// Returns std::nullopt if the JSON structure is invalid.

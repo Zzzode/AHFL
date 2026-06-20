@@ -566,7 +566,6 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr,
     return EvalResult{clone_value(*lv->items[static_cast<size_t>(idx)]), {}};
 }
 
-
 // ============================================================================
 // CallExpr - NOT SUPPORTED in v0.51
 // ============================================================================

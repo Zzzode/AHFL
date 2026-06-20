@@ -374,46 +374,46 @@ class AstPrinter final {
     }
 
     void print_type(const ast::TypeSyntax &type, int indent_level) {
-        std::visit(Overloaded{
-            [&](const ast::UnitType &) { line(indent_level, "primitive ()"); },
-            [&](const ast::BoolType &) { line(indent_level, "primitive Bool"); },
-            [&](const ast::IntType &) { line(indent_level, "primitive Int"); },
-            [&](const ast::FloatType &) { line(indent_level, "primitive Float"); },
-            [&](const ast::StringType &) { line(indent_level, "primitive String"); },
-            [&](const ast::BoundedStringType &t) {
-                std::ostringstream ss;
-                ss << "bounded_string String(" << t.min_length << ", " << t.max_length << ")";
-                line(indent_level, ss.str());
+        std::visit(
+            Overloaded{
+                [&](const ast::UnitType &) { line(indent_level, "primitive ()"); },
+                [&](const ast::BoolType &) { line(indent_level, "primitive Bool"); },
+                [&](const ast::IntType &) { line(indent_level, "primitive Int"); },
+                [&](const ast::FloatType &) { line(indent_level, "primitive Float"); },
+                [&](const ast::StringType &) { line(indent_level, "primitive String"); },
+                [&](const ast::BoundedStringType &t) {
+                    std::ostringstream ss;
+                    ss << "bounded_string String(" << t.min_length << ", " << t.max_length << ")";
+                    line(indent_level, ss.str());
+                },
+                [&](const ast::UuidType &) { line(indent_level, "primitive UUID"); },
+                [&](const ast::TimestampType &) { line(indent_level, "primitive Timestamp"); },
+                [&](const ast::DurationType &) { line(indent_level, "primitive Duration"); },
+                [&](const ast::DecimalType &t) {
+                    line(indent_level, "decimal Decimal(" + std::to_string(t.scale) + ")");
+                },
+                [&](const ast::NamedType &t) { line(indent_level, "named " + t.name->spelling()); },
+                [&](const ast::OptionalType &t) {
+                    line(indent_level, "optional");
+                    print_type(*t.inner, indent_level + 1);
+                },
+                [&](const ast::ListType &t) {
+                    line(indent_level, "list");
+                    print_type(*t.element, indent_level + 1);
+                },
+                [&](const ast::SetType &t) {
+                    line(indent_level, "set");
+                    print_type(*t.element, indent_level + 1);
+                },
+                [&](const ast::MapType &t) {
+                    line(indent_level, "map");
+                    line(indent_level + 1, "key");
+                    print_type(*t.key_type, indent_level + 2);
+                    line(indent_level + 1, "value");
+                    print_type(*t.value_type, indent_level + 2);
+                },
             },
-            [&](const ast::UuidType &) { line(indent_level, "primitive UUID"); },
-            [&](const ast::TimestampType &) { line(indent_level, "primitive Timestamp"); },
-            [&](const ast::DurationType &) { line(indent_level, "primitive Duration"); },
-            [&](const ast::DecimalType &t) {
-                line(indent_level, "decimal Decimal(" + std::to_string(t.scale) + ")");
-            },
-            [&](const ast::NamedType &t) {
-                line(indent_level, "named " + t.name->spelling());
-            },
-            [&](const ast::OptionalType &t) {
-                line(indent_level, "optional");
-                print_type(*t.inner, indent_level + 1);
-            },
-            [&](const ast::ListType &t) {
-                line(indent_level, "list");
-                print_type(*t.element, indent_level + 1);
-            },
-            [&](const ast::SetType &t) {
-                line(indent_level, "set");
-                print_type(*t.element, indent_level + 1);
-            },
-            [&](const ast::MapType &t) {
-                line(indent_level, "map");
-                line(indent_level + 1, "key");
-                print_type(*t.key_type, indent_level + 2);
-                line(indent_level + 1, "value");
-                print_type(*t.value_type, indent_level + 2);
-            },
-        }, type.node);
+            type.node);
     }
 
     void print_expr_field(std::string_view label, const ast::ExprSyntax *expr, int indent_level) {
@@ -426,103 +426,99 @@ class AstPrinter final {
     }
 
     void print_expr(const ast::ExprSyntax &expr, int indent_level) {
-        std::visit(Overloaded{
-            [&](const ast::NoneLiteralExpr &) {
-                line(indent_level, "none");
+        std::visit(
+            Overloaded{
+                [&](const ast::NoneLiteralExpr &) { line(indent_level, "none"); },
+                [&](const ast::BoolLiteralExpr &e) {
+                    line(indent_level, std::string("bool ") + (e.value ? "true" : "false"));
+                },
+                [&](const ast::IntegerLiteralExpr &e) {
+                    line(indent_level, "integer " + e.literal->spelling);
+                },
+                [&](const ast::FloatLiteralExpr &e) { line(indent_level, "float " + e.spelling); },
+                [&](const ast::DecimalLiteralExpr &e) {
+                    line(indent_level, "decimal " + e.spelling);
+                },
+                [&](const ast::StringLiteralExpr &e) {
+                    line(indent_level, "string " + e.spelling);
+                },
+                [&](const ast::DurationLiteralExpr &e) {
+                    line(indent_level, "duration " + e.literal->spelling);
+                },
+                [&](const ast::SomeExpr &e) {
+                    line(indent_level, "some");
+                    print_expr(*e.value, indent_level + 1);
+                },
+                [&](const ast::PathExpr &e) { line(indent_level, "path " + e.path->spelling()); },
+                [&](const ast::QualifiedValueExpr &e) {
+                    line(indent_level, "qualified_value " + e.name->spelling());
+                },
+                [&](const ast::CallExpr &e) {
+                    line(indent_level, "call " + e.callee->spelling());
+                    for (std::size_t index = 0; index < e.arguments.size(); ++index) {
+                        line(indent_level + 1, "arg " + std::to_string(index));
+                        print_expr(*e.arguments[index], indent_level + 2);
+                    }
+                },
+                [&](const ast::StructLiteralExpr &e) {
+                    line(indent_level, "struct_literal " + e.type_name->spelling());
+                    for (const auto &field : e.fields) {
+                        line(indent_level + 1, "field " + field->field_name);
+                        print_expr(*field->value, indent_level + 2);
+                    }
+                },
+                [&](const ast::ListLiteralExpr &e) {
+                    line(indent_level, "list_literal");
+                    for (std::size_t index = 0; index < e.items.size(); ++index) {
+                        line(indent_level + 1, "item " + std::to_string(index));
+                        print_expr(*e.items[index], indent_level + 2);
+                    }
+                },
+                [&](const ast::SetLiteralExpr &e) {
+                    line(indent_level, "set_literal");
+                    for (std::size_t index = 0; index < e.items.size(); ++index) {
+                        line(indent_level + 1, "item " + std::to_string(index));
+                        print_expr(*e.items[index], indent_level + 2);
+                    }
+                },
+                [&](const ast::MapLiteralExpr &e) {
+                    line(indent_level, "map_literal");
+                    for (std::size_t index = 0; index < e.entries.size(); ++index) {
+                        line(indent_level + 1, "entry " + std::to_string(index));
+                        line(indent_level + 2, "key");
+                        print_expr(*e.entries[index]->key, indent_level + 3);
+                        line(indent_level + 2, "value");
+                        print_expr(*e.entries[index]->value, indent_level + 3);
+                    }
+                },
+                [&](const ast::UnaryExpr &e) {
+                    line(indent_level, "unary " + expr_unary_name(e.op));
+                    print_expr(*e.operand, indent_level + 1);
+                },
+                [&](const ast::BinaryExpr &e) {
+                    line(indent_level, "binary " + expr_binary_name(e.op));
+                    line(indent_level + 1, "lhs");
+                    print_expr(*e.lhs, indent_level + 2);
+                    line(indent_level + 1, "rhs");
+                    print_expr(*e.rhs, indent_level + 2);
+                },
+                [&](const ast::MemberAccessExpr &e) {
+                    line(indent_level, "member_access ." + e.member);
+                    print_expr(*e.base, indent_level + 1);
+                },
+                [&](const ast::IndexAccessExpr &e) {
+                    line(indent_level, "index_access");
+                    line(indent_level + 1, "base");
+                    print_expr(*e.base, indent_level + 2);
+                    line(indent_level + 1, "index");
+                    print_expr(*e.index, indent_level + 2);
+                },
+                [&](const ast::GroupExpr &e) {
+                    line(indent_level, "group");
+                    print_expr(*e.inner, indent_level + 1);
+                },
             },
-            [&](const ast::BoolLiteralExpr &e) {
-                line(indent_level, std::string("bool ") + (e.value ? "true" : "false"));
-            },
-            [&](const ast::IntegerLiteralExpr &e) {
-                line(indent_level, "integer " + e.literal->spelling);
-            },
-            [&](const ast::FloatLiteralExpr &e) {
-                line(indent_level, "float " + e.spelling);
-            },
-            [&](const ast::DecimalLiteralExpr &e) {
-                line(indent_level, "decimal " + e.spelling);
-            },
-            [&](const ast::StringLiteralExpr &e) {
-                line(indent_level, "string " + e.spelling);
-            },
-            [&](const ast::DurationLiteralExpr &e) {
-                line(indent_level, "duration " + e.literal->spelling);
-            },
-            [&](const ast::SomeExpr &e) {
-                line(indent_level, "some");
-                print_expr(*e.value, indent_level + 1);
-            },
-            [&](const ast::PathExpr &e) {
-                line(indent_level, "path " + e.path->spelling());
-            },
-            [&](const ast::QualifiedValueExpr &e) {
-                line(indent_level, "qualified_value " + e.name->spelling());
-            },
-            [&](const ast::CallExpr &e) {
-                line(indent_level, "call " + e.callee->spelling());
-                for (std::size_t index = 0; index < e.arguments.size(); ++index) {
-                    line(indent_level + 1, "arg " + std::to_string(index));
-                    print_expr(*e.arguments[index], indent_level + 2);
-                }
-            },
-            [&](const ast::StructLiteralExpr &e) {
-                line(indent_level, "struct_literal " + e.type_name->spelling());
-                for (const auto &field : e.fields) {
-                    line(indent_level + 1, "field " + field->field_name);
-                    print_expr(*field->value, indent_level + 2);
-                }
-            },
-            [&](const ast::ListLiteralExpr &e) {
-                line(indent_level, "list_literal");
-                for (std::size_t index = 0; index < e.items.size(); ++index) {
-                    line(indent_level + 1, "item " + std::to_string(index));
-                    print_expr(*e.items[index], indent_level + 2);
-                }
-            },
-            [&](const ast::SetLiteralExpr &e) {
-                line(indent_level, "set_literal");
-                for (std::size_t index = 0; index < e.items.size(); ++index) {
-                    line(indent_level + 1, "item " + std::to_string(index));
-                    print_expr(*e.items[index], indent_level + 2);
-                }
-            },
-            [&](const ast::MapLiteralExpr &e) {
-                line(indent_level, "map_literal");
-                for (std::size_t index = 0; index < e.entries.size(); ++index) {
-                    line(indent_level + 1, "entry " + std::to_string(index));
-                    line(indent_level + 2, "key");
-                    print_expr(*e.entries[index]->key, indent_level + 3);
-                    line(indent_level + 2, "value");
-                    print_expr(*e.entries[index]->value, indent_level + 3);
-                }
-            },
-            [&](const ast::UnaryExpr &e) {
-                line(indent_level, "unary " + expr_unary_name(e.op));
-                print_expr(*e.operand, indent_level + 1);
-            },
-            [&](const ast::BinaryExpr &e) {
-                line(indent_level, "binary " + expr_binary_name(e.op));
-                line(indent_level + 1, "lhs");
-                print_expr(*e.lhs, indent_level + 2);
-                line(indent_level + 1, "rhs");
-                print_expr(*e.rhs, indent_level + 2);
-            },
-            [&](const ast::MemberAccessExpr &e) {
-                line(indent_level, "member_access ." + e.member);
-                print_expr(*e.base, indent_level + 1);
-            },
-            [&](const ast::IndexAccessExpr &e) {
-                line(indent_level, "index_access");
-                line(indent_level + 1, "base");
-                print_expr(*e.base, indent_level + 2);
-                line(indent_level + 1, "index");
-                print_expr(*e.index, indent_level + 2);
-            },
-            [&](const ast::GroupExpr &e) {
-                line(indent_level, "group");
-                print_expr(*e.inner, indent_level + 1);
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void print_block(const ast::BlockSyntax &block, int indent_level) {
@@ -575,47 +571,45 @@ class AstPrinter final {
     }
 
     void print_temporal_expr(const ast::TemporalExprSyntax &expr, int indent_level) {
-        std::visit(Overloaded{
-            [&](const ast::EmbeddedTemporalExpr &e) {
-                line(indent_level, "embedded_expr");
-                if (e.expr) {
-                    print_expr(*e.expr, indent_level + 1);
-                }
+        std::visit(
+            Overloaded{
+                [&](const ast::EmbeddedTemporalExpr &e) {
+                    line(indent_level, "embedded_expr");
+                    if (e.expr) {
+                        print_expr(*e.expr, indent_level + 1);
+                    }
+                },
+                [&](const ast::CalledTemporalExpr &e) { line(indent_level, "called " + e.name); },
+                [&](const ast::InStateTemporalExpr &e) {
+                    line(indent_level, "in_state " + e.name);
+                },
+                [&](const ast::RunningTemporalExpr &e) { line(indent_level, "running " + e.name); },
+                [&](const ast::CompletedTemporalExpr &e) {
+                    if (e.state_name.has_value()) {
+                        line(indent_level, "completed " + e.name + ", " + *e.state_name);
+                    } else {
+                        line(indent_level, "completed " + e.name);
+                    }
+                },
+                [&](const ast::UnaryTemporalExpr &e) {
+                    line(indent_level, "temporal_unary " + temporal_unary_name(e.op));
+                    if (e.operand) {
+                        print_temporal_expr(*e.operand, indent_level + 1);
+                    }
+                },
+                [&](const ast::BinaryTemporalExpr &e) {
+                    line(indent_level, "temporal_binary " + temporal_binary_name(e.op));
+                    line(indent_level + 1, "lhs");
+                    if (e.lhs) {
+                        print_temporal_expr(*e.lhs, indent_level + 2);
+                    }
+                    line(indent_level + 1, "rhs");
+                    if (e.rhs) {
+                        print_temporal_expr(*e.rhs, indent_level + 2);
+                    }
+                },
             },
-            [&](const ast::CalledTemporalExpr &e) {
-                line(indent_level, "called " + e.name);
-            },
-            [&](const ast::InStateTemporalExpr &e) {
-                line(indent_level, "in_state " + e.name);
-            },
-            [&](const ast::RunningTemporalExpr &e) {
-                line(indent_level, "running " + e.name);
-            },
-            [&](const ast::CompletedTemporalExpr &e) {
-                if (e.state_name.has_value()) {
-                    line(indent_level, "completed " + e.name + ", " + *e.state_name);
-                } else {
-                    line(indent_level, "completed " + e.name);
-                }
-            },
-            [&](const ast::UnaryTemporalExpr &e) {
-                line(indent_level, "temporal_unary " + temporal_unary_name(e.op));
-                if (e.operand) {
-                    print_temporal_expr(*e.operand, indent_level + 1);
-                }
-            },
-            [&](const ast::BinaryTemporalExpr &e) {
-                line(indent_level, "temporal_binary " + temporal_binary_name(e.op));
-                line(indent_level + 1, "lhs");
-                if (e.lhs) {
-                    print_temporal_expr(*e.lhs, indent_level + 2);
-                }
-                line(indent_level + 1, "rhs");
-                if (e.rhs) {
-                    print_temporal_expr(*e.rhs, indent_level + 2);
-                }
-            },
-        }, expr.node);
+            expr.node);
     }
 };
 

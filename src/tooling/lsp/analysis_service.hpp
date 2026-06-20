@@ -20,11 +20,11 @@
 namespace ahfl::lsp {
 
 struct LspSourceSnapshot {
-    std::string uri;
-    std::filesystem::path path;
+    std::string uri{};
+    std::filesystem::path path{};
     const SourceFile *source{nullptr};
     const ast::Program *program{nullptr};
-    std::optional<SourceId> source_id;
+    std::optional<SourceId> source_id{};
 };
 
 struct LspAnalysisSnapshot {

@@ -1,7 +1,7 @@
 #include "tooling/formatter/formatter.hpp"
 
-#include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/base/support/overloaded.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
 
 #include <algorithm>
 #include <sstream>
@@ -503,162 +503,154 @@ class AstFormatter {
     }
 
     void format_expr(const ahfl::ast::ExprSyntax &expr) {
-        std::visit(Overloaded{
-            [&](const ahfl::ast::NoneLiteralExpr &) {
-                write("none");
-            },
-            [&](const ahfl::ast::BoolLiteralExpr &e) {
-                write(e.value ? "true" : "false");
-            },
-            [&](const ahfl::ast::IntegerLiteralExpr &e) {
-                if (e.literal) {
-                    write(e.literal->spelling);
-                } else {
-                    write(expr.text);
-                }
-            },
-            [&](const ahfl::ast::FloatLiteralExpr &e) {
-                write(e.spelling);
-            },
-            [&](const ahfl::ast::DecimalLiteralExpr &e) {
-                write(e.spelling);
-            },
-            [&](const ahfl::ast::StringLiteralExpr &e) {
-                write(e.spelling);
-            },
-            [&](const ahfl::ast::DurationLiteralExpr &e) {
-                if (e.literal) {
-                    write(e.literal->spelling);
-                } else {
-                    write(expr.text);
-                }
-            },
-            [&](const ahfl::ast::SomeExpr &e) {
-                write("some(");
-                if (e.value) {
-                    format_expr(*e.value);
-                }
-                write(")");
-            },
-            [&](const ahfl::ast::PathExpr &e) {
-                if (e.path) {
-                    write(e.path->spelling());
-                }
-            },
-            [&](const ahfl::ast::QualifiedValueExpr &e) {
-                if (e.name) {
-                    write(e.name->spelling());
-                }
-            },
-            [&](const ahfl::ast::CallExpr &e) {
-                if (e.callee) {
-                    write(e.callee->spelling());
-                }
-                write("(");
-                for (std::size_t i = 0; i < e.arguments.size(); ++i) {
-                    if (i > 0)
-                        out_ << ", ";
-                    if (e.arguments[i]) {
-                        format_expr(*e.arguments[i]);
+        std::visit(
+            Overloaded{
+                [&](const ahfl::ast::NoneLiteralExpr &) { write("none"); },
+                [&](const ahfl::ast::BoolLiteralExpr &e) { write(e.value ? "true" : "false"); },
+                [&](const ahfl::ast::IntegerLiteralExpr &e) {
+                    if (e.literal) {
+                        write(e.literal->spelling);
+                    } else {
+                        write(expr.text);
                     }
-                }
-                write(")");
-            },
-            [&](const ahfl::ast::StructLiteralExpr &e) {
-                if (e.type_name) {
-                    write(e.type_name->spelling());
-                }
-                write(" { ");
-                for (std::size_t i = 0; i < e.fields.size(); ++i) {
-                    if (i > 0)
-                        out_ << ", ";
-                    const auto &field = e.fields[i];
-                    out_ << field->field_name << ": ";
-                    if (field->value) {
-                        format_expr(*field->value);
+                },
+                [&](const ahfl::ast::FloatLiteralExpr &e) { write(e.spelling); },
+                [&](const ahfl::ast::DecimalLiteralExpr &e) { write(e.spelling); },
+                [&](const ahfl::ast::StringLiteralExpr &e) { write(e.spelling); },
+                [&](const ahfl::ast::DurationLiteralExpr &e) {
+                    if (e.literal) {
+                        write(e.literal->spelling);
+                    } else {
+                        write(expr.text);
                     }
-                }
-                write(" }");
-            },
-            [&](const ahfl::ast::ListLiteralExpr &e) {
-                write("[");
-                for (std::size_t i = 0; i < e.items.size(); ++i) {
-                    if (i > 0)
-                        out_ << ", ";
-                    if (e.items[i]) {
-                        format_expr(*e.items[i]);
+                },
+                [&](const ahfl::ast::SomeExpr &e) {
+                    write("some(");
+                    if (e.value) {
+                        format_expr(*e.value);
                     }
-                }
-                write("]");
-            },
-            [&](const ahfl::ast::SetLiteralExpr &e) {
-                write("{");
-                for (std::size_t i = 0; i < e.items.size(); ++i) {
-                    if (i > 0)
-                        out_ << ", ";
-                    if (e.items[i]) {
-                        format_expr(*e.items[i]);
+                    write(")");
+                },
+                [&](const ahfl::ast::PathExpr &e) {
+                    if (e.path) {
+                        write(e.path->spelling());
                     }
-                }
-                write("}");
-            },
-            [&](const ahfl::ast::MapLiteralExpr &e) {
-                write("{");
-                for (std::size_t i = 0; i < e.entries.size(); ++i) {
-                    if (i > 0)
-                        out_ << ", ";
-                    const auto &entry = e.entries[i];
-                    if (entry->key) {
-                        format_expr(*entry->key);
+                },
+                [&](const ahfl::ast::QualifiedValueExpr &e) {
+                    if (e.name) {
+                        write(e.name->spelling());
                     }
-                    out_ << ": ";
-                    if (entry->value) {
-                        format_expr(*entry->value);
+                },
+                [&](const ahfl::ast::CallExpr &e) {
+                    if (e.callee) {
+                        write(e.callee->spelling());
                     }
-                }
-                write("}");
+                    write("(");
+                    for (std::size_t i = 0; i < e.arguments.size(); ++i) {
+                        if (i > 0)
+                            out_ << ", ";
+                        if (e.arguments[i]) {
+                            format_expr(*e.arguments[i]);
+                        }
+                    }
+                    write(")");
+                },
+                [&](const ahfl::ast::StructLiteralExpr &e) {
+                    if (e.type_name) {
+                        write(e.type_name->spelling());
+                    }
+                    write(" { ");
+                    for (std::size_t i = 0; i < e.fields.size(); ++i) {
+                        if (i > 0)
+                            out_ << ", ";
+                        const auto &field = e.fields[i];
+                        out_ << field->field_name << ": ";
+                        if (field->value) {
+                            format_expr(*field->value);
+                        }
+                    }
+                    write(" }");
+                },
+                [&](const ahfl::ast::ListLiteralExpr &e) {
+                    write("[");
+                    for (std::size_t i = 0; i < e.items.size(); ++i) {
+                        if (i > 0)
+                            out_ << ", ";
+                        if (e.items[i]) {
+                            format_expr(*e.items[i]);
+                        }
+                    }
+                    write("]");
+                },
+                [&](const ahfl::ast::SetLiteralExpr &e) {
+                    write("{");
+                    for (std::size_t i = 0; i < e.items.size(); ++i) {
+                        if (i > 0)
+                            out_ << ", ";
+                        if (e.items[i]) {
+                            format_expr(*e.items[i]);
+                        }
+                    }
+                    write("}");
+                },
+                [&](const ahfl::ast::MapLiteralExpr &e) {
+                    write("{");
+                    for (std::size_t i = 0; i < e.entries.size(); ++i) {
+                        if (i > 0)
+                            out_ << ", ";
+                        const auto &entry = e.entries[i];
+                        if (entry->key) {
+                            format_expr(*entry->key);
+                        }
+                        out_ << ": ";
+                        if (entry->value) {
+                            format_expr(*entry->value);
+                        }
+                    }
+                    write("}");
+                },
+                [&](const ahfl::ast::UnaryExpr &e) {
+                    format_unary_op(e.op);
+                    if (e.operand) {
+                        format_expr(*e.operand);
+                    }
+                },
+                [&](const ahfl::ast::BinaryExpr &e) {
+                    if (e.lhs) {
+                        format_expr(*e.lhs);
+                    }
+                    out_ << " ";
+                    format_binary_op(e.op);
+                    out_ << " ";
+                    if (e.rhs) {
+                        format_expr(*e.rhs);
+                    }
+                },
+                [&](const ahfl::ast::MemberAccessExpr &e) {
+                    if (e.base) {
+                        format_expr(*e.base);
+                    }
+                    out_ << "." << e.member;
+                },
+                [&](const ahfl::ast::IndexAccessExpr &e) {
+                    if (e.base) {
+                        format_expr(*e.base);
+                    }
+                    write("[");
+                    if (e.index) {
+                        format_expr(*e.index);
+                    }
+                    write("]");
+                },
+                [&](const ahfl::ast::GroupExpr &e) {
+                    write("(");
+                    if (e.inner) {
+                        format_expr(*e.inner);
+                    }
+                    write(")");
+                },
             },
-            [&](const ahfl::ast::UnaryExpr &e) {
-                format_unary_op(e.op);
-                if (e.operand) {
-                    format_expr(*e.operand);
-                }
-            },
-            [&](const ahfl::ast::BinaryExpr &e) {
-                if (e.lhs) {
-                    format_expr(*e.lhs);
-                }
-                out_ << " ";
-                format_binary_op(e.op);
-                out_ << " ";
-                if (e.rhs) {
-                    format_expr(*e.rhs);
-                }
-            },
-            [&](const ahfl::ast::MemberAccessExpr &e) {
-                if (e.base) {
-                    format_expr(*e.base);
-                }
-                out_ << "." << e.member;
-            },
-            [&](const ahfl::ast::IndexAccessExpr &e) {
-                if (e.base) {
-                    format_expr(*e.base);
-                }
-                write("[");
-                if (e.index) {
-                    format_expr(*e.index);
-                }
-                write("]");
-            },
-            [&](const ahfl::ast::GroupExpr &e) {
-                write("(");
-                if (e.inner) {
-                    format_expr(*e.inner);
-                }
-                write(")");
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void format_unary_op(ahfl::ast::ExprUnaryOp op) {
@@ -725,47 +717,43 @@ class AstFormatter {
     }
 
     void format_temporal_expr(const ahfl::ast::TemporalExprSyntax &expr) {
-        std::visit(Overloaded{
-            [&](const ahfl::ast::EmbeddedTemporalExpr &e) {
-                if (e.expr) {
-                    format_expr(*e.expr);
-                }
+        std::visit(
+            Overloaded{
+                [&](const ahfl::ast::EmbeddedTemporalExpr &e) {
+                    if (e.expr) {
+                        format_expr(*e.expr);
+                    }
+                },
+                [&](const ahfl::ast::CalledTemporalExpr &e) { write("called(" + e.name + ")"); },
+                [&](const ahfl::ast::InStateTemporalExpr &e) { write("in_state(" + e.name + ")"); },
+                [&](const ahfl::ast::RunningTemporalExpr &e) { write("running(" + e.name + ")"); },
+                [&](const ahfl::ast::CompletedTemporalExpr &e) {
+                    write("completed(" + e.name);
+                    if (e.state_name) {
+                        out_ << ", " << *e.state_name;
+                    }
+                    write(")");
+                },
+                [&](const ahfl::ast::UnaryTemporalExpr &e) {
+                    format_temporal_unary_op(e.op);
+                    write(" ");
+                    if (e.operand) {
+                        format_temporal_expr(*e.operand);
+                    }
+                },
+                [&](const ahfl::ast::BinaryTemporalExpr &e) {
+                    if (e.lhs) {
+                        format_temporal_expr(*e.lhs);
+                    }
+                    out_ << " ";
+                    format_temporal_binary_op(e.op);
+                    out_ << " ";
+                    if (e.rhs) {
+                        format_temporal_expr(*e.rhs);
+                    }
+                },
             },
-            [&](const ahfl::ast::CalledTemporalExpr &e) {
-                write("called(" + e.name + ")");
-            },
-            [&](const ahfl::ast::InStateTemporalExpr &e) {
-                write("in_state(" + e.name + ")");
-            },
-            [&](const ahfl::ast::RunningTemporalExpr &e) {
-                write("running(" + e.name + ")");
-            },
-            [&](const ahfl::ast::CompletedTemporalExpr &e) {
-                write("completed(" + e.name);
-                if (e.state_name) {
-                    out_ << ", " << *e.state_name;
-                }
-                write(")");
-            },
-            [&](const ahfl::ast::UnaryTemporalExpr &e) {
-                format_temporal_unary_op(e.op);
-                write(" ");
-                if (e.operand) {
-                    format_temporal_expr(*e.operand);
-                }
-            },
-            [&](const ahfl::ast::BinaryTemporalExpr &e) {
-                if (e.lhs) {
-                    format_temporal_expr(*e.lhs);
-                }
-                out_ << " ";
-                format_temporal_binary_op(e.op);
-                out_ << " ";
-                if (e.rhs) {
-                    format_temporal_expr(*e.rhs);
-                }
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void format_temporal_unary_op(ahfl::ast::TemporalUnaryOp op) {

@@ -248,7 +248,8 @@ namespace {
 }
 
 // Returns the word at the start of the given line (skipping leading whitespace).
-[[nodiscard]] std::string_view first_word_of_line(const std::string &source, std::size_t line_start) {
+[[nodiscard]] std::string_view first_word_of_line(const std::string &source,
+                                                  std::size_t line_start) {
     std::size_t i = line_start;
     while (i < source.size() && (source[i] == ' ' || source[i] == '\t')) {
         ++i;
@@ -281,7 +282,8 @@ namespace {
     return end;
 }
 
-[[nodiscard]] std::optional<Range> declaration_range(const std::string &source, std::size_t offset) {
+[[nodiscard]] std::optional<Range> declaration_range(const std::string &source,
+                                                     std::size_t offset) {
     // Walk backward through lines until we find a top-level (column 0 or near 0)
     // declaration keyword.
     std::size_t current = line_start(source, offset);
@@ -362,18 +364,14 @@ namespace {
 [[nodiscard]] bool range_contains(const Range &outer, const Range &inner) {
     const bool starts_before =
         (outer.start.line < inner.start.line) ||
-        (outer.start.line == inner.start.line &&
-         outer.start.character <= inner.start.character);
+        (outer.start.line == inner.start.line && outer.start.character <= inner.start.character);
     const bool ends_after =
         (outer.end.line > inner.end.line) ||
-        (outer.end.line == inner.end.line &&
-         outer.end.character >= inner.end.character);
+        (outer.end.line == inner.end.line && outer.end.character >= inner.end.character);
 
     const bool same =
-        outer.start.line == inner.start.line &&
-        outer.start.character == inner.start.character &&
-        outer.end.line == inner.end.line &&
-        outer.end.character == inner.end.character;
+        outer.start.line == inner.start.line && outer.start.character == inner.start.character &&
+        outer.end.line == inner.end.line && outer.end.character == inner.end.character;
 
     return starts_before && ends_after && !same;
 }

@@ -44,9 +44,9 @@ enum class LLMResponseCacheAuditEventKind {
 
 struct LLMResponseCacheAuditEvent {
     LLMResponseCacheAuditEventKind kind{LLMResponseCacheAuditEventKind::Miss};
-    std::string model;
-    std::string cache_key_version;
-    std::string key_fingerprint;
+    std::string model{};
+    std::string cache_key_version{};
+    std::string key_fingerprint{};
     std::size_t system_prompt_bytes{0};
     std::size_t user_prompt_bytes{0};
     std::size_t response_bytes{0};
@@ -89,12 +89,12 @@ struct LLMStreamingEvent {
 };
 
 struct LLMTokenUsageEvent {
-    std::string provider_name;
-    std::string model;
-    std::string workflow_name;
-    std::string workflow_node_name;
-    std::string agent_name;
-    std::string state_name;
+    std::string provider_name{};
+    std::string model{};
+    std::string workflow_name{};
+    std::string workflow_node_name{};
+    std::string agent_name{};
+    std::string state_name{};
     std::size_t workflow_node_execution_index{0};
     bool has_workflow_node_context{false};
     std::size_t prompt_tokens{0};
@@ -127,13 +127,13 @@ enum class LLMTokenBudgetEventKind {
 
 struct LLMTokenBudgetEvent {
     LLMTokenBudgetEventKind kind{LLMTokenBudgetEventKind::PromptAccepted};
-    std::string provider_name;
-    std::string model;
-    std::string capability_name;
-    std::string workflow_name;
-    std::string workflow_node_name;
-    std::string agent_name;
-    std::string state_name;
+    std::string provider_name{};
+    std::string model{};
+    std::string capability_name{};
+    std::string workflow_name{};
+    std::string workflow_node_name{};
+    std::string agent_name{};
+    std::string state_name{};
     std::size_t workflow_node_execution_index{0};
     bool has_workflow_node_context{false};
     std::size_t max_total_tokens{0};
@@ -158,8 +158,8 @@ struct LLMTokenBudgetEvent {
     double cumulative_node_cost_usd{0.0};
     bool truncated{false};
     std::string policy{"fail"};
-    std::string message;
-    std::string diagnostic_code;
+    std::string message{};
+    std::string diagnostic_code{};
     bool secret_free{true};
 };
 

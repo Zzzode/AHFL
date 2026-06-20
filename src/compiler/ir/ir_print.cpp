@@ -1,9 +1,9 @@
 #include "ahfl/compiler/ir/lowering.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
-#include "ahfl/base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
 
 #include <cctype>

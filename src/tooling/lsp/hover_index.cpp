@@ -1,8 +1,8 @@
 #include "tooling/lsp/hover_index.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
-#include "ahfl/base/support/overloaded.hpp"
 #include "tooling/lsp/analysis_service.hpp"
 
 #include <algorithm>
@@ -585,23 +585,25 @@ void add_agent_capability_targets(HoverTargetIndex &index,
 }
 
 [[nodiscard]] std::string_view builtin_type_constructor(const ast::TypeSyntax &type) noexcept {
-    return std::visit(Overloaded{
-        [](const ast::UnitType &) -> std::string_view { return {}; },
-        [](const ast::NamedType &) -> std::string_view { return {}; },
-        [](const ast::BoolType &) -> std::string_view { return "Bool"; },
-        [](const ast::IntType &) -> std::string_view { return "Int"; },
-        [](const ast::FloatType &) -> std::string_view { return "Float"; },
-        [](const ast::StringType &) -> std::string_view { return "String"; },
-        [](const ast::BoundedStringType &) -> std::string_view { return "String"; },
-        [](const ast::UuidType &) -> std::string_view { return "UUID"; },
-        [](const ast::TimestampType &) -> std::string_view { return "Timestamp"; },
-        [](const ast::DurationType &) -> std::string_view { return "Duration"; },
-        [](const ast::DecimalType &) -> std::string_view { return "Decimal"; },
-        [](const ast::OptionalType &) -> std::string_view { return "Optional"; },
-        [](const ast::ListType &) -> std::string_view { return "List"; },
-        [](const ast::SetType &) -> std::string_view { return "Set"; },
-        [](const ast::MapType &) -> std::string_view { return "Map"; },
-    }, type.node);
+    return std::visit(
+        Overloaded{
+            [](const ast::UnitType &) -> std::string_view { return {}; },
+            [](const ast::NamedType &) -> std::string_view { return {}; },
+            [](const ast::BoolType &) -> std::string_view { return "Bool"; },
+            [](const ast::IntType &) -> std::string_view { return "Int"; },
+            [](const ast::FloatType &) -> std::string_view { return "Float"; },
+            [](const ast::StringType &) -> std::string_view { return "String"; },
+            [](const ast::BoundedStringType &) -> std::string_view { return "String"; },
+            [](const ast::UuidType &) -> std::string_view { return "UUID"; },
+            [](const ast::TimestampType &) -> std::string_view { return "Timestamp"; },
+            [](const ast::DurationType &) -> std::string_view { return "Duration"; },
+            [](const ast::DecimalType &) -> std::string_view { return "Decimal"; },
+            [](const ast::OptionalType &) -> std::string_view { return "Optional"; },
+            [](const ast::ListType &) -> std::string_view { return "List"; },
+            [](const ast::SetType &) -> std::string_view { return "Set"; },
+            [](const ast::MapType &) -> std::string_view { return "Map"; },
+        },
+        type.node);
 }
 
 void add_builtin_type_constructor_target(HoverTargetIndex &index,
@@ -639,38 +641,40 @@ void add_type_syntax_targets(HoverTargetIndex &index,
     add_builtin_type_constructor_target(index, source, *type);
 
     std::visit(Overloaded{
-        [&](const ast::NamedType &t) {
-            if (t.name && !has_resolved_type_reference(snapshot, source, t.name->range)) {
-                for (const auto &segment :
-                     identifier_segments_in_range(*source.source, t.name->range)) {
-                    index.add(HoverTarget{
-                        .kind = HoverTargetKind::TypeReference,
-                        .token_range = segment.range,
-                        .source_id = source.source_id,
-                        .local_name = segment.text,
-                        .role = "builtin type",
-                        .source_label = source.source->display_name,
-                    });
-                }
-            }
-        },
-        [&](const ast::OptionalType &t) {
-            add_type_syntax_targets(index, snapshot, source, t.inner.get());
-        },
-        [&](const ast::ListType &t) {
-            add_type_syntax_targets(index, snapshot, source, t.element.get());
-        },
-        [&](const ast::SetType &t) {
-            add_type_syntax_targets(index, snapshot, source, t.element.get());
-        },
-        [&](const ast::MapType &t) {
-            add_type_syntax_targets(index, snapshot, source, t.key_type.get());
-            add_type_syntax_targets(index, snapshot, source, t.value_type.get());
-        },
-        [](const auto &) {
-            // Leaf types with no sub-types or name — nothing to add
-        },
-    }, type->node);
+                   [&](const ast::NamedType &t) {
+                       if (t.name &&
+                           !has_resolved_type_reference(snapshot, source, t.name->range)) {
+                           for (const auto &segment :
+                                identifier_segments_in_range(*source.source, t.name->range)) {
+                               index.add(HoverTarget{
+                                   .kind = HoverTargetKind::TypeReference,
+                                   .token_range = segment.range,
+                                   .source_id = source.source_id,
+                                   .local_name = segment.text,
+                                   .role = "builtin type",
+                                   .source_label = source.source->display_name,
+                               });
+                           }
+                       }
+                   },
+                   [&](const ast::OptionalType &t) {
+                       add_type_syntax_targets(index, snapshot, source, t.inner.get());
+                   },
+                   [&](const ast::ListType &t) {
+                       add_type_syntax_targets(index, snapshot, source, t.element.get());
+                   },
+                   [&](const ast::SetType &t) {
+                       add_type_syntax_targets(index, snapshot, source, t.element.get());
+                   },
+                   [&](const ast::MapType &t) {
+                       add_type_syntax_targets(index, snapshot, source, t.key_type.get());
+                       add_type_syntax_targets(index, snapshot, source, t.value_type.get());
+                   },
+                   [](const auto &) {
+                       // Leaf types with no sub-types or name — nothing to add
+                   },
+               },
+               type->node);
 }
 
 void add_predicate_return_type_target(HoverTargetIndex &index,
@@ -757,56 +761,57 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
     }
 
     std::visit(Overloaded{
-        [&](const ast::StructLiteralExpr &e) {
-            add_struct_init_targets(index, snapshot, source, e);
-        },
-        [&](const ast::CallExpr &e) {
-            for (const auto &item : e.arguments) {
-                add_expr_syntax_targets(index, snapshot, source, item.get());
-            }
-        },
-        [&](const ast::ListLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                add_expr_syntax_targets(index, snapshot, source, item.get());
-            }
-        },
-        [&](const ast::SetLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                add_expr_syntax_targets(index, snapshot, source, item.get());
-            }
-        },
-        [&](const ast::MapLiteralExpr &e) {
-            for (const auto &entry : e.entries) {
-                if (entry) {
-                    add_expr_syntax_targets(index, snapshot, source, entry->key.get());
-                    add_expr_syntax_targets(index, snapshot, source, entry->value.get());
-                }
-            }
-        },
-        [&](const ast::SomeExpr &e) {
-            add_expr_syntax_targets(index, snapshot, source, e.value.get());
-        },
-        [&](const ast::UnaryExpr &e) {
-            add_expr_syntax_targets(index, snapshot, source, e.operand.get());
-        },
-        [&](const ast::GroupExpr &e) {
-            add_expr_syntax_targets(index, snapshot, source, e.inner.get());
-        },
-        [&](const ast::BinaryExpr &e) {
-            add_expr_syntax_targets(index, snapshot, source, e.lhs.get());
-            add_expr_syntax_targets(index, snapshot, source, e.rhs.get());
-        },
-        [&](const ast::IndexAccessExpr &e) {
-            add_expr_syntax_targets(index, snapshot, source, e.base.get());
-            add_expr_syntax_targets(index, snapshot, source, e.index.get());
-        },
-        [&](const ast::MemberAccessExpr &e) {
-            add_expr_syntax_targets(index, snapshot, source, e.base.get());
-        },
-        [](const auto &) {
-            // Leaf expressions with no sub-expressions — nothing to add
-        },
-    }, expr->node);
+                   [&](const ast::StructLiteralExpr &e) {
+                       add_struct_init_targets(index, snapshot, source, e);
+                   },
+                   [&](const ast::CallExpr &e) {
+                       for (const auto &item : e.arguments) {
+                           add_expr_syntax_targets(index, snapshot, source, item.get());
+                       }
+                   },
+                   [&](const ast::ListLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           add_expr_syntax_targets(index, snapshot, source, item.get());
+                       }
+                   },
+                   [&](const ast::SetLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           add_expr_syntax_targets(index, snapshot, source, item.get());
+                       }
+                   },
+                   [&](const ast::MapLiteralExpr &e) {
+                       for (const auto &entry : e.entries) {
+                           if (entry) {
+                               add_expr_syntax_targets(index, snapshot, source, entry->key.get());
+                               add_expr_syntax_targets(index, snapshot, source, entry->value.get());
+                           }
+                       }
+                   },
+                   [&](const ast::SomeExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.value.get());
+                   },
+                   [&](const ast::UnaryExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.operand.get());
+                   },
+                   [&](const ast::GroupExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.inner.get());
+                   },
+                   [&](const ast::BinaryExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.lhs.get());
+                       add_expr_syntax_targets(index, snapshot, source, e.rhs.get());
+                   },
+                   [&](const ast::IndexAccessExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.base.get());
+                       add_expr_syntax_targets(index, snapshot, source, e.index.get());
+                   },
+                   [&](const ast::MemberAccessExpr &e) {
+                       add_expr_syntax_targets(index, snapshot, source, e.base.get());
+                   },
+                   [](const auto &) {
+                       // Leaf expressions with no sub-expressions — nothing to add
+                   },
+               },
+               expr->node);
 }
 
 void add_all_named_targets(HoverTargetIndex &index,

@@ -451,8 +451,7 @@ class ProgramBuilder {
             declaration->states = build_ident_list(require(
                 require(agent_decl->get().statesDecl(), "agent states are missing").identList(),
                 "agent states list is missing"));
-            declaration->states_range = context_range(
-                *agent_decl->get().statesDecl(), source_);
+            declaration->states_range = context_range(*agent_decl->get().statesDecl(), source_);
             declaration->initial_state = text_of(require(
                 require(agent_decl->get().initialDecl(), "agent initial state is missing").IDENT(),
                 "agent initial state name is missing"));
@@ -973,15 +972,13 @@ class ProgramBuilder {
                     "some") {
                 auto expr =
                     make_expr_syntax(ast::ExprSyntaxKind::Some, context_range(context, source_));
-                std::get<ast::SomeExpr>(expr->node).value =
-                    build_expr_syntax(inner_expr->get());
+                std::get<ast::SomeExpr>(expr->node).value = build_expr_syntax(inner_expr->get());
                 return expr;
             }
 
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Group, context_range(context, source_));
-            std::get<ast::GroupExpr>(expr->node).inner =
-                build_expr_syntax(inner_expr->get());
+            std::get<ast::GroupExpr>(expr->node).inner = build_expr_syntax(inner_expr->get());
             return expr;
         }
 
@@ -1085,8 +1082,7 @@ class ProgramBuilder {
             make_expr_syntax(ast::ExprSyntaxKind::ListLiteral, context_range(context, source_));
 
         if (const auto expr_list = borrow(context.exprList())) {
-            std::get<ast::ListLiteralExpr>(expr->node).items =
-                build_expr_list(expr_list->get());
+            std::get<ast::ListLiteralExpr>(expr->node).items = build_expr_list(expr_list->get());
         }
 
         return expr;
@@ -1098,8 +1094,7 @@ class ProgramBuilder {
             make_expr_syntax(ast::ExprSyntaxKind::SetLiteral, context_range(context, source_));
 
         if (const auto expr_list = borrow(context.exprList())) {
-            std::get<ast::SetLiteralExpr>(expr->node).items =
-                build_expr_list(expr_list->get());
+            std::get<ast::SetLiteralExpr>(expr->node).items = build_expr_list(expr_list->get());
         }
 
         return expr;
@@ -1113,8 +1108,7 @@ class ProgramBuilder {
 
         if (const auto entry_list = borrow(context.mapEntryList())) {
             for (auto *entry_context : entry_list->get().mapEntry()) {
-                entries.push_back(
-                    build_map_entry(require(entry_context, "map entry is missing")));
+                entries.push_back(build_map_entry(require(entry_context, "map entry is missing")));
             }
         }
 
@@ -1418,8 +1412,7 @@ class ProgramBuilder {
             auto temporal = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Completed,
                                                       context_range(context, source_));
             auto &completed = std::get<ast::CompletedTemporalExpr>(temporal->node);
-            completed.name =
-                text_of(require(context.IDENT(0), "completed() target is missing"));
+            completed.name = text_of(require(context.IDENT(0), "completed() target is missing"));
 
             if (context.IDENT().size() > 1) {
                 completed.state_name =
@@ -1470,21 +1463,24 @@ class ProgramBuilder {
 
         if (type_keyword == "Optional") {
             type->node = ast::OptionalType{
-                .inner = build_type_syntax(require(context.type_(0), "optional element type is missing")),
+                .inner = build_type_syntax(
+                    require(context.type_(0), "optional element type is missing")),
             };
             return type;
         }
 
         if (type_keyword == "List") {
             type->node = ast::ListType{
-                .element = build_type_syntax(require(context.type_(0), "list element type is missing")),
+                .element =
+                    build_type_syntax(require(context.type_(0), "list element type is missing")),
             };
             return type;
         }
 
         if (type_keyword == "Set") {
             type->node = ast::SetType{
-                .element = build_type_syntax(require(context.type_(0), "set element type is missing")),
+                .element =
+                    build_type_syntax(require(context.type_(0), "set element type is missing")),
             };
             return type;
         }
@@ -1492,7 +1488,8 @@ class ProgramBuilder {
         if (type_keyword == "Map") {
             type->node = ast::MapType{
                 .key_type = build_type_syntax(require(context.type_(0), "map key type is missing")),
-                .value_type = build_type_syntax(require(context.type_(1), "map value type is missing")),
+                .value_type =
+                    build_type_syntax(require(context.type_(1), "map value type is missing")),
             };
             return type;
         }

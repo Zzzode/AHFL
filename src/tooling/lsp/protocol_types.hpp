@@ -338,8 +338,7 @@ serialize_signature_information(const SignatureInformation &sig);
 [[nodiscard]] std::unique_ptr<json::JsonValue>
 serialize_semantic_tokens(const SemanticTokens &tokens);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_code_action(const CodeAction &action);
-[[nodiscard]] std::unique_ptr<json::JsonValue>
-serialize_folding_range(const FoldingRange &range);
+[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_folding_range(const FoldingRange &range);
 [[nodiscard]] std::unique_ptr<json::JsonValue>
 serialize_document_highlight(const DocumentHighlight &hl);
 [[nodiscard]] std::unique_ptr<json::JsonValue>
