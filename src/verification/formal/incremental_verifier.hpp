@@ -20,13 +20,11 @@ struct IncrementalState {
 };
 
 class IncrementalVerifier {
-public:
-    [[nodiscard]] IncrementalState
-    compute_diff(const std::vector<PropertyHash> &previous,
-                 const std::vector<PropertyHash> &current);
+  public:
+    [[nodiscard]] IncrementalState compute_diff(const std::vector<PropertyHash> &previous,
+                                                const std::vector<PropertyHash> &current);
 
-    [[nodiscard]] static std::string
-    hash_property(std::string_view property_text);
+    [[nodiscard]] static std::string hash_property(std::string_view property_text);
 };
 
 } // namespace ahfl::formal

@@ -54,6 +54,8 @@ std::optional<std::string> SecretManager::get(std::string_view key, std::string_
     return result;
 }
 
-void SecretManager::refresh(std::string_view key) { provider_->refresh(key); }
+void SecretManager::refresh(std::string_view key) {
+    provider_->refresh(key);
+}
 
 } // namespace ahfl::secret

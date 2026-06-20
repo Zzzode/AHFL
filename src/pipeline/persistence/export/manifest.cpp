@@ -9,18 +9,17 @@ namespace ahfl::persistence_export {
 
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"PERSISTENCE_EXPORT_MANIFEST"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> kBootstrapDiagnosticCode{"PERSISTENCE_EXPORT_MANIFEST_BOOTSTRAP"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{
+    "PERSISTENCE_EXPORT_MANIFEST"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> kBootstrapDiagnosticCode{
+    "PERSISTENCE_EXPORT_MANIFEST_BOOTSTRAP"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
 }
 
 void emit_bootstrap_error(DiagnosticBag &diagnostics, std::string message) {
-    diagnostics.error()
-        .code(kBootstrapDiagnosticCode)
-        .message(std::move(message))
-        .emit();
+    diagnostics.error().code(kBootstrapDiagnosticCode).message(std::move(message)).emit();
 }
 
 void validate_package_identity(const handoff::PackageIdentity &identity,

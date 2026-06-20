@@ -7,6 +7,8 @@
 // LLVM/Clang Sema's split between SemaDecl/SemaExpr/SemaStmt while keeping
 // state on a single class.
 
+#include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
@@ -17,8 +19,6 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
-#include "ahfl/base/support/source.hpp"
 
 #include <cstddef>
 #include <functional>
@@ -325,13 +325,21 @@ class TypeCheckPass final {
 
     [[nodiscard]] TypePtr
     field_access(const Type &base_type, std::string_view field_name, SourceRange range);
-    [[nodiscard]] TypePtr make_any_type() const { return types_->make(TypeKind::Any); }
-    [[nodiscard]] TypePtr make_type(TypeKind kind) const { return types_->make(kind); }
-    [[nodiscard]] TypePtr string_type() const { return types_->string(); }
+    [[nodiscard]] TypePtr make_any_type() const {
+        return types_->make(TypeKind::Any);
+    }
+    [[nodiscard]] TypePtr make_type(TypeKind kind) const {
+        return types_->make(kind);
+    }
+    [[nodiscard]] TypePtr string_type() const {
+        return types_->string();
+    }
     [[nodiscard]] TypePtr bounded_string_type(std::int64_t minimum, std::int64_t maximum) const {
         return types_->bounded_string(minimum, maximum);
     }
-    [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const { return types_->decimal(scale); }
+    [[nodiscard]] TypePtr decimal_type(std::int64_t scale) const {
+        return types_->decimal(scale);
+    }
     [[nodiscard]] TypePtr struct_type(std::string canonical_name) const {
         return types_->struct_type(std::move(canonical_name));
     }
@@ -347,8 +355,12 @@ class TypeCheckPass final {
     [[nodiscard]] TypePtr optional_type(TypePtr value_type) const {
         return types_->optional(value_type);
     }
-    [[nodiscard]] TypePtr list_type(TypePtr element_type) const { return types_->list(element_type); }
-    [[nodiscard]] TypePtr set_type(TypePtr element_type) const { return types_->set(element_type); }
+    [[nodiscard]] TypePtr list_type(TypePtr element_type) const {
+        return types_->list(element_type);
+    }
+    [[nodiscard]] TypePtr set_type(TypePtr element_type) const {
+        return types_->set(element_type);
+    }
     [[nodiscard]] TypePtr map_type(TypePtr key_type, TypePtr value_type) const {
         return types_->map(key_type, value_type);
     }

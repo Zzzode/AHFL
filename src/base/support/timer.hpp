@@ -11,11 +11,11 @@ struct TimerResult {
 };
 
 class ScopedTimer {
-public:
+  public:
     explicit ScopedTimer(std::string label);
     [[nodiscard]] TimerResult elapsed() const;
 
-private:
+  private:
     std::string label_;
     std::chrono::steady_clock::time_point start_;
 };

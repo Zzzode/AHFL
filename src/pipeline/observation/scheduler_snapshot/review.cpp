@@ -8,7 +8,8 @@ namespace ahfl::scheduler_snapshot {
 
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"SCHEDULER_REVIEW"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{
+    "SCHEDULER_REVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);

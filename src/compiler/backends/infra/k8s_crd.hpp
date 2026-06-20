@@ -19,6 +19,6 @@ struct K8sCrdOutput {
     std::string resource_name;
 };
 
-[[nodiscard]] K8sCrdOutput generate_crd(const K8sCrdConfig& config);
+[[nodiscard]] K8sCrdOutput generate_crd(const K8sCrdConfig &config);
 
 } // namespace ahfl::backends

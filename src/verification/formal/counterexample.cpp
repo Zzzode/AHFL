@@ -131,8 +131,8 @@ parse_structured_symbol_mappings(std::string_view model) {
             const auto location_part = after_separator.substr(at_pos + at_separator.size());
 
             // Try to parse source location. If it fails, treat entire payload as description.
-            if (!parse_source_location(location_part, mapping.source_path,
-                                       mapping.begin_offset, mapping.end_offset)) {
+            if (!parse_source_location(
+                    location_part, mapping.source_path, mapping.begin_offset, mapping.end_offset)) {
                 // Fallback: include the @ part in the description.
                 mapping.description = trim_to_string(after_separator);
             }
@@ -180,8 +180,7 @@ parse_counterexample_trace(std::string_view checker_output,
         }
 
         // Extract trace type
-        if (constexpr std::string_view tt_prefix = "Trace Type:";
-            trimmed.starts_with(tt_prefix)) {
+        if (constexpr std::string_view tt_prefix = "Trace Type:"; trimmed.starts_with(tt_prefix)) {
             trace.trace_type = trim_to_string(trimmed.substr(tt_prefix.size()));
             found_counterexample = true;
         }
@@ -257,9 +256,8 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
             std::string step = "步骤 1 (State " + state.label + "): 初始状态";
             bool has_values = false;
             for (const auto &assignment : state.assignments) {
-                const auto &desc = assignment.mapping.has_value()
-                                       ? assignment.mapping->description
-                                       : assignment.variable;
+                const auto &desc = assignment.mapping.has_value() ? assignment.mapping->description
+                                                                  : assignment.variable;
                 if (has_values) {
                     step += ", ";
                 } else {
@@ -286,15 +284,13 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
             const auto prev_it = prev_values.find(assignment.variable);
             if (prev_it == prev_values.end()) {
                 // New variable appeared — treat as a change from unknown
-                const auto &desc = assignment.mapping.has_value()
-                                       ? assignment.mapping->description
-                                       : assignment.variable;
+                const auto &desc = assignment.mapping.has_value() ? assignment.mapping->description
+                                                                  : assignment.variable;
                 changes.push_back(desc + " 变为 " + assignment.value);
             } else if (prev_it->second != assignment.value) {
                 // Value changed
-                const auto &desc = assignment.mapping.has_value()
-                                       ? assignment.mapping->description
-                                       : assignment.variable;
+                const auto &desc = assignment.mapping.has_value() ? assignment.mapping->description
+                                                                  : assignment.variable;
                 changes.push_back(desc + " 从 " + prev_it->second + " 变为 " + assignment.value);
             }
         }

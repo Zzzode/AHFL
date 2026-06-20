@@ -215,8 +215,8 @@ class ValidationPass final {
         const TypedExpr *expr_info =
             type_check_result_.typed_program.find_expr(expr.node_id, current_source_id_);
         if (expr_info == nullptr) {
-            expr_info = type_check_result_.typed_program.find_expr_by_range(expr.range,
-                                                                             current_source_id_);
+            expr_info =
+                type_check_result_.typed_program.find_expr_by_range(expr.range, current_source_id_);
         }
         if (expr_info == nullptr || expr_info->type == nullptr) {
             return;

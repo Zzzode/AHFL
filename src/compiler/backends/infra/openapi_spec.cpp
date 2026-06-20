@@ -9,7 +9,7 @@ namespace ahfl::backends {
 namespace {
 
 class OpenApiJsonWriter : private PrettyJsonWriter {
-public:
+  public:
     explicit OpenApiJsonWriter(std::ostream &out) : PrettyJsonWriter(out) {}
 
     void emit(const OpenApiConfig &config) {
@@ -35,7 +35,9 @@ public:
                                         if (!endpoint.request_schema.empty()) {
                                             ef("requestBody", [&]() {
                                                 print_object(4, [&](const auto &rf) {
-                                                    rf("schema", [&]() { write_string(endpoint.request_schema); });
+                                                    rf("schema", [&]() {
+                                                        write_string(endpoint.request_schema);
+                                                    });
                                                 });
                                             });
                                         }
@@ -44,7 +46,10 @@ public:
                                                 print_object(4, [&](const auto &rf) {
                                                     rf("200", [&]() {
                                                         print_object(5, [&](const auto &sf) {
-                                                            sf("schema", [&]() { write_string(endpoint.response_schema); });
+                                                            sf("schema", [&]() {
+                                                                write_string(
+                                                                    endpoint.response_schema);
+                                                            });
                                                         });
                                                     });
                                                 });
@@ -64,7 +69,7 @@ public:
 
 } // namespace
 
-OpenApiOutput generate_openapi(const OpenApiConfig& config) {
+OpenApiOutput generate_openapi(const OpenApiConfig &config) {
     OpenApiOutput output;
 
     std::ostringstream oss;

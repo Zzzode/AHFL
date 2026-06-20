@@ -12,7 +12,7 @@
 namespace ahfl::support {
 
 class ThreadPool {
-public:
+  public:
     explicit ThreadPool(std::size_t num_threads = 0);
     ~ThreadPool();
 
@@ -35,7 +35,7 @@ public:
     [[nodiscard]] std::size_t thread_count() const;
     void shutdown();
 
-private:
+  private:
     void worker_loop();
 
     std::vector<std::thread> workers_;

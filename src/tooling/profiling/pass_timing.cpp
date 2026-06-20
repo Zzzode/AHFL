@@ -22,7 +22,7 @@ std::vector<PassTimingRecord> PassProfiler::records() const {
 
 std::chrono::nanoseconds PassProfiler::total_time() const {
     std::chrono::nanoseconds total{0};
-    for (const auto& rec : records_) {
+    for (const auto &rec : records_) {
         total += rec.duration;
     }
     return total;

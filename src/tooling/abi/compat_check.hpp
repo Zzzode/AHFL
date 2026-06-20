@@ -1,7 +1,7 @@
 #pragma once
 
-#include <tooling/abi/version_info.hpp>
 #include <string>
+#include <tooling/abi/version_info.hpp>
 
 namespace ahfl::abi {
 
@@ -19,13 +19,9 @@ struct CompatibilityResult {
     AbiVersion target;
 };
 
-[[nodiscard]] CompatibilityResult check_compatibility(
-    AbiDomain domain,
-    const AbiVersion& source,
-    const AbiVersion& target);
+[[nodiscard]] CompatibilityResult
+check_compatibility(AbiDomain domain, const AbiVersion &source, const AbiVersion &target);
 
-[[nodiscard]] bool is_compatible(
-    const AbiVersion& source,
-    const AbiVersion& target);
+[[nodiscard]] bool is_compatible(const AbiVersion &source, const AbiVersion &target);
 
 } // namespace ahfl::abi

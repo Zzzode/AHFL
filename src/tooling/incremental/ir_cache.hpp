@@ -18,11 +18,15 @@ struct CacheEntry {
     // content_hash (e.g. whitespace-only edits flip content_hash but
     // not the fingerprint, while semantic edits flip both).
     std::uint64_t signature_fingerprint{0};
-    std::string serialized_ir;  // JSON string
+    std::string serialized_ir; // JSON string
     std::chrono::system_clock::time_point cached_at;
 };
 
-enum class CacheHitKind { Hit, Miss, Stale };
+enum class CacheHitKind {
+    Hit,
+    Miss,
+    Stale
+};
 
 struct CacheLookupResult {
     CacheHitKind kind;
@@ -30,15 +34,16 @@ struct CacheLookupResult {
 };
 
 class IrCache {
-public:
+  public:
     void store(CacheEntry entry);
-    [[nodiscard]] CacheLookupResult lookup(const std::string& module_path, std::uint64_t current_hash) const;
-    void invalidate(const std::string& module_path);
+    [[nodiscard]] CacheLookupResult lookup(const std::string &module_path,
+                                           std::uint64_t current_hash) const;
+    void invalidate(const std::string &module_path);
     void clear();
     [[nodiscard]] std::size_t entry_count() const;
     [[nodiscard]] std::size_t total_size_bytes() const;
 
-private:
+  private:
     std::unordered_map<std::string, CacheEntry> cache_;
 };
 

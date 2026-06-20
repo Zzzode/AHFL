@@ -20,7 +20,9 @@ class SSEParser {
     [[nodiscard]] std::optional<std::string> feed_line(std::string_view line);
 
     /// Check if the stream has signaled completion ([DONE]).
-    [[nodiscard]] bool is_done() const { return done_; }
+    [[nodiscard]] bool is_done() const {
+        return done_;
+    }
 
   private:
     bool done_{false};
@@ -36,7 +38,8 @@ struct StreamResult {
 /// Streaming client for SSE chat completion responses.
 class StreamingClient {
   public:
-    explicit StreamingClient(std::string_view endpoint, std::string_view api_key,
+    explicit StreamingClient(std::string_view endpoint,
+                             std::string_view api_key,
                              std::string_view model);
 
     /// Execute a streaming chat completion request.

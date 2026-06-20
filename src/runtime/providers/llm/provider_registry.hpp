@@ -9,7 +9,11 @@
 namespace ahfl::llm_provider {
 
 /// Status of an LLM provider.
-enum class ProviderStatus { Available, Degraded, Unavailable };
+enum class ProviderStatus {
+    Available,
+    Degraded,
+    Unavailable
+};
 
 /// An entry in the provider registry.
 struct ProviderEntry {
@@ -36,7 +40,9 @@ class ProviderRegistry {
     void mark_available(std::string_view name);
 
     /// Get all registered providers.
-    [[nodiscard]] const std::vector<ProviderEntry> &providers() const { return providers_; }
+    [[nodiscard]] const std::vector<ProviderEntry> &providers() const {
+        return providers_;
+    }
 
   private:
     std::vector<ProviderEntry> providers_;

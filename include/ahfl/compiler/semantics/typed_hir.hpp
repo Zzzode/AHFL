@@ -1,10 +1,10 @@
 #pragma once
 
+#include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
-#include "ahfl/base/support/source.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -54,10 +54,10 @@ struct TypedProgram;
 
 // Helper: resolve a TypedExprChild to a pointer. Returns nullptr if the
 // child's index is unset / out of range.
-[[nodiscard]] const TypedExpr *
-resolve_child(const TypedProgram &program, const TypedExprChild &child) noexcept;
-[[nodiscard]] TypedExpr *
-resolve_child_mut(TypedProgram &program, const TypedExprChild &child) noexcept;
+[[nodiscard]] const TypedExpr *resolve_child(const TypedProgram &program,
+                                             const TypedExprChild &child) noexcept;
+[[nodiscard]] TypedExpr *resolve_child_mut(TypedProgram &program,
+                                           const TypedExprChild &child) noexcept;
 
 struct TypedExpr {
     ast::ExprSyntaxKind kind{ast::ExprSyntaxKind::NoneLiteral};
@@ -80,11 +80,11 @@ struct TypedExpr {
     // not need to reach back into the AST. Each field is only meaningful for
     // the `kind`s listed after it.
     // ------------------------------------------------------------------------
-    bool bool_value{false};                        // BoolLiteral
-    ast::ExprUnaryOp unary_op{ast::ExprUnaryOp::Not};       // Unary
+    bool bool_value{false};                                  // BoolLiteral
+    ast::ExprUnaryOp unary_op{ast::ExprUnaryOp::Not};        // Unary
     ast::ExprBinaryOp binary_op{ast::ExprBinaryOp::Implies}; // Binary
-    std::string literal_spelling;                  // Integer/Float/Decimal/String/Duration literal
-    std::string member_name;                       // MemberAccess (right-hand field name)
+    std::string literal_spelling; // Integer/Float/Decimal/String/Duration literal
+    std::string member_name;      // MemberAccess (right-hand field name)
 };
 
 struct TypedDecl {
@@ -111,8 +111,8 @@ struct TypedProgram {
     // TypeCheckResult::find_expression_type(range, source_id).
     [[nodiscard]] const TypedExpr *
     find_expr_by_range(SourceRange range, std::optional<SourceId> source_id) const noexcept;
-    [[nodiscard]] TypedExpr *
-    find_expr_by_range(SourceRange range, std::optional<SourceId> source_id) noexcept;
+    [[nodiscard]] TypedExpr *find_expr_by_range(SourceRange range,
+                                                std::optional<SourceId> source_id) noexcept;
 
     // Find the most specific (smallest) expression whose range contains the
     // given byte offset. Used by LSP hover for "what type is under the cursor".
@@ -147,8 +147,7 @@ struct TypedProgram {
 //
 // The project's -Wswitch -Werror guard catches missing cases when
 // `ast::ExprSyntaxKind` / `TypedExpr` coverage grows.
-template <typename Visitor>
-decltype(auto) typed_visit(const TypedExpr &expr, Visitor &&visitor) {
+template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Visitor &&visitor) {
     switch (expr.kind) {
     case ast::ExprSyntaxKind::BoolLiteral:
         return std::forward<Visitor>(visitor).visit_bool_literal(expr);

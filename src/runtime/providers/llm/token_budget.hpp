@@ -28,7 +28,9 @@ class PromptTruncator {
     /// Returns the truncated user prompt (system prompt has priority).
     [[nodiscard]] std::string truncate(std::string_view system, std::string_view user) const;
 
-    [[nodiscard]] const TokenBudget &budget() const { return budget_; }
+    [[nodiscard]] const TokenBudget &budget() const {
+        return budget_;
+    }
 
   private:
     TokenBudget budget_;

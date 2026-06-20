@@ -23,7 +23,6 @@ struct StateSpaceEstimate {
     std::string warning;
 };
 
-[[nodiscard]] StateSpaceEstimate
-estimate_state_space(const std::vector<AgentMetrics> &agents);
+[[nodiscard]] StateSpaceEstimate estimate_state_space(const std::vector<AgentMetrics> &agents);
 
 } // namespace ahfl::formal

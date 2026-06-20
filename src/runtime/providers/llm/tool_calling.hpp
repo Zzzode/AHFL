@@ -27,9 +27,9 @@ struct ToolCallResult {
 
 /// Build a request JSON body that includes tool definitions.
 [[nodiscard]] std::string build_tool_request_json(std::string_view system_prompt,
-                                                   std::string_view user_prompt,
-                                                   std::string_view model,
-                                                   const std::vector<ToolDefinition> &tools);
+                                                  std::string_view user_prompt,
+                                                  std::string_view model,
+                                                  const std::vector<ToolDefinition> &tools);
 
 /// Parse tool calls from an LLM response body.
 [[nodiscard]] std::vector<ToolCall> parse_tool_calls(std::string_view response_body);

@@ -15,12 +15,13 @@ struct HotspotEntry {
 };
 
 class HotspotAnalyzer {
-public:
+  public:
     void record_call(std::string name, std::chrono::nanoseconds duration);
     [[nodiscard]] std::vector<HotspotEntry> top_hotspots(std::size_t n = 10) const;
     [[nodiscard]] std::size_t entry_count() const;
     void clear();
-private:
+
+  private:
     std::unordered_map<std::string, HotspotEntry> entries_;
 };
 

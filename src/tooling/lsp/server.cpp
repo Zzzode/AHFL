@@ -12,11 +12,11 @@ namespace {
 
 /// AHFL keywords for completion.
 constexpr std::string_view kKeywords[] = {
-    "agent",    "workflow", "flow",       "contract",  "capability", "predicate",
-    "struct",   "enum",    "const",      "import",    "module",     "state",
-    "handler",  "on",      "emit",       "transition","always",     "eventually",
-    "until",    "implies", "requires",   "ensures",   "invariant",  "after",
-    "true",     "false",   "if",         "else",      "match",      "return",
+    "agent",   "workflow", "flow",     "contract",   "capability", "predicate",
+    "struct",  "enum",     "const",    "import",     "module",     "state",
+    "handler", "on",       "emit",     "transition", "always",     "eventually",
+    "until",   "implies",  "requires", "ensures",    "invariant",  "after",
+    "true",    "false",    "if",       "else",       "match",      "return",
 };
 
 LspSymbolKind to_lsp_symbol_kind(SymbolKind kind) {
@@ -43,8 +43,7 @@ LspSymbolKind to_lsp_symbol_kind(SymbolKind kind) {
 
 } // anonymous namespace
 
-LspServer::LspServer(std::istream &in, std::ostream &out)
-    : transport_(in, out) {}
+LspServer::LspServer(std::istream &in, std::ostream &out) : transport_(in, out) {}
 
 void LspServer::run() {
     while (true) {
@@ -419,8 +418,7 @@ void LspServer::handle_hover(const JsonRpcRequest &req) {
         hover.range = Range{
             {static_cast<uint32_t>(start_pos.line - 1),
              static_cast<uint32_t>(start_pos.column - 1)},
-            {static_cast<uint32_t>(end_pos.line - 1),
-             static_cast<uint32_t>(end_pos.column - 1)},
+            {static_cast<uint32_t>(end_pos.line - 1), static_cast<uint32_t>(end_pos.column - 1)},
         };
 
         JsonRpcResponse resp;
@@ -759,8 +757,7 @@ void LspServer::handle_rename(const JsonRpcRequest &req) {
         TextEdit te;
         te.range.start = {static_cast<uint32_t>(start.line - 1),
                           static_cast<uint32_t>(start.column - 1)};
-        te.range.end = {static_cast<uint32_t>(end.line - 1),
-                        static_cast<uint32_t>(end.column - 1)};
+        te.range.end = {static_cast<uint32_t>(end.line - 1), static_cast<uint32_t>(end.column - 1)};
         te.new_text = new_name;
         edits.push_back(std::move(te));
     }
@@ -839,8 +836,7 @@ void LspServer::handle_document_symbol(const JsonRpcRequest &req) {
         ds.kind = to_lsp_symbol_kind(sym.kind);
         ds.range.start = {static_cast<uint32_t>(start.line - 1),
                           static_cast<uint32_t>(start.column - 1)};
-        ds.range.end = {static_cast<uint32_t>(end.line - 1),
-                        static_cast<uint32_t>(end.column - 1)};
+        ds.range.end = {static_cast<uint32_t>(end.line - 1), static_cast<uint32_t>(end.column - 1)};
         ds.selection_range = ds.range;
 
         result->push(serialize_document_symbol(ds));

@@ -12,7 +12,8 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_sdk_adapter_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_ADAPTER"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_sdk_adapter_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_ADAPTER"};
 
 void provider_sdk_adapter_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                        std::string message) {
@@ -731,7 +732,8 @@ ProviderSdkAdapterReadinessReviewResult build_provider_sdk_adapter_readiness_rev
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_sdk_interface_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_ADAPTER_INTERFACE"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_sdk_interface_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_ADAPTER_INTERFACE"};
 
 void provider_sdk_interface_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                          std::string message) {
@@ -1233,7 +1235,8 @@ build_provider_sdk_adapter_interface_review(const ProviderSdkAdapterInterfacePla
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_sdk_payload_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_PAYLOAD"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_sdk_payload_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_PAYLOAD"};
 
 void provider_sdk_payload_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                        std::string message) {
@@ -1544,7 +1547,8 @@ build_provider_sdk_payload_audit_summary(const ProviderSdkPayloadMaterialization
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_sdk_mock_adapter_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_MOCK_ADAPTER"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_sdk_mock_adapter_detail_kValidationDiagnosticCode{"DSI_PROVIDER_SDK_MOCK_ADAPTER"};
 
 void provider_sdk_mock_adapter_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                             std::string message) {

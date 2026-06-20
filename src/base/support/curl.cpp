@@ -2,8 +2,8 @@
 
 #include "base/support/process.hpp"
 
-#include <chrono>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
@@ -21,8 +21,8 @@ class TempBodyFile {
   public:
     [[nodiscard]] bool write(std::string_view body) {
         path_ = make_path();
-        const int fd = open(path_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC,
-                            S_IRUSR | S_IWUSR);
+        const int fd =
+            open(path_.c_str(), O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, S_IRUSR | S_IWUSR);
         if (fd < 0) {
             error_ = std::strerror(errno);
             return false;
@@ -43,8 +43,12 @@ class TempBodyFile {
         return true;
     }
 
-    [[nodiscard]] const std::filesystem::path &path() const { return path_; }
-    [[nodiscard]] const std::string &error() const { return error_; }
+    [[nodiscard]] const std::filesystem::path &path() const {
+        return path_;
+    }
+    [[nodiscard]] const std::string &error() const {
+        return error_;
+    }
 
     ~TempBodyFile() {
         if (!path_.empty()) {
@@ -69,12 +73,24 @@ class TempBodyFile {
     std::string quoted = "\"";
     for (const char character : value) {
         switch (character) {
-        case '\\': quoted += "\\\\"; break;
-        case '"': quoted += "\\\""; break;
-        case '\n': quoted += "\\n"; break;
-        case '\r': quoted += "\\r"; break;
-        case '\t': quoted += "\\t"; break;
-        default: quoted.push_back(character); break;
+        case '\\':
+            quoted += "\\\\";
+            break;
+        case '"':
+            quoted += "\\\"";
+            break;
+        case '\n':
+            quoted += "\\n";
+            break;
+        case '\r':
+            quoted += "\\r";
+            break;
+        case '\t':
+            quoted += "\\t";
+            break;
+        default:
+            quoted.push_back(character);
+            break;
         }
     }
     quoted += '"';
@@ -92,9 +108,14 @@ class TempBodyFile {
     config << "max-time = " << quote_config_value(std::to_string(request.timeout_seconds)) << "\n";
 
     switch (request.http_version) {
-    case CurlHttpVersion::Default: break;
-    case CurlHttpVersion::Http2: config << "http2\n"; break;
-    case CurlHttpVersion::Http2PriorKnowledge: config << "http2-prior-knowledge\n"; break;
+    case CurlHttpVersion::Default:
+        break;
+    case CurlHttpVersion::Http2:
+        config << "http2\n";
+        break;
+    case CurlHttpVersion::Http2PriorKnowledge:
+        config << "http2-prior-knowledge\n";
+        break;
     }
 
     for (const auto &[key, value] : request.headers) {

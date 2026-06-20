@@ -6,7 +6,8 @@ namespace ahfl::support {
 
 ThreadPool::ThreadPool(std::size_t num_threads) {
     if (num_threads == 0) {
-        num_threads = std::max(std::size_t{1}, static_cast<std::size_t>(std::thread::hardware_concurrency()));
+        num_threads =
+            std::max(std::size_t{1}, static_cast<std::size_t>(std::thread::hardware_concurrency()));
     }
     workers_.reserve(num_threads);
     for (std::size_t i = 0; i < num_threads; ++i) {

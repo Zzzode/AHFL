@@ -499,8 +499,7 @@ void TypeCheckPass::check_agent_context_defaults() {
             continue;
         }
 
-        const auto context_struct =
-            result_.environment.get_struct(*ctx->symbol);
+        const auto context_struct = result_.environment.get_struct(*ctx->symbol);
         if (!context_struct.has_value()) {
             continue;
         }
@@ -508,10 +507,10 @@ void TypeCheckPass::check_agent_context_defaults() {
         with_symbol_context(context_struct->get().symbol, [&]() {
             for (const auto &field : context_struct->get().fields) {
                 if (!field.has_default) {
-                    typecheck_error_here(
-                        error_codes::typecheck::MissingField,
-                        "agent context field '" + field.name + "' must declare a default value",
-                        field.declaration_range);
+                    typecheck_error_here(error_codes::typecheck::MissingField,
+                                         "agent context field '" + field.name +
+                                             "' must declare a default value",
+                                         field.declaration_range);
                 }
             }
         });

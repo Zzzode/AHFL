@@ -7,8 +7,8 @@
 
 #include "pipeline/persistence/durable_store_import/provider/governance/audit.hpp"
 #include "pipeline/persistence/durable_store_import/provider/governance/compatibility.hpp"
-#include "pipeline/persistence/durable_store_import/provider/production/production_readiness.hpp"
 #include "pipeline/persistence/durable_store_import/provider/governance/registry.hpp"
+#include "pipeline/persistence/durable_store_import/provider/production/production_readiness.hpp"
 
 namespace ahfl::durable_store_import {
 

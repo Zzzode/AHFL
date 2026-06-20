@@ -120,8 +120,12 @@ void print_scheduler_review(const scheduler_snapshot::SchedulerDecisionSummary &
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
-    line(out, 0, "snapshot_status " + pipeline_review::snapshot_status_name(summary.snapshot_status));
+    line(out,
+         0,
+         "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out,
+         0,
+         "snapshot_status " + pipeline_review::snapshot_status_name(summary.snapshot_status));
     line(out,
          0,
          std::string("checkpoint_friendly ") + (summary.checkpoint_friendly ? "true" : "false"));
@@ -137,7 +141,8 @@ void print_scheduler_review(const scheduler_snapshot::SchedulerDecisionSummary &
          "terminal_reason " +
              (summary.terminal_reason.has_value() ? *summary.terminal_reason : "none"));
 
-    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_failure_summary(
+        out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     pipeline_review::print_string_list(out, 0, "executed_prefix", summary.completed_prefix);
     print_ready_nodes(summary.ready_nodes, out);
     print_blocked_nodes(summary.blocked_nodes, out);

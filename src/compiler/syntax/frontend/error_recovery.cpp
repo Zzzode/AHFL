@@ -13,8 +13,7 @@ std::size_t edit_distance(std::string_view a, std::string_view b) {
     const auto n = b.size();
 
     // 2D DP matrix
-    std::vector<std::vector<std::size_t>> dp(m + 1,
-                                             std::vector<std::size_t>(n + 1, 0));
+    std::vector<std::vector<std::size_t>> dp(m + 1, std::vector<std::size_t>(n + 1, 0));
 
     for (std::size_t i = 0; i <= m; ++i) {
         dp[i][0] = i;
@@ -28,10 +27,11 @@ std::size_t edit_distance(std::string_view a, std::string_view b) {
             if (a[i - 1] == b[j - 1]) {
                 dp[i][j] = dp[i - 1][j - 1];
             } else {
-                dp[i][j] = 1 + std::min({dp[i - 1][j],      // deletion
-                                          dp[i][j - 1],      // insertion
-                                          dp[i - 1][j - 1]   // substitution
-                });
+                dp[i][j] = 1 + std::min({
+                                   dp[i - 1][j],    // deletion
+                                   dp[i][j - 1],    // insertion
+                                   dp[i - 1][j - 1] // substitution
+                               });
             }
         }
     }
@@ -40,10 +40,9 @@ std::size_t edit_distance(std::string_view a, std::string_view b) {
 }
 
 std::vector<RecoverySuggestion>
-AhflErrorStrategy::compute_suggestions(
-    std::string_view token,
-    const std::vector<std::string> &candidates,
-    std::size_t max_results) const {
+AhflErrorStrategy::compute_suggestions(std::string_view token,
+                                       const std::vector<std::string> &candidates,
+                                       std::size_t max_results) const {
 
     struct Scored {
         std::string candidate;
@@ -57,18 +56,15 @@ AhflErrorStrategy::compute_suggestions(
     for (const auto &candidate : candidates) {
         auto dist = edit_distance(token, candidate);
         auto max_len = std::max(token.size(), candidate.size());
-        double conf = (max_len == 0)
-                          ? 1.0
-                          : 1.0 - (static_cast<double>(dist) /
-                                   static_cast<double>(max_len));
+        double conf =
+            (max_len == 0) ? 1.0 : 1.0 - (static_cast<double>(dist) / static_cast<double>(max_len));
         scored.push_back({candidate, dist, conf});
     }
 
     // Sort by distance ascending (lower distance = better match)
-    std::sort(scored.begin(), scored.end(),
-              [](const Scored &lhs, const Scored &rhs) {
-                  return lhs.distance < rhs.distance;
-              });
+    std::sort(scored.begin(), scored.end(), [](const Scored &lhs, const Scored &rhs) {
+        return lhs.distance < rhs.distance;
+    });
 
     std::vector<RecoverySuggestion> results;
     auto count = std::min(max_results, scored.size());
@@ -85,9 +81,8 @@ AhflErrorStrategy::compute_suggestions(
     return results;
 }
 
-RecoverySuggestion
-AhflErrorStrategy::best_match(std::string_view token,
-                              const std::vector<std::string> &dictionary) const {
+RecoverySuggestion AhflErrorStrategy::best_match(std::string_view token,
+                                                 const std::vector<std::string> &dictionary) const {
     auto suggestions = compute_suggestions(token, dictionary, 1);
     if (suggestions.empty()) {
         RecoverySuggestion empty;
@@ -98,27 +93,30 @@ AhflErrorStrategy::best_match(std::string_view token,
 }
 
 std::vector<std::string> AhflErrorStrategy::keyword_dictionary() {
-    return {
-        "module",     "import",    "as",         "struct",     "enum",
-        "type",       "const",     "capability", "predicate",  "agent",
-        "contract",   "flow",      "workflow",   "state",      "states",
-        "initial",    "final",     "input",      "output",     "context",
-        "transition", "requires",  "ensures",    "invariant",  "forbid",
-        "always",     "eventually","next",       "until",      "called",
-        "in_state",   "running",   "completed",  "let",        "if",
-        "else",       "goto",      "return",     "assert",     "true",
-        "false",      "none"
-    };
+    return {"module",   "import",     "as",         "struct",   "enum",     "type",
+            "const",    "capability", "predicate",  "agent",    "contract", "flow",
+            "workflow", "state",      "states",     "initial",  "final",    "input",
+            "output",   "context",    "transition", "requires", "ensures",  "invariant",
+            "forbid",   "always",     "eventually", "next",     "until",    "called",
+            "in_state", "running",    "completed",  "let",      "if",       "else",
+            "goto",     "return",     "assert",     "true",     "false",    "none"};
 }
 
 namespace {
 
 /// Check if a token matches a top-level declaration keyword
 bool is_declaration_keyword(std::string_view token) {
-    static const std::vector<std::string_view> decl_keywords = {
-        "struct", "enum", "agent", "workflow", "contract", "flow",
-        "capability", "predicate", "type", "module", "const"
-    };
+    static const std::vector<std::string_view> decl_keywords = {"struct",
+                                                                "enum",
+                                                                "agent",
+                                                                "workflow",
+                                                                "contract",
+                                                                "flow",
+                                                                "capability",
+                                                                "predicate",
+                                                                "type",
+                                                                "module",
+                                                                "const"};
     for (auto kw : decl_keywords) {
         if (token == kw) {
             return true;
@@ -145,12 +143,9 @@ std::vector<std::string> tokenize(std::string_view source) {
     while (i < source.size()) {
         // Skip whitespace and punctuation that isn't part of identifiers
         while (i < source.size() &&
-               (source[i] == ' ' || source[i] == '\t' ||
-                source[i] == '\n' || source[i] == '\r' ||
-                source[i] == '{' || source[i] == '}' ||
-                source[i] == '(' || source[i] == ')' ||
-                source[i] == ';' || source[i] == ':' ||
-                source[i] == ',' || source[i] == '.')) {
+               (source[i] == ' ' || source[i] == '\t' || source[i] == '\n' || source[i] == '\r' ||
+                source[i] == '{' || source[i] == '}' || source[i] == '(' || source[i] == ')' ||
+                source[i] == ';' || source[i] == ':' || source[i] == ',' || source[i] == '.')) {
             ++i;
         }
         if (i >= source.size()) {
@@ -158,13 +153,10 @@ std::vector<std::string> tokenize(std::string_view source) {
         }
         // Collect token characters (identifiers and underscores)
         std::size_t start = i;
-        while (i < source.size() &&
-               source[i] != ' ' && source[i] != '\t' &&
-               source[i] != '\n' && source[i] != '\r' &&
-               source[i] != '{' && source[i] != '}' &&
-               source[i] != '(' && source[i] != ')' &&
-               source[i] != ';' && source[i] != ':' &&
-               source[i] != ',' && source[i] != '.') {
+        while (i < source.size() && source[i] != ' ' && source[i] != '\t' && source[i] != '\n' &&
+               source[i] != '\r' && source[i] != '{' && source[i] != '}' && source[i] != '(' &&
+               source[i] != ')' && source[i] != ';' && source[i] != ':' && source[i] != ',' &&
+               source[i] != '.') {
             ++i;
         }
         if (i > start) {
@@ -176,8 +168,7 @@ std::vector<std::string> tokenize(std::string_view source) {
 
 } // anonymous namespace
 
-PartialParseResult
-parse_with_recovery(std::string_view source, std::string_view filename) {
+PartialParseResult parse_with_recovery(std::string_view source, std::string_view filename) {
     PartialParseResult result;
 
     auto tokens = tokenize(source);

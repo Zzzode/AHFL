@@ -50,15 +50,12 @@ struct BmcStateMachine {
 };
 
 /// SAT-based Bounded Model Checking
-[[nodiscard]] BmcResult
-run_bmc(const BmcStateMachine &machine, const BmcOptions &options);
+[[nodiscard]] BmcResult run_bmc(const BmcStateMachine &machine, const BmcOptions &options);
 
 /// k-induction verification
-[[nodiscard]] BmcResult
-run_k_induction(const BmcStateMachine &machine, const BmcOptions &options);
+[[nodiscard]] BmcResult run_k_induction(const BmcStateMachine &machine, const BmcOptions &options);
 
 /// CEGAR stub
-[[nodiscard]] BmcResult
-run_cegar(const BmcStateMachine &machine, const BmcOptions &options);
+[[nodiscard]] BmcResult run_cegar(const BmcStateMachine &machine, const BmcOptions &options);
 
 } // namespace ahfl::formal

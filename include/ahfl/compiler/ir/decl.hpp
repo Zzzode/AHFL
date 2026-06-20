@@ -248,9 +248,9 @@ struct WorkflowExprSummary {
 
 /// Workflow 节点: node name: AgentType(input_expr) [after [dep1, dep2]];
 struct WorkflowNode {
-    std::string name;                  // 节点名称
-    ExprPtr input;                     // 传递给 agent 的输入表达式
-    std::vector<std::string> after;    // DAG 依赖（前置节点名列表）
+    std::string name;               // 节点名称
+    ExprPtr input;                  // 传递给 agent 的输入表达式
+    std::vector<std::string> after; // DAG 依赖（前置节点名列表）
     SymbolRef target_ref;
     SourceRangeOpt source_range;
 };

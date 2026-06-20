@@ -17,9 +17,9 @@ class DiagnosticConsumer {
     virtual ~DiagnosticConsumer() = default;
 
     /// Consume a batch of diagnostics, optionally with source context.
-    virtual void consume(const ahfl::DiagnosticBag &bag,
-                         std::optional<std::reference_wrapper<const ahfl::SourceFile>> source =
-                             std::nullopt) = 0;
+    virtual void consume(
+        const ahfl::DiagnosticBag &bag,
+        std::optional<std::reference_wrapper<const ahfl::SourceFile>> source = std::nullopt) = 0;
 
     /// Called once when the CLI is about to exit — flush buffered state.
     virtual void finalize() {}
@@ -56,7 +56,7 @@ class JsonDiagnosticConsumer final : public DiagnosticConsumer {
 
 /// Factory: create appropriate consumer based on format string.
 /// Supported formats: "text" (default), "json"
-[[nodiscard]] std::unique_ptr<DiagnosticConsumer>
-make_diagnostic_consumer(std::string_view format, std::ostream &out);
+[[nodiscard]] std::unique_ptr<DiagnosticConsumer> make_diagnostic_consumer(std::string_view format,
+                                                                           std::ostream &out);
 
 } // namespace ahfl::cli

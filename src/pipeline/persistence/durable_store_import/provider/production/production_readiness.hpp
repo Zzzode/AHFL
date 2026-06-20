@@ -4,8 +4,8 @@
 #include <string>
 #include <string_view>
 
-#include "pipeline/persistence/durable_store_import/provider/reliability/failure_taxonomy.hpp"
 #include "pipeline/persistence/durable_store_import/provider/governance/registry.hpp"
+#include "pipeline/persistence/durable_store_import/provider/reliability/failure_taxonomy.hpp"
 
 namespace ahfl::durable_store_import {
 

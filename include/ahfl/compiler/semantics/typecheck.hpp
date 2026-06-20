@@ -10,15 +10,15 @@
 #include <utility>
 #include <vector>
 
+#include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/base/support/ownership.hpp"
+#include "ahfl/base/support/source.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/effects.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/type_relations.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
-#include "ahfl/base/support/ownership.hpp"
-#include "ahfl/base/support/source.hpp"
 
 namespace ahfl {
 
@@ -153,8 +153,7 @@ class TypeEnvironment {
     // declaration in this environment. Intended consumers are incremental
     // rebuild drivers and LSP cache invalidation: when a declaration's
     // fingerprint is unchanged, downstream cached results can be reused.
-    [[nodiscard]] std::optional<std::uint64_t>
-    signature_fingerprint(SymbolId id) const;
+    [[nodiscard]] std::optional<std::uint64_t> signature_fingerprint(SymbolId id) const;
 
   private:
     friend class TypeChecker;
@@ -198,7 +197,9 @@ struct TypeCheckResult {
     TypedProgram typed_program;
     RelationTrace relation_trace;
 
-    TypeCheckResult() { typed_program.type_check_result = this; }
+    TypeCheckResult() {
+        typed_program.type_check_result = this;
+    }
 
     TypeCheckResult(const TypeCheckResult &other)
         : environment(other.environment), diagnostics(other.diagnostics),
@@ -261,9 +262,8 @@ class TypeChecker {
     [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
                                         const ResolveResult &resolve_result,
                                         TypeCheckOptions options) const;
-    [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
-                                        const ResolveResult &resolve_result,
-                                        TypeContext &types) const;
+    [[nodiscard]] TypeCheckResult
+    check(const SourceGraph &graph, const ResolveResult &resolve_result, TypeContext &types) const;
     [[nodiscard]] TypeCheckResult check(const SourceGraph &graph,
                                         const ResolveResult &resolve_result,
                                         TypeContext &types,

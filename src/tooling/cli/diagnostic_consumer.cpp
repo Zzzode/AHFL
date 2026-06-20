@@ -105,16 +105,16 @@ void JsonDiagnosticConsumer::finalize() {
 // Factory
 // ---------------------------------------------------------------------------
 
-std::unique_ptr<DiagnosticConsumer>
-make_diagnostic_consumer(std::string_view format, std::ostream &out) {
+std::unique_ptr<DiagnosticConsumer> make_diagnostic_consumer(std::string_view format,
+                                                             std::ostream &out) {
     if (format == "json") {
         return std::make_unique<JsonDiagnosticConsumer>(out);
     }
     if (format == "text" || format.empty()) {
         return std::make_unique<TextDiagnosticConsumer>(out);
     }
-    throw std::invalid_argument(
-        std::string("unknown diagnostic format: '") + std::string(format) + "'");
+    throw std::invalid_argument(std::string("unknown diagnostic format: '") + std::string(format) +
+                                "'");
 }
 
 } // namespace ahfl::cli

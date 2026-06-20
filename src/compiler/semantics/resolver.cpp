@@ -1,7 +1,7 @@
 #include "ahfl/compiler/semantics/resolver.hpp"
 
-#include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/frontend/frontend.hpp"
 
 #include <algorithm>
 #include <functional>

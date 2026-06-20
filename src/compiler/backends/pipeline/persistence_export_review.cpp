@@ -1,6 +1,6 @@
 #include "compiler/backends/pipeline/persistence_export_review.hpp"
-#include "printer_helpers.hpp"
 #include "compiler/backends/pipeline/review_helpers.hpp"
+#include "printer_helpers.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -107,10 +107,19 @@ void print_persistence_export_review(
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
-    line(out, 0, "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
-    line(out, 0, "persistence_status " + pipeline_review::persistence_status_name(summary.persistence_status));
-    line(out, 0, "manifest_status " + pipeline_review::manifest_status_name(summary.manifest_status));
+    line(out,
+         0,
+         "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out,
+         0,
+         "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
+    line(out,
+         0,
+         "persistence_status " +
+             pipeline_review::persistence_status_name(summary.persistence_status));
+    line(out,
+         0,
+         "manifest_status " + pipeline_review::manifest_status_name(summary.manifest_status));
     line(out, 0, "export_package_identity " + summary.export_package_identity);
     line(out, 0, "planned_durable_identity " + summary.planned_durable_identity);
     line(out,
@@ -127,9 +136,11 @@ void print_persistence_export_review(
                                           ? artifact_kind_name(*summary.next_required_artifact_kind)
                                           : "none"));
 
-    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_failure_summary(
+        out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_store_import_blocker(out, 0, summary.store_import_blocker);
-    pipeline_review::print_string_list(out, 0, "artifact_bundle_preview", summary.artifact_bundle_preview);
+    pipeline_review::print_string_list(
+        out, 0, "artifact_bundle_preview", summary.artifact_bundle_preview);
 }
 
 } // namespace ahfl

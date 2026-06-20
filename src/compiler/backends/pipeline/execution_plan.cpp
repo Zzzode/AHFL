@@ -126,8 +126,8 @@ EmitResult print_program_execution_plan(const ir::Program &program, std::ostream
 }
 
 EmitResult print_program_execution_plan(const ir::Program &program,
-                                  const handoff::PackageMetadata &metadata,
-                                  std::ostream &out) {
+                                        const handoff::PackageMetadata &metadata,
+                                        std::ostream &out) {
     const auto result = handoff::build_execution_plan(handoff::lower_package(program, metadata));
     if (!result.plan.has_value()) {
         return std::unexpected<std::string>("execution plan build failed");

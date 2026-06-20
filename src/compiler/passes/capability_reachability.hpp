@@ -19,7 +19,9 @@ struct CapabilityReachabilityResult final : public AnalysisResult {
 /// Checks which capabilities declared on agents are actually called in flows.
 class CapabilityReachabilityPass final : public AnalysisPass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "capability-reachability"; }
+    [[nodiscard]] std::string_view name() const override {
+        return "capability-reachability";
+    }
     [[nodiscard]] std::unique_ptr<AnalysisResult> run(const ir::Program &program) override;
 };
 

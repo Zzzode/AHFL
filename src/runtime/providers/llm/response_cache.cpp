@@ -8,7 +8,8 @@ namespace ahfl::llm_provider {
 ResponseCache::ResponseCache(std::size_t max_entries, std::chrono::seconds ttl)
     : max_entries_(max_entries), ttl_(ttl) {}
 
-std::string ResponseCache::make_key(std::string_view model, std::string_view system,
+std::string ResponseCache::make_key(std::string_view model,
+                                    std::string_view system,
                                     std::string_view user) const {
     // Simple hash key: model + "|" + system + "|" + user
     std::string key;
@@ -21,8 +22,8 @@ std::string ResponseCache::make_key(std::string_view model, std::string_view sys
     return key;
 }
 
-std::optional<std::string> ResponseCache::get(std::string_view model, std::string_view system,
-                                              std::string_view user) {
+std::optional<std::string>
+ResponseCache::get(std::string_view model, std::string_view system, std::string_view user) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto key = make_key(model, system, user);
     auto it = entries_.find(key);
@@ -35,16 +36,17 @@ std::optional<std::string> ResponseCache::get(std::string_view model, std::strin
     if (now - it->second.inserted_at > ttl_) {
         // Expired — remove
         entries_.erase(it);
-        insertion_order_.erase(
-            std::remove(insertion_order_.begin(), insertion_order_.end(), key),
-            insertion_order_.end());
+        insertion_order_.erase(std::remove(insertion_order_.begin(), insertion_order_.end(), key),
+                               insertion_order_.end());
         return std::nullopt;
     }
 
     return it->second.response;
 }
 
-void ResponseCache::put(std::string_view model, std::string_view system, std::string_view user,
+void ResponseCache::put(std::string_view model,
+                        std::string_view system,
+                        std::string_view user,
                         std::string response) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto key = make_key(model, system, user);

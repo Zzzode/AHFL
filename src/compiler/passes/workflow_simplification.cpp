@@ -80,8 +80,7 @@ bool WorkflowSimplificationPass::run(ir::Program &program) {
                     }
                     // Is `dep` reachable from `other_dep`?
                     auto it = reachable.find(other_dep);
-                    if (it != reachable.end() &&
-                        it->second.find(dep) != it->second.end()) {
+                    if (it != reachable.end() && it->second.find(dep) != it->second.end()) {
                         redundant = true;
                         break;
                     }

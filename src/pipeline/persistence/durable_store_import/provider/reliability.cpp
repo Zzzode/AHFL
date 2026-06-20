@@ -12,7 +12,8 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_retry_detail_kValidationDiagnosticCode{"DSI_PROVIDER_WRITE_RETRY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_retry_detail_kValidationDiagnosticCode{"DSI_PROVIDER_WRITE_RETRY"};
 
 void provider_retry_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(
@@ -214,7 +215,8 @@ build_provider_write_retry_decision(const ProviderSdkMockAdapterExecutionResult 
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_commit_detail_kValidationDiagnosticCode{"DSI_PROVIDER_WRITE_COMMIT"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_commit_detail_kValidationDiagnosticCode{"DSI_PROVIDER_WRITE_COMMIT"};
 
 void provider_commit_detail_emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(
@@ -459,7 +461,8 @@ build_provider_write_commit_review(const ProviderWriteCommitReceipt &receipt) {
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_recovery_detail_kValidationDiagnosticCode{"DSI_PROVIDER_WRITE_RECOVERY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_recovery_detail_kValidationDiagnosticCode{"DSI_PROVIDER_WRITE_RECOVERY"};
 
 void provider_recovery_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                     std::string message) {
@@ -829,7 +832,8 @@ build_provider_write_recovery_review(const ProviderWriteRecoveryPlan &plan) {
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_failure_taxonomy_detail_kValidationDiagnosticCode{"DSI_PROVIDER_FAILURE_TAXONOMY"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_failure_taxonomy_detail_kValidationDiagnosticCode{"DSI_PROVIDER_FAILURE_TAXONOMY"};
 
 void provider_failure_taxonomy_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                             std::string message) {

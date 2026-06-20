@@ -1,10 +1,10 @@
 #pragma once
 
-#include "tooling/cli/command_catalog.hpp"
-#include "tooling/cli/output_context.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
+#include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/output_context.hpp"
 
 #include <iostream>
 #include <optional>
@@ -14,15 +14,13 @@
 namespace ahfl::cli {
 
 template <typename Artifact>
-using CliArtifactBuilder =
-    std::optional<Artifact> (*)(const ahfl::ir::Program &,
-                                const ahfl::handoff::PackageMetadata &,
-                                const ahfl::dry_run::CapabilityMockSet &,
-                                const CommandLineOptions &,
-                                std::string_view);
+using CliArtifactBuilder = std::optional<Artifact> (*)(const ahfl::ir::Program &,
+                                                       const ahfl::handoff::PackageMetadata &,
+                                                       const ahfl::dry_run::CapabilityMockSet &,
+                                                       const CommandLineOptions &,
+                                                       std::string_view);
 
-template <typename Artifact>
-using ArtifactPrinter = void (*)(const Artifact &, std::ostream &);
+template <typename Artifact> using ArtifactPrinter = void (*)(const Artifact &, std::ostream &);
 
 template <typename Artifact>
 [[nodiscard]] int emit_cli_artifact(CliArtifactBuilder<Artifact> build,
@@ -44,7 +42,8 @@ template <typename Artifact>
 
 template <typename Result, typename Artifact>
 [[nodiscard]] std::optional<Artifact>
-unwrap_cli_result(Result &&result, std::optional<Artifact> Result::*artifact_member,
+unwrap_cli_result(Result &&result,
+                  std::optional<Artifact> Result::*artifact_member,
                   std::ostream &err = std::cerr) {
     result.diagnostics.render(err);
     const auto &artifact = result.*artifact_member;

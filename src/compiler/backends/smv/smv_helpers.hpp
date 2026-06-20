@@ -9,9 +9,9 @@
 #include <vector>
 
 #include "ahfl/compiler/ir/ir.hpp"
-#include "compiler/backends/smv/smv_naming.hpp"
 #include "base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
+#include "compiler/backends/smv/smv_naming.hpp"
 
 namespace ahfl::smv_detail {
 
