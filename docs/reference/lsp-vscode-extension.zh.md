@@ -52,9 +52,11 @@ build/dev/src/tooling/lsp/ahfl-lsp
 在仓库根目录先确保 LSP 二进制可用，然后运行：
 
 ```bash
+corepack enable
+corepack prepare pnpm@10.10.0 --activate
 cd tools/vscode
-npm ci
-npm run compile
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run compile
 code --extensionDevelopmentPath="$(pwd)" /Users/bytedance/Develop/AHFL
 ```
 
@@ -91,16 +93,16 @@ code --install-extension tools/vscode/dist/ahfl-language-<version>-<target>.vsix
 
 ```bash
 cd tools/vscode
-npm run test:package-inventory
-npm run test:vsix-install
+pnpm run test:package-inventory
+pnpm run test:vsix-install
 ```
 
 如果只调试客户端扩展，可以从 `tools/vscode` 生成 client-only VSIX：
 
 ```bash
 cd tools/vscode
-npm ci
-npm run package
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run package
 ```
 
 输出文件：
@@ -128,8 +130,8 @@ Client-only VSIX 不适合作为普通用户主安装包；它需要用户另外
 2. 具有 Marketplace Manage 权限的 personal access token。
 3. `tools/vscode/package.json` 中的 `publisher` 与 Marketplace publisher 一致。
 4. 已通过 `scripts/package-vscode-vsix-release.sh` 生成对应平台 VSIX。
-5. 已通过 `npm run test:package-inventory` 验证 Marketplace 发布包清单。
-6. 已通过 `npm run test:vsix-install` 验证 platform VSIX 可安装且包含可执行 release `ahfl-lsp`。
+5. 已通过 `pnpm run test:package-inventory` 验证 Marketplace 发布包清单。
+6. 已通过 `pnpm run test:vsix-install` 验证 platform VSIX 可安装且包含可执行 release `ahfl-lsp`。
 
 先从仓库根目录生成 platform VSIX：
 
@@ -141,13 +143,13 @@ scripts/package-vscode-vsix-release.sh
 
 ```bash
 cd tools/vscode
-npm run publish:vsix -- dist/ahfl-language-<version>-<target>.vsix --pat "$VSCE_PAT"
+pnpm run publish:vsix -- dist/ahfl-language-<version>-<target>.vsix --pat "$VSCE_PAT"
 ```
 
 如果只是预检扩展包内容，不发布 Marketplace，使用：
 
 ```bash
-npm run test:package-inventory
+pnpm run test:package-inventory
 ```
 
 当前本地 `vsce` 没有真正的 `publish --dry-run` 选项；该门禁使用 `vsce ls --no-dependencies`
@@ -174,7 +176,7 @@ https://code.visualstudio.com/api/working-with-extensions/publishing-extension
 2. `tools/vscode/package.json` 的 `version` 已递增。
 3. `tools/vscode/CHANGELOG.md` 已更新。
 4. 对应版本的 platform VSIX 已包含 release `ahfl-lsp`。
-5. `npm run test:package-inventory` 与 `npm run test:vsix-install` 已通过。
+5. `pnpm run test:package-inventory` 与 `pnpm run test:vsix-install` 已通过。
 
 ## 七、验证门禁
 
@@ -188,8 +190,8 @@ scripts/package-vscode-vsix-release.sh
 
 ```bash
 cd tools/vscode
-npm ci
-npm run compile
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run compile
 ```
 
 验证 VS Code extension host 下的 hover、completion、rename、watched-files 与 diagnostics publish/recovery：
@@ -197,22 +199,22 @@ npm run compile
 ```bash
 cmake --build --preset build-dev --target ahfl-lsp
 cd tools/vscode
-npm run test:extension
+pnpm run test:extension
 ```
 
 生成并校验 Problems diagnostics transcript：
 
 ```bash
 cd tools/vscode
-npm run test:problems-transcript
+pnpm run test:problems-transcript
 ```
 
 验证 Marketplace package inventory 与 platform VSIX 安装：
 
 ```bash
 cd tools/vscode
-npm run test:package-inventory
-npm run test:vsix-install
+pnpm run test:package-inventory
+pnpm run test:vsix-install
 ```
 
 仓库级变更还应运行：
