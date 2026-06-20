@@ -1,38 +1,57 @@
 #include "ahfl/compiler/semantics/condition_facts.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
+
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 
 namespace ahfl {
 
 namespace {
 
 [[nodiscard]] std::optional<Place> extract_place(const ast::ExprSyntax &expr) {
-    if (expr.kind == ast::ExprSyntaxKind::Group && expr.first) {
-        return extract_place(*expr.first);
-    }
-    if (expr.kind == ast::ExprSyntaxKind::MemberAccess && expr.first) {
-        auto place = extract_place(*expr.first);
-        if (!place.has_value()) {
+    return std::visit(Overloaded{
+        [](const ast::GroupExpr &group) -> std::optional<Place> {
+            if (!group.inner) {
+                return std::nullopt;
+            }
+            return extract_place(*group.inner);
+        },
+        [](const ast::MemberAccessExpr &member) -> std::optional<Place> {
+            if (!member.base) {
+                return std::nullopt;
+            }
+            auto place = extract_place(*member.base);
+            if (!place.has_value()) {
+                return std::nullopt;
+            }
+            place->members.push_back(member.member);
+            return place;
+        },
+        [](const ast::PathExpr &path_expr) -> std::optional<Place> {
+            if (!path_expr.path) {
+                return std::nullopt;
+            }
+            return Place{.root = path_expr.path->root_name, .members = path_expr.path->members};
+        },
+        [](const auto &) -> std::optional<Place> {
             return std::nullopt;
-        }
-        place->members.push_back(expr.name);
-        return place;
-    }
-    if (expr.kind != ast::ExprSyntaxKind::Path || !expr.path) {
-        return std::nullopt;
-    }
-    return Place{.root = expr.path->root_name, .members = expr.path->members};
+        },
+    }, expr.node);
 }
 
 [[nodiscard]] bool is_none_literal(const ast::ExprSyntax &expr) noexcept {
-    return expr.kind == ast::ExprSyntaxKind::NoneLiteral;
+    return expr.is<ast::NoneLiteralExpr>();
 }
 
 [[nodiscard]] bool is_qualified_value(const ast::ExprSyntax &expr) noexcept {
-    return expr.kind == ast::ExprSyntaxKind::QualifiedValue && expr.qualified_name != nullptr &&
-           expr.qualified_name->segments.size() >= 2;
+    if (!expr.is<ast::QualifiedValueExpr>()) {
+        return false;
+    }
+    const auto &q = expr.as<ast::QualifiedValueExpr>();
+    return q.name != nullptr && q.name->segments.size() >= 2;
 }
 
 [[nodiscard]] TypeFactKind opposite(TypeFactKind kind) noexcept {
@@ -41,99 +60,134 @@ namespace {
 
 [[nodiscard]] std::optional<TypeFact> extract_none_comparison(const ast::ExprSyntax &condition,
                                                              bool truth_value) {
-    if (condition.kind == ast::ExprSyntaxKind::Group && condition.first) {
-        return extract_none_comparison(*condition.first, truth_value);
-    }
-    if (condition.kind != ast::ExprSyntaxKind::Binary || !condition.first || !condition.second) {
-        return std::nullopt;
-    }
-    if (condition.binary_op != ast::ExprBinaryOp::Equal &&
-        condition.binary_op != ast::ExprBinaryOp::NotEqual) {
-        return std::nullopt;
-    }
+    return std::visit(Overloaded{
+        [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
+            if (!group.inner) {
+                return std::nullopt;
+            }
+            return extract_none_comparison(*group.inner, truth_value);
+        },
+        [truth_value, &condition](const ast::BinaryExpr &binary) -> std::optional<TypeFact> {
+            if (!binary.lhs || !binary.rhs) {
+                return std::nullopt;
+            }
+            if (binary.op != ast::ExprBinaryOp::Equal &&
+                binary.op != ast::ExprBinaryOp::NotEqual) {
+                return std::nullopt;
+            }
 
-    std::optional<Place> place;
-    if (is_none_literal(*condition.first)) {
-        place = extract_place(*condition.second);
-    } else if (is_none_literal(*condition.second)) {
-        place = extract_place(*condition.first);
-    }
-    if (!place.has_value()) {
-        return std::nullopt;
-    }
+            std::optional<Place> place;
+            if (is_none_literal(*binary.lhs)) {
+                place = extract_place(*binary.rhs);
+            } else if (is_none_literal(*binary.rhs)) {
+                place = extract_place(*binary.lhs);
+            }
+            if (!place.has_value()) {
+                return std::nullopt;
+            }
 
-    auto kind = condition.binary_op == ast::ExprBinaryOp::Equal ? TypeFactKind::IsNone
-                                                               : TypeFactKind::IsNotNone;
-    if (!truth_value) {
-        kind = opposite(kind);
-    }
+            auto kind = binary.op == ast::ExprBinaryOp::Equal ? TypeFactKind::IsNone
+                                                              : TypeFactKind::IsNotNone;
+            if (!truth_value) {
+                kind = opposite(kind);
+            }
 
-    return TypeFact{
-        .place = std::move(*place),
-        .kind = kind,
-        .origin = condition.range,
-        .enum_name = {},
-        .variant_name = {},
-    };
+            return TypeFact{
+                .place = std::move(*place),
+                .kind = kind,
+                .origin = condition.range,
+                .enum_name = {},
+                .variant_name = {},
+            };
+        },
+        [](const auto &) -> std::optional<TypeFact> {
+            return std::nullopt;
+        },
+    }, condition.node);
 }
 
 [[nodiscard]] std::optional<TypeFact> extract_variant_comparison(const ast::ExprSyntax &condition,
                                                                 bool truth_value) {
-    if (condition.kind == ast::ExprSyntaxKind::Group && condition.first) {
-        return extract_variant_comparison(*condition.first, truth_value);
-    }
-    if (condition.kind != ast::ExprSyntaxKind::Binary || !condition.first || !condition.second) {
-        return std::nullopt;
-    }
-    if (condition.binary_op != ast::ExprBinaryOp::Equal &&
-        condition.binary_op != ast::ExprBinaryOp::NotEqual) {
-        return std::nullopt;
-    }
+    return std::visit(Overloaded{
+        [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
+            if (!group.inner) {
+                return std::nullopt;
+            }
+            return extract_variant_comparison(*group.inner, truth_value);
+        },
+        [truth_value, &condition](const ast::BinaryExpr &binary) -> std::optional<TypeFact> {
+            if (!binary.lhs || !binary.rhs) {
+                return std::nullopt;
+            }
+            if (binary.op != ast::ExprBinaryOp::Equal &&
+                binary.op != ast::ExprBinaryOp::NotEqual) {
+                return std::nullopt;
+            }
 
-    // Detect: path == QualifiedValue  or  QualifiedValue == path
-    std::optional<Place> place;
-    const ast::QualifiedName *qualified = nullptr;
+            // Detect: path == QualifiedValue  or  QualifiedValue == path
+            std::optional<Place> place;
+            const ast::QualifiedName *qualified = nullptr;
 
-    if (is_qualified_value(*condition.second)) {
-        place = extract_place(*condition.first);
-        qualified = condition.second->qualified_name.get();
-    } else if (is_qualified_value(*condition.first)) {
-        place = extract_place(*condition.second);
-        qualified = condition.first->qualified_name.get();
-    }
+            if (is_qualified_value(*binary.rhs)) {
+                place = extract_place(*binary.lhs);
+                qualified = binary.rhs->as<ast::QualifiedValueExpr>().name.get();
+            } else if (is_qualified_value(*binary.lhs)) {
+                place = extract_place(*binary.rhs);
+                qualified = binary.lhs->as<ast::QualifiedValueExpr>().name.get();
+            }
 
-    if (!place.has_value() || qualified == nullptr) {
-        return std::nullopt;
-    }
+            if (!place.has_value() || qualified == nullptr) {
+                return std::nullopt;
+            }
 
-    // segments: ["EnumName", "VariantName"] (possibly more for module-qualified).
-    // The last segment is the variant, second-to-last is the enum type.
-    const auto &segs = qualified->segments;
-    const std::string &variant = segs.back();
-    const std::string &enum_type = segs[segs.size() - 2];
+            // segments: ["EnumName", "VariantName"] (possibly more for module-qualified).
+            // The last segment is the variant, second-to-last is the enum type.
+            const auto &segs = qualified->segments;
+            const std::string &variant = segs.back();
+            const std::string &enum_type = segs[segs.size() - 2];
 
-    const bool positive = (condition.binary_op == ast::ExprBinaryOp::Equal) == truth_value;
+            const bool positive = (binary.op == ast::ExprBinaryOp::Equal) == truth_value;
 
-    return TypeFact{
-        .place = std::move(*place),
-        .kind = positive ? TypeFactKind::IsVariant : TypeFactKind::IsNotVariant,
-        .origin = condition.range,
-        .enum_name = enum_type,
-        .variant_name = variant,
-    };
+            return TypeFact{
+                .place = std::move(*place),
+                .kind = positive ? TypeFactKind::IsVariant : TypeFactKind::IsNotVariant,
+                .origin = condition.range,
+                .enum_name = enum_type,
+                .variant_name = variant,
+            };
+        },
+        [](const auto &) -> std::optional<TypeFact> {
+            return std::nullopt;
+        },
+    }, condition.node);
 }
 
 void collect_true_facts(const ast::ExprSyntax &condition, FlowFacts &facts) {
-    if (condition.kind == ast::ExprSyntaxKind::Group && condition.first) {
-        collect_true_facts(*condition.first, facts);
+    const bool handled = std::visit(Overloaded{
+        [&facts](const ast::GroupExpr &group) -> bool {
+            if (!group.inner) {
+                return false;
+            }
+            collect_true_facts(*group.inner, facts);
+            return true;
+        },
+        [&facts](const ast::BinaryExpr &binary) -> bool {
+            if (binary.op != ast::ExprBinaryOp::And || !binary.lhs || !binary.rhs) {
+                return false;
+            }
+            collect_true_facts(*binary.lhs, facts);
+            collect_true_facts(*binary.rhs, facts);
+            return true;
+        },
+        [](const auto &) -> bool {
+            return false;
+        },
+    }, condition.node);
+
+    if (handled) {
         return;
     }
-    if (condition.kind == ast::ExprSyntaxKind::Binary &&
-        condition.binary_op == ast::ExprBinaryOp::And && condition.first && condition.second) {
-        collect_true_facts(*condition.first, facts);
-        collect_true_facts(*condition.second, facts);
-        return;
-    }
+
     if (auto fact = extract_none_comparison(condition, true); fact.has_value()) {
         facts.add(std::move(*fact));
     }

@@ -594,19 +594,111 @@ class ProgramBuilder {
     [[nodiscard]] Owned<ast::ExprSyntax> make_expr_syntax(ast::ExprSyntaxKind kind,
                                                           SourceRange range) const {
         auto expr = make_owned<ast::ExprSyntax>();
-        expr->kind = kind;
         expr->range = range;
         expr->node_id = ++next_expr_id_;
         expr->text = source_text(source_, range);
+
+        // Initialize node variant with the correct default-constructed alternative
+        switch (kind) {
+        case ast::ExprSyntaxKind::NoneLiteral:
+            expr->node = ast::NoneLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::BoolLiteral:
+            expr->node = ast::BoolLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::IntegerLiteral:
+            expr->node = ast::IntegerLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::FloatLiteral:
+            expr->node = ast::FloatLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::DecimalLiteral:
+            expr->node = ast::DecimalLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::StringLiteral:
+            expr->node = ast::StringLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::DurationLiteral:
+            expr->node = ast::DurationLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::Some:
+            expr->node = ast::SomeExpr{};
+            break;
+        case ast::ExprSyntaxKind::Path:
+            expr->node = ast::PathExpr{};
+            break;
+        case ast::ExprSyntaxKind::QualifiedValue:
+            expr->node = ast::QualifiedValueExpr{};
+            break;
+        case ast::ExprSyntaxKind::Call:
+            expr->node = ast::CallExpr{};
+            break;
+        case ast::ExprSyntaxKind::StructLiteral:
+            expr->node = ast::StructLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::ListLiteral:
+            expr->node = ast::ListLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::SetLiteral:
+            expr->node = ast::SetLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::MapLiteral:
+            expr->node = ast::MapLiteralExpr{};
+            break;
+        case ast::ExprSyntaxKind::Unary:
+            expr->node = ast::UnaryExpr{};
+            break;
+        case ast::ExprSyntaxKind::Binary:
+            expr->node = ast::BinaryExpr{};
+            break;
+        case ast::ExprSyntaxKind::MemberAccess:
+            expr->node = ast::MemberAccessExpr{};
+            break;
+        case ast::ExprSyntaxKind::IndexAccess:
+            expr->node = ast::IndexAccessExpr{};
+            break;
+        case ast::ExprSyntaxKind::Group:
+            expr->node = ast::GroupExpr{};
+            break;
+        default:
+            throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
+        }
+
         return expr;
     }
 
     [[nodiscard]] Owned<ast::TemporalExprSyntax>
     make_temporal_expr_syntax(ast::TemporalExprSyntaxKind kind, SourceRange range) const {
         auto expr = make_owned<ast::TemporalExprSyntax>();
-        expr->kind = kind;
         expr->range = range;
-        expr->text = source_text(source_, range);
+
+        // Initialize node variant with the correct default-constructed alternative
+        switch (kind) {
+        case ast::TemporalExprSyntaxKind::EmbeddedExpr:
+            expr->node = ast::EmbeddedTemporalExpr{};
+            break;
+        case ast::TemporalExprSyntaxKind::Called:
+            expr->node = ast::CalledTemporalExpr{};
+            break;
+        case ast::TemporalExprSyntaxKind::InState:
+            expr->node = ast::InStateTemporalExpr{};
+            break;
+        case ast::TemporalExprSyntaxKind::Running:
+            expr->node = ast::RunningTemporalExpr{};
+            break;
+        case ast::TemporalExprSyntaxKind::Completed:
+            expr->node = ast::CompletedTemporalExpr{};
+            break;
+        case ast::TemporalExprSyntaxKind::Unary:
+            expr->node = ast::UnaryTemporalExpr{};
+            break;
+        case ast::TemporalExprSyntaxKind::Binary:
+            expr->node = ast::BinaryTemporalExpr{};
+            break;
+        default:
+            throw std::logic_error("unhandled TemporalExprSyntaxKind in make_temporal_expr_syntax");
+        }
+
         return expr;
     }
 
@@ -645,9 +737,10 @@ class ProgramBuilder {
                 auto lhs = build_operand(require(operands[index], "expression operand is missing"));
                 auto binary = make_expr_syntax(ast::ExprSyntaxKind::Binary,
                                                span_range(lhs->range, result->range));
-                binary->binary_op = expr_binary_op_from(operators[index]);
-                binary->first = std::move(lhs);
-                binary->second = std::move(result);
+                auto &binary_node = std::get<ast::BinaryExpr>(binary->node);
+                binary_node.op = expr_binary_op_from(operators[index]);
+                binary_node.lhs = std::move(lhs);
+                binary_node.rhs = std::move(result);
                 result = std::move(binary);
             }
 
@@ -660,9 +753,10 @@ class ProgramBuilder {
             auto rhs = build_operand(require(operands[index + 1], "expression operand is missing"));
             auto binary = make_expr_syntax(ast::ExprSyntaxKind::Binary,
                                            span_range(result->range, rhs->range));
-            binary->binary_op = expr_binary_op_from(operators[index]);
-            binary->first = std::move(result);
-            binary->second = std::move(rhs);
+            auto &binary_node = std::get<ast::BinaryExpr>(binary->node);
+            binary_node.op = expr_binary_op_from(operators[index]);
+            binary_node.lhs = std::move(result);
+            binary_node.rhs = std::move(rhs);
             result = std::move(binary);
         }
 
@@ -692,9 +786,10 @@ class ProgramBuilder {
                 auto lhs = build_operand(require(operands[index], "temporal operand is missing"));
                 auto binary = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Binary,
                                                         span_range(lhs->range, result->range));
-                binary->binary_op = temporal_binary_op_from(operators[index]);
-                binary->first = std::move(lhs);
-                binary->second = std::move(result);
+                auto &binary_node = std::get<ast::BinaryTemporalExpr>(binary->node);
+                binary_node.op = temporal_binary_op_from(operators[index]);
+                binary_node.lhs = std::move(lhs);
+                binary_node.rhs = std::move(result);
                 result = std::move(binary);
             }
 
@@ -707,9 +802,10 @@ class ProgramBuilder {
             auto rhs = build_operand(require(operands[index + 1], "temporal operand is missing"));
             auto binary = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Binary,
                                                     span_range(result->range, rhs->range));
-            binary->binary_op = temporal_binary_op_from(operators[index]);
-            binary->first = std::move(result);
-            binary->second = std::move(rhs);
+            auto &binary_node = std::get<ast::BinaryTemporalExpr>(binary->node);
+            binary_node.op = temporal_binary_op_from(operators[index]);
+            binary_node.lhs = std::move(result);
+            binary_node.rhs = std::move(rhs);
             result = std::move(binary);
         }
 
@@ -774,9 +870,10 @@ class ProgramBuilder {
         if (const auto inner = borrow(context.unaryExpr())) {
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Unary, context_range(context, source_));
-            expr->unary_op = expr_unary_op_from(
+            auto &unary_node = std::get<ast::UnaryExpr>(expr->node);
+            unary_node.op = expr_unary_op_from(
                 require(context.getStart(), "unary operator is missing").getText());
-            expr->first = build_unary_expr(inner->get());
+            unary_node.operand = build_unary_expr(inner->get());
             return expr;
         }
 
@@ -803,8 +900,9 @@ class ProgramBuilder {
                                                 terminal_range(require(context.IDENT(ident_index),
                                                                        "member name is missing"),
                                                                source_)));
-                member->first = std::move(result);
-                member->name =
+                auto &member_node = std::get<ast::MemberAccessExpr>(member->node);
+                member_node.base = std::move(result);
+                member_node.member =
                     text_of(require(context.IDENT(ident_index), "member name is missing"));
                 result = std::move(member);
                 ++ident_index;
@@ -817,8 +915,9 @@ class ProgramBuilder {
                     require(context.expr(expr_index), "index expression is missing"));
                 auto index_access = make_expr_syntax(ast::ExprSyntaxKind::IndexAccess,
                                                      span_range(result->range, index_expr->range));
-                index_access->first = std::move(result);
-                index_access->second = std::move(index_expr);
+                auto &idx_node = std::get<ast::IndexAccessExpr>(index_access->node);
+                idx_node.base = std::move(result);
+                idx_node.index = std::move(index_expr);
                 result = std::move(index_access);
                 ++expr_index;
                 child_index += 3;
@@ -852,7 +951,7 @@ class ProgramBuilder {
         if (const auto path = borrow(context.pathExpr())) {
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Path, context_range(context, source_));
-            expr->path = build_path_syntax(path->get());
+            std::get<ast::PathExpr>(expr->node).path = build_path_syntax(path->get());
             return expr;
         }
 
@@ -874,13 +973,15 @@ class ProgramBuilder {
                     "some") {
                 auto expr =
                     make_expr_syntax(ast::ExprSyntaxKind::Some, context_range(context, source_));
-                expr->first = build_expr_syntax(inner_expr->get());
+                std::get<ast::SomeExpr>(expr->node).value =
+                    build_expr_syntax(inner_expr->get());
                 return expr;
             }
 
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Group, context_range(context, source_));
-            expr->first = build_expr_syntax(inner_expr->get());
+            std::get<ast::GroupExpr>(expr->node).inner =
+                build_expr_syntax(inner_expr->get());
             return expr;
         }
 
@@ -902,31 +1003,39 @@ class ProgramBuilder {
 
         if (literal_text == "true" || literal_text == "false") {
             auto expr = make_expr_syntax(ast::ExprSyntaxKind::BoolLiteral, range);
-            expr->bool_value = literal_text == "true";
+            std::get<ast::BoolLiteralExpr>(expr->node).value = (literal_text == "true");
             return expr;
         }
 
         if (const auto integer_literal = borrow(context.integerLiteral())) {
             auto expr = make_expr_syntax(ast::ExprSyntaxKind::IntegerLiteral, range);
-            expr->integer_literal = build_integer_syntax(integer_literal->get());
+            std::get<ast::IntegerLiteralExpr>(expr->node).literal =
+                build_integer_syntax(integer_literal->get());
             return expr;
         }
 
         if (borrow(context.floatLiteral()).has_value()) {
-            return make_expr_syntax(ast::ExprSyntaxKind::FloatLiteral, range);
+            auto expr = make_expr_syntax(ast::ExprSyntaxKind::FloatLiteral, range);
+            std::get<ast::FloatLiteralExpr>(expr->node).spelling = expr->text;
+            return expr;
         }
 
         if (borrow(context.decimalLiteral()).has_value()) {
-            return make_expr_syntax(ast::ExprSyntaxKind::DecimalLiteral, range);
+            auto expr = make_expr_syntax(ast::ExprSyntaxKind::DecimalLiteral, range);
+            std::get<ast::DecimalLiteralExpr>(expr->node).spelling = expr->text;
+            return expr;
         }
 
         if (borrow(context.stringLiteral()).has_value()) {
-            return make_expr_syntax(ast::ExprSyntaxKind::StringLiteral, range);
+            auto expr = make_expr_syntax(ast::ExprSyntaxKind::StringLiteral, range);
+            std::get<ast::StringLiteralExpr>(expr->node).spelling = expr->text;
+            return expr;
         }
 
         if (const auto duration_literal = borrow(context.durationLiteral())) {
             auto expr = make_expr_syntax(ast::ExprSyntaxKind::DurationLiteral, range);
-            expr->duration_literal = build_duration_syntax(duration_literal->get());
+            std::get<ast::DurationLiteralExpr>(expr->node).literal =
+                build_duration_syntax(duration_literal->get());
             return expr;
         }
 
@@ -936,11 +1045,12 @@ class ProgramBuilder {
     [[nodiscard]] Owned<ast::ExprSyntax>
     build_call_expr(AHFLParser::CallExprContext &context) const {
         auto expr = make_expr_syntax(ast::ExprSyntaxKind::Call, context_range(context, source_));
-        expr->qualified_name =
+        auto &call_node = std::get<ast::CallExpr>(expr->node);
+        call_node.callee =
             build_qualified_name(require(context.qualifiedIdent(), "call target is missing"));
 
         if (const auto arguments = borrow(context.exprList())) {
-            expr->items = build_expr_list(arguments->get());
+            call_node.arguments = build_expr_list(arguments->get());
         }
 
         return expr;
@@ -950,11 +1060,12 @@ class ProgramBuilder {
     build_struct_literal_expr(AHFLParser::StructLiteralContext &context) const {
         auto expr =
             make_expr_syntax(ast::ExprSyntaxKind::StructLiteral, context_range(context, source_));
-        expr->qualified_name = build_qualified_name(
+        auto &struct_node = std::get<ast::StructLiteralExpr>(expr->node);
+        struct_node.type_name = build_qualified_name(
             require(context.qualifiedIdent(), "struct literal type is missing"));
 
         if (const auto init_list = borrow(context.structInitList())) {
-            expr->struct_fields = build_struct_init_list(init_list->get());
+            struct_node.fields = build_struct_init_list(init_list->get());
         }
 
         return expr;
@@ -964,7 +1075,7 @@ class ProgramBuilder {
     build_qualified_value_expr(AHFLParser::QualifiedValueExprContext &context) const {
         auto expr =
             make_expr_syntax(ast::ExprSyntaxKind::QualifiedValue, context_range(context, source_));
-        expr->qualified_name = build_qualified_name(context);
+        std::get<ast::QualifiedValueExpr>(expr->node).name = build_qualified_name(context);
         return expr;
     }
 
@@ -974,7 +1085,8 @@ class ProgramBuilder {
             make_expr_syntax(ast::ExprSyntaxKind::ListLiteral, context_range(context, source_));
 
         if (const auto expr_list = borrow(context.exprList())) {
-            expr->items = build_expr_list(expr_list->get());
+            std::get<ast::ListLiteralExpr>(expr->node).items =
+                build_expr_list(expr_list->get());
         }
 
         return expr;
@@ -986,7 +1098,8 @@ class ProgramBuilder {
             make_expr_syntax(ast::ExprSyntaxKind::SetLiteral, context_range(context, source_));
 
         if (const auto expr_list = borrow(context.exprList())) {
-            expr->items = build_expr_list(expr_list->get());
+            std::get<ast::SetLiteralExpr>(expr->node).items =
+                build_expr_list(expr_list->get());
         }
 
         return expr;
@@ -996,10 +1109,11 @@ class ProgramBuilder {
     build_map_literal_expr(AHFLParser::MapLiteralContext &context) const {
         auto expr =
             make_expr_syntax(ast::ExprSyntaxKind::MapLiteral, context_range(context, source_));
+        auto &entries = std::get<ast::MapLiteralExpr>(expr->node).entries;
 
         if (const auto entry_list = borrow(context.mapEntryList())) {
             for (auto *entry_context : entry_list->get().mapEntry()) {
-                expr->map_entries.push_back(
+                entries.push_back(
                     build_map_entry(require(entry_context, "map entry is missing")));
             }
         }
@@ -1249,9 +1363,10 @@ class ProgramBuilder {
         if (const auto inner = borrow(context.temporalUnaryExpr())) {
             auto expr = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Unary,
                                                   context_range(context, source_));
-            expr->unary_op = temporal_unary_op_from(
+            auto &unary_node = std::get<ast::UnaryTemporalExpr>(expr->node);
+            unary_node.op = temporal_unary_op_from(
                 require(context.getStart(), "temporal unary operator is missing").getText());
-            expr->first = build_temporal_unary_expr(inner->get());
+            unary_node.operand = build_temporal_unary_expr(inner->get());
             return expr;
         }
 
@@ -1267,7 +1382,8 @@ class ProgramBuilder {
         if (const auto expr = borrow(context.expr())) {
             auto temporal = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::EmbeddedExpr,
                                                       context_range(context, source_));
-            temporal->expr = build_expr_syntax(expr->get());
+            std::get<ast::EmbeddedTemporalExpr>(temporal->node).expr =
+                build_expr_syntax(expr->get());
             return temporal;
         }
 
@@ -1277,31 +1393,36 @@ class ProgramBuilder {
         if (keyword == "called") {
             auto temporal = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Called,
                                                       context_range(context, source_));
-            temporal->name = text_of(require(context.IDENT(0), "called() target is missing"));
+            std::get<ast::CalledTemporalExpr>(temporal->node).name =
+                text_of(require(context.IDENT(0), "called() target is missing"));
             return temporal;
         }
 
         if (keyword == "in_state") {
             auto temporal = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::InState,
                                                       context_range(context, source_));
-            temporal->name = text_of(require(context.IDENT(0), "in_state() value is missing"));
+            std::get<ast::InStateTemporalExpr>(temporal->node).name =
+                text_of(require(context.IDENT(0), "in_state() value is missing"));
             return temporal;
         }
 
         if (keyword == "running") {
             auto temporal = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Running,
                                                       context_range(context, source_));
-            temporal->name = text_of(require(context.IDENT(0), "running() value is missing"));
+            std::get<ast::RunningTemporalExpr>(temporal->node).name =
+                text_of(require(context.IDENT(0), "running() value is missing"));
             return temporal;
         }
 
         if (keyword == "completed") {
             auto temporal = make_temporal_expr_syntax(ast::TemporalExprSyntaxKind::Completed,
                                                       context_range(context, source_));
-            temporal->name = text_of(require(context.IDENT(0), "completed() target is missing"));
+            auto &completed = std::get<ast::CompletedTemporalExpr>(temporal->node);
+            completed.name =
+                text_of(require(context.IDENT(0), "completed() target is missing"));
 
             if (context.IDENT().size() > 1) {
-                temporal->state_name =
+                completed.state_name =
                     text_of(require(context.IDENT(1), "completed() state is missing"));
             }
 
@@ -1340,8 +1461,7 @@ class ProgramBuilder {
         type->range = context_range(context, source_);
 
         if (const auto qualified_name = borrow(context.qualifiedIdent())) {
-            type->kind = ast::TypeSyntaxKind::Named;
-            type->name = build_qualified_name(qualified_name->get());
+            type->node = ast::NamedType{.name = build_qualified_name(qualified_name->get())};
             return type;
         }
 
@@ -1349,31 +1469,31 @@ class ProgramBuilder {
             require(context.getStart(), "type start token is missing").getText();
 
         if (type_keyword == "Optional") {
-            type->kind = ast::TypeSyntaxKind::Optional;
-            type->first =
-                build_type_syntax(require(context.type_(0), "optional element type is missing"));
+            type->node = ast::OptionalType{
+                .inner = build_type_syntax(require(context.type_(0), "optional element type is missing")),
+            };
             return type;
         }
 
         if (type_keyword == "List") {
-            type->kind = ast::TypeSyntaxKind::List;
-            type->first =
-                build_type_syntax(require(context.type_(0), "list element type is missing"));
+            type->node = ast::ListType{
+                .element = build_type_syntax(require(context.type_(0), "list element type is missing")),
+            };
             return type;
         }
 
         if (type_keyword == "Set") {
-            type->kind = ast::TypeSyntaxKind::Set;
-            type->first =
-                build_type_syntax(require(context.type_(0), "set element type is missing"));
+            type->node = ast::SetType{
+                .element = build_type_syntax(require(context.type_(0), "set element type is missing")),
+            };
             return type;
         }
 
         if (type_keyword == "Map") {
-            type->kind = ast::TypeSyntaxKind::Map;
-            type->first = build_type_syntax(require(context.type_(0), "map key type is missing"));
-            type->second =
-                build_type_syntax(require(context.type_(1), "map value type is missing"));
+            type->node = ast::MapType{
+                .key_type = build_type_syntax(require(context.type_(0), "map key type is missing")),
+                .value_type = build_type_syntax(require(context.type_(1), "map value type is missing")),
+            };
             return type;
         }
 
@@ -1389,59 +1509,61 @@ class ProgramBuilder {
             require(context.getStart(), "primitive type start token is missing").getText();
 
         if (primitive_keyword == "Unit") {
-            type->kind = ast::TypeSyntaxKind::Unit;
+            type->node = ast::UnitType{};
             return type;
         }
 
         if (primitive_keyword == "Bool") {
-            type->kind = ast::TypeSyntaxKind::Bool;
+            type->node = ast::BoolType{};
             return type;
         }
 
         if (primitive_keyword == "Int") {
-            type->kind = ast::TypeSyntaxKind::Int;
+            type->node = ast::IntType{};
             return type;
         }
 
         if (primitive_keyword == "Float") {
-            type->kind = ast::TypeSyntaxKind::Float;
+            type->node = ast::FloatType{};
             return type;
         }
 
         if (primitive_keyword == "String") {
             if (context.INT_LITERAL().empty()) {
-                type->kind = ast::TypeSyntaxKind::String;
+                type->node = ast::StringType{};
                 return type;
             }
 
-            type->kind = ast::TypeSyntaxKind::BoundedString;
-            type->string_bounds = std::make_pair(
-                parse_integer_literal(
-                    text_of(require(context.INT_LITERAL(0), "string minimum length is missing"))),
-                parse_integer_literal(
-                    text_of(require(context.INT_LITERAL(1), "string maximum length is missing"))));
+            auto min_val = parse_integer_literal(
+                text_of(require(context.INT_LITERAL(0), "string minimum length is missing")));
+            auto max_val = parse_integer_literal(
+                text_of(require(context.INT_LITERAL(1), "string maximum length is missing")));
+            type->node = ast::BoundedStringType{
+                .min_length = static_cast<std::uint64_t>(min_val),
+                .max_length = static_cast<std::uint64_t>(max_val),
+            };
             return type;
         }
 
         if (primitive_keyword == "UUID") {
-            type->kind = ast::TypeSyntaxKind::UUID;
+            type->node = ast::UuidType{};
             return type;
         }
 
         if (primitive_keyword == "Timestamp") {
-            type->kind = ast::TypeSyntaxKind::Timestamp;
+            type->node = ast::TimestampType{};
             return type;
         }
 
         if (primitive_keyword == "Duration") {
-            type->kind = ast::TypeSyntaxKind::Duration;
+            type->node = ast::DurationType{};
             return type;
         }
 
         if (primitive_keyword == "Decimal") {
-            type->kind = ast::TypeSyntaxKind::Decimal;
-            type->decimal_scale = parse_integer_literal(
+            auto scale = parse_integer_literal(
                 text_of(require(context.INT_LITERAL(0), "decimal scale is missing")));
+            type->node = ast::DecimalType{.scale = static_cast<std::uint8_t>(scale)};
             return type;
         }
 
