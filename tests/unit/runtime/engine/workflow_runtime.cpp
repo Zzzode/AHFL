@@ -38,7 +38,7 @@ bool diagnostic_message_contains(const DiagnosticBag &diagnostics, std::string_v
 }
 
 // ============================================================================
-// IR 构造辅助函数
+// IR construction helper functions
 // ============================================================================
 
 ExprArena &test_expr_arena() {
@@ -75,7 +75,7 @@ SymbolRef make_agent_ref(const std::string &name) {
     };
 }
 
-// 构造一个简单的 EchoAgent（Init -> Done，返回 input 的某个字段的值）
+// Build a simple EchoAgent (Init -> Done, returns a field value of input)
 AgentDecl make_echo_agent(const std::string &name) {
     AgentDecl agent;
     agent.name = name;
@@ -90,7 +90,7 @@ AgentDecl make_echo_agent(const std::string &name) {
     return agent;
 }
 
-// 构造一个 EchoFlow：Init goto Done; Done return IntegerLiteral
+// Build an EchoFlow: Init goto Done; Done return IntegerLiteral
 FlowDecl make_echo_flow(const std::string &target, const std::string &return_val) {
     FlowDecl flow;
     flow.target_ref = make_agent_ref(target);
@@ -111,7 +111,7 @@ FlowDecl make_echo_flow(const std::string &target, const std::string &return_val
     return flow;
 }
 
-// 构造一个 Flow 返回 StructLiteral
+// Build a Flow that returns a StructLiteral
 FlowDecl make_struct_return_flow(const std::string &target,
                                  const std::string &type_name,
                                  const std::string &field_name,
@@ -138,7 +138,7 @@ FlowDecl make_struct_return_flow(const std::string &target,
     return flow;
 }
 
-// 构造一个 Flow：Init goto Done; Done return input.<field_name>
+// Build a Flow: Init goto Done; Done return input.<field_name>
 FlowDecl make_input_field_return_flow(const std::string &target, const std::string &field_name) {
     FlowDecl flow;
     flow.target_ref = make_agent_ref(target);
@@ -161,7 +161,7 @@ FlowDecl make_input_field_return_flow(const std::string &target, const std::stri
     return flow;
 }
 
-// 构造一个会失败的 flow（Init 状态 assert(false)）
+// Build a flow that will fail (Init state asserts false)
 FlowDecl make_failing_flow(const std::string &target) {
     FlowDecl flow;
     flow.target_ref = make_agent_ref(target);
@@ -181,7 +181,7 @@ FlowDecl make_failing_flow(const std::string &target) {
     return flow;
 }
 
-// 构造 workflow node（无 input 表达式）
+// Build a workflow node (no input expression)
 WorkflowNode
 make_node(const std::string &name, const std::string &target, std::vector<std::string> after = {}) {
     WorkflowNode node;
@@ -192,7 +192,7 @@ make_node(const std::string &name, const std::string &target, std::vector<std::s
     return node;
 }
 
-// 构造 workflow node with PathExpr input referencing another node (node_name.field)
+// Build a workflow node with PathExpr input referencing another node (node_name.field)
 WorkflowNode make_node_with_node_output_path(const std::string &name,
                                              const std::string &target,
                                              const std::string &source_node,
@@ -214,7 +214,7 @@ WorkflowNode make_node_with_node_output_path(const std::string &name,
 }
 
 // ============================================================================
-// Test: 单节点 workflow
+// Test: single-node workflow
 // ============================================================================
 
 void test_single_node_workflow() {
@@ -230,7 +230,7 @@ void test_single_node_workflow() {
     workflow.input_type_ref = make_named_type_ref("WfInput");
     workflow.output_type_ref = make_named_type_ref("WfOutput");
     workflow.nodes.push_back(make_node("echo", "EchoAgent"));
-    // return value: 直接返回 node output 的 PathExpr -> 此处简单设为 null
+    // return value: directly return a PathExpr of node output -> here simply set to null
     program.declarations.push_back(std::move(workflow));
 
     WorkflowRuntime runtime(program);
@@ -245,7 +245,7 @@ void test_single_node_workflow() {
 }
 
 // ============================================================================
-// Test: 线性 3 节点 workflow (A -> B -> C)
+// Test: linear 3-node workflow (A -> B -> C)
 // ============================================================================
 
 void test_linear_three_node_workflow() {
@@ -282,7 +282,7 @@ void test_linear_three_node_workflow() {
 }
 
 // ============================================================================
-// Test: 菱形 workflow (A, B -> C)
+// Test: diamond workflow (A, B -> C)
 // ============================================================================
 
 void test_diamond_workflow() {
@@ -309,23 +309,23 @@ void test_diamond_workflow() {
 
     check(result.status == WorkflowStatus::Completed, "diamond.status_completed");
     check(result.execution_order.size() == 3, "diamond.exec_order_size");
-    // a 和 b 先执行（顺序可能不同但都在 c 之前）
+    // a and b execute first (order may vary but both before c)
     check(result.execution_order[2] == "c", "diamond.c_is_last");
     check(result.node_results.size() == 3, "diamond.node_results_size");
 }
 
 // ============================================================================
-// Test: Node 失败传播
+// Test: node failure propagation
 // ============================================================================
 
 void test_node_failure_propagation() {
     Program program;
 
-    // FailAgent 会在 Init 断言失败
+    // FailAgent asserts false in Init state
     program.declarations.push_back(make_echo_agent("FailAgent"));
     program.declarations.push_back(make_failing_flow("FailAgent"));
 
-    // SuccessAgent 正常执行
+    // SuccessAgent executes normally
     program.declarations.push_back(make_echo_agent("SuccessAgent"));
     program.declarations.push_back(make_echo_flow("SuccessAgent", "99"));
 
@@ -344,16 +344,16 @@ void test_node_failure_propagation() {
               result.status == WorkflowStatus::DependencyFailed,
           "failure.status_not_completed");
     check(result.node_results.size() == 2, "failure.node_results_size");
-    // 第一个 node 失败
+    // First node failed
     check(result.node_results[0].node_name == "fail_node", "failure.first_is_fail_node");
     check(result.node_results[0].status != AgentStatus::Completed, "failure.first_failed");
-    // 第二个 node 因依赖失败而被跳过
+    // Second node skipped due to dependency failure
     check(result.node_results[1].node_name == "succ_node", "failure.second_is_succ_node");
     check(result.node_results[1].status == AgentStatus::Failed, "failure.second_dep_failed");
 }
 
 // ============================================================================
-// Test: 返回值来自最后节点
+// Test: return value comes from the last node
 // ============================================================================
 
 void test_return_value_from_node() {
@@ -418,7 +418,7 @@ void test_return_value_eval_error_is_reported() {
 }
 
 // ============================================================================
-// Test: workflow return 复合表达式支持 capability call
+// Test: workflow return composite expression supports capability call
 // ============================================================================
 
 void test_return_value_can_call_capability_inside_composite_expression() {
@@ -470,7 +470,7 @@ void test_return_value_can_call_capability_inside_composite_expression() {
 }
 
 // ============================================================================
-// Test: workflow node input 复合表达式支持 capability call
+// Test: workflow node input composite expression supports capability call
 // ============================================================================
 
 void test_node_input_can_call_capability_inside_struct_literal() {
@@ -807,7 +807,7 @@ void test_agent_state_capability_failure_fails_workflow_with_contextual_diagnost
 }
 
 // ============================================================================
-// Test: 空 workflow（无 nodes）
+// Test: empty workflow (no nodes)
 // ============================================================================
 
 void test_empty_workflow() {
@@ -817,7 +817,7 @@ void test_empty_workflow() {
     workflow.name = "EmptyWorkflow";
     workflow.input_type_ref = make_named_type_ref("Input");
     workflow.output_type_ref = make_named_type_ref("Output");
-    // 无 nodes
+    // No nodes
     program.declarations.push_back(std::move(workflow));
 
     WorkflowRuntime runtime(program);
@@ -829,13 +829,13 @@ void test_empty_workflow() {
 }
 
 // ============================================================================
-// Test: 缺失 Agent 声明（错误）
+// Test: missing Agent declaration (error)
 // ============================================================================
 
 void test_missing_agent_declaration() {
     Program program;
 
-    // 不添加 Agent/Flow 声明，只有 workflow
+    // Do not add Agent/Flow declarations, only the workflow
     WorkflowDecl workflow;
     workflow.name = "BrokenWorkflow";
     workflow.input_type_ref = make_named_type_ref("Input");
@@ -851,7 +851,7 @@ void test_missing_agent_declaration() {
 }
 
 // ============================================================================
-// Test: Workflow 不存在
+// Test: workflow does not exist
 // ============================================================================
 
 void test_missing_workflow() {
@@ -865,17 +865,17 @@ void test_missing_workflow() {
 }
 
 // ============================================================================
-// Test: Node input 使用另一个 node 的 output
+// Test: node input uses another node's output
 // ============================================================================
 
 void test_node_input_uses_node_output() {
     Program program;
 
-    // AgentA: 返回 struct {value: 100}
+    // AgentA: returns struct {value: 100}
     program.declarations.push_back(make_echo_agent("AgentA"));
     program.declarations.push_back(make_struct_return_flow("AgentA", "AOutput", "value", "100"));
 
-    // AgentB: 简单返回整数 200
+    // AgentB: simply returns the integer 200
     program.declarations.push_back(make_echo_agent("AgentB"));
     program.declarations.push_back(make_echo_flow("AgentB", "200"));
 
@@ -884,7 +884,7 @@ void test_node_input_uses_node_output() {
     workflow.input_type_ref = make_named_type_ref("Input");
     workflow.output_type_ref = make_named_type_ref("Output");
     workflow.nodes.push_back(make_node("a", "AgentA"));
-    // b 的 input 引用 a.value (via PathExpr with Identifier root)
+    // b's input references a.value (via PathExpr with Identifier root)
     workflow.nodes.push_back(make_node_with_node_output_path("b", "AgentB", "a", "value", {"a"}));
     program.declarations.push_back(std::move(workflow));
 

@@ -9,7 +9,7 @@ namespace {
 
 using namespace ahfl::durable_store_import;
 
-// 辅助函数：创建有效的 ReleaseEvidenceArchiveManifest
+// Helper: create a valid ReleaseEvidenceArchiveManifest
 [[nodiscard]] ReleaseEvidenceArchiveManifest make_archive_manifest() {
     ReleaseEvidenceArchiveManifest manifest;
     manifest.format_version = std::string(kProviderReleaseEvidenceArchiveManifestFormatVersion);
@@ -37,7 +37,7 @@ using namespace ahfl::durable_store_import;
     return manifest;
 }
 
-// 辅助函数：创建有效的 ProviderProductionReadinessEvidence
+// Helper: create a valid ProviderProductionReadinessEvidence
 [[nodiscard]] ProviderProductionReadinessEvidence make_readiness_evidence() {
     ProviderProductionReadinessEvidence evidence;
     evidence.format_version = std::string(kProviderProductionReadinessEvidenceFormatVersion);
@@ -66,7 +66,7 @@ using namespace ahfl::durable_store_import;
     return evidence;
 }
 
-// 测试：构建 approval request 成功
+// Test: build approval request succeeds
 int test_build_approval_request() {
     const auto archive = make_archive_manifest();
     const auto readiness = make_readiness_evidence();
@@ -94,7 +94,7 @@ int test_build_approval_request() {
     return 0;
 }
 
-// 测试：构建 approval receipt（Rejected 默认）
+// Test: build approval receipt (Rejected by default)
 int test_build_approval_receipt_rejected() {
     const auto archive = make_archive_manifest();
     const auto readiness = make_readiness_evidence();
@@ -102,7 +102,7 @@ int test_build_approval_receipt_rejected() {
     const auto request_result = build_approval_request(archive, readiness);
     assert(request_result.request.has_value());
 
-    // 构建 Rejected 决定
+    // Build a Rejected decision
     ApprovalDecisionRecord decision;
     decision.approval_request_identity = "approval-request::session-001";
     decision.decision = ApprovalDecision::Rejected;
@@ -118,7 +118,7 @@ int test_build_approval_receipt_rejected() {
 
     const auto &receipt = *result.receipt;
 
-    // 验证安全默认：不自动批准
+    // Verify safe default: no auto-approval
     assert(!receipt.is_approved);
     assert(receipt.final_decision == ApprovalDecision::Rejected);
     assert(!receipt.blocking_reason_summary.empty());
@@ -128,7 +128,7 @@ int test_build_approval_receipt_rejected() {
     return 0;
 }
 
-// 测试：构建 approval receipt（Approved）
+// Test: build approval receipt (Approved)
 int test_build_approval_receipt_approved() {
     const auto archive = make_archive_manifest();
     const auto readiness = make_readiness_evidence();
@@ -136,7 +136,7 @@ int test_build_approval_receipt_approved() {
     const auto request_result = build_approval_request(archive, readiness);
     assert(request_result.request.has_value());
 
-    // 构建 Approved 决定
+    // Build an Approved decision
     ApprovalDecisionRecord decision;
     decision.approval_request_identity = "approval-request::session-001";
     decision.decision = ApprovalDecision::Approved;
@@ -160,7 +160,7 @@ int test_build_approval_receipt_approved() {
     return 0;
 }
 
-// 测试：构建 approval receipt（Deferred）
+// Test: build approval receipt (Deferred)
 int test_build_approval_receipt_deferred() {
     const auto archive = make_archive_manifest();
     const auto readiness = make_readiness_evidence();
@@ -168,7 +168,7 @@ int test_build_approval_receipt_deferred() {
     const auto request_result = build_approval_request(archive, readiness);
     assert(request_result.request.has_value());
 
-    // 构建 Deferred 决定
+    // Build a Deferred decision
     ApprovalDecisionRecord decision;
     decision.approval_request_identity = "approval-request::session-001";
     decision.decision = ApprovalDecision::Deferred;
@@ -191,7 +191,7 @@ int test_build_approval_receipt_deferred() {
     return 0;
 }
 
-// 测试：验证 format version 校验
+// Test: validate format version validation
 int test_validate_approval_request_format_version() {
     ApprovalRequest request;
     request.format_version = "invalid-version";
@@ -214,14 +214,14 @@ int test_validate_approval_request_format_version() {
     return 0;
 }
 
-// 测试：验证 rejection_details 对 Rejected 决定是必需的
+// Test: validate rejection_details is required for Rejected decisions
 int test_validate_decision_rejection_details() {
     ApprovalDecisionRecord decision;
     decision.format_version = std::string(kProviderApprovalDecisionFormatVersion);
     decision.approval_request_identity = "approval-request::session-001";
     decision.decision = ApprovalDecision::Rejected;
     decision.decision_reason = "denied";
-    // 不设置 rejection_details
+    // Do not set rejection_details
 
     const auto result = validate_approval_decision_record(decision);
 
@@ -234,7 +234,7 @@ int test_validate_decision_rejection_details() {
     return 0;
 }
 
-// 测试：验证 receipt 中 is_approved 与 final_decision 一致性
+// Test: validate is_approved / final_decision consistency in receipt
 int test_validate_receipt_approval_consistency() {
     ApprovalReceipt receipt;
     receipt.format_version = std::string(kProviderApprovalReceiptFormatVersion);
@@ -243,7 +243,7 @@ int test_validate_receipt_approval_consistency() {
     receipt.approval_request_identity = "request-001";
     receipt.approval_decision_identity = "decision-001";
     receipt.final_decision = ApprovalDecision::Rejected;
-    receipt.is_approved = true;  // 不一致
+    receipt.is_approved = true;  // inconsistent
     receipt.receipt_summary = "test";
     receipt.blocking_reason_summary = "reason";
 

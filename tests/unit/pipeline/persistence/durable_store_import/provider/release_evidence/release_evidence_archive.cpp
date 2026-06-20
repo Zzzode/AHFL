@@ -9,7 +9,7 @@ namespace {
 
 using namespace ahfl::durable_store_import;
 
-// 辅助函数：创建有效的 conformance report
+// Helper: create a valid conformance report
 [[nodiscard]] ProviderConformanceReport make_conformance_report() {
     ProviderConformanceReport report;
     report.format_version = std::string(kProviderConformanceReportFormatVersion);
@@ -31,7 +31,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建有效的 schema drift report
+// Helper: create a valid schema drift report
 [[nodiscard]] ProviderSchemaCompatibilityReport make_schema_report() {
     ProviderSchemaCompatibilityReport report;
     report.format_version = std::string(kProviderSchemaCompatibilityReportFormatVersion);
@@ -43,7 +43,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建有效的 config bundle validation report
+// Helper: create a valid config bundle validation report
 [[nodiscard]] ProviderConfigBundleValidationReport make_config_report() {
     ProviderConfigBundleValidationReport report;
     report.format_version = std::string(kProviderConfigBundleValidationReportFormatVersion);
@@ -69,7 +69,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建有效的 production readiness evidence
+// Helper: create a valid production readiness evidence
 [[nodiscard]] ProviderProductionReadinessEvidence make_readiness_evidence() {
     ProviderProductionReadinessEvidence evidence;
     evidence.format_version = std::string(kProviderProductionReadinessEvidenceFormatVersion);
@@ -98,7 +98,7 @@ using namespace ahfl::durable_store_import;
     return evidence;
 }
 
-// 测试：构建 release evidence archive manifest 成功
+// Test: building the release evidence archive manifest succeeds
 int test_build_release_evidence_archive_manifest() {
     const auto conformance = make_conformance_report();
     const auto schema = make_schema_report();
@@ -115,25 +115,25 @@ int test_build_release_evidence_archive_manifest() {
 
     const auto &manifest = *result.manifest;
 
-    // 验证身份字段
+    // Verify identity fields
     assert(manifest.workflow_canonical_name == "app::main::ValueFlowWorkflow");
     assert(manifest.session_id == "session-001");
     assert(manifest.run_id.has_value() && *manifest.run_id == "run-001");
 
-    // 验证 evidence items 数量
+    // Verify the number of evidence items
     assert(manifest.total_evidence_count == 4);
     assert(manifest.evidence_items.size() == 4);
 
-    // 验证统计计数
+    // Verify statistical counts
     assert(manifest.present_evidence_count == 4);
     assert(manifest.valid_evidence_count == 4);
     assert(manifest.missing_evidence_count == 0);
     assert(manifest.invalid_evidence_count == 0);
 
-    // 验证 release ready 状态
+    // Verify the release-ready state
     assert(manifest.is_release_ready);
 
-    // 验证汇总字段不为空
+    // Verify summary fields are non-empty
     assert(!manifest.archive_summary.empty());
     assert(!manifest.missing_evidence_summary.empty());
     assert(!manifest.incompatible_evidence_summary.empty());
@@ -142,7 +142,7 @@ int test_build_release_evidence_archive_manifest() {
     return 0;
 }
 
-// 测试：无效 format_version 应被检测
+// Test: an invalid format_version should be detected
 int test_validate_manifest_format_version() {
     ReleaseEvidenceArchiveManifest manifest;
     manifest.format_version = "invalid-version";
@@ -166,12 +166,12 @@ int test_validate_manifest_format_version() {
     return 0;
 }
 
-// 测试：空字段应被检测
+// Test: empty fields should be detected
 int test_validate_manifest_empty_fields() {
     ReleaseEvidenceArchiveManifest manifest;
     manifest.format_version = std::string(kProviderReleaseEvidenceArchiveManifestFormatVersion);
-    manifest.workflow_canonical_name = ""; // 空
-    manifest.session_id = "";              // 空
+    manifest.workflow_canonical_name = ""; // empty
+    manifest.session_id = "";              // empty
     manifest.archive_summary = "test summary";
 
     const auto result = validate_release_evidence_archive_manifest(manifest);
@@ -185,10 +185,10 @@ int test_validate_manifest_empty_fields() {
     return 0;
 }
 
-// 测试：has_errors 的 conformance report 导致 manifest 构建失败
+// Test: a conformance report with errors fails manifest construction
 int test_build_with_invalid_conformance() {
     ProviderConformanceReport conformance;
-    conformance.format_version = "invalid"; // 无效版本
+    conformance.format_version = "invalid"; // invalid version
 
     const auto schema = make_schema_report();
     const auto config = make_config_report();
@@ -206,10 +206,10 @@ int test_build_with_invalid_conformance() {
     return 0;
 }
 
-// 测试：失败 conformance 检查导致 invalid evidence
+// Test: a failed conformance check produces invalid evidence
 int test_invalid_conformance_evidence() {
     auto conformance = make_conformance_report();
-    conformance.fail_count = 2; // 有失败的检查
+    conformance.fail_count = 2; // has failed checks
     conformance.conformance_summary = "failed 2 checks";
 
     const auto schema = make_schema_report();
@@ -226,7 +226,7 @@ int test_invalid_conformance_evidence() {
 
     const auto &manifest = *result.manifest;
 
-    // 验证有 invalid evidence
+    // Verify there is invalid evidence
     assert(manifest.invalid_evidence_count >= 1);
     assert(!manifest.is_release_ready);
 
@@ -234,7 +234,7 @@ int test_invalid_conformance_evidence() {
     return 0;
 }
 
-// 测试：计数一致性
+// Test: count consistency
 int test_count_consistency() {
     const auto conformance = make_conformance_report();
     const auto schema = make_schema_report();
@@ -246,7 +246,7 @@ int test_count_consistency() {
 
     const auto &manifest = *result.manifest;
 
-    // 验证计数一致性
+    // Verify count consistency
     assert(manifest.total_evidence_count ==
            manifest.present_evidence_count + manifest.missing_evidence_count);
     assert(manifest.present_evidence_count ==
@@ -259,7 +259,7 @@ int test_count_consistency() {
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // 支持通过命令行参数选择单个测试用例（CTest 集成）
+    // Allow selecting a single test case via command-line argument (CTest integration)
     if (argc == 2) {
         std::string cmd = argv[1];
         if (cmd == "test-build-manifest")
@@ -278,7 +278,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 无参数时运行全部测试
+    // Run all tests when no arguments are provided
     int failures = 0;
     failures += test_build_release_evidence_archive_manifest();
     failures += test_validate_manifest_format_version();

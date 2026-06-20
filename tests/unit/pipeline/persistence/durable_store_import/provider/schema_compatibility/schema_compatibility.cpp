@@ -121,7 +121,7 @@ void assert_provider_artifact_registry() {
            "record");
 }
 
-// 测试：所有版本兼容时应成功构建报告
+// Test: report should be built successfully when all versions are compatible
 int test_all_compatible() {
     assert_artifact_printer_registry();
     assert_provider_artifact_registry();
@@ -170,7 +170,7 @@ int test_all_compatible() {
     assert(!result.report->has_schema_drift);
     assert(!result.report->drift_details.has_value());
 
-    // 验证 JSON 输出可以正常执行
+    // Verify the JSON output runs normally
     std::ostringstream oss;
     ahfl::print_durable_store_import_provider_schema_compatibility_report_json(*result.report, oss);
     assert(!oss.str().empty());
@@ -179,7 +179,7 @@ int test_all_compatible() {
     return 0;
 }
 
-// 测试：存在不兼容版本时应检测到 schema drift
+// Test: schema drift should be detected when an incompatible version exists
 int test_incompatible_version() {
     using namespace ahfl::durable_store_import;
 
@@ -219,7 +219,7 @@ int test_incompatible_version() {
     return 0;
 }
 
-// 测试：source chain 不兼容时应检测到 schema drift
+// Test: schema drift should be detected when the source chain is incompatible
 int test_source_chain_incompatible() {
     using namespace ahfl::durable_store_import;
 
@@ -267,7 +267,7 @@ int test_source_chain_incompatible() {
     return 0;
 }
 
-// 测试：空的 workflow 或 session 应返回错误
+// Test: empty workflow or session should return an error
 int test_empty_identity_fields() {
     using namespace ahfl::durable_store_import;
 
@@ -284,7 +284,7 @@ int test_empty_identity_fields() {
     return 0;
 }
 
-// 测试：验证报告 format version 不正确时应返回错误
+// Test: should return an error when the report's format version is incorrect
 int test_validation_wrong_format_version() {
     using namespace ahfl::durable_store_import;
 
@@ -304,7 +304,7 @@ int test_validation_wrong_format_version() {
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // 支持通过命令行参数选择单个测试用例（CTest 集成）
+    // Allow selecting a single test case via command-line argument (CTest integration)
     if (argc == 2) {
         std::string cmd = argv[1];
         if (cmd == "test-all-compatible")
@@ -321,7 +321,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 无参数时运行全部测试
+    // Run all tests when no argument is provided
     int failures = 0;
     failures += test_all_compatible();
     failures += test_incompatible_version();
