@@ -111,7 +111,17 @@ flow for TestAgent {
                     },
                 }
             ),
-            frame({"jsonrpc": "2.0", "id": 4, "method": "shutdown", "params": {}}),
+            frame(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "textDocument/diagnostic",
+                    "params": {
+                        "textDocument": {"uri": uri},
+                    },
+                }
+            ),
+            frame({"jsonrpc": "2.0", "id": 5, "method": "shutdown", "params": {}}),
         ]
     )
 
@@ -120,13 +130,14 @@ flow for TestAgent {
         raise AssertionError(result.stderr.decode("utf-8", errors="replace"))
 
     messages = parse_frames(result.stdout)
-    diagnostics = [
-        message
-        for message in messages
-        if message.get("method") == "textDocument/publishDiagnostics"
-    ]
-    if not diagnostics or diagnostics[0]["params"].get("version") != 1:
-        raise AssertionError("expected versioned publishDiagnostics")
+    diagnostic_resp = find_response(messages, 4)
+    diagnostic_result = diagnostic_resp.get("result", {})
+    if diagnostic_result.get("kind") != "full":
+        raise AssertionError("expected full diagnostic report")
+    if "items" not in diagnostic_result:
+        raise AssertionError("expected diagnostic items array")
+    if "resultId" not in diagnostic_result:
+        raise AssertionError("expected resultId in diagnostic report")
 
     hover = find_response(messages, 2)
     hover_text = hover.get("result", {}).get("contents", {}).get("value", "")

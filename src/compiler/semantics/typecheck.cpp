@@ -1423,7 +1423,7 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
                                  context,
                                  std::cref(*agent_info->get().output_type),
                                  handler->state_name,
-                                 agent_info->get().declaration_range);
+                                 agent_info->get().output_type_range);
         }
     }
 }
@@ -1508,7 +1508,7 @@ void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
                                                        *agent_info->get().input_type,
                                                        SchemaBoundaryKind::WorkflowNodeInput,
                                                        node->input->range,
-                                                       agent_info->get().declaration_range);
+                                                       agent_info->get().input_type_range);
         }
 
         ValueContext return_context;
@@ -1534,7 +1534,7 @@ void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
                                                    *workflow_info->get().output_type,
                                                    SchemaBoundaryKind::WorkflowOutput,
                                                    decl.return_value->range,
-                                                   workflow_info->get().declaration_range);
+                                                   workflow_info->get().output_type_range);
     }
 }
 
