@@ -2,6 +2,7 @@
 
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 #include "tooling/lsp/analysis_service.hpp"
 
 #include <algorithm>
@@ -584,37 +585,23 @@ void add_agent_capability_targets(HoverTargetIndex &index,
 }
 
 [[nodiscard]] std::string_view builtin_type_constructor(const ast::TypeSyntax &type) noexcept {
-    switch (type.kind) {
-    case ast::TypeSyntaxKind::Unit:
-    case ast::TypeSyntaxKind::Named:
-        return {};
-    case ast::TypeSyntaxKind::Bool:
-        return "Bool";
-    case ast::TypeSyntaxKind::Int:
-        return "Int";
-    case ast::TypeSyntaxKind::Float:
-        return "Float";
-    case ast::TypeSyntaxKind::String:
-    case ast::TypeSyntaxKind::BoundedString:
-        return "String";
-    case ast::TypeSyntaxKind::UUID:
-        return "UUID";
-    case ast::TypeSyntaxKind::Timestamp:
-        return "Timestamp";
-    case ast::TypeSyntaxKind::Duration:
-        return "Duration";
-    case ast::TypeSyntaxKind::Decimal:
-        return "Decimal";
-    case ast::TypeSyntaxKind::Optional:
-        return "Optional";
-    case ast::TypeSyntaxKind::List:
-        return "List";
-    case ast::TypeSyntaxKind::Set:
-        return "Set";
-    case ast::TypeSyntaxKind::Map:
-        return "Map";
-    }
-    return {};
+    return std::visit(Overloaded{
+        [](const ast::UnitType &) -> std::string_view { return {}; },
+        [](const ast::NamedType &) -> std::string_view { return {}; },
+        [](const ast::BoolType &) -> std::string_view { return "Bool"; },
+        [](const ast::IntType &) -> std::string_view { return "Int"; },
+        [](const ast::FloatType &) -> std::string_view { return "Float"; },
+        [](const ast::StringType &) -> std::string_view { return "String"; },
+        [](const ast::BoundedStringType &) -> std::string_view { return "String"; },
+        [](const ast::UuidType &) -> std::string_view { return "UUID"; },
+        [](const ast::TimestampType &) -> std::string_view { return "Timestamp"; },
+        [](const ast::DurationType &) -> std::string_view { return "Duration"; },
+        [](const ast::DecimalType &) -> std::string_view { return "Decimal"; },
+        [](const ast::OptionalType &) -> std::string_view { return "Optional"; },
+        [](const ast::ListType &) -> std::string_view { return "List"; },
+        [](const ast::SetType &) -> std::string_view { return "Set"; },
+        [](const ast::MapType &) -> std::string_view { return "Map"; },
+    }, type.node);
 }
 
 void add_builtin_type_constructor_target(HoverTargetIndex &index,
@@ -651,22 +638,39 @@ void add_type_syntax_targets(HoverTargetIndex &index,
 
     add_builtin_type_constructor_target(index, source, *type);
 
-    if (type->name && !has_resolved_type_reference(snapshot, source, type->name->range)) {
-        for (const auto &segment :
-             identifier_segments_in_range(*source.source, type->name->range)) {
-            index.add(HoverTarget{
-                .kind = HoverTargetKind::TypeReference,
-                .token_range = segment.range,
-                .source_id = source.source_id,
-                .local_name = segment.text,
-                .role = "builtin type",
-                .source_label = source.source->display_name,
-            });
-        }
-    }
-
-    add_type_syntax_targets(index, snapshot, source, type->first.get());
-    add_type_syntax_targets(index, snapshot, source, type->second.get());
+    std::visit(Overloaded{
+        [&](const ast::NamedType &t) {
+            if (t.name && !has_resolved_type_reference(snapshot, source, t.name->range)) {
+                for (const auto &segment :
+                     identifier_segments_in_range(*source.source, t.name->range)) {
+                    index.add(HoverTarget{
+                        .kind = HoverTargetKind::TypeReference,
+                        .token_range = segment.range,
+                        .source_id = source.source_id,
+                        .local_name = segment.text,
+                        .role = "builtin type",
+                        .source_label = source.source->display_name,
+                    });
+                }
+            }
+        },
+        [&](const ast::OptionalType &t) {
+            add_type_syntax_targets(index, snapshot, source, t.inner.get());
+        },
+        [&](const ast::ListType &t) {
+            add_type_syntax_targets(index, snapshot, source, t.element.get());
+        },
+        [&](const ast::SetType &t) {
+            add_type_syntax_targets(index, snapshot, source, t.element.get());
+        },
+        [&](const ast::MapType &t) {
+            add_type_syntax_targets(index, snapshot, source, t.key_type.get());
+            add_type_syntax_targets(index, snapshot, source, t.value_type.get());
+        },
+        [](const auto &) {
+            // Leaf types with no sub-types or name — nothing to add
+        },
+    }, type->node);
 }
 
 void add_predicate_return_type_target(HoverTargetIndex &index,
@@ -727,9 +731,9 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
 void add_struct_init_targets(HoverTargetIndex &index,
                              const LspAnalysisSnapshot &snapshot,
                              const LspSourceSnapshot &source,
-                             const ast::ExprSyntax &expr) {
-    const auto owner = local_struct_symbol(snapshot, source, expr.qualified_name.get());
-    for (const auto &field : expr.struct_fields) {
+                             const ast::StructLiteralExpr &expr) {
+    const auto owner = local_struct_symbol(snapshot, source, expr.type_name.get());
+    for (const auto &field : expr.fields) {
         if (!field) {
             continue;
         }
@@ -752,49 +756,57 @@ void add_expr_syntax_targets(HoverTargetIndex &index,
         return;
     }
 
-    switch (expr->kind) {
-    case ast::ExprSyntaxKind::StructLiteral:
-        add_struct_init_targets(index, snapshot, source, *expr);
-        break;
-    case ast::ExprSyntaxKind::Call:
-    case ast::ExprSyntaxKind::ListLiteral:
-    case ast::ExprSyntaxKind::SetLiteral:
-        for (const auto &item : expr->items) {
-            add_expr_syntax_targets(index, snapshot, source, item.get());
-        }
-        break;
-    case ast::ExprSyntaxKind::MapLiteral:
-        for (const auto &entry : expr->map_entries) {
-            if (entry) {
-                add_expr_syntax_targets(index, snapshot, source, entry->key.get());
-                add_expr_syntax_targets(index, snapshot, source, entry->value.get());
+    std::visit(Overloaded{
+        [&](const ast::StructLiteralExpr &e) {
+            add_struct_init_targets(index, snapshot, source, e);
+        },
+        [&](const ast::CallExpr &e) {
+            for (const auto &item : e.arguments) {
+                add_expr_syntax_targets(index, snapshot, source, item.get());
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::Some:
-    case ast::ExprSyntaxKind::Unary:
-    case ast::ExprSyntaxKind::Group:
-        add_expr_syntax_targets(index, snapshot, source, expr->first.get());
-        break;
-    case ast::ExprSyntaxKind::Binary:
-    case ast::ExprSyntaxKind::IndexAccess:
-        add_expr_syntax_targets(index, snapshot, source, expr->first.get());
-        add_expr_syntax_targets(index, snapshot, source, expr->second.get());
-        break;
-    case ast::ExprSyntaxKind::MemberAccess:
-        add_expr_syntax_targets(index, snapshot, source, expr->first.get());
-        break;
-    case ast::ExprSyntaxKind::BoolLiteral:
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-    case ast::ExprSyntaxKind::NoneLiteral:
-    case ast::ExprSyntaxKind::Path:
-    case ast::ExprSyntaxKind::QualifiedValue:
-        break;
-    }
+        },
+        [&](const ast::ListLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                add_expr_syntax_targets(index, snapshot, source, item.get());
+            }
+        },
+        [&](const ast::SetLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                add_expr_syntax_targets(index, snapshot, source, item.get());
+            }
+        },
+        [&](const ast::MapLiteralExpr &e) {
+            for (const auto &entry : e.entries) {
+                if (entry) {
+                    add_expr_syntax_targets(index, snapshot, source, entry->key.get());
+                    add_expr_syntax_targets(index, snapshot, source, entry->value.get());
+                }
+            }
+        },
+        [&](const ast::SomeExpr &e) {
+            add_expr_syntax_targets(index, snapshot, source, e.value.get());
+        },
+        [&](const ast::UnaryExpr &e) {
+            add_expr_syntax_targets(index, snapshot, source, e.operand.get());
+        },
+        [&](const ast::GroupExpr &e) {
+            add_expr_syntax_targets(index, snapshot, source, e.inner.get());
+        },
+        [&](const ast::BinaryExpr &e) {
+            add_expr_syntax_targets(index, snapshot, source, e.lhs.get());
+            add_expr_syntax_targets(index, snapshot, source, e.rhs.get());
+        },
+        [&](const ast::IndexAccessExpr &e) {
+            add_expr_syntax_targets(index, snapshot, source, e.base.get());
+            add_expr_syntax_targets(index, snapshot, source, e.index.get());
+        },
+        [&](const ast::MemberAccessExpr &e) {
+            add_expr_syntax_targets(index, snapshot, source, e.base.get());
+        },
+        [](const auto &) {
+            // Leaf expressions with no sub-expressions — nothing to add
+        },
+    }, expr->node);
 }
 
 void add_all_named_targets(HoverTargetIndex &index,

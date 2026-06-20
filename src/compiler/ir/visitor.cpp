@@ -1,6 +1,6 @@
 #include "ahfl/compiler/ir/visitor.hpp"
 
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 
 #include <variant>
 

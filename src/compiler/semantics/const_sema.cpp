@@ -1,6 +1,7 @@
 #include "ahfl/compiler/semantics/const_sema.hpp"
 
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -262,11 +263,12 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
 [[nodiscard]] std::optional<SymbolId> const_struct_symbol_for(const ast::ExprSyntax &expr,
                                                               const ResolveResult &resolve_result,
                                                               std::optional<SourceId> source_id) {
-    if (expr.kind != ast::ExprSyntaxKind::StructLiteral || expr.qualified_name == nullptr) {
+    const auto *struct_literal = std::get_if<ast::StructLiteralExpr>(&expr.node);
+    if (struct_literal == nullptr || struct_literal->type_name == nullptr) {
         return std::nullopt;
     }
     if (const auto reference = resolve_result.find_reference(
-            ReferenceKind::TypeName, expr.qualified_name->range, source_id);
+            ReferenceKind::TypeName, struct_literal->type_name->range, source_id);
         reference.has_value()) {
         return reference->get().target;
     }
@@ -274,68 +276,83 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
 }
 
 [[nodiscard]] bool is_const_expr_syntax(const ast::ExprSyntax &expr, std::string_view &reason) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::BoolLiteral:
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-    case ast::ExprSyntaxKind::NoneLiteral:
-    case ast::ExprSyntaxKind::QualifiedValue:
-        return true;
-    case ast::ExprSyntaxKind::Some:
-    case ast::ExprSyntaxKind::Group:
-        return is_const_expr_syntax(*expr.first, reason);
-    case ast::ExprSyntaxKind::StructLiteral:
-        for (const auto &field : expr.struct_fields) {
-            if (!is_const_expr_syntax(*field->value, reason)) {
-                return false;
+    return std::visit(Overloaded{
+        [](const ast::NoneLiteralExpr &) { return true; },
+        [](const ast::BoolLiteralExpr &) { return true; },
+        [](const ast::IntegerLiteralExpr &) { return true; },
+        [](const ast::FloatLiteralExpr &) { return true; },
+        [](const ast::DecimalLiteralExpr &) { return true; },
+        [](const ast::StringLiteralExpr &) { return true; },
+        [](const ast::DurationLiteralExpr &) { return true; },
+        [](const ast::QualifiedValueExpr &) { return true; },
+        [&reason](const ast::SomeExpr &e) {
+            return is_const_expr_syntax(*e.value, reason);
+        },
+        [&reason](const ast::GroupExpr &e) {
+            return is_const_expr_syntax(*e.inner, reason);
+        },
+        [&reason](const ast::StructLiteralExpr &e) {
+            for (const auto &field : e.fields) {
+                if (!is_const_expr_syntax(*field->value, reason)) {
+                    return false;
+                }
             }
-        }
-        return true;
-    case ast::ExprSyntaxKind::ListLiteral:
-    case ast::ExprSyntaxKind::SetLiteral:
-        for (const auto &item : expr.items) {
-            if (!is_const_expr_syntax(*item, reason)) {
-                return false;
+            return true;
+        },
+        [&reason](const ast::ListLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                if (!is_const_expr_syntax(*item, reason)) {
+                    return false;
+                }
             }
-        }
-        return true;
-    case ast::ExprSyntaxKind::MapLiteral:
-        for (const auto &entry : expr.map_entries) {
-            if (!is_const_expr_syntax(*entry->key, reason) ||
-                !is_const_expr_syntax(*entry->value, reason)) {
-                return false;
+            return true;
+        },
+        [&reason](const ast::SetLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                if (!is_const_expr_syntax(*item, reason)) {
+                    return false;
+                }
             }
-        }
-        return true;
-    case ast::ExprSyntaxKind::MemberAccess:
-        return is_const_expr_syntax(*expr.first, reason);
-    case ast::ExprSyntaxKind::IndexAccess:
-        return is_const_expr_syntax(*expr.first, reason) &&
-               is_const_expr_syntax(*expr.second, reason);
-    case ast::ExprSyntaxKind::Unary:
-        // Pure unary operators (!, -, +) over constant operands are themselves
-        // constants. The full type-check pass still validates the operator
-        // applies to the operand kind; we only relax the syntactic gate.
-        return is_const_expr_syntax(*expr.first, reason);
-    case ast::ExprSyntaxKind::Binary:
-        // Same rationale as Unary: arithmetic/logical/comparison operators
-        // applied to constant operands fold to a constant. Type errors are
-        // still surfaced by check_binary_expr.
-        return is_const_expr_syntax(*expr.first, reason) &&
-               is_const_expr_syntax(*expr.second, reason);
-    case ast::ExprSyntaxKind::Path:
-        reason = "runtime path references are not compile-time constants";
-        return false;
-    case ast::ExprSyntaxKind::Call:
-        reason = "capability and predicate calls are not compile-time constants";
-        return false;
-    }
-
-    reason = "unsupported expression form";
-    return false;
+            return true;
+        },
+        [&reason](const ast::MapLiteralExpr &e) {
+            for (const auto &entry : e.entries) {
+                if (!is_const_expr_syntax(*entry->key, reason) ||
+                    !is_const_expr_syntax(*entry->value, reason)) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        [&reason](const ast::MemberAccessExpr &e) {
+            return is_const_expr_syntax(*e.base, reason);
+        },
+        [&reason](const ast::IndexAccessExpr &e) {
+            return is_const_expr_syntax(*e.base, reason) &&
+                   is_const_expr_syntax(*e.index, reason);
+        },
+        [&reason](const ast::UnaryExpr &e) {
+            // Pure unary operators (!, -, +) over constant operands are themselves
+            // constants. The full type-check pass still validates the operator
+            // applies to the operand kind; we only relax the syntactic gate.
+            return is_const_expr_syntax(*e.operand, reason);
+        },
+        [&reason](const ast::BinaryExpr &e) {
+            // Same rationale as Unary: arithmetic/logical/comparison operators
+            // applied to constant operands fold to a constant. Type errors are
+            // still surfaced by check_binary_expr.
+            return is_const_expr_syntax(*e.lhs, reason) &&
+                   is_const_expr_syntax(*e.rhs, reason);
+        },
+        [&reason](const ast::PathExpr &) {
+            reason = "runtime path references are not compile-time constants";
+            return false;
+        },
+        [&reason](const ast::CallExpr &) {
+            reason = "capability and predicate calls are not compile-time constants";
+            return false;
+        },
+    }, expr.node);
 }
 
 [[nodiscard]] bool is_const_error_type(const Type &type) noexcept {
@@ -1018,196 +1035,215 @@ ConstEvaluator::ConstEvaluator(const ResolveResult &resolve_result,
     : resolve_result_(resolve_result), source_id_(source_id), const_values_(const_values) {}
 
 std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) const {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::NoneLiteral:
-        return ConstValue{.kind = ConstValueKind::NoneLiteral, .scalar = "none"};
-    case ast::ExprSyntaxKind::BoolLiteral:
-        return ConstValue{.kind = ConstValueKind::Bool,
-                          .scalar = expr.bool_value ? "true" : "false"};
-    case ast::ExprSyntaxKind::IntegerLiteral:
-        return ConstValue{.kind = ConstValueKind::Integer, .scalar = expr.text};
-    case ast::ExprSyntaxKind::FloatLiteral:
-        return ConstValue{.kind = ConstValueKind::Float, .scalar = expr.text};
-    case ast::ExprSyntaxKind::DecimalLiteral:
-        return ConstValue{.kind = ConstValueKind::Decimal, .scalar = expr.text};
-    case ast::ExprSyntaxKind::StringLiteral:
-        return ConstValue{.kind = ConstValueKind::String, .scalar = expr.text};
-    case ast::ExprSyntaxKind::DurationLiteral:
-        return duration_const_value(expr.text);
-    case ast::ExprSyntaxKind::QualifiedValue: {
-        if (expr.qualified_name == nullptr) {
+    return std::visit(Overloaded{
+        [](const ast::NoneLiteralExpr &) -> std::optional<ConstValue> {
+            return ConstValue{.kind = ConstValueKind::NoneLiteral, .scalar = "none"};
+        },
+        [](const ast::BoolLiteralExpr &e) -> std::optional<ConstValue> {
+            return ConstValue{.kind = ConstValueKind::Bool,
+                              .scalar = e.value ? "true" : "false"};
+        },
+        [](const ast::IntegerLiteralExpr &e) -> std::optional<ConstValue> {
+            return ConstValue{.kind = ConstValueKind::Integer, .scalar = e.literal->spelling};
+        },
+        [](const ast::FloatLiteralExpr &e) -> std::optional<ConstValue> {
+            return ConstValue{.kind = ConstValueKind::Float, .scalar = e.spelling};
+        },
+        [](const ast::DecimalLiteralExpr &e) -> std::optional<ConstValue> {
+            return ConstValue{.kind = ConstValueKind::Decimal, .scalar = e.spelling};
+        },
+        [](const ast::StringLiteralExpr &e) -> std::optional<ConstValue> {
+            return ConstValue{.kind = ConstValueKind::String, .scalar = e.spelling};
+        },
+        [](const ast::DurationLiteralExpr &e) -> std::optional<ConstValue> {
+            return duration_const_value(e.literal->spelling);
+        },
+        [this](const ast::QualifiedValueExpr &e) -> std::optional<ConstValue> {
+            if (e.name == nullptr) {
+                return std::nullopt;
+            }
+            if (const auto reference = resolve_result_.find_reference(
+                    ReferenceKind::ConstValue, e.name->range, source_id_);
+                reference.has_value()) {
+                ConstValue value{
+                    .kind = ConstValueKind::ConstReference,
+                    .scalar = e.name->spelling(),
+                    .symbol = reference->get().target,
+                };
+                if (const auto iter = const_values_.find(reference->get().target.value);
+                    iter != const_values_.end()) {
+                    add_const_child(value, "value", iter->second);
+                }
+                return value;
+            }
+            if (const auto reference = resolve_result_.find_reference(
+                    ReferenceKind::QualifiedValueOwnerType, e.name->range, source_id_);
+                reference.has_value()) {
+                return ConstValue{
+                    .kind = ConstValueKind::EnumVariant,
+                    .scalar = e.name->spelling(),
+                    .symbol = reference->get().target,
+                };
+            }
             return std::nullopt;
-        }
-        if (const auto reference = resolve_result_.find_reference(
-                ReferenceKind::ConstValue, expr.qualified_name->range, source_id_);
-            reference.has_value()) {
+        },
+        [this](const ast::SomeExpr &e) -> std::optional<ConstValue> {
+            if (!e.value) {
+                return std::nullopt;
+            }
+            auto child = evaluate(*e.value);
+            if (!child.has_value()) {
+                return std::nullopt;
+            }
+            ConstValue value{.kind = ConstValueKind::Some, .scalar = "some"};
+            add_const_child(value, "value", std::move(*child));
+            return value;
+        },
+        [this, &expr](const ast::StructLiteralExpr &e) -> std::optional<ConstValue> {
             ConstValue value{
-                .kind = ConstValueKind::ConstReference,
-                .scalar = expr.qualified_name->spelling(),
-                .symbol = reference->get().target,
+                .kind = ConstValueKind::Struct,
+                .scalar = e.type_name ? e.type_name->spelling() : std::string{},
+                .symbol = const_struct_symbol_for(expr, resolve_result_, source_id_),
             };
-            if (const auto iter = const_values_.find(reference->get().target.value);
-                iter != const_values_.end()) {
-                add_const_child(value, "value", iter->second);
+            for (const auto &field : e.fields) {
+                if (field == nullptr || field->value == nullptr) {
+                    return std::nullopt;
+                }
+                auto child = evaluate(*field->value);
+                if (!child.has_value()) {
+                    return std::nullopt;
+                }
+                add_const_child(value, field->field_name, std::move(*child));
             }
             return value;
-        }
-        if (const auto reference = resolve_result_.find_reference(
-                ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range, source_id_);
-            reference.has_value()) {
-            return ConstValue{
-                .kind = ConstValueKind::EnumVariant,
-                .scalar = expr.qualified_name->spelling(),
-                .symbol = reference->get().target,
-            };
-        }
-        return std::nullopt;
-    }
-    case ast::ExprSyntaxKind::Some: {
-        if (!expr.first) {
-            return std::nullopt;
-        }
-        auto child = evaluate(*expr.first);
-        if (!child.has_value()) {
-            return std::nullopt;
-        }
-        ConstValue value{.kind = ConstValueKind::Some, .scalar = "some"};
-        add_const_child(value, "value", std::move(*child));
-        return value;
-    }
-    case ast::ExprSyntaxKind::StructLiteral: {
-        ConstValue value{
-            .kind = ConstValueKind::Struct,
-            .scalar = expr.qualified_name ? expr.qualified_name->spelling() : std::string{},
-            .symbol = const_struct_symbol_for(expr, resolve_result_, source_id_),
-        };
-        for (const auto &field : expr.struct_fields) {
-            if (field == nullptr || field->value == nullptr) {
-                return std::nullopt;
+        },
+        [this](const ast::ListLiteralExpr &e) -> std::optional<ConstValue> {
+            ConstValue value{.kind = ConstValueKind::List};
+            for (const auto &item : e.items) {
+                if (item == nullptr) {
+                    return std::nullopt;
+                }
+                auto child = evaluate(*item);
+                if (!child.has_value()) {
+                    return std::nullopt;
+                }
+                add_const_child(value, "", std::move(*child));
             }
-            auto child = evaluate(*field->value);
-            if (!child.has_value()) {
-                return std::nullopt;
+            return value;
+        },
+        [this](const ast::SetLiteralExpr &e) -> std::optional<ConstValue> {
+            ConstValue value{.kind = ConstValueKind::Set};
+            for (const auto &item : e.items) {
+                if (item == nullptr) {
+                    return std::nullopt;
+                }
+                auto child = evaluate(*item);
+                if (!child.has_value()) {
+                    return std::nullopt;
+                }
+                add_const_child(value, "", std::move(*child));
             }
-            add_const_child(value, field->field_name, std::move(*child));
-        }
-        return value;
-    }
-    case ast::ExprSyntaxKind::ListLiteral:
-    case ast::ExprSyntaxKind::SetLiteral: {
-        ConstValue value{.kind = expr.kind == ast::ExprSyntaxKind::ListLiteral
-                                     ? ConstValueKind::List
-                                     : ConstValueKind::Set};
-        for (const auto &item : expr.items) {
-            if (item == nullptr) {
-                return std::nullopt;
-            }
-            auto child = evaluate(*item);
-            if (!child.has_value()) {
-                return std::nullopt;
-            }
-            add_const_child(value, "", std::move(*child));
-        }
-        if (value.kind == ConstValueKind::Set) {
             normalize_set_const_value(value);
-        }
-        return value;
-    }
-    case ast::ExprSyntaxKind::MapLiteral: {
-        ConstValue value{.kind = ConstValueKind::Map};
-        for (const auto &entry : expr.map_entries) {
-            if (entry == nullptr || entry->key == nullptr || entry->value == nullptr) {
+            return value;
+        },
+        [this](const ast::MapLiteralExpr &e) -> std::optional<ConstValue> {
+            ConstValue value{.kind = ConstValueKind::Map};
+            for (const auto &entry : e.entries) {
+                if (entry == nullptr || entry->key == nullptr || entry->value == nullptr) {
+                    return std::nullopt;
+                }
+                auto key = evaluate(*entry->key);
+                auto map_value = evaluate(*entry->value);
+                if (!key.has_value() || !map_value.has_value()) {
+                    return std::nullopt;
+                }
+                add_const_child(value, "key", std::move(*key));
+                add_const_child(value, "value", std::move(*map_value));
+            }
+            normalize_map_const_value(value);
+            return value;
+        },
+        [this](const ast::UnaryExpr &e) -> std::optional<ConstValue> {
+            if (!e.operand) {
                 return std::nullopt;
             }
-            auto key = evaluate(*entry->key);
-            auto map_value = evaluate(*entry->value);
-            if (!key.has_value() || !map_value.has_value()) {
+            auto child = evaluate(*e.operand);
+            if (!child.has_value()) {
                 return std::nullopt;
             }
-            add_const_child(value, "key", std::move(*key));
-            add_const_child(value, "value", std::move(*map_value));
-        }
-        normalize_map_const_value(value);
-        return value;
-    }
-    case ast::ExprSyntaxKind::Unary: {
-        if (!expr.first) {
+            if (auto folded = fold_unary_const(e.op, *child); folded.has_value()) {
+                return folded;
+            }
+            ConstValue value{.kind = ConstValueKind::Unary,
+                             .scalar = e.op == ast::ExprUnaryOp::Not      ? "!"
+                                       : e.op == ast::ExprUnaryOp::Negate ? "-"
+                                                                          : "+"};
+            add_const_child(value, "operand", std::move(*child));
+            return value;
+        },
+        [this](const ast::BinaryExpr &e) -> std::optional<ConstValue> {
+            if (!e.lhs || !e.rhs) {
+                return std::nullopt;
+            }
+            auto lhs = evaluate(*e.lhs);
+            auto rhs = evaluate(*e.rhs);
+            if (!lhs.has_value() || !rhs.has_value()) {
+                return std::nullopt;
+            }
+            if (auto folded = fold_binary_const(e.op, *lhs, *rhs); folded.has_value()) {
+                return folded;
+            }
+            ConstValue value{.kind = ConstValueKind::Binary,
+                             .scalar = std::string(const_binary_op_spelling(e.op))};
+            add_const_child(value, "lhs", std::move(*lhs));
+            add_const_child(value, "rhs", std::move(*rhs));
+            return value;
+        },
+        [this](const ast::MemberAccessExpr &e) -> std::optional<ConstValue> {
+            if (!e.base) {
+                return std::nullopt;
+            }
+            auto base = evaluate(*e.base);
+            if (!base.has_value()) {
+                return std::nullopt;
+            }
+            if (auto folded = fold_member_const(*base, e.member); folded.has_value()) {
+                return folded;
+            }
+            ConstValue value{.kind = ConstValueKind::MemberAccess, .scalar = e.member};
+            add_const_child(value, "base", std::move(*base));
+            return value;
+        },
+        [this](const ast::IndexAccessExpr &e) -> std::optional<ConstValue> {
+            if (!e.base || !e.index) {
+                return std::nullopt;
+            }
+            auto base = evaluate(*e.base);
+            auto index = evaluate(*e.index);
+            if (!base.has_value() || !index.has_value()) {
+                return std::nullopt;
+            }
+            if (auto folded = fold_index_const(*base, *index); folded.has_value()) {
+                return folded;
+            }
+            ConstValue value{.kind = ConstValueKind::IndexAccess};
+            add_const_child(value, "base", std::move(*base));
+            add_const_child(value, "index", std::move(*index));
+            return value;
+        },
+        [this](const ast::GroupExpr &e) -> std::optional<ConstValue> {
+            if (!e.inner) {
+                return std::nullopt;
+            }
+            return evaluate(*e.inner);
+        },
+        [](const ast::PathExpr &) -> std::optional<ConstValue> {
             return std::nullopt;
-        }
-        auto child = evaluate(*expr.first);
-        if (!child.has_value()) {
+        },
+        [](const ast::CallExpr &) -> std::optional<ConstValue> {
             return std::nullopt;
-        }
-        if (auto folded = fold_unary_const(expr.unary_op, *child); folded.has_value()) {
-            return folded;
-        }
-        ConstValue value{.kind = ConstValueKind::Unary,
-                         .scalar = expr.unary_op == ast::ExprUnaryOp::Not      ? "!"
-                                   : expr.unary_op == ast::ExprUnaryOp::Negate ? "-"
-                                                                               : "+"};
-        add_const_child(value, "operand", std::move(*child));
-        return value;
-    }
-    case ast::ExprSyntaxKind::Binary: {
-        if (!expr.first || !expr.second) {
-            return std::nullopt;
-        }
-        auto lhs = evaluate(*expr.first);
-        auto rhs = evaluate(*expr.second);
-        if (!lhs.has_value() || !rhs.has_value()) {
-            return std::nullopt;
-        }
-        if (auto folded = fold_binary_const(expr.binary_op, *lhs, *rhs); folded.has_value()) {
-            return folded;
-        }
-        ConstValue value{.kind = ConstValueKind::Binary,
-                         .scalar = std::string(const_binary_op_spelling(expr.binary_op))};
-        add_const_child(value, "lhs", std::move(*lhs));
-        add_const_child(value, "rhs", std::move(*rhs));
-        return value;
-    }
-    case ast::ExprSyntaxKind::MemberAccess: {
-        if (!expr.first) {
-            return std::nullopt;
-        }
-        auto base = evaluate(*expr.first);
-        if (!base.has_value()) {
-            return std::nullopt;
-        }
-        if (auto folded = fold_member_const(*base, expr.name); folded.has_value()) {
-            return folded;
-        }
-        ConstValue value{.kind = ConstValueKind::MemberAccess, .scalar = expr.name};
-        add_const_child(value, "base", std::move(*base));
-        return value;
-    }
-    case ast::ExprSyntaxKind::IndexAccess: {
-        if (!expr.first || !expr.second) {
-            return std::nullopt;
-        }
-        auto base = evaluate(*expr.first);
-        auto index = evaluate(*expr.second);
-        if (!base.has_value() || !index.has_value()) {
-            return std::nullopt;
-        }
-        if (auto folded = fold_index_const(*base, *index); folded.has_value()) {
-            return folded;
-        }
-        ConstValue value{.kind = ConstValueKind::IndexAccess};
-        add_const_child(value, "base", std::move(*base));
-        add_const_child(value, "index", std::move(*index));
-        return value;
-    }
-    case ast::ExprSyntaxKind::Group:
-        if (!expr.first) {
-            return std::nullopt;
-        }
-        return evaluate(*expr.first);
-    case ast::ExprSyntaxKind::Path:
-    case ast::ExprSyntaxKind::Call:
-        break;
-    }
-    return std::nullopt;
+        },
+    }, expr.node);
 }
 
 ConstValueTreeRecorder::ConstValueTreeRecorder(
@@ -1233,61 +1269,78 @@ void ConstValueTreeRecorder::record(const ast::ExprSyntax &expr) const {
 }
 
 void ConstValueTreeRecorder::record_children(const ast::ExprSyntax &expr) const {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::Some:
-    case ast::ExprSyntaxKind::Unary:
-    case ast::ExprSyntaxKind::MemberAccess:
-    case ast::ExprSyntaxKind::Group:
-        if (expr.first != nullptr) {
-            record(*expr.first);
-        }
-        break;
-    case ast::ExprSyntaxKind::Binary:
-    case ast::ExprSyntaxKind::IndexAccess:
-        if (expr.first != nullptr) {
-            record(*expr.first);
-        }
-        if (expr.second != nullptr) {
-            record(*expr.second);
-        }
-        break;
-    case ast::ExprSyntaxKind::StructLiteral:
-        for (const auto &field : expr.struct_fields) {
-            if (field != nullptr && field->value != nullptr) {
-                record(*field->value);
+    std::visit(Overloaded{
+        [this](const ast::SomeExpr &e) {
+            if (e.value != nullptr) {
+                record(*e.value);
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::ListLiteral:
-    case ast::ExprSyntaxKind::SetLiteral:
-        for (const auto &item : expr.items) {
-            if (item != nullptr) {
-                record(*item);
+        },
+        [this](const ast::UnaryExpr &e) {
+            if (e.operand != nullptr) {
+                record(*e.operand);
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::MapLiteral:
-        for (const auto &entry : expr.map_entries) {
-            if (entry != nullptr && entry->key != nullptr) {
-                record(*entry->key);
+        },
+        [this](const ast::MemberAccessExpr &e) {
+            if (e.base != nullptr) {
+                record(*e.base);
             }
-            if (entry != nullptr && entry->value != nullptr) {
-                record(*entry->value);
+        },
+        [this](const ast::GroupExpr &e) {
+            if (e.inner != nullptr) {
+                record(*e.inner);
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::BoolLiteral:
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-    case ast::ExprSyntaxKind::NoneLiteral:
-    case ast::ExprSyntaxKind::Path:
-    case ast::ExprSyntaxKind::QualifiedValue:
-    case ast::ExprSyntaxKind::Call:
-        break;
-    }
+        },
+        [this](const ast::BinaryExpr &e) {
+            if (e.lhs != nullptr) {
+                record(*e.lhs);
+            }
+            if (e.rhs != nullptr) {
+                record(*e.rhs);
+            }
+        },
+        [this](const ast::IndexAccessExpr &e) {
+            if (e.base != nullptr) {
+                record(*e.base);
+            }
+            if (e.index != nullptr) {
+                record(*e.index);
+            }
+        },
+        [this](const ast::StructLiteralExpr &e) {
+            for (const auto &field : e.fields) {
+                if (field != nullptr && field->value != nullptr) {
+                    record(*field->value);
+                }
+            }
+        },
+        [this](const ast::ListLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                if (item != nullptr) {
+                    record(*item);
+                }
+            }
+        },
+        [this](const ast::SetLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                if (item != nullptr) {
+                    record(*item);
+                }
+            }
+        },
+        [this](const ast::MapLiteralExpr &e) {
+            for (const auto &entry : e.entries) {
+                if (entry != nullptr && entry->key != nullptr) {
+                    record(*entry->key);
+                }
+                if (entry != nullptr && entry->value != nullptr) {
+                    record(*entry->value);
+                }
+            }
+        },
+        [](const auto &) {
+            // No children for leaf nodes
+        },
+    }, expr.node);
 }
 
 ConstValueResolutionState::ConstValueResolutionState(
@@ -1371,74 +1424,92 @@ ConstDependencyResolver::collect(const ast::ExprSyntax &expr) const {
 
 void ConstDependencyResolver::collect_into(
     const ast::ExprSyntax &expr, std::vector<ConstDependencyReference> &references) const {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::QualifiedValue:
-        if (expr.qualified_name != nullptr) {
-            if (const auto reference = resolve_result_.find_reference(
-                    ReferenceKind::ConstValue, expr.qualified_name->range, source_id_);
-                reference.has_value()) {
-                references.push_back(ConstDependencyReference{
-                    .target = reference->get().target,
-                    .use_range = expr.range,
-                    .reference_range = reference->get().range,
-                    .source_id = reference->get().source_id,
-                });
+    std::visit(Overloaded{
+        [this, &expr, &references](const ast::QualifiedValueExpr &e) {
+            if (e.name != nullptr) {
+                if (const auto reference = resolve_result_.find_reference(
+                        ReferenceKind::ConstValue, e.name->range, source_id_);
+                    reference.has_value()) {
+                    references.push_back(ConstDependencyReference{
+                        .target = reference->get().target,
+                        .use_range = expr.range,
+                        .reference_range = reference->get().range,
+                        .source_id = reference->get().source_id,
+                    });
+                }
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::Some:
-    case ast::ExprSyntaxKind::Unary:
-    case ast::ExprSyntaxKind::MemberAccess:
-    case ast::ExprSyntaxKind::Group:
-        if (expr.first != nullptr) {
-            collect_into(*expr.first, references);
-        }
-        break;
-    case ast::ExprSyntaxKind::Binary:
-    case ast::ExprSyntaxKind::IndexAccess:
-        if (expr.first != nullptr) {
-            collect_into(*expr.first, references);
-        }
-        if (expr.second != nullptr) {
-            collect_into(*expr.second, references);
-        }
-        break;
-    case ast::ExprSyntaxKind::StructLiteral:
-        for (const auto &field : expr.struct_fields) {
-            if (field != nullptr && field->value != nullptr) {
-                collect_into(*field->value, references);
+        },
+        [this, &references](const ast::SomeExpr &e) {
+            if (e.value != nullptr) {
+                collect_into(*e.value, references);
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::ListLiteral:
-    case ast::ExprSyntaxKind::SetLiteral:
-        for (const auto &item : expr.items) {
-            if (item != nullptr) {
-                collect_into(*item, references);
+        },
+        [this, &references](const ast::UnaryExpr &e) {
+            if (e.operand != nullptr) {
+                collect_into(*e.operand, references);
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::MapLiteral:
-        for (const auto &entry : expr.map_entries) {
-            if (entry != nullptr && entry->key != nullptr) {
-                collect_into(*entry->key, references);
+        },
+        [this, &references](const ast::MemberAccessExpr &e) {
+            if (e.base != nullptr) {
+                collect_into(*e.base, references);
             }
-            if (entry != nullptr && entry->value != nullptr) {
-                collect_into(*entry->value, references);
+        },
+        [this, &references](const ast::GroupExpr &e) {
+            if (e.inner != nullptr) {
+                collect_into(*e.inner, references);
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::BoolLiteral:
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-    case ast::ExprSyntaxKind::NoneLiteral:
-    case ast::ExprSyntaxKind::Path:
-    case ast::ExprSyntaxKind::Call:
-        break;
-    }
+        },
+        [this, &references](const ast::BinaryExpr &e) {
+            if (e.lhs != nullptr) {
+                collect_into(*e.lhs, references);
+            }
+            if (e.rhs != nullptr) {
+                collect_into(*e.rhs, references);
+            }
+        },
+        [this, &references](const ast::IndexAccessExpr &e) {
+            if (e.base != nullptr) {
+                collect_into(*e.base, references);
+            }
+            if (e.index != nullptr) {
+                collect_into(*e.index, references);
+            }
+        },
+        [this, &references](const ast::StructLiteralExpr &e) {
+            for (const auto &field : e.fields) {
+                if (field != nullptr && field->value != nullptr) {
+                    collect_into(*field->value, references);
+                }
+            }
+        },
+        [this, &references](const ast::ListLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                if (item != nullptr) {
+                    collect_into(*item, references);
+                }
+            }
+        },
+        [this, &references](const ast::SetLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                if (item != nullptr) {
+                    collect_into(*item, references);
+                }
+            }
+        },
+        [this, &references](const ast::MapLiteralExpr &e) {
+            for (const auto &entry : e.entries) {
+                if (entry != nullptr && entry->key != nullptr) {
+                    collect_into(*entry->key, references);
+                }
+                if (entry != nullptr && entry->value != nullptr) {
+                    collect_into(*entry->value, references);
+                }
+            }
+        },
+        [](const auto &) {
+            // Leaf nodes carry no const dependencies.
+        },
+    }, expr.node);
 }
 
 ConstDependencyScheduler::ConstDependencyScheduler(

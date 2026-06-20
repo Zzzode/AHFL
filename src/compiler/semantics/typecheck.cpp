@@ -1,5 +1,6 @@
 #include "ahfl/compiler/semantics/typecheck.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/condition_facts.hpp"
 #include "ahfl/compiler/semantics/const_sema.hpp"
@@ -85,123 +86,129 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                                                              const TypeEnvironment &environment,
                                                              std::optional<SourceId> source_id) {
     std::vector<TypedExprChild> children;
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::Some:
-        append_typed_child(
-            children, program, expr.first.get(), source_id, TypedExprChildRole::Operand);
-        break;
-    case ast::ExprSyntaxKind::Call: {
-        std::vector<std::string> parameter_names;
-        if (expr.qualified_name != nullptr) {
-            if (const auto reference = resolve_result.find_reference(
-                    ReferenceKind::CallTarget, expr.qualified_name->range, source_id);
-                reference.has_value()) {
-                if (const auto capability = environment.get_capability(reference->get().target);
-                    capability.has_value()) {
-                    parameter_names.reserve(capability->get().params.size());
-                    for (const auto &param : capability->get().params) {
-                        parameter_names.push_back(param.name);
-                    }
-                } else if (const auto predicate =
-                               environment.get_predicate(reference->get().target);
-                           predicate.has_value()) {
-                    parameter_names.reserve(predicate->get().params.size());
-                    for (const auto &param : predicate->get().params) {
-                        parameter_names.push_back(param.name);
+    std::visit(Overloaded{
+        [&](const ast::NoneLiteralExpr &) {},
+        [&](const ast::BoolLiteralExpr &) {},
+        [&](const ast::IntegerLiteralExpr &) {},
+        [&](const ast::FloatLiteralExpr &) {},
+        [&](const ast::DecimalLiteralExpr &) {},
+        [&](const ast::StringLiteralExpr &) {},
+        [&](const ast::DurationLiteralExpr &) {},
+        [&](const ast::SomeExpr &e) {
+            append_typed_child(
+                children, program, e.value.get(), source_id, TypedExprChildRole::Operand);
+        },
+        [&](const ast::PathExpr &) {},
+        [&](const ast::QualifiedValueExpr &) {},
+        [&](const ast::CallExpr &e) {
+            std::vector<std::string> parameter_names;
+            if (e.callee != nullptr) {
+                if (const auto reference = resolve_result.find_reference(
+                        ReferenceKind::CallTarget, e.callee->range, source_id);
+                    reference.has_value()) {
+                    if (const auto capability = environment.get_capability(reference->get().target);
+                        capability.has_value()) {
+                        parameter_names.reserve(capability->get().params.size());
+                        for (const auto &param : capability->get().params) {
+                            parameter_names.push_back(param.name);
+                        }
+                    } else if (const auto predicate =
+                                   environment.get_predicate(reference->get().target);
+                               predicate.has_value()) {
+                        parameter_names.reserve(predicate->get().params.size());
+                        for (const auto &param : predicate->get().params) {
+                            parameter_names.push_back(param.name);
+                        }
                     }
                 }
             }
-        }
-        for (std::size_t index = 0; index < expr.items.size(); ++index) {
-            append_typed_child(children,
-                               program,
-                               expr.items[index].get(),
-                               source_id,
-                               TypedExprChildRole::Argument,
-                               index < parameter_names.size() ? parameter_names[index]
-                                                              : std::string{});
-        }
-        break;
-    }
-    case ast::ExprSyntaxKind::StructLiteral:
-        for (const auto &field : expr.struct_fields) {
-            append_typed_child(children,
-                               program,
-                               field->value.get(),
-                               source_id,
-                               TypedExprChildRole::StructFieldValue,
-                               field->field_name);
-        }
-        break;
-    case ast::ExprSyntaxKind::ListLiteral:
-    case ast::ExprSyntaxKind::SetLiteral:
-        for (const auto &item : expr.items) {
+            for (std::size_t index = 0; index < e.arguments.size(); ++index) {
+                append_typed_child(children,
+                                   program,
+                                   e.arguments[index].get(),
+                                   source_id,
+                                   TypedExprChildRole::Argument,
+                                   index < parameter_names.size() ? parameter_names[index]
+                                                                  : std::string{});
+            }
+        },
+        [&](const ast::StructLiteralExpr &e) {
+            for (const auto &field : e.fields) {
+                append_typed_child(children,
+                                   program,
+                                   field->value.get(),
+                                   source_id,
+                                   TypedExprChildRole::StructFieldValue,
+                                   field->field_name);
+            }
+        },
+        [&](const ast::ListLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                append_typed_child(children, program, item.get(), source_id,
+                                   TypedExprChildRole::CollectionElement);
+            }
+        },
+        [&](const ast::SetLiteralExpr &e) {
+            for (const auto &item : e.items) {
+                append_typed_child(children, program, item.get(), source_id,
+                                   TypedExprChildRole::CollectionElement);
+            }
+        },
+        [&](const ast::MapLiteralExpr &e) {
+            for (const auto &entry : e.entries) {
+                append_typed_child(
+                    children, program, entry->key.get(), source_id, TypedExprChildRole::MapKey);
+                append_typed_child(
+                    children, program, entry->value.get(), source_id, TypedExprChildRole::MapValue);
+            }
+        },
+        [&](const ast::UnaryExpr &e) {
             append_typed_child(
-                children, program, item.get(), source_id, TypedExprChildRole::CollectionElement);
-        }
-        break;
-    case ast::ExprSyntaxKind::MapLiteral:
-        for (const auto &entry : expr.map_entries) {
+                children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
+        },
+        [&](const ast::BinaryExpr &e) {
             append_typed_child(
-                children, program, entry->key.get(), source_id, TypedExprChildRole::MapKey);
+                children, program, e.lhs.get(), source_id, TypedExprChildRole::LeftOperand);
             append_typed_child(
-                children, program, entry->value.get(), source_id, TypedExprChildRole::MapValue);
-        }
-        break;
-    case ast::ExprSyntaxKind::Unary:
-        append_typed_child(
-            children, program, expr.first.get(), source_id, TypedExprChildRole::Operand);
-        break;
-    case ast::ExprSyntaxKind::Binary:
-        append_typed_child(
-            children, program, expr.first.get(), source_id, TypedExprChildRole::LeftOperand);
-        append_typed_child(
-            children, program, expr.second.get(), source_id, TypedExprChildRole::RightOperand);
-        break;
-    case ast::ExprSyntaxKind::MemberAccess:
-        append_typed_child(
-            children, program, expr.first.get(), source_id, TypedExprChildRole::Base);
-        break;
-    case ast::ExprSyntaxKind::IndexAccess:
-        append_typed_child(
-            children, program, expr.first.get(), source_id, TypedExprChildRole::Base);
-        append_typed_child(
-            children, program, expr.second.get(), source_id, TypedExprChildRole::Index);
-        break;
-    case ast::ExprSyntaxKind::Group:
-        append_typed_child(
-            children, program, expr.first.get(), source_id, TypedExprChildRole::Grouped);
-        break;
-    case ast::ExprSyntaxKind::BoolLiteral:
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-    case ast::ExprSyntaxKind::NoneLiteral:
-    case ast::ExprSyntaxKind::Path:
-    case ast::ExprSyntaxKind::QualifiedValue:
-        break;
-    }
+                children, program, e.rhs.get(), source_id, TypedExprChildRole::RightOperand);
+        },
+        [&](const ast::MemberAccessExpr &e) {
+            append_typed_child(
+                children, program, e.base.get(), source_id, TypedExprChildRole::Base);
+        },
+        [&](const ast::IndexAccessExpr &e) {
+            append_typed_child(
+                children, program, e.base.get(), source_id, TypedExprChildRole::Base);
+            append_typed_child(
+                children, program, e.index.get(), source_id, TypedExprChildRole::Index);
+        },
+        [&](const ast::GroupExpr &e) {
+            append_typed_child(
+                children, program, e.inner.get(), source_id, TypedExprChildRole::Grouped);
+        },
+    }, expr.node);
     return children;
 }
 
 [[nodiscard]] std::optional<Place> place_of_expr(const ast::ExprSyntax &expr) {
-    if (expr.kind == ast::ExprSyntaxKind::Group && expr.first) {
-        return place_of_expr(*expr.first);
-    }
-    if (expr.kind == ast::ExprSyntaxKind::MemberAccess && expr.first) {
-        auto place = place_of_expr(*expr.first);
-        if (!place.has_value()) {
+    return std::visit(Overloaded{
+        [](const ast::GroupExpr &e) -> std::optional<Place> {
+            if (e.inner) return place_of_expr(*e.inner);
             return std::nullopt;
-        }
-        place->members.push_back(expr.name);
-        return place;
-    }
-    if (expr.kind == ast::ExprSyntaxKind::Path && expr.path) {
-        return Place{.root = expr.path->root_name, .members = expr.path->members};
-    }
-    return std::nullopt;
+        },
+        [](const ast::MemberAccessExpr &e) -> std::optional<Place> {
+            if (!e.base) return std::nullopt;
+            auto place = place_of_expr(*e.base);
+            if (!place.has_value()) return std::nullopt;
+            place->members.push_back(e.member);
+            return place;
+        },
+        [](const ast::PathExpr &e) -> std::optional<Place> {
+            if (!e.path) return std::nullopt;
+            return Place{.root = e.path->root_name, .members = e.path->members};
+        },
+        [](const auto &) -> std::optional<Place> { return std::nullopt; },
+    }, expr.node);
 }
 
 [[nodiscard]] std::string path_spelling(const ast::PathSyntax &path) {
@@ -279,90 +286,98 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 }
 
 [[nodiscard]] std::string expr_spelling(const ast::ExprSyntax &expr) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::NoneLiteral:
-        return "none";
-    case ast::ExprSyntaxKind::BoolLiteral:
-        return expr.bool_value ? "true" : "false";
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-        return expr.text;
-    case ast::ExprSyntaxKind::Path:
-        return expr.path ? path_spelling(*expr.path) : "<path>";
-    case ast::ExprSyntaxKind::MemberAccess:
-        if (expr.first) {
-            return expr_spelling(*expr.first) + "." + expr.name;
-        }
-        return expr.name;
-    case ast::ExprSyntaxKind::Group:
-        return expr.first ? expr_spelling(*expr.first) : "<group>";
-    case ast::ExprSyntaxKind::Binary:
-        if (expr.first && expr.second) {
-            return expr_spelling(*expr.first) + " " +
-                   std::string(binary_op_spelling(expr.binary_op)) + " " +
-                   expr_spelling(*expr.second);
-        }
-        return "<binary>";
-    default:
-        break;
-    }
-    return "condition";
+    return std::visit(Overloaded{
+        [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
+        [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
+        [](const ast::IntegerLiteralExpr &e) -> std::string {
+            if (e.literal) return e.literal->spelling;
+            return "0";
+        },
+        [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::DurationLiteralExpr &e) -> std::string {
+            if (e.literal) return e.literal->spelling;
+            return "";
+        },
+        [](const ast::PathExpr &e) -> std::string {
+            return e.path ? path_spelling(*e.path) : "<path>";
+        },
+        [](const ast::MemberAccessExpr &e) -> std::string {
+            if (e.base) return expr_spelling(*e.base) + "." + e.member;
+            return e.member;
+        },
+        [](const ast::GroupExpr &e) -> std::string {
+            return e.inner ? expr_spelling(*e.inner) : "<group>";
+        },
+        [](const ast::BinaryExpr &e) -> std::string {
+            if (e.lhs && e.rhs) {
+                return expr_spelling(*e.lhs) + " " +
+                       std::string(binary_op_spelling(e.op)) + " " +
+                       expr_spelling(*e.rhs);
+            }
+            return "<binary>";
+        },
+        [](const auto &) -> std::string { return "condition"; },
+    }, expr.node);
 }
 
 [[nodiscard]] std::optional<SymbolId> resolved_symbol_for(const ast::ExprSyntax &expr,
                                                           const ResolveResult &resolve_result,
                                                           std::optional<SourceId> source_id) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::Call:
-        if (expr.qualified_name != nullptr) {
-            if (const auto reference = resolve_result.find_reference(
-                    ReferenceKind::CallTarget, expr.qualified_name->range, source_id);
-                reference.has_value()) {
-                return reference->get().target;
+    return std::visit(Overloaded{
+        [&](const ast::CallExpr &e) -> std::optional<SymbolId> {
+            if (e.callee != nullptr) {
+                if (const auto reference = resolve_result.find_reference(
+                        ReferenceKind::CallTarget, e.callee->range, source_id);
+                    reference.has_value()) {
+                    return reference->get().target;
+                }
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::StructLiteral:
-        if (expr.qualified_name != nullptr) {
-            if (const auto reference = resolve_result.find_reference(
-                    ReferenceKind::TypeName, expr.qualified_name->range, source_id);
-                reference.has_value()) {
-                return reference->get().target;
+            return std::nullopt;
+        },
+        [&](const ast::StructLiteralExpr &e) -> std::optional<SymbolId> {
+            if (e.type_name != nullptr) {
+                if (const auto reference = resolve_result.find_reference(
+                        ReferenceKind::TypeName, e.type_name->range, source_id);
+                    reference.has_value()) {
+                    return reference->get().target;
+                }
             }
-        }
-        break;
-    case ast::ExprSyntaxKind::QualifiedValue:
-        if (expr.qualified_name != nullptr) {
-            if (const auto const_reference = resolve_result.find_reference(
-                    ReferenceKind::ConstValue, expr.qualified_name->range, source_id);
-                const_reference.has_value()) {
-                return const_reference->get().target;
+            return std::nullopt;
+        },
+        [&](const ast::QualifiedValueExpr &e) -> std::optional<SymbolId> {
+            if (e.name != nullptr) {
+                if (const auto const_reference = resolve_result.find_reference(
+                        ReferenceKind::ConstValue, e.name->range, source_id);
+                    const_reference.has_value()) {
+                    return const_reference->get().target;
+                }
+                if (const auto owner_reference = resolve_result.find_reference(
+                        ReferenceKind::QualifiedValueOwnerType, e.name->range, source_id);
+                    owner_reference.has_value()) {
+                    return owner_reference->get().target;
+                }
             }
-            if (const auto owner_reference = resolve_result.find_reference(
-                    ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range, source_id);
-                owner_reference.has_value()) {
-                return owner_reference->get().target;
-            }
-        }
-        break;
-    default:
-        break;
-    }
-    return std::nullopt;
+            return std::nullopt;
+        },
+        [](const auto &) -> std::optional<SymbolId> { return std::nullopt; },
+    }, expr.node);
 }
 
 [[nodiscard]] TypedCallTargetKind call_target_kind_for(const ast::ExprSyntax &expr,
                                                        const ResolveResult &resolve_result,
                                                        std::optional<SourceId> source_id) {
-    if (expr.kind != ast::ExprSyntaxKind::Call || expr.qualified_name == nullptr) {
+    if (!std::holds_alternative<ast::CallExpr>(expr.node)) {
+        return TypedCallTargetKind::None;
+    }
+    const auto &call = std::get<ast::CallExpr>(expr.node);
+    if (call.callee == nullptr) {
         return TypedCallTargetKind::None;
     }
 
     const auto reference = resolve_result.find_reference(
-        ReferenceKind::CallTarget, expr.qualified_name->range, source_id);
+        ReferenceKind::CallTarget, call.callee->range, source_id);
     if (!reference.has_value()) {
         return TypedCallTargetKind::None;
     }
@@ -389,31 +404,40 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 }
 
 [[nodiscard]] std::string semantic_name_for(const ast::ExprSyntax &expr) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::Path:
-        return expr.path ? path_spelling(*expr.path) : std::string{};
-    case ast::ExprSyntaxKind::Call:
-    case ast::ExprSyntaxKind::StructLiteral:
-    case ast::ExprSyntaxKind::QualifiedValue:
-        return expr.qualified_name ? expr.qualified_name->spelling() : std::string{};
-    case ast::ExprSyntaxKind::MemberAccess:
-        return expr_spelling(expr);
-    case ast::ExprSyntaxKind::Group:
-        return expr.first ? expr_spelling(*expr.first) : std::string{};
-    case ast::ExprSyntaxKind::BoolLiteral:
-        return expr.bool_value ? "true" : "false";
-    case ast::ExprSyntaxKind::NoneLiteral:
-        return "none";
-    case ast::ExprSyntaxKind::StringLiteral:
-    case ast::ExprSyntaxKind::IntegerLiteral:
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::DurationLiteral:
-        return expr.text;
-    default:
-        break;
-    }
-    return {};
+    return std::visit(Overloaded{
+        [](const ast::PathExpr &e) -> std::string {
+            return e.path ? path_spelling(*e.path) : std::string{};
+        },
+        [](const ast::CallExpr &e) -> std::string {
+            return e.callee ? e.callee->spelling() : std::string{};
+        },
+        [](const ast::StructLiteralExpr &e) -> std::string {
+            return e.type_name ? e.type_name->spelling() : std::string{};
+        },
+        [](const ast::QualifiedValueExpr &e) -> std::string {
+            return e.name ? e.name->spelling() : std::string{};
+        },
+        [&](const ast::MemberAccessExpr &) -> std::string {
+            return expr_spelling(expr);
+        },
+        [](const ast::GroupExpr &e) -> std::string {
+            return e.inner ? expr_spelling(*e.inner) : std::string{};
+        },
+        [](const ast::BoolLiteralExpr &e) -> std::string {
+            return e.value ? "true" : "false";
+        },
+        [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
+        [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::IntegerLiteralExpr &e) -> std::string {
+            return e.literal ? e.literal->spelling : std::string{};
+        },
+        [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::DurationLiteralExpr &e) -> std::string {
+            return e.literal ? e.literal->spelling : std::string{};
+        },
+        [](const auto &) -> std::string { return {}; },
+    }, expr.node);
 }
 
 // Literal spelling kept as a dedicated field distinct from semantic_name:
@@ -424,43 +448,69 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 //     (integer_literal->spelling, duration_literal->spelling, ...) so typed-
 //     tree lowering can reproduce token payloads without needing AST.
 [[nodiscard]] std::string literal_spelling_for(const ast::ExprSyntax &expr) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::IntegerLiteral:
-        return expr.integer_literal ? expr.integer_literal->spelling
-                                    : (expr.text.empty() ? "0" : expr.text);
-    case ast::ExprSyntaxKind::DurationLiteral:
-        return expr.duration_literal ? expr.duration_literal->spelling : expr.text;
-    case ast::ExprSyntaxKind::FloatLiteral:
-    case ast::ExprSyntaxKind::DecimalLiteral:
-    case ast::ExprSyntaxKind::StringLiteral:
-        return expr.text;
-    default:
-        break;
-    }
-    return {};
+    return std::visit(Overloaded{
+        [](const ast::IntegerLiteralExpr &e) -> std::string {
+            if (e.literal) return e.literal->spelling;
+            return "0";
+        },
+        [](const ast::DurationLiteralExpr &e) -> std::string {
+            if (e.literal) return e.literal->spelling;
+            return "";
+        },
+        [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
+        [](const auto &) -> std::string { return {}; },
+    }, expr.node);
 }
 
 [[nodiscard]] std::optional<Place> path_payload_for(const ast::ExprSyntax &expr) {
-    switch (expr.kind) {
-    case ast::ExprSyntaxKind::Path:
-    case ast::ExprSyntaxKind::MemberAccess:
-    case ast::ExprSyntaxKind::Group:
+    if (expr.is<ast::PathExpr>() || expr.is<ast::MemberAccessExpr>() || expr.is<ast::GroupExpr>()) {
         return place_of_expr(expr);
-    default:
-        break;
     }
     return std::nullopt;
 }
 
 [[nodiscard]] bool contains_binary_op(const ast::ExprSyntax &expr, ast::ExprBinaryOp op) noexcept {
-    if (expr.kind == ast::ExprSyntaxKind::Group && expr.first) {
-        return contains_binary_op(*expr.first, op);
+    return std::visit(Overloaded{
+        [&](const ast::GroupExpr &e) -> bool {
+            return e.inner ? contains_binary_op(*e.inner, op) : false;
+        },
+        [&](const ast::BinaryExpr &e) -> bool {
+            return e.op == op ||
+                   (e.lhs != nullptr && contains_binary_op(*e.lhs, op)) ||
+                   (e.rhs != nullptr && contains_binary_op(*e.rhs, op));
+        },
+        [](const auto &) -> bool { return false; },
+    }, expr.node);
+}
+
+[[nodiscard]] bool expr_bool_value(const ast::ExprSyntax &expr) noexcept {
+    if (const auto *b = std::get_if<ast::BoolLiteralExpr>(&expr.node)) {
+        return b->value;
     }
-    if (expr.kind != ast::ExprSyntaxKind::Binary) {
-        return false;
+    return false;
+}
+
+[[nodiscard]] ast::ExprUnaryOp expr_unary_op(const ast::ExprSyntax &expr) noexcept {
+    if (const auto *u = std::get_if<ast::UnaryExpr>(&expr.node)) {
+        return u->op;
     }
-    return expr.binary_op == op || (expr.first != nullptr && contains_binary_op(*expr.first, op)) ||
-           (expr.second != nullptr && contains_binary_op(*expr.second, op));
+    return ast::ExprUnaryOp::Not;
+}
+
+[[nodiscard]] ast::ExprBinaryOp expr_binary_op(const ast::ExprSyntax &expr) noexcept {
+    if (const auto *b = std::get_if<ast::BinaryExpr>(&expr.node)) {
+        return b->op;
+    }
+    return ast::ExprBinaryOp::Implies;
+}
+
+[[nodiscard]] std::string expr_member_name(const ast::ExprSyntax &expr) {
+    if (const auto *m = std::get_if<ast::MemberAccessExpr>(&expr.node)) {
+        return m->member;
+    }
+    return {};
 }
 
 [[nodiscard]] std::string_view narrowed_fact_description(TypeFactKind kind) noexcept {
@@ -792,11 +842,11 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             expr, result_.typed_program, resolve_result_, result_.environment, current_source_id_);
         // Primitive payload mirrors so typed-tree consumers never need to
         // reach back into the AST for operator/literal/member-name details.
-        typed_expr->bool_value = expr.bool_value;
-        typed_expr->unary_op = expr.unary_op;
-        typed_expr->binary_op = expr.binary_op;
+        typed_expr->bool_value = expr_bool_value(expr);
+        typed_expr->unary_op = expr_unary_op(expr);
+        typed_expr->binary_op = expr_binary_op(expr);
         typed_expr->literal_spelling = literal_spelling_for(expr);
-        typed_expr->member_name = expr.name;
+        typed_expr->member_name = expr_member_name(expr);
         return;
     }
 
@@ -809,11 +859,11 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             typed_expr->type = typed.type ? typed.type->clone() : make_error_type();
             typed_expr->effect = typed.effect;
             typed_expr->is_pure = typed.is_pure;
-            typed_expr->bool_value = expr.bool_value;
-            typed_expr->unary_op = expr.unary_op;
-            typed_expr->binary_op = expr.binary_op;
+            typed_expr->bool_value = expr_bool_value(expr);
+            typed_expr->unary_op = expr_unary_op(expr);
+            typed_expr->binary_op = expr_binary_op(expr);
             typed_expr->literal_spelling = literal_spelling_for(expr);
-            typed_expr->member_name = expr.name;
+            typed_expr->member_name = expr_member_name(expr);
             typed_expr->path_root_kind =
                 typed.path_root_kind.value_or(AssignTargetRootKind::Identifier);
             return;
@@ -821,7 +871,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
     }
 
     hir_builder_.append_expression(TypedExpr{
-        .kind = expr.kind,
+        .kind = ast::expr_syntax_kind(expr),
         .range = expr.range,
         .source_id = current_source_id_,
         .node_id = expr.node_id,
@@ -837,11 +887,11 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
             path_payload.has_value() ? path_payload->members : std::vector<std::string>{},
         .children = typed_children_for(
             expr, result_.typed_program, resolve_result_, result_.environment, current_source_id_),
-        .bool_value = expr.bool_value,
-        .unary_op = expr.unary_op,
-        .binary_op = expr.binary_op,
+        .bool_value = expr_bool_value(expr),
+        .unary_op = expr_unary_op(expr),
+        .binary_op = expr_binary_op(expr),
         .literal_spelling = literal_spelling_for(expr),
-        .member_name = expr.name,
+        .member_name = expr_member_name(expr),
     });
     if (expr.node_id != 0) {
         const auto index = static_cast<std::uint32_t>(result_.typed_program.expressions.size() - 1);
@@ -1256,123 +1306,116 @@ std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalEx
     te.range = expr.range;
     te.source_id = current_source_id_;
 
-    switch (expr.kind) {
-    case ast::TemporalExprSyntaxKind::EmbeddedExpr: {
-        const auto bool_type = make_type(TypeKind::Bool);
-        const auto value = check_expr(*expr.expr, context, std::cref(*bool_type));
-        if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
-            typecheck_error_here(error_codes::typecheck::TypeMismatch,
-                                 messages::typecheck::BoolExpressionRequired.format_with(
-                                     "temporal embedded expression"),
-                                 expr.expr->range,
-                                 std::vector<Diagnostic::Related>{Diagnostic::Related{
-                                     .message = actual_type_note(*value.type),
-                                     .range = expr.expr->range,
-                                 }});
-        }
-        if (!value.is_pure) {
-            non_pure_error_here("temporal embedded expression", value.effect, expr.expr->range);
-        }
-        te.kind = TypedTemporalKind::Atom;
-        te.op = TypedTemporalOp::Atom;
-        const std::uint32_t expr_idx = resolve_payload_expr_index(*expr.expr);
-        te.children_index.push_back(expr_idx);
-        break;
-    }
-    case ast::TemporalExprSyntaxKind::Called: {
-        te.kind = TypedTemporalKind::NameLiteral;
-        te.op = TypedTemporalOp::NameLiteralCalled;
-        std::string canonical = expr.name;
-        if (const auto ref = find_reference_here(ReferenceKind::TemporalCapability, expr.range);
-            ref.has_value()) {
-            if (const auto sym = resolve_result_.symbol_table.get(ref->get().target);
-                sym.has_value()) {
-                canonical = sym->get().canonical_name;
+    std::visit(Overloaded{
+        [&](const ast::EmbeddedTemporalExpr &e) {
+            const auto bool_type = make_type(TypeKind::Bool);
+            const auto value = check_expr(*e.expr, context, std::cref(*bool_type));
+            if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
+                typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                     messages::typecheck::BoolExpressionRequired.format_with(
+                                         "temporal embedded expression"),
+                                     e.expr->range,
+                                     std::vector<Diagnostic::Related>{Diagnostic::Related{
+                                         .message = actual_type_note(*value.type),
+                                         .range = e.expr->range,
+                                     }});
             }
-        }
-        // T1.7 P1: payload_spelling stores the canonical name directly
-        // (no "called:" prefix). The op enum encodes the variant.
-        te.payload_spelling = std::move(canonical);
-        break;
-    }
-    case ast::TemporalExprSyntaxKind::InState: {
-        te.kind = TypedTemporalKind::StateLiteral;
-        te.op = TypedTemporalOp::StateLiteral;
-        // payload_spelling stores the state name directly (no "state:" prefix).
-        te.payload_spelling = expr.name;
-        break;
-    }
-    case ast::TemporalExprSyntaxKind::Running: {
-        te.kind = TypedTemporalKind::NameLiteral;
-        te.op = TypedTemporalOp::NameLiteralRunning;
-        // payload_spelling stores the node name directly (no "running:" prefix).
-        te.payload_spelling = expr.name;
-        break;
-    }
-    case ast::TemporalExprSyntaxKind::Completed: {
-        te.kind = TypedTemporalKind::NameLiteral;
-        te.op = TypedTemporalOp::NameLiteralCompleted;
-        // payload_spelling encodes "node_name|optional_state_name" for the
-        // Completed variant so lowering can extract both without AST.
-        std::string data = expr.name;
-        if (expr.state_name.has_value()) {
-            data += "|";
-            data += *expr.state_name;
-        }
-        te.payload_spelling = std::move(data);
-        break;
-    }
-    case ast::TemporalExprSyntaxKind::Unary: {
-        const std::uint32_t child_idx = check_temporal_embedded_exprs(*expr.first, context);
-        te.kind = TypedTemporalKind::Unary;
-        te.children_index.push_back(child_idx);
-        switch (expr.unary_op) {
-        case ast::TemporalUnaryOp::Always:
-            te.op = TypedTemporalOp::TemporalAlways;
-            te.payload_spelling = "always";
-            break;
-        case ast::TemporalUnaryOp::Eventually:
-            te.op = TypedTemporalOp::TemporalEventually;
-            te.payload_spelling = "eventually";
-            break;
-        case ast::TemporalUnaryOp::Next:
-            te.op = TypedTemporalOp::TemporalNext;
-            te.payload_spelling = "next";
-            break;
-        case ast::TemporalUnaryOp::Not:
-            te.op = TypedTemporalOp::TemporalNot;
-            te.payload_spelling = "not";
-            break;
-        }
-        break;
-    }
-    case ast::TemporalExprSyntaxKind::Binary: {
-        const std::uint32_t lhs_idx = check_temporal_embedded_exprs(*expr.first, context);
-        const std::uint32_t rhs_idx = check_temporal_embedded_exprs(*expr.second, context);
-        te.kind = TypedTemporalKind::Binary;
-        te.children_index.push_back(lhs_idx);
-        te.children_index.push_back(rhs_idx);
-        switch (expr.binary_op) {
-        case ast::TemporalBinaryOp::Implies:
-            te.op = TypedTemporalOp::TemporalImply;
-            te.payload_spelling = "implies";
-            break;
-        case ast::TemporalBinaryOp::Or:
-            te.op = TypedTemporalOp::TemporalOr;
-            te.payload_spelling = "or";
-            break;
-        case ast::TemporalBinaryOp::And:
-            te.op = TypedTemporalOp::TemporalAnd;
-            te.payload_spelling = "and";
-            break;
-        case ast::TemporalBinaryOp::Until:
-            te.op = TypedTemporalOp::TemporalUntil;
-            te.payload_spelling = "until";
-            break;
-        }
-        break;
-    }
-    }
+            if (!value.is_pure) {
+                non_pure_error_here("temporal embedded expression", value.effect, e.expr->range);
+            }
+            te.kind = TypedTemporalKind::Atom;
+            te.op = TypedTemporalOp::Atom;
+            const std::uint32_t expr_idx = resolve_payload_expr_index(*e.expr);
+            te.children_index.push_back(expr_idx);
+        },
+        [&](const ast::CalledTemporalExpr &e) {
+            te.kind = TypedTemporalKind::NameLiteral;
+            te.op = TypedTemporalOp::NameLiteralCalled;
+            std::string canonical = e.name;
+            if (const auto ref = find_reference_here(ReferenceKind::TemporalCapability, expr.range);
+                ref.has_value()) {
+                if (const auto sym = resolve_result_.symbol_table.get(ref->get().target);
+                    sym.has_value()) {
+                    canonical = sym->get().canonical_name;
+                }
+            }
+            // T1.7 P1: payload_spelling stores the canonical name directly
+            // (no "called:" prefix). The op enum encodes the variant.
+            te.payload_spelling = std::move(canonical);
+        },
+        [&](const ast::InStateTemporalExpr &e) {
+            te.kind = TypedTemporalKind::StateLiteral;
+            te.op = TypedTemporalOp::StateLiteral;
+            // payload_spelling stores the state name directly (no "state:" prefix).
+            te.payload_spelling = e.name;
+        },
+        [&](const ast::RunningTemporalExpr &e) {
+            te.kind = TypedTemporalKind::NameLiteral;
+            te.op = TypedTemporalOp::NameLiteralRunning;
+            // payload_spelling stores the node name directly (no "running:" prefix).
+            te.payload_spelling = e.name;
+        },
+        [&](const ast::CompletedTemporalExpr &e) {
+            te.kind = TypedTemporalKind::NameLiteral;
+            te.op = TypedTemporalOp::NameLiteralCompleted;
+            // payload_spelling encodes "node_name|optional_state_name" for the
+            // Completed variant so lowering can extract both without AST.
+            std::string data = e.name;
+            if (e.state_name.has_value()) {
+                data += "|";
+                data += *e.state_name;
+            }
+            te.payload_spelling = std::move(data);
+        },
+        [&](const ast::UnaryTemporalExpr &e) {
+            const std::uint32_t child_idx = check_temporal_embedded_exprs(*e.operand, context);
+            te.kind = TypedTemporalKind::Unary;
+            te.children_index.push_back(child_idx);
+            switch (e.op) {
+            case ast::TemporalUnaryOp::Always:
+                te.op = TypedTemporalOp::TemporalAlways;
+                te.payload_spelling = "always";
+                break;
+            case ast::TemporalUnaryOp::Eventually:
+                te.op = TypedTemporalOp::TemporalEventually;
+                te.payload_spelling = "eventually";
+                break;
+            case ast::TemporalUnaryOp::Next:
+                te.op = TypedTemporalOp::TemporalNext;
+                te.payload_spelling = "next";
+                break;
+            case ast::TemporalUnaryOp::Not:
+                te.op = TypedTemporalOp::TemporalNot;
+                te.payload_spelling = "not";
+                break;
+            }
+        },
+        [&](const ast::BinaryTemporalExpr &e) {
+            const std::uint32_t lhs_idx = check_temporal_embedded_exprs(*e.lhs, context);
+            const std::uint32_t rhs_idx = check_temporal_embedded_exprs(*e.rhs, context);
+            te.kind = TypedTemporalKind::Binary;
+            te.children_index.push_back(lhs_idx);
+            te.children_index.push_back(rhs_idx);
+            switch (e.op) {
+            case ast::TemporalBinaryOp::Implies:
+                te.op = TypedTemporalOp::TemporalImply;
+                te.payload_spelling = "implies";
+                break;
+            case ast::TemporalBinaryOp::Or:
+                te.op = TypedTemporalOp::TemporalOr;
+                te.payload_spelling = "or";
+                break;
+            case ast::TemporalBinaryOp::And:
+                te.op = TypedTemporalOp::TemporalAnd;
+                te.payload_spelling = "and";
+                break;
+            case ast::TemporalBinaryOp::Until:
+                te.op = TypedTemporalOp::TemporalUntil;
+                te.payload_spelling = "until";
+                break;
+            }
+        },
+    }, expr.node);
 
     return hir_builder_.append_temporal_expr(std::move(te));
 }
