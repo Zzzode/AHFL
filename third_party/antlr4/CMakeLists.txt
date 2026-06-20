@@ -8,6 +8,7 @@ add_library(antlr4_runtime STATIC
 )
 
 target_include_directories(antlr4_runtime
+    SYSTEM
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/runtime/src>
         $<INSTALL_INTERFACE:include/ahfl/third_party/antlr4>
