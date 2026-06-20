@@ -1,3 +1,4 @@
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -6,10 +7,14 @@
 static int test_count = 0;
 static int pass_count = 0;
 
-static void check(bool condition, const char* name) {
+static void check(bool condition, const char *name) {
     ++test_count;
-    if (condition) { ++pass_count; std::printf("  PASS: %s\n", name); }
-    else { std::printf("  FAIL: %s\n", name); }
+    if (condition) {
+        ++pass_count;
+        std::printf("  PASS: %s\n", name);
+    } else {
+        std::printf("  FAIL: %s\n", name);
+    }
 }
 
 namespace {
@@ -20,15 +25,15 @@ struct CompileTimeBenchmark {
     std::chrono::nanoseconds duration;
 };
 
-CompileTimeBenchmark measure_compile_time(const std::string& name, std::size_t lines) {
+CompileTimeBenchmark measure_compile_time(const std::string &name, std::size_t lines) {
     auto start = std::chrono::steady_clock::now();
 
     // Simulate compilation work proportional to input size
-    volatile std::size_t work = 0;
+    std::atomic<std::size_t> work{0};
     for (std::size_t i = 0; i < lines * 100; ++i) {
-        work += i;
+        work.fetch_add(i, std::memory_order_relaxed);
     }
-    (void)work;
+    (void)work.load(std::memory_order_relaxed);
 
     auto end = std::chrono::steady_clock::now();
     return {name, lines, std::chrono::duration_cast<std::chrono::nanoseconds>(end - start)};
@@ -49,12 +54,18 @@ int main() {
     check(large.duration >= small.duration, "large module takes >= small module time");
 
     std::printf("\nResults:\n");
-    std::printf("  %s: %zu lines in %lld ns\n", small.name.c_str(), small.input_lines,
-        static_cast<long long>(small.duration.count()));
-    std::printf("  %s: %zu lines in %lld ns\n", medium.name.c_str(), medium.input_lines,
-        static_cast<long long>(medium.duration.count()));
-    std::printf("  %s: %zu lines in %lld ns\n", large.name.c_str(), large.input_lines,
-        static_cast<long long>(large.duration.count()));
+    std::printf("  %s: %zu lines in %lld ns\n",
+                small.name.c_str(),
+                small.input_lines,
+                static_cast<long long>(small.duration.count()));
+    std::printf("  %s: %zu lines in %lld ns\n",
+                medium.name.c_str(),
+                medium.input_lines,
+                static_cast<long long>(medium.duration.count()));
+    std::printf("  %s: %zu lines in %lld ns\n",
+                large.name.c_str(),
+                large.input_lines,
+                static_cast<long long>(large.duration.count()));
 
     std::printf("\n%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
