@@ -134,6 +134,9 @@ struct AgentTypeInfo {
     TypePtr output_type;
     std::vector<SymbolId> capability_symbols;
     SourceRange declaration_range;
+    SourceRange input_type_range;
+    SourceRange context_type_range;
+    SourceRange output_type_range;
 
     std::vector<std::string> states;
     std::string initial_state;
@@ -158,6 +161,8 @@ struct WorkflowTypeInfo {
     TypePtr input_type;
     TypePtr output_type;
     SourceRange declaration_range;
+    SourceRange input_type_range;
+    SourceRange output_type_range;
 
     std::vector<WorkflowNodeInfo> nodes;
     std::vector<SourceRange> safety_ranges;

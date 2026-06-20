@@ -38,15 +38,6 @@ namespace {
     return range.end_offset >= range.begin_offset ? range.end_offset - range.begin_offset : 0;
 }
 
-[[nodiscard]] bool position_before_or_equal(Position lhs, Position rhs) noexcept {
-    return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.character <= rhs.character);
-}
-
-[[nodiscard]] bool position_in_range(Position position, Range range) noexcept {
-    return position_before_or_equal(range.start, position) &&
-           position_before_or_equal(position, range.end);
-}
-
 [[nodiscard]] std::string type_description(TypePtr type) {
     return type != nullptr ? type->describe() : std::string{"<unknown>"};
 }
@@ -753,29 +744,6 @@ expression_payload(const LspAnalysisSnapshot &snapshot, const HoverTarget &targe
     return std::nullopt;
 }
 
-[[nodiscard]] std::optional<HoverPayload> diagnostic_payload_at(const LspAnalysisSnapshot &snapshot,
-                                                                const LspSourceSnapshot &source,
-                                                                Position position) {
-    if (source.source == nullptr) {
-        return std::nullopt;
-    }
-    for (const auto &diagnostic : snapshot.diagnostics_for_uri(source.uri)) {
-        if (!position_in_range(position, diagnostic.range)) {
-            continue;
-        }
-        auto payload = HoverPayload{};
-        payload.headline = "diagnostic";
-        payload.diagnostics.push_back(diagnostic.message);
-        payload.token_range = SourceRange{
-            .begin_offset = offset_at(*source.source, diagnostic.range.start),
-            .end_offset = offset_at(*source.source, diagnostic.range.end),
-        };
-        payload.source_label = source.source->display_name;
-        return payload;
-    }
-    return std::nullopt;
-}
-
 [[nodiscard]] std::optional<HoverPayload> fallback_expression_payload(
     const LspAnalysisSnapshot &snapshot, const LspSourceSnapshot &source, std::size_t offset) {
     const auto *typed = snapshot.typed_program();
@@ -817,11 +785,6 @@ std::optional<HoverPayload> HoverService::payload_at(const LspAnalysisSnapshot &
                 return payload;
             }
         }
-    }
-
-    if (auto diagnostic = diagnostic_payload_at(snapshot, source, position);
-        diagnostic.has_value()) {
-        return diagnostic;
     }
 
     return fallback_expression_payload(snapshot, source, offset);
