@@ -175,7 +175,7 @@ CapabilityCallResult CapabilityRegistry::invoke_with_retry(CapabilityBinding &bi
         binding.circuit_state->record_failure();
     }
 
-    // 只有当实际进行了重试（max_retries > 0）时，才标记为 RetryExhausted
+    // Only mark as RetryExhausted when retries actually occurred (max_retries > 0)
     if (binding.retry.max_retries > 0) {
         last_result.status = CapabilityCallStatus::RetryExhausted;
     }

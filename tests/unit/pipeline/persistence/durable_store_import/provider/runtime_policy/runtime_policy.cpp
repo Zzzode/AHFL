@@ -8,7 +8,7 @@ namespace {
 
 using namespace ahfl::durable_store_import;
 
-// 辅助函数：创建通过审批的 ApprovalReceipt
+// Helper: build an approved ApprovalReceipt
 [[nodiscard]] ApprovalReceipt make_approved_receipt() {
     ApprovalReceipt receipt;
     receipt.format_version = std::string(kProviderApprovalReceiptFormatVersion);
@@ -24,7 +24,7 @@ using namespace ahfl::durable_store_import;
     return receipt;
 }
 
-// 辅助函数：创建拒绝审批的 ApprovalReceipt
+// Helper: build a rejected ApprovalReceipt
 [[nodiscard]] ApprovalReceipt make_rejected_receipt() {
     ApprovalReceipt receipt;
     receipt.format_version = std::string(kProviderApprovalReceiptFormatVersion);
@@ -40,7 +40,7 @@ using namespace ahfl::durable_store_import;
     return receipt;
 }
 
-// 辅助函数：创建有效的 ProviderConfigBundleValidationReport
+// Helper: build a valid ProviderConfigBundleValidationReport
 [[nodiscard]] ProviderConfigBundleValidationReport make_valid_config_report() {
     ProviderConfigBundleValidationReport report;
     report.format_version =
@@ -57,7 +57,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建有效选中的 ProviderSelectionPlan
+// Helper: build a selected ProviderSelectionPlan
 [[nodiscard]] ProviderSelectionPlan make_selected_plan() {
     ProviderSelectionPlan plan;
     plan.format_version = std::string(kProviderSelectionPlanFormatVersion);
@@ -71,7 +71,7 @@ using namespace ahfl::durable_store_import;
     return plan;
 }
 
-// 辅助函数：创建通过就绪检查的 readiness evidence
+// Helper: build passing readiness evidence
 [[nodiscard]] ProviderProductionReadinessEvidence make_passing_readiness() {
     ProviderProductionReadinessEvidence evidence;
     evidence.workflow_canonical_name = "app::main::ValueFlowWorkflow";
@@ -88,7 +88,7 @@ using namespace ahfl::durable_store_import;
     return evidence;
 }
 
-// 辅助函数：创建允许 traffic 的 opt-in decision report
+// Helper: build an opt-in decision report that allows traffic
 [[nodiscard]] ProviderOptInDecisionReport make_allow_opt_in_report() {
     ProviderOptInDecisionReport report;
     report.format_version = std::string(kProviderOptInDecisionReportFormatVersion);
@@ -102,7 +102,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建拒绝 traffic 的 opt-in decision report
+// Helper: build an opt-in decision report that denies traffic
 [[nodiscard]] ProviderOptInDecisionReport make_deny_opt_in_report() {
     ProviderOptInDecisionReport report;
     report.format_version = std::string(kProviderOptInDecisionReportFormatVersion);
@@ -117,7 +117,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 测试：所有 gate 通过时 Permit
+// Test: Permit when all gates pass
 int test_build_all_gates_pass() {
     const auto opt_in = make_allow_opt_in_report();
     const auto receipt = make_approved_receipt();
@@ -145,7 +145,7 @@ int test_build_all_gates_pass() {
     return 0;
 }
 
-// 测试：opt-in 未授予时 Deny
+// Test: Deny when opt-in is not granted
 int test_build_deny_opt_in_not_granted() {
     const auto opt_in = make_deny_opt_in_report();
     const auto receipt = make_approved_receipt();
@@ -164,7 +164,7 @@ int test_build_deny_opt_in_not_granted() {
     assert(report.gates_failed > 0);
     assert(report.blocking_violation_count > 0);
 
-    // 确认 opt_in gate 失败
+    // Confirm the opt_in gate failed
     bool found_opt_in_failure = false;
     for (const auto &gate : report.policy_gates) {
         if (gate.gate_name == "opt_in" && !gate.passed) {
@@ -184,7 +184,7 @@ int test_build_deny_opt_in_not_granted() {
     return 0;
 }
 
-// 测试：审批缺失时 Deny
+// Test: Deny when approval is missing
 int test_build_deny_approval_missing() {
     const auto opt_in = make_allow_opt_in_report();
     const auto receipt = make_rejected_receipt();
@@ -213,7 +213,7 @@ int test_build_deny_approval_missing() {
     return 0;
 }
 
-// 测试：config 无效时 Deny
+// Test: Deny when config is invalid
 int test_build_deny_config_invalid() {
     const auto opt_in = make_allow_opt_in_report();
     const auto receipt = make_approved_receipt();
@@ -243,7 +243,7 @@ int test_build_deny_config_invalid() {
     return 0;
 }
 
-// 测试：registry 不匹配时 Deny
+// Test: Deny on registry mismatch
 int test_build_deny_registry_mismatch() {
     const auto opt_in = make_allow_opt_in_report();
     const auto receipt = make_approved_receipt();
@@ -273,7 +273,7 @@ int test_build_deny_registry_mismatch() {
     return 0;
 }
 
-// 测试：readiness 未通过时 Deny
+// Test: Deny when readiness is not met
 int test_build_deny_readiness_not_met() {
     const auto opt_in = make_allow_opt_in_report();
     const auto receipt = make_approved_receipt();
@@ -303,7 +303,7 @@ int test_build_deny_readiness_not_met() {
     return 0;
 }
 
-// 测试：验证 format_version 校验
+// Test: validate format_version checking
 int test_validate_format_version() {
     ProviderRuntimePolicyReport report;
     report.format_version = "invalid-version";
@@ -323,14 +323,14 @@ int test_validate_format_version() {
     return 0;
 }
 
-// 测试：验证 decision/is_execution_permitted 一致性
+// Test: validate decision/is_execution_permitted conformance
 int test_validate_decision_consistency() {
     ProviderRuntimePolicyReport report;
     report.format_version = std::string(kProviderRuntimePolicyReportFormatVersion);
     report.workflow_canonical_name = "test";
     report.session_id = "session-001";
     report.decision = PolicyDecision::Deny;
-    report.is_execution_permitted = true;  // 不一致
+    report.is_execution_permitted = true;  // inconsistent
 
     const auto result = validate_provider_runtime_policy_report(report);
 
@@ -343,11 +343,11 @@ int test_validate_decision_consistency() {
     return 0;
 }
 
-// 测试：默认值确保 is_execution_permitted 为 false、decision 为 Deny
+// Test: defaults ensure is_execution_permitted is false and decision is Deny
 int test_default_deny() {
     ProviderRuntimePolicyReport report;
 
-    // 核心安全约束：默认值必须为 Deny + false
+    // Core safety constraint: defaults must be Deny + false
     assert(report.is_execution_permitted == false);
     assert(report.decision == PolicyDecision::Deny);
 

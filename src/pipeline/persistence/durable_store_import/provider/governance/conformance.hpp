@@ -12,18 +12,18 @@
 
 namespace ahfl::durable_store_import {
 
-// Provider Conformance Report 格式版本常量
+// Provider Conformance Report format version constant
 inline constexpr std::string_view kProviderConformanceReportFormatVersion =
     "ahfl.durable-store-import-provider-conformance-report.v1";
 
-// 契约检查结果枚举
+// Contract check result enum
 enum class ConformanceCheckResult {
     Pass,
     Fail,
     Skipped
 };
 
-// 单个契约检查项
+// Single contract check item
 struct ConformanceCheckItem {
     std::string check_name;
     ConformanceCheckResult result;
@@ -31,7 +31,7 @@ struct ConformanceCheckItem {
     std::optional<std::string> failure_reason;
 };
 
-// Provider Conformance Report 结构
+// Provider Conformance Report structure
 struct ProviderConformanceReport {
     std::string format_version{std::string(kProviderConformanceReportFormatVersion)};
     std::string source_durable_store_import_provider_compatibility_report_format_version{
@@ -44,12 +44,12 @@ struct ProviderConformanceReport {
     std::string session_id;
     std::optional<std::string> run_id;
     std::string input_fixture;
-    // 上游 artifact 引用
+    // Upstream artifact references
     std::string durable_store_import_provider_compatibility_report_identity;
     std::string durable_store_import_provider_registry_identity;
     std::string durable_store_import_provider_production_readiness_evidence_identity;
     std::string durable_store_import_provider_conformance_report_identity;
-    // 检查结果统计
+    // Check result statistics
     int pass_count{0};
     int fail_count{0};
     int skipped_count{0};
@@ -57,7 +57,7 @@ struct ProviderConformanceReport {
     std::string conformance_summary;
 };
 
-// 验证结果结构
+// Validation result structure
 struct ProviderConformanceReportValidationResult {
     DiagnosticBag diagnostics;
     [[nodiscard]] bool has_errors() const noexcept {
@@ -65,7 +65,7 @@ struct ProviderConformanceReportValidationResult {
     }
 };
 
-// 构建结果结构
+// Build result structure
 struct ProviderConformanceReportResult {
     std::optional<ProviderConformanceReport> report;
     DiagnosticBag diagnostics;
@@ -74,11 +74,11 @@ struct ProviderConformanceReportResult {
     }
 };
 
-// 验证函数
+// Validation function
 [[nodiscard]] ProviderConformanceReportValidationResult
 validate_provider_conformance_report(const ProviderConformanceReport &report);
 
-// 构建函数 - 消费 v0.40-v0.42 的 artifact
+// Build function - consumes v0.40-v0.42 artifacts
 [[nodiscard]] ProviderConformanceReportResult
 build_provider_conformance_report(const ProviderCompatibilityReport &compatibility_report,
                                   const ProviderRegistry &registry,

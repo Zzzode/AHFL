@@ -13,7 +13,7 @@
 namespace ahfl::evaluator {
 
 // ============================================================================
-// Execution Outcome - 语句执行后的控制流结果
+// Execution Outcome - control-flow result after a statement executes
 // ============================================================================
 
 struct ExecContinue {};
@@ -33,7 +33,7 @@ struct ExecAssertFailed {
 using ExecOutcome = std::variant<ExecContinue, ExecGoto, ExecReturn, ExecAssertFailed>;
 
 // ============================================================================
-// ExecResult - 执行结果（控制流 + 诊断信息）
+// ExecResult - execution result (control flow + diagnostics)
 // ============================================================================
 
 struct ExecResult {
@@ -46,20 +46,20 @@ struct ExecResult {
 };
 
 // ============================================================================
-// ExecContext - 执行上下文（包裹 EvalContext 并提供可变操作）
+// ExecContext - execution context (wraps EvalContext and provides mutable operations)
 // ============================================================================
 
-// 表达式求值函数类型（支持可选的 capability 调用）
+// Expression evaluation function type (supports optional capability calls)
 using ExprEvalFn = std::function<EvalResult(const ir::Expr &, const EvalContext &)>;
 
 struct ExecContext {
     EvalContext eval_ctx;
-    // 可选的自定义表达式求值器（用于支持 CallExpr）
+    // Optional custom expression evaluator (used to support CallExpr)
     ExprEvalFn expr_eval;
 
     void bind_local(const std::string &name, Value value);
     bool assign_ctx(const std::string &name, Value value);
-    // 求值表达式：使用自定义求值器（如有）或默认的 eval_expr
+    // Evaluate an expression: use the custom evaluator (if any) or the default eval_expr
     EvalResult eval_expression(const ir::Expr &expr) const;
 };
 

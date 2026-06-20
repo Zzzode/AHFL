@@ -245,8 +245,9 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
 
     // Generate summary
     const auto spec_abbrev = abbreviate_spec(trace.violated_spec);
-    explanation.summary = "验证失败：在 " + std::to_string(trace.states.size()) +
-                          " 步执行后违反了性质 " + spec_abbrev;
+    explanation.summary = "Verification failed: property " + spec_abbrev +
+                          " violated after " + std::to_string(trace.states.size()) +
+                          " execution steps";
 
     // Generate steps
     for (std::size_t i = 0; i < trace.states.size(); ++i) {
@@ -254,7 +255,7 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
 
         if (i == 0) {
             // First state: list initial values
-            std::string step = "步骤 1 (State " + state.label + "): 初始状态";
+            std::string step = "Step 1 (State " + state.label + "): initial state";
             bool has_values = false;
             for (const auto &assignment : state.assignments) {
                 const auto &desc = assignment.mapping.has_value()
@@ -289,20 +290,20 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
                 const auto &desc = assignment.mapping.has_value()
                                        ? assignment.mapping->description
                                        : assignment.variable;
-                changes.push_back(desc + " 变为 " + assignment.value);
+                changes.push_back(desc + " changed to " + assignment.value);
             } else if (prev_it->second != assignment.value) {
                 // Value changed
                 const auto &desc = assignment.mapping.has_value()
                                        ? assignment.mapping->description
                                        : assignment.variable;
-                changes.push_back(desc + " 从 " + prev_it->second + " 变为 " + assignment.value);
+                changes.push_back(desc + " changed from " + prev_it->second + " to " + assignment.value);
             }
         }
 
         const auto step_num = std::to_string(i + 1);
-        std::string step = "步骤 " + step_num + " (State " + state.label + "): ";
+        std::string step = "Step " + step_num + " (State " + state.label + "): ";
         if (changes.empty()) {
-            step += "无变化";
+            step += "no change";
         } else {
             for (std::size_t c = 0; c < changes.size(); ++c) {
                 if (c > 0) {
@@ -317,13 +318,13 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
     // If a loop was detected, add a note
     if (trace.loop_start_index.has_value()) {
         const auto loop_idx = *trace.loop_start_index;
-        std::string loop_note = "注意：从 State ";
+        std::string loop_note = "Note: an infinite loop starts from State ";
         if (loop_idx < trace.states.size()) {
             loop_note += trace.states[loop_idx].label;
         } else {
             loop_note += std::to_string(loop_idx + 1);
         }
-        loop_note += " 开始存在无限循环，系统将永远无法满足该性质";
+        loop_note += "; the system will never satisfy this property";
         explanation.steps.push_back(std::move(loop_note));
     }
 

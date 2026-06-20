@@ -789,7 +789,7 @@ void provider_conformance_detail_emit_validation_error(DiagnosticBag &diagnostic
         diagnostics, provider_conformance_detail_kValidationDiagnosticCode, message);
 }
 
-// 执行单个检查并返回检查项
+// Run a single check and return the check item
 [[nodiscard]] ConformanceCheckItem
 provider_conformance_detail_run_check(const std::string &check_name,
                                       bool condition,
@@ -814,7 +814,7 @@ validate_provider_conformance_report(const ProviderConformanceReport &report) {
     ProviderConformanceReportValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    // 检查 format_version
+    // Check format_version
     if (report.format_version != kProviderConformanceReportFormatVersion) {
         provider_conformance_detail_emit_validation_error(
             diagnostics,
@@ -822,7 +822,7 @@ validate_provider_conformance_report(const ProviderConformanceReport &report) {
                 std::string(kProviderConformanceReportFormatVersion) + "'");
     }
 
-    // 检查 source format versions
+    // Check source format versions
     if (report.source_durable_store_import_provider_compatibility_report_format_version !=
             kProviderCompatibilityReportFormatVersion ||
         report.source_durable_store_import_provider_registry_format_version !=
@@ -834,7 +834,7 @@ validate_provider_conformance_report(const ProviderConformanceReport &report) {
             "provider conformance report source format_versions must match V0.40-V0.42 artifacts");
     }
 
-    // 检查必需字段非空
+    // Check required fields are non-empty
     if (report.workflow_canonical_name.empty() || report.session_id.empty() ||
         report.input_fixture.empty() ||
         report.durable_store_import_provider_compatibility_report_identity.empty() ||
@@ -847,7 +847,7 @@ validate_provider_conformance_report(const ProviderConformanceReport &report) {
             "provider conformance report identity and summary fields must not be empty");
     }
 
-    // 检查计数非负
+    // Check counts are non-negative
     if (report.pass_count < 0 || report.fail_count < 0 || report.skipped_count < 0) {
         provider_conformance_detail_emit_validation_error(
             diagnostics, "provider conformance report counts cannot be negative");
@@ -862,7 +862,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
                                   const ProviderProductionReadinessEvidence &readiness_evidence) {
     ProviderConformanceReportResult result;
 
-    // 验证上游 artifact
+    // Validate upstream artifacts
     result.diagnostics.append(
         validate_provider_compatibility_report(compatibility_report).diagnostics);
     result.diagnostics.append(validate_provider_registry(registry).diagnostics);
@@ -879,7 +879,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
     report.run_id = compatibility_report.run_id;
     report.input_fixture = compatibility_report.input_fixture;
 
-    // 设置上游 artifact 引用
+    // Set upstream artifact references
     report.durable_store_import_provider_compatibility_report_identity =
         compatibility_report.durable_store_import_provider_compatibility_report_identity;
     report.durable_store_import_provider_registry_identity =
@@ -887,56 +887,56 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
     report.durable_store_import_provider_production_readiness_evidence_identity =
         readiness_evidence.durable_store_import_provider_production_readiness_evidence_identity;
 
-    // 预先生成 conformance report identity（后续检查需引用）
+    // Pre-generate conformance report identity (referenced by subsequent checks)
     report.durable_store_import_provider_conformance_report_identity =
         "durable-store-import-provider-conformance-report::" + report.session_id;
 
-    // 执行契约检查
+    // Run conformance checks
     std::vector<ConformanceCheckItem> checks;
 
-    // 检查 1: Compatibility Status Pass
+    // Check 1: Compatibility Status Pass
     checks.push_back(provider_conformance_detail_run_check(
         "compatibility_status_passed",
         compatibility_report.status == ProviderCompatibilityStatus::Passed,
         report.durable_store_import_provider_compatibility_report_identity,
         "compatibility status is not passed"));
 
-    // 检查 2: Mock Adapter Compatible
+    // Check 2: Mock Adapter Compatible
     checks.push_back(provider_conformance_detail_run_check(
         "mock_adapter_compatible",
         compatibility_report.mock_adapter_compatible,
         report.durable_store_import_provider_compatibility_report_identity,
         "mock adapter is not compatible"));
 
-    // 检查 3: Local Filesystem Alpha Compatible
+    // Check 3: Local Filesystem Alpha Compatible
     checks.push_back(provider_conformance_detail_run_check(
         "local_filesystem_alpha_compatible",
         compatibility_report.local_filesystem_alpha_compatible,
         report.durable_store_import_provider_compatibility_report_identity,
         "local filesystem alpha is not compatible"));
 
-    // 检查 4: Capability Matrix Complete
+    // Check 4: Capability Matrix Complete
     checks.push_back(provider_conformance_detail_run_check(
         "capability_matrix_complete",
         compatibility_report.capability_matrix_complete,
         report.durable_store_import_provider_compatibility_report_identity,
         "capability matrix is not complete"));
 
-    // 检查 5: Registry Mock Adapter Registered
+    // Check 5: Registry Mock Adapter Registered
     checks.push_back(provider_conformance_detail_run_check(
         "registry_mock_adapter_registered",
         registry.mock_adapter_registered,
         report.durable_store_import_provider_registry_identity,
         "mock adapter is not registered in registry"));
 
-    // 检查 6: Registry Local Filesystem Alpha Registered
+    // Check 6: Registry Local Filesystem Alpha Registered
     checks.push_back(provider_conformance_detail_run_check(
         "registry_local_filesystem_alpha_registered",
         registry.local_filesystem_alpha_registered,
         report.durable_store_import_provider_registry_identity,
         "local filesystem alpha is not registered in registry"));
 
-    // 检查 7: Registry Compatibility Status Match
+    // Check 7: Registry Compatibility Status Match
     checks.push_back(provider_conformance_detail_run_check(
         "registry_compatibility_status_match",
         registry.compatibility_status == ProviderCompatibilityStatus::Passed ||
@@ -944,42 +944,42 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
         report.durable_store_import_provider_registry_identity,
         "registry compatibility status does not match expected values"));
 
-    // 检查 8: Security Evidence Passed
+    // Check 8: Security Evidence Passed
     checks.push_back(provider_conformance_detail_run_check(
         "security_evidence_passed",
         readiness_evidence.security_evidence_passed,
         report.durable_store_import_provider_production_readiness_evidence_identity,
         "security evidence did not pass"));
 
-    // 检查 9: Recovery Evidence Passed
+    // Check 9: Recovery Evidence Passed
     checks.push_back(provider_conformance_detail_run_check(
         "recovery_evidence_passed",
         readiness_evidence.recovery_evidence_passed,
         report.durable_store_import_provider_production_readiness_evidence_identity,
         "recovery evidence did not pass"));
 
-    // 检查 10: Compatibility Evidence Passed
+    // Check 10: Compatibility Evidence Passed
     checks.push_back(provider_conformance_detail_run_check(
         "compatibility_evidence_passed",
         readiness_evidence.compatibility_evidence_passed,
         report.durable_store_import_provider_production_readiness_evidence_identity,
         "compatibility evidence did not pass"));
 
-    // 检查 11: Observability Evidence Passed
+    // Check 11: Observability Evidence Passed
     checks.push_back(provider_conformance_detail_run_check(
         "observability_evidence_passed",
         readiness_evidence.observability_evidence_passed,
         report.durable_store_import_provider_production_readiness_evidence_identity,
         "observability evidence did not pass"));
 
-    // 检查 12: Registry Evidence Passed
+    // Check 12: Registry Evidence Passed
     checks.push_back(provider_conformance_detail_run_check(
         "registry_evidence_passed",
         readiness_evidence.registry_evidence_passed,
         report.durable_store_import_provider_production_readiness_evidence_identity,
         "registry evidence did not pass"));
 
-    // 检查 13: No Blocking Issues
+    // Check 13: No Blocking Issues
     checks.push_back(provider_conformance_detail_run_check(
         "no_blocking_issues",
         readiness_evidence.blocking_issue_count == 0,
@@ -987,7 +987,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
         "there are " + std::to_string(readiness_evidence.blocking_issue_count) +
             " blocking issues"));
 
-    // 检查 14: Session ID Consistency
+    // Check 14: Session ID Consistency
     checks.push_back(provider_conformance_detail_run_check(
         "session_id_consistency",
         compatibility_report.session_id == registry.session_id &&
@@ -995,7 +995,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
         report.durable_store_import_provider_conformance_report_identity,
         "session IDs are not consistent across artifacts"));
 
-    // 检查 15: Workflow Name Consistency
+    // Check 15: Workflow Name Consistency
     checks.push_back(provider_conformance_detail_run_check(
         "workflow_name_consistency",
         compatibility_report.workflow_canonical_name == registry.workflow_canonical_name &&
@@ -1003,7 +1003,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
         report.durable_store_import_provider_conformance_report_identity,
         "workflow canonical names are not consistent across artifacts"));
 
-    // 检查 16: Input Fixture Consistency
+    // Check 16: Input Fixture Consistency
     checks.push_back(provider_conformance_detail_run_check(
         "input_fixture_consistency",
         compatibility_report.input_fixture == registry.input_fixture &&
@@ -1011,7 +1011,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
         report.durable_store_import_provider_conformance_report_identity,
         "input fixtures are not consistent across artifacts"));
 
-    // 计算统计数据
+    // Compute aggregate counts
     int pass_count = 0;
     int fail_count = 0;
     int skipped_count = 0;
@@ -1034,7 +1034,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
     report.skipped_count = skipped_count;
     report.checks = std::move(checks);
 
-    // 生成 conformance summary
+    // Generate conformance summary
     if (fail_count == 0) {
         report.conformance_summary = "provider conformance passed all checks";
     } else {
@@ -1042,7 +1042,7 @@ build_provider_conformance_report(const ProviderCompatibilityReport &compatibili
                                      " of " + std::to_string(checks.size()) + " checks";
     }
 
-    // 验证生成的 report
+    // Validate the generated report
     result.diagnostics.append(validate_provider_conformance_report(report).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -1082,7 +1082,7 @@ validate_provider_schema_compatibility_report(const ProviderSchemaCompatibilityR
     ProviderSchemaCompatibilityReportValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    // 校验 format version
+    // Validate format version
     if (report.format_version != kProviderSchemaCompatibilityReportFormatVersion) {
         provider_schema_compatibility_detail_emit_validation_error(
             diagnostics,
@@ -1090,7 +1090,7 @@ validate_provider_schema_compatibility_report(const ProviderSchemaCompatibilityR
                 std::string(kProviderSchemaCompatibilityReportFormatVersion) + "'");
     }
 
-    // 校验必填字段
+    // Validate required fields
     if (report.workflow_canonical_name.empty() || report.session_id.empty()) {
         provider_schema_compatibility_detail_emit_validation_error(
             diagnostics,
@@ -1098,14 +1098,14 @@ validate_provider_schema_compatibility_report(const ProviderSchemaCompatibilityR
             "be empty");
     }
 
-    // 校验兼容性汇总不为空
+    // Validate compatibility summary is non-empty
     if (report.compatibility_summary.empty()) {
         provider_schema_compatibility_detail_emit_validation_error(
             diagnostics,
             "provider schema compatibility report compatibility_summary must not be empty");
     }
 
-    // 校验汇总计数与检查项一致
+    // Validate summary counts match check item count
     const int total = report.compatible_count + report.incompatible_count + report.unknown_count;
     const int expected_total = static_cast<int>(report.version_checks.size());
     if (total != expected_total) {
@@ -1127,7 +1127,7 @@ ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_repo
     const std::optional<std::string> &run_id) {
     ProviderSchemaCompatibilityReportResult result;
 
-    // 校验输入不为空
+    // Validate inputs are non-empty
     if (workflow_canonical_name.empty() || session_id.empty()) {
         provider_schema_compatibility_detail_emit_validation_error(
             result.diagnostics, "workflow_canonical_name and session_id must not be empty");
@@ -1142,7 +1142,7 @@ ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_repo
     report.source_chain_checks = source_chain_checks;
     report.reference_checks = reference_checks;
 
-    // 计算汇总
+    // Compute summary counts
     int compatible = 0;
     int incompatible = 0;
     int unknown = 0;
@@ -1163,7 +1163,7 @@ ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_repo
     report.incompatible_count = incompatible;
     report.unknown_count = unknown;
 
-    // 检查 source chain 是否有不兼容项
+    // Check source chain for any incompatible items
     bool source_chain_drift = false;
     for (const auto &chain : source_chain_checks) {
         if (!chain.is_compatible) {
@@ -1172,7 +1172,7 @@ ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_repo
         }
     }
 
-    // 检查 reference version 是否有不兼容项
+    // Check reference version for any incompatible items
     bool reference_drift = false;
     for (const auto &ref : reference_checks) {
         if (!ref.is_compatible) {
@@ -1181,7 +1181,7 @@ ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_repo
         }
     }
 
-    // 判定 schema drift
+    // Determine schema drift
     report.has_schema_drift = (incompatible > 0) || source_chain_drift || reference_drift;
     if (report.has_schema_drift) {
         report.drift_details =
@@ -1194,12 +1194,12 @@ ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_repo
         }
     }
 
-    // 构造汇总
+    // Build the summary
     report.compatibility_summary = "provider schema drift gate: " + std::to_string(compatible) +
                                    " aligned, " + std::to_string(incompatible) + " drift, " +
                                    std::to_string(unknown) + " unknown";
 
-    // 验证构建结果
+    // Validate the built result
     result.diagnostics.append(validate_provider_schema_compatibility_report(report).diagnostics);
     if (result.has_errors()) {
         return result;

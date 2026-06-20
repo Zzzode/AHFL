@@ -1,7 +1,7 @@
-// e2e_workflow.cpp - 多 Agent Workflow 端到端测试
+// e2e_workflow.cpp - multi-agent workflow end-to-end test
 //
-// 本测试编译 tests/runtime/e2e_multi_agent.ahfl 并使用 WorkflowRuntime 执行，
-// 验证完整的 runtime 执行流程。
+// This test compiles tests/runtime/e2e_multi_agent.ahfl and executes it with WorkflowRuntime,
+// validating the complete runtime execution flow.
 
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
@@ -26,7 +26,7 @@ using namespace ahfl::evaluator;
 using namespace ahfl::runtime;
 using namespace ahfl::ir;
 
-// 测试统计
+// Test statistics
 int test_count = 0;
 int pass_count = 0;
 
@@ -40,11 +40,11 @@ void check(bool condition, const std::string &test_name) {
 }
 
 // ============================================================================
-// 编译 .ahfl 文件到 IR
+// Compile a .ahfl file into IR
 // ============================================================================
 
 [[nodiscard]] std::optional<ir::Program> compile_ahfl_file(const std::filesystem::path &file_path) {
-    // 1. 解析文件
+    // 1. Parse the file
     const Frontend frontend;
     const auto parse_result = frontend.parse_file(file_path);
     if (parse_result.has_errors() || !parse_result.program) {
@@ -52,7 +52,7 @@ void check(bool condition, const std::string &test_name) {
         return std::nullopt;
     }
 
-    // 2. 符号解析
+    // 2. Symbol resolution
     const Resolver resolver;
     const auto resolve_result = resolver.resolve(*parse_result.program);
     if (resolve_result.has_errors()) {
@@ -60,7 +60,7 @@ void check(bool condition, const std::string &test_name) {
         return std::nullopt;
     }
 
-    // 3. 类型检查
+    // 3. Type checking
     const TypeChecker type_checker;
     const auto type_check_result = type_checker.check(*parse_result.program, resolve_result);
     if (type_check_result.has_errors()) {
@@ -68,7 +68,7 @@ void check(bool condition, const std::string &test_name) {
         return std::nullopt;
     }
 
-    // 4. 语义验证
+    // 4. Semantic validation
     const Validator validator;
     const auto validation_result =
         validator.validate(*parse_result.program, resolve_result, type_check_result);
@@ -77,12 +77,12 @@ void check(bool condition, const std::string &test_name) {
         return std::nullopt;
     }
 
-    // 5. 生成 IR
+    // 5. Generate IR
     return lower_program_ir(*parse_result.program, resolve_result, type_check_result);
 }
 
 // ============================================================================
-// 辅助: 构造 unordered_map<string, Value>（Value 不可拷贝，只能 move）
+// Helper: build unordered_map<string, Value> (Value is move-only, not copyable)
 // ============================================================================
 
 std::unordered_map<std::string, Value> build_fields() {
@@ -97,10 +97,10 @@ std::unordered_map<std::string, Value> build_fields(std::string key, Value val, 
 }
 
 // ============================================================================
-// Mock Capability 实现
+// Mock capability implementations
 // ============================================================================
 
-// 模拟 ClassifyMessage: 返回 ClassifyResult { category: Technical, confidence: "high" }
+// Mock ClassifyMessage: returns ClassifyResult { category: Technical, confidence: "high" }
 Value mock_classify_message(const std::vector<Value> & /*args*/) {
     return make_struct(
         "ClassifyResult",
@@ -108,7 +108,7 @@ Value mock_classify_message(const std::vector<Value> & /*args*/) {
             "category", make_enum("Category", "Technical"), "confidence", make_string("high")));
 }
 
-// 模拟 HandleGeneral: 返回 SupportResult { response: "...", resolved: true }
+// Mock HandleGeneral: returns SupportResult { response: "...", resolved: true }
 Value mock_handle_general(const std::vector<Value> & /*args*/) {
     return make_struct(
         "SupportResult",
@@ -116,7 +116,7 @@ Value mock_handle_general(const std::vector<Value> & /*args*/) {
             "response", make_string("Your issue has been resolved"), "resolved", make_bool(true)));
 }
 
-// 模拟 HandleTechnical: 返回 SupportResult { response: "...", resolved: true }
+// Mock HandleTechnical: returns SupportResult { response: "...", resolved: true }
 Value mock_handle_technical(const std::vector<Value> & /*args*/) {
     return make_struct(
         "SupportResult",
@@ -124,14 +124,14 @@ Value mock_handle_technical(const std::vector<Value> & /*args*/) {
             "response", make_string("Escalated to senior engineer"), "resolved", make_bool(true)));
 }
 
-// 模拟 HandleBilling: 返回 SupportResult { response: "...", resolved: true }
+// Mock HandleBilling: returns SupportResult { response: "...", resolved: true }
 Value mock_handle_billing(const std::vector<Value> & /*args*/) {
     return make_struct(
         "SupportResult",
         build_fields("response", make_string("Billing adjusted"), "resolved", make_bool(true)));
 }
 
-// 模拟 GenerateSummary: 返回 SummaryResult
+// Mock GenerateSummary: returns SummaryResult
 Value mock_generate_summary(const std::vector<Value> &args) {
     // args[0] = category (Enum), args[1] = response (String), args[2] = resolved (Bool)
     Value category = args.empty() ? make_enum("Category", "General") : clone_value(args[0]);
@@ -152,12 +152,12 @@ Value mock_generate_summary(const std::vector<Value> &args) {
 }
 
 // ============================================================================
-// 创建 CapabilityRegistry
+// Create the CapabilityRegistry
 // ============================================================================
 
 CapabilityRegistry create_mock_registry() {
     CapabilityRegistry registry;
-    // IR 使用全限定名，需要匹配 module::capability 格式
+    // IR uses fully-qualified names, must match the module::capability format
     registry.register_function("runtime::e2e_multi_agent::ClassifyMessage", mock_classify_message);
     registry.register_function("runtime::e2e_multi_agent::HandleGeneral", mock_handle_general);
     registry.register_function("runtime::e2e_multi_agent::HandleTechnical", mock_handle_technical);
@@ -167,13 +167,13 @@ CapabilityRegistry create_mock_registry() {
 }
 
 // ============================================================================
-// 打印执行轨迹
+// Print the execution trace
 // ============================================================================
 
 void print_execution_trace(const WorkflowResult &result) {
     std::cout << "\n=== Workflow Execution Trace ===\n";
 
-    // 状态
+    // Status
     std::cout << "Status: ";
     switch (result.status) {
     case WorkflowStatus::Completed:
@@ -191,7 +191,7 @@ void print_execution_trace(const WorkflowResult &result) {
     }
     std::cout << "\n";
 
-    // 执行顺序
+    // Execution order
     std::cout << "Execution Order: [";
     for (std::size_t i = 0; i < result.execution_order.size(); ++i) {
         if (i > 0)
@@ -200,7 +200,7 @@ void print_execution_trace(const WorkflowResult &result) {
     }
     std::cout << "]\n\n";
 
-    // Node 结果
+    // Node results
     std::cout << "Node Results:\n";
     for (const auto &nr : result.node_results) {
         std::cout << "  [" << nr.execution_index << "] " << nr.node_name << " -> " << nr.target;
@@ -227,7 +227,7 @@ void print_execution_trace(const WorkflowResult &result) {
         }
         std::cout << ")\n";
 
-        // 打印输出值
+        // Print the output value
         if (nr.output.has_value()) {
             std::cout << "      Output: ";
             print_value(*nr.output, std::cout);
@@ -236,7 +236,7 @@ void print_execution_trace(const WorkflowResult &result) {
     }
     std::cout << "\n";
 
-    // 最终输出
+    // Final output
     std::cout << "Final Output: ";
     if (result.output.has_value()) {
         print_value(*result.output, std::cout);
@@ -245,7 +245,7 @@ void print_execution_trace(const WorkflowResult &result) {
     }
     std::cout << "\n";
 
-    // 错误信息
+    // Error messages
     if (result.has_errors()) {
         std::cout << "\nErrors:\n";
         result.diagnostics.render(std::cout);
@@ -255,23 +255,23 @@ void print_execution_trace(const WorkflowResult &result) {
 }
 
 // ============================================================================
-// 测试 1: Priority::Low 路径 (Handling)
+// Test 1: Priority::Low path (Handling)
 // ============================================================================
 
 int test_priority_low_handling_path(const ir::Program &program) {
     std::cout << "\n=== Test 1: Priority::Low (Handling Path) ===\n";
 
-    // 创建 mock registry
+    // Create mock registry
     auto registry = create_mock_registry();
 
-    // 配置 WorkflowRuntime
+    // Configure WorkflowRuntime
     WorkflowRuntimeConfig config;
     config.capability_invoker = registry.as_invoker();
 
-    // 创建 runtime
+    // Create runtime
     WorkflowRuntime runtime(program, config);
 
-    // 准备输入: SupportRequest { user_id, message, priority }
+    // Prepare input: SupportRequest { user_id, message, priority }
     Value input = make_struct("SupportRequest",
                               build_fields("user_id",
                                            make_string("user_123"),
@@ -280,18 +280,18 @@ int test_priority_low_handling_path(const ir::Program &program) {
                                            "priority",
                                            make_enum("runtime::e2e_multi_agent::Priority", "Low")));
 
-    // 执行 workflow
+    // Execute the workflow
     auto result =
         runtime.run("runtime::e2e_multi_agent::CustomerSupportWorkflow", std::move(input));
 
-    // 打印执行轨迹
+    // Print execution trace
     print_execution_trace(result);
 
-    // 验证结果
+    // Verify results
     check(result.status == WorkflowStatus::Completed, "low.status_completed");
     check(!result.has_errors(), "low.no_errors");
 
-    // 执行顺序: [classify, support, summary]
+    // Execution order: [classify, support, summary]
     check(result.execution_order.size() == 3, "low.exec_order_size_3");
     if (result.execution_order.size() >= 3) {
         check(result.execution_order[0] == "classify", "low.order_0_classify");
@@ -299,32 +299,32 @@ int test_priority_low_handling_path(const ir::Program &program) {
         check(result.execution_order[2] == "summary", "low.order_2_summary");
     }
 
-    // 验证最终输出
+    // Verify the final output
     check(result.output.has_value(), "low.has_output");
     if (result.output.has_value()) {
         auto *sv = std::get_if<StructValue>(&result.output->node);
         check(sv != nullptr, "low.output_is_struct");
         if (sv) {
-            // 验证 category = Technical
+            // Verify category = Technical
             auto cat_it = sv->fields.find("category");
             if (cat_it != sv->fields.end()) {
                 auto *ev = std::get_if<EnumValue>(&cat_it->second->node);
                 check(ev != nullptr && ev->variant == "Technical", "low.category_technical");
             }
 
-            // 验证 resolved = true
+            // Verify resolved = true
             auto res_it = sv->fields.find("resolved");
             if (res_it != sv->fields.end()) {
                 auto *bv = std::get_if<BoolValue>(&res_it->second->node);
                 check(bv != nullptr && bv->value == true, "low.resolved_true");
             }
 
-            // 验证 summary 存在
+            // Verify summary exists
             check(sv->fields.find("summary") != sv->fields.end(), "low.has_summary");
         }
     }
 
-    // 验证所有 node 都完成
+    // Verify all nodes completed
     for (const auto &nr : result.node_results) {
         check(nr.status == AgentStatus::Completed, "low.node_completed_" + nr.node_name);
     }
@@ -333,23 +333,23 @@ int test_priority_low_handling_path(const ir::Program &program) {
 }
 
 // ============================================================================
-// 测试 2: Priority::High 路径 (Escalated)
+// Test 2: Priority::High path (Escalated)
 // ============================================================================
 
 int test_priority_high_escalated_path(const ir::Program &program) {
     std::cout << "\n=== Test 2: Priority::High (Escalated Path) ===\n";
 
-    // 创建 mock registry
+    // Create mock registry
     auto registry = create_mock_registry();
 
-    // 配置 WorkflowRuntime
+    // Configure WorkflowRuntime
     WorkflowRuntimeConfig config;
     config.capability_invoker = registry.as_invoker();
 
-    // 创建 runtime
+    // Create runtime
     WorkflowRuntime runtime(program, config);
 
-    // 准备输入: SupportRequest { priority: High }
+    // Prepare input: SupportRequest { priority: High }
     Value input =
         make_struct("SupportRequest",
                     build_fields("user_id",
@@ -359,34 +359,34 @@ int test_priority_high_escalated_path(const ir::Program &program) {
                                  "priority",
                                  make_enum("runtime::e2e_multi_agent::Priority", "High")));
 
-    // 执行 workflow
+    // Execute the workflow
     auto result =
         runtime.run("runtime::e2e_multi_agent::CustomerSupportWorkflow", std::move(input));
 
-    // 打印执行轨迹
+    // Print execution trace
     print_execution_trace(result);
 
-    // 验证结果
+    // Verify results
     check(result.status == WorkflowStatus::Completed, "high.status_completed");
     check(!result.has_errors(), "high.no_errors");
 
-    // 执行顺序: [classify, support, summary]
+    // Execution order: [classify, support, summary]
     check(result.execution_order.size() == 3, "high.exec_order_size_3");
 
-    // 验证最终输出
+    // Verify the final output
     check(result.output.has_value(), "high.has_output");
     if (result.output.has_value()) {
         auto *sv = std::get_if<StructValue>(&result.output->node);
         check(sv != nullptr, "high.output_is_struct");
         if (sv) {
-            // 验证 category = Technical (来自 classify)
+            // Verify category = Technical (from classify)
             auto cat_it = sv->fields.find("category");
             if (cat_it != sv->fields.end()) {
                 auto *ev = std::get_if<EnumValue>(&cat_it->second->node);
                 check(ev != nullptr && ev->variant == "Technical", "high.category_technical");
             }
 
-            // 验证 resolved = true
+            // Verify resolved = true
             auto res_it = sv->fields.find("resolved");
             if (res_it != sv->fields.end()) {
                 auto *bv = std::get_if<BoolValue>(&res_it->second->node);
@@ -395,8 +395,8 @@ int test_priority_high_escalated_path(const ir::Program &program) {
         }
     }
 
-    // 验证 support node 的 output 包含 Escalated 路径的响应
-    // (HandleTechnical 被调用而非 HandleGeneral)
+    // Verify that the support node's output contains the Escalated-path response
+    // (HandleTechnical is called instead of HandleGeneral)
     bool found_support_node = false;
     for (const auto &nr : result.node_results) {
         if (nr.node_name == "support") {
@@ -408,7 +408,7 @@ int test_priority_high_escalated_path(const ir::Program &program) {
                     auto resp_it = sv->fields.find("response");
                     if (resp_it != sv->fields.end()) {
                         auto *strv = std::get_if<StringValue>(&resp_it->second->node);
-                        // 应该是 HandleTechnical 的响应
+                        // Should be HandleTechnical's response
                         check(strv != nullptr && strv->value == "Escalated to senior engineer",
                               "high.support_technical_response");
                     }
@@ -425,19 +425,19 @@ int test_priority_high_escalated_path(const ir::Program &program) {
 } // anonymous namespace
 
 int main(int argc, char **argv) {
-    // 确定测试文件路径
+    // Determine the test file path
     std::filesystem::path test_file;
     if (argc > 1) {
         test_file = argv[1];
     } else {
-        // 默认路径
+        // Default path
         test_file = "/Users/bytedance/Develop/AHFL/tests/runtime/e2e_multi_agent.ahfl";
     }
 
     std::cout << "=== AHFL E2E Workflow Test ===\n";
     std::cout << "Test file: " << test_file << "\n";
 
-    // 编译 .ahfl 文件
+    // Compile the .ahfl file
     std::cout << "\nCompiling " << test_file << "...\n";
     auto program = compile_ahfl_file(test_file);
     if (!program.has_value()) {
@@ -446,11 +446,11 @@ int main(int argc, char **argv) {
     }
     std::cout << "Compilation successful!\n";
 
-    // 运行测试
+    // Run tests
     int result1 = test_priority_low_handling_path(*program);
     int result2 = test_priority_high_escalated_path(*program);
 
-    // 总结
+    // Summary
     std::cout << "\n=== Test Summary ===\n";
     std::cout << pass_count << "/" << test_count << " tests passed\n";
 

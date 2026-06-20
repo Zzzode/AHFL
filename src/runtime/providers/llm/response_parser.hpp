@@ -18,12 +18,12 @@ struct ResponseParseResult {
     }
 };
 
-// 将 LLM 的 JSON 响应解析为 AHFL Value
+// Parse an LLM's JSON response into an AHFL Value
 class ResponseParser {
   public:
     explicit ResponseParser(const ir::Program &program);
 
-    // 解析 JSON 字符串为指定类型的 Value
+    // Parse a JSON string into a Value of the specified type
     [[nodiscard]] std::optional<evaluator::Value> parse(const std::string &json_str,
                                                         const std::string &expected_type) const;
     [[nodiscard]] ResponseParseResult
@@ -36,15 +36,15 @@ class ResponseParser {
     [[nodiscard]] const ir::StructDecl *find_struct(const std::string &name) const;
     [[nodiscard]] const ir::EnumDecl *find_enum(const std::string &name) const;
 
-    // 解析 JSON object 为 struct Value
+    // Parse a JSON object into a struct Value
     [[nodiscard]] ResponseParseResult parse_struct(const std::string &json_obj,
                                                    const ir::StructDecl &decl) const;
 
-    // 从 JSON object 中提取指定 key 的 value
+    // Extract the value of a given key from a JSON object
     [[nodiscard]] std::string extract_json_value(const std::string &json_str,
                                                  const std::string &key) const;
 
-    // 解析基本类型值
+    // Parse a primitive type value
     [[nodiscard]] ResponseParseResult parse_primitive(const std::string &value_str,
                                                       const std::string &type_name) const;
 };

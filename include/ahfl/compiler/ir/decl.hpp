@@ -12,35 +12,35 @@
 namespace ahfl::ir {
 
 // ----------------------------------------------------------------------------
-// 声明来源追踪 (Declaration Provenance)
+// Declaration Provenance
 // ----------------------------------------------------------------------------
 
-/// 声明来源信息（用于诊断和调试）
+/// Declaration provenance info (used for diagnostics and debugging)
 struct DeclarationProvenance {
-    std::string module_name; // 所属模块名
-    std::string source_path; // 源文件路径
+    std::string module_name; // Owning module name
+    std::string source_path; // Source file path
     SourceRangeOpt source_range;
     std::uint32_t id{0}; // Monotonic declaration ID assigned during lowering
 };
 
 // ----------------------------------------------------------------------------
-// 顶层声明 (Top-Level Declarations)
+// Top-Level Declarations
 // ----------------------------------------------------------------------------
 
-/// 模块声明: module a::b::c;
+/// Module declaration: module a::b::c;
 struct ModuleDecl {
     DeclarationProvenance provenance;
     std::string name;
 };
 
-/// 导入声明: import a::b::c [as alias];
+/// Import declaration: import a::b::c [as alias];
 struct ImportDecl {
     DeclarationProvenance provenance;
     std::string path;
     std::optional<std::string> alias;
 };
 
-/// 常量声明: const NAME: Type = value;
+/// Constant declaration: const NAME: Type = value;
 struct ConstDecl {
     DeclarationProvenance provenance;
     std::string name;
@@ -49,7 +49,7 @@ struct ConstDecl {
     SymbolRef symbol_ref;
 };
 
-/// 类型别名: type NewName = ExistingType;
+/// Type alias: type NewName = ExistingType;
 struct TypeAliasDecl {
     DeclarationProvenance provenance;
     std::string name;
@@ -57,15 +57,15 @@ struct TypeAliasDecl {
     SymbolRef symbol_ref;
 };
 
-/// 结构体字段声明
+/// Struct field declaration
 struct FieldDecl {
     std::string name;
-    ExprRef default_value; // 可选的默认值
+    ExprRef default_value; // Optional default value
     TypeRef type_ref;
     SourceRangeOpt source_range;
 };
 
-/// 结构体声明: struct Name { field1: Type1; ... }
+/// Struct declaration: struct Name { field1: Type1; ... }
 struct StructDecl {
     DeclarationProvenance provenance;
     std::string name;
@@ -73,7 +73,7 @@ struct StructDecl {
     SymbolRef symbol_ref;
 };
 
-/// 枚举声明: enum Name { Variant1; Variant2; }
+/// Enum declaration: enum Name { Variant1; Variant2; }
 struct EnumDecl {
     DeclarationProvenance provenance;
     std::string name;
@@ -81,14 +81,14 @@ struct EnumDecl {
     SymbolRef symbol_ref;
 };
 
-/// 参数声明
+/// Parameter declaration
 struct ParamDecl {
     std::string name;
     TypeRef type_ref;
     SourceRangeOpt source_range;
 };
 
-/// Capability 副作用类别。IR 中保留结构化值，backend 再映射为目标工件枚举。
+/// Capability side-effect category. The IR keeps a structured value; the backend maps it to a target artifact enum.
 enum class CapabilityEffectKind {
     Unknown,
     Read,
@@ -97,21 +97,21 @@ enum class CapabilityEffectKind {
     FinancialWrite,
 };
 
-/// Capability 执行回执要求
+/// Capability execution receipt requirement
 enum class CapabilityReceiptMode {
     None,
     Optional,
     Required,
 };
 
-/// Capability 重试安全性声明
+/// Capability retry-safety declaration
 enum class CapabilityRetryMode {
     Unsafe,
     SafeIfIdempotent,
     Safe,
 };
 
-/// Capability effect analysis 的输入事实，由 DSL 显式声明并随 IR 传播。
+/// Input facts for capability effect analysis, explicitly declared by the DSL and propagated with the IR.
 struct CapabilityEffectSpec {
     bool declared{false};
     CapabilityEffectKind kind{CapabilityEffectKind::Unknown};
@@ -125,7 +125,7 @@ struct CapabilityEffectSpec {
     SourceRangeOpt source_range;
 };
 
-/// 能力声明: capability Name(param1: Type1, ...) -> ReturnType;
+/// Capability declaration: capability Name(param1: Type1, ...) -> ReturnType;
 struct CapabilityDecl {
     DeclarationProvenance provenance;
     std::string name;
@@ -135,7 +135,7 @@ struct CapabilityDecl {
     SymbolRef symbol_ref;
 };
 
-/// 谓词声明: predicate Name(param1: Type1, ...);
+/// Predicate declaration: predicate Name(param1: Type1, ...);
 struct PredicateDecl {
     DeclarationProvenance provenance;
     std::string name;
@@ -143,27 +143,27 @@ struct PredicateDecl {
     SymbolRef symbol_ref;
 };
 
-/// 配额项
+/// Quota item
 struct QuotaItem {
-    std::string name;  // 如 "max_tool_calls"
-    std::string value; // 如 "10"
+    std::string name;  // e.g. "max_tool_calls"
+    std::string value; // e.g. "10"
 };
 
-/// 状态转换声明
+/// State transition declaration
 struct TransitionDecl {
     std::string from_state;
     std::string to_state;
 };
 
-/// Agent 声明 — AHFL 的核心实体
+/// Agent declaration — the core entity of AHFL
 struct AgentDecl {
     DeclarationProvenance provenance;
     std::string name;
-    std::vector<std::string> states;         // 状态集合
-    std::string initial_state;               // 初始状态
-    std::vector<std::string> final_states;   // 终止状态集合
-    std::vector<QuotaItem> quota;            // 资源配额
-    std::vector<TransitionDecl> transitions; // 合法状态转换
+    std::vector<std::string> states;         // State set
+    std::string initial_state;               // Initial state
+    std::vector<std::string> final_states;   // Final state set
+    std::vector<QuotaItem> quota;            // Resource quota
+    std::vector<TransitionDecl> transitions; // Legal state transitions
     TypeRef input_type_ref;
     TypeRef context_type_ref;
     TypeRef output_type_ref;
@@ -171,142 +171,142 @@ struct AgentDecl {
     SymbolRef symbol_ref;
 };
 
-/// 契约子句
+/// Contract clause
 struct ContractClause {
     ContractClauseKind kind{ContractClauseKind::Requires};
-    std::variant<ExprRef, TemporalExprPtr> value; // 普通表达式或时序逻辑表达式
+    std::variant<ExprRef, TemporalExprPtr> value; // Plain expression or temporal-logic expression
     SourceRangeOpt source_range;
 };
 
-/// 契约声明: contract for AgentName { requires ...; ensures ...; }
+/// Contract declaration: contract for AgentName { requires ...; ensures ...; }
 struct ContractDecl {
     DeclarationProvenance provenance;
-    std::vector<ContractClause> clauses; // 契约子句列表
+    std::vector<ContractClause> clauses; // List of contract clauses
     SymbolRef target_ref;
 };
 
 // ----------------------------------------------------------------------------
-// Flow 相关结构 (Flow-Related Structures)
+// Flow-Related Structures
 // ----------------------------------------------------------------------------
 
-/// 重试策略: retry: 3;
+/// Retry policy: retry: 3;
 struct RetryPolicy {
     std::string limit;
 };
 
-/// 指定错误类型重试策略: retry_on: [Error1, Error2];
+/// Error-typed retry policy: retry_on: [Error1, Error2];
 struct RetryOnPolicy {
     std::vector<std::string> targets;
 };
 
-/// 超时策略: timeout: 30s;
+/// Timeout policy: timeout: 30s;
 struct TimeoutPolicy {
     std::string duration;
 };
 
-/// 状态策略项（variant）
+/// State policy item (variant)
 using StatePolicyItem = std::variant<RetryPolicy, RetryOnPolicy, TimeoutPolicy>;
 
-/// 状态处理器: state StateName [policy {...}] { statements... }
+/// State handler: state StateName [policy {...}] { statements... }
 struct StateHandler {
-    /// 状态处理器摘要（由 IR lowering 阶段计算）
+    /// State handler summary (computed during IR lowering)
     struct Summary {
-        std::vector<std::string> goto_targets;   // 可能跳转到的目标状态
-        bool may_return{false};                  // 是否可能执行 return
-        bool may_fallthrough{true};              // 是否可能顺序执行到底
-        std::vector<Path> assigned_paths;        // 被赋值的路径
-        std::vector<std::string> called_targets; // 调用的 capability
-        std::size_t assert_count{0};             // assert 语句数量
+        std::vector<std::string> goto_targets;   // Target states it may jump to
+        bool may_return{false};                  // Whether it may execute a return
+        bool may_fallthrough{true};              // Whether it may fall through to the end
+        std::vector<Path> assigned_paths;        // Paths that get assigned
+        std::vector<std::string> called_targets; // Capabilities called
+        std::size_t assert_count{0};             // Number of assert statements
     };
 
-    std::string state_name;              // 处理哪个状态
-    std::vector<StatePolicyItem> policy; // 执行策略
-    Block body;                          // 处理逻辑（语句块）
+    std::string state_name;              // Which state is handled
+    std::vector<StatePolicyItem> policy; // Execution policy
+    Block body;                          // Handling logic (statement block)
     SourceRangeOpt source_range;
 };
 
-/// 流程声明: flow for AgentName { state Init { ... } ... }
+/// Flow declaration: flow for AgentName { state Init { ... } ... }
 struct FlowDecl {
     DeclarationProvenance provenance;
-    std::vector<StateHandler> state_handlers; // 各状态的处理器
+    std::vector<StateHandler> state_handlers; // Handler for each state
     SymbolRef target_ref;
 };
 
 // ----------------------------------------------------------------------------
-// Workflow 相关结构 (Workflow-Related Structures)
+// Workflow-Related Structures
 // ----------------------------------------------------------------------------
 
-/// Workflow 中值引用的来源
+/// Source of value references within a workflow
 struct WorkflowValueRead {
     WorkflowValueSourceKind kind{WorkflowValueSourceKind::WorkflowInput};
-    std::string root_name;            // input 或 node 名称
-    std::vector<std::string> members; // 成员访问链
+    std::string root_name;            // Input or node name
+    std::vector<std::string> members; // Member access chain
 };
 
-/// Workflow 表达式摘要（分析其依赖的值来源）
+/// Workflow expression summary (analyzes the value sources it depends on)
 struct WorkflowExprSummary {
-    std::vector<WorkflowValueRead> reads; // 所有值引用
+    std::vector<WorkflowValueRead> reads; // All value references
 };
 
-/// Workflow 节点: node name: AgentType(input_expr) [after [dep1, dep2]];
+/// Workflow node: node name: AgentType(input_expr) [after [dep1, dep2]];
 struct WorkflowNode {
-    std::string name;                  // 节点名称
-    ExprRef input;                     // 传递给 agent 的输入表达式
-    std::vector<std::string> after;    // DAG 依赖（前置节点名列表）
+    std::string name;                  // Node name
+    ExprRef input;                     // Input expression passed to the agent
+    std::vector<std::string> after;    // DAG dependencies (predecessor node names)
     SymbolRef target_ref;
     SourceRangeOpt source_range;
 };
 
-/// 工作流声明 — 多 Agent DAG 编排
+/// Workflow declaration — multi-agent DAG orchestration
 struct WorkflowDecl {
     DeclarationProvenance provenance;
     std::string name;
-    std::vector<WorkflowNode> nodes;       // DAG 节点列表
-    std::vector<TemporalExprPtr> safety;   // 安全性属性
-    std::vector<TemporalExprPtr> liveness; // 活性属性
-    ExprRef return_value;                  // 最终返回值表达式
+    std::vector<WorkflowNode> nodes;       // DAG node list
+    std::vector<TemporalExprPtr> safety;   // Safety properties
+    std::vector<TemporalExprPtr> liveness; // Liveness properties
+    ExprRef return_value;                  // Final return value expression
     TypeRef input_type_ref;
     TypeRef output_type_ref;
     SymbolRef symbol_ref;
 };
 
 // ----------------------------------------------------------------------------
-// 形式化观察 (Formal Observations)
+// Formal Observations
 // ----------------------------------------------------------------------------
 
-/// 形式化观察的范围类型
+/// Scope kind of a formal observation
 enum class FormalObservationScopeKind {
-    ContractClause,         // 契约子句
-    WorkflowSafetyClause,   // Workflow safety 属性
-    WorkflowLivenessClause, // Workflow liveness 属性
+    ContractClause,         // Contract clause
+    WorkflowSafetyClause,   // Workflow safety property
+    WorkflowLivenessClause, // Workflow liveness property
 };
 
-/// 形式化观察的范围
+/// Scope of a formal observation
 struct FormalObservationScope {
     FormalObservationScopeKind kind{FormalObservationScopeKind::ContractClause};
-    std::string owner;           // 所属 Agent 或 Workflow
-    std::size_t clause_index{0}; // 子句索引
-    std::size_t atom_index{0};   // 原子索引
+    std::string owner;           // Owning Agent or Workflow
+    std::size_t clause_index{0}; // Clause index
+    std::size_t atom_index{0};   // Atom index
 };
 
-/// called(capability) 观察
+/// called(capability) observation
 struct CalledCapabilityObservation {
     std::string agent;
     std::string capability;
 };
 
-/// 嵌入布尔表达式观察
+/// Embedded boolean-expression observation
 struct EmbeddedBoolObservation {
     FormalObservationScope scope;
 };
 
-/// 形式化观察节点
+/// Formal observation node
 using FormalObservationNode = std::variant<CalledCapabilityObservation, EmbeddedBoolObservation>;
 
-/// 形式化观察（用于 SMV 模型生成）
+/// Formal observation (used for SMV model generation)
 struct FormalObservation {
-    std::string symbol;         // 观察符号
-    FormalObservationNode node; // 观察内容
+    std::string symbol;         // Observation symbol
+    FormalObservationNode node; // Observation content
 };
 
 } // namespace ahfl::ir

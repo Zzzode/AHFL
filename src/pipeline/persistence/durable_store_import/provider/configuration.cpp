@@ -1116,7 +1116,7 @@ void provider_config_bundle_validation_detail_emit_validation_error(DiagnosticBa
         std::move(message));
 }
 
-// 校验 provider reference：selection plan 中的 provider 是否在 config 中引用
+// Validate provider reference: whether the provider in the selection plan is referenced in config
 [[nodiscard]] ProviderReferenceCheck
 provider_config_bundle_validation_detail_check_provider_reference(const ProviderSelectionPlan &plan,
                                                                   std::string_view provider_id) {
@@ -1129,7 +1129,7 @@ provider_config_bundle_validation_detail_check_provider_reference(const Provider
         return check;
     }
 
-    // 判断 provider 是否在 selection plan 中被注册
+    // Determine whether the provider is registered in the selection plan
     if (plan.selected_provider_id == provider_id || plan.fallback_provider_id == provider_id) {
         check.status = ConfigValidationStatus::Valid;
     } else {
@@ -1141,7 +1141,7 @@ provider_config_bundle_validation_detail_check_provider_reference(const Provider
     return check;
 }
 
-// 基于 config snapshot 构建 secret handle check（不读取 secret value）
+// Build secret handle check from config snapshot (without reading secret value)
 [[nodiscard]] SecretHandleCheck provider_config_bundle_validation_detail_check_secret_handle(
     const ProviderConfigSnapshotPlaceholder &snapshot) {
     SecretHandleCheck check;
@@ -1154,27 +1154,27 @@ provider_config_bundle_validation_detail_check_provider_reference(const Provider
         check.presence_status = ConfigValidationStatus::Missing;
     }
 
-    // Scope 校验：profile identity 不能为空
+    // Scope validation: profile identity must not be empty
     if (!snapshot.provider_config_profile_identity.empty()) {
         check.scope_status = ConfigValidationStatus::Valid;
     } else {
         check.scope_status = ConfigValidationStatus::Invalid;
     }
 
-    // Redaction policy 要求：不允许 materialize secret value
+    // Redaction policy requirement: materializing secret value is not allowed
     check.has_redaction_policy = !snapshot.materializes_secret_value;
 
     return check;
 }
 
-// 校验 endpoint shape：config snapshot 中是否引用了 endpoint uri
+// Validate endpoint shape: whether an endpoint uri is referenced in config snapshot
 [[nodiscard]] EndpointShapeCheck provider_config_bundle_validation_detail_check_endpoint_shape(
     const ProviderConfigSnapshotPlaceholder &snapshot) {
     EndpointShapeCheck check;
     check.endpoint_name = snapshot.provider_config_profile_identity + ".endpoint";
     check.expected_shape = "uri";
 
-    // Snapshot 本身不含 endpoint（placeholder），检查 operation kind 是否就绪
+    // Snapshot itself contains no endpoint (placeholder); check whether operation kind is ready
     if (snapshot.snapshot_status == ProviderConfigStatus::Ready) {
         check.status = ConfigValidationStatus::Valid;
     } else {
@@ -1184,7 +1184,7 @@ provider_config_bundle_validation_detail_check_provider_reference(const Provider
     return check;
 }
 
-// 校验 environment binding：config 是否引用了运行时环境
+// Validate environment binding: whether config references a runtime environment
 [[nodiscard]] EnvironmentBindingCheck
 provider_config_bundle_validation_detail_check_environment_binding(
     const ProviderConfigSnapshotPlaceholder &snapshot) {
@@ -1200,7 +1200,7 @@ provider_config_bundle_validation_detail_check_environment_binding(
     return check;
 }
 
-// 计算各项汇总
+// Compute the per-item tallies
 void provider_config_bundle_validation_detail_compute_summary(
     ProviderConfigBundleValidationReport &report) {
     report.valid_count = 0;
@@ -1295,7 +1295,7 @@ validate_provider_config_bundle_validation_report(
             "provider config bundle validation report summary fields must not be empty");
     }
 
-    // 安全约束断言
+    // Security constraint assertions
     if (report.reads_secret_value) {
         provider_config_bundle_validation_detail_emit_validation_error(
             diagnostics, "provider config bundle validation must not read secret values");
@@ -1318,7 +1318,7 @@ ProviderConfigBundleValidationReportResult build_provider_config_bundle_validati
     ProviderConfigBundleValidationReportResult result;
     auto &diagnostics = result.diagnostics;
 
-    // 前置校验：selection plan 和 snapshot 状态
+    // Pre-check: selection plan and snapshot status
     if (selection_plan.workflow_canonical_name.empty() || selection_plan.session_id.empty()) {
         provider_config_bundle_validation_detail_emit_validation_error(
             diagnostics, "selection plan workflow_canonical_name and session_id required");
@@ -1338,7 +1338,7 @@ ProviderConfigBundleValidationReportResult build_provider_config_bundle_validati
         "config-bundle-validation::" + selection_plan.workflow_canonical_name +
         "::" + selection_plan.session_id;
 
-    // 1. 校验 provider references
+    // 1. Validate provider references
     report.provider_references.push_back(
         provider_config_bundle_validation_detail_check_provider_reference(
             selection_plan, selection_plan.selected_provider_id));
@@ -1346,22 +1346,22 @@ ProviderConfigBundleValidationReportResult build_provider_config_bundle_validati
         provider_config_bundle_validation_detail_check_provider_reference(
             selection_plan, selection_plan.fallback_provider_id));
 
-    // 2. 校验 secret handles（基于 config snapshot，不读取 value）
+    // 2. Validate secret handles (based on config snapshot, without reading value)
     report.secret_handles.push_back(
         provider_config_bundle_validation_detail_check_secret_handle(config_snapshot));
 
-    // 3. 校验 endpoint shapes
+    // 3. Validate endpoint shapes
     report.endpoint_shapes.push_back(
         provider_config_bundle_validation_detail_check_endpoint_shape(config_snapshot));
 
-    // 4. 校验 environment bindings
+    // 4. Validate environment bindings
     report.environment_bindings.push_back(
         provider_config_bundle_validation_detail_check_environment_binding(config_snapshot));
 
-    // 汇总计数
+    // Tally counts
     provider_config_bundle_validation_detail_compute_summary(report);
 
-    // 安全约束：确保不读取 secret value、不连接网络、不生成配置
+    // Security constraints: ensure no secret value is read, no network connection, no config generation
     report.reads_secret_value = false;
     report.opens_network_connection = false;
     report.generates_production_config = false;
