@@ -34,7 +34,8 @@ SemanticVersion parse_version(std::string_view input) {
     if (dot1 == std::string_view::npos) {
         std::abort();
     }
-    auto [ptr1, ec1] = std::from_chars(numeric_part.data(), numeric_part.data() + dot1, version.major);
+    auto [ptr1, ec1] =
+        std::from_chars(numeric_part.data(), numeric_part.data() + dot1, version.major);
     if (ec1 != std::errc{}) {
         std::abort();
     }
@@ -52,7 +53,8 @@ SemanticVersion parse_version(std::string_view input) {
 
     // Parse patch
     auto patch_str = rest.substr(dot2 + 1);
-    auto [ptr3, ec3] = std::from_chars(patch_str.data(), patch_str.data() + patch_str.size(), version.patch);
+    auto [ptr3, ec3] =
+        std::from_chars(patch_str.data(), patch_str.data() + patch_str.size(), version.patch);
     if (ec3 != std::errc{}) {
         std::abort();
     }

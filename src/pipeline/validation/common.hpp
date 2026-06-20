@@ -6,9 +6,9 @@
 #include <string_view>
 #include <vector>
 
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "pipeline/execution/runtime_session/session.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
 
 namespace ahfl::validation {
 
@@ -28,10 +28,9 @@ namespace ahfl::validation {
     return std::string(scope) + " " + std::string(message);
 }
 
-inline void
-emit_validation_error(DiagnosticBag &diagnostics,
-                      ErrorCode<DiagnosticCategory::Validation> err_code,
-                      std::string message) {
+inline void emit_validation_error(DiagnosticBag &diagnostics,
+                                  ErrorCode<DiagnosticCategory::Validation> err_code,
+                                  std::string message) {
     diagnostics.error().code(err_code).message(std::move(message)).emit();
 }
 
@@ -57,10 +56,9 @@ inline void require_non_empty(DiagnosticBag &diagnostics,
         return;
     }
 
-    emit_validation_error(
-        diagnostics,
-        error_codes::validation::RequiredFieldEmpty,
-        scoped_label(scope, field) + " must not be empty");
+    emit_validation_error(diagnostics,
+                          error_codes::validation::RequiredFieldEmpty,
+                          scoped_label(scope, field) + " must not be empty");
 }
 
 inline void require_optional_non_empty(DiagnosticBag &diagnostics,

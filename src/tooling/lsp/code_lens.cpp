@@ -34,8 +34,7 @@ namespace {
 
 /// Extract the first identifier after a keyword on the same line.
 /// Returns empty if none found.
-[[nodiscard]] std::string_view extract_name_after(std::string_view line,
-                                                  std::string_view keyword) {
+[[nodiscard]] std::string_view extract_name_after(std::string_view line, std::string_view keyword) {
     auto after = line.substr(keyword.size());
     std::size_t i = 0;
     while (i < after.size() && std::isspace(static_cast<unsigned char>(after[i]))) {
@@ -145,8 +144,8 @@ std::vector<CodeLens> compute_code_lens(const std::string &source) {
 
                     CodeLens lens;
                     lens.range.start.line = line_number;
-                    lens.range.start.character = static_cast<uint32_t>(
-                        stripped.data() - line.data());
+                    lens.range.start.character =
+                        static_cast<uint32_t>(stripped.data() - line.data());
                     lens.range.end.line = line_number;
                     lens.range.end.character = static_cast<uint32_t>(line.size());
 

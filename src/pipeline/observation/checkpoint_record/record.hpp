@@ -6,12 +6,12 @@
 #include <string_view>
 #include <vector>
 
-#include "pipeline/execution/execution_journal/journal.hpp"
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
+#include "pipeline/execution/execution_journal/journal.hpp"
 #include "pipeline/execution/replay_view/replay.hpp"
 #include "pipeline/execution/runtime_session/session.hpp"
 #include "pipeline/observation/scheduler_snapshot/snapshot.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
 
 namespace ahfl::checkpoint_record {
 

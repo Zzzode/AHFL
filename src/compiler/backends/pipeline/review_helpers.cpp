@@ -73,8 +73,7 @@ std::string snapshot_status_name(scheduler_snapshot::SchedulerSnapshotStatus sta
     return "invalid";
 }
 
-std::string
-persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
+std::string persistence_status_name(persistence_descriptor::PersistenceDescriptorStatus status) {
     switch (status) {
     case persistence_descriptor::PersistenceDescriptorStatus::ReadyToExport:
         return "ready_to_export";

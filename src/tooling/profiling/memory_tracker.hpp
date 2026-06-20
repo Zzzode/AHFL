@@ -11,14 +11,15 @@ struct AllocationRecord {
 };
 
 class MemoryTracker {
-public:
+  public:
     void record_allocation(std::string tag, std::size_t bytes);
     void record_deallocation(std::string tag, std::size_t bytes);
     [[nodiscard]] std::size_t current_usage() const;
     [[nodiscard]] std::size_t peak_usage() const;
     [[nodiscard]] std::size_t allocation_count() const;
     void reset();
-private:
+
+  private:
     std::size_t current_ = 0;
     std::size_t peak_ = 0;
     std::size_t alloc_count_ = 0;

@@ -1,13 +1,13 @@
 #pragma once
 #include "tooling/formatter/formatter.hpp"
-#include <string>
 #include <optional>
+#include <string>
 
 namespace ahfl::formatter {
 
-[[nodiscard]] std::optional<FormatOptions> load_config(const std::string& path);
+[[nodiscard]] std::optional<FormatOptions> load_config(const std::string &path);
 
-[[nodiscard]] std::string serialize_config(const FormatOptions& options);
+[[nodiscard]] std::string serialize_config(const FormatOptions &options);
 
 [[nodiscard]] FormatOptions default_options();
 

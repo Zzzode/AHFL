@@ -12,7 +12,8 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_host_execution_detail_kValidationDiagnosticCode{"DSI_PROVIDER_HOST_EXECUTION"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_host_execution_detail_kValidationDiagnosticCode{"DSI_PROVIDER_HOST_EXECUTION"};
 
 void provider_host_execution_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                           std::string message) {
@@ -713,7 +714,9 @@ build_provider_host_execution_readiness_review(const ProviderHostExecutionPlan &
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_local_host_execution_detail_kValidationDiagnosticCode{"DSI_PROVIDER_LOCAL_HOST_EXECUTION"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_local_host_execution_detail_kValidationDiagnosticCode{
+        "DSI_PROVIDER_LOCAL_HOST_EXECUTION"};
 
 void provider_local_host_execution_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                 std::string message) {
@@ -1192,7 +1195,8 @@ ProviderLocalHostExecutionReceiptReviewResult build_provider_local_host_executio
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_local_host_harness_detail_kValidationDiagnosticCode{"DSI_PROVIDER_LOCAL_HOST_HARNESS"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_local_host_harness_detail_kValidationDiagnosticCode{"DSI_PROVIDER_LOCAL_HOST_HARNESS"};
 
 void provider_local_host_harness_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                               std::string message) {
@@ -1678,7 +1682,9 @@ build_provider_local_host_harness_review(const ProviderLocalHostHarnessExecution
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> provider_local_filesystem_alpha_detail_kValidationDiagnosticCode{"DSI_PROVIDER_LOCAL_FILESYSTEM_ALPHA"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation>
+    provider_local_filesystem_alpha_detail_kValidationDiagnosticCode{
+        "DSI_PROVIDER_LOCAL_FILESYSTEM_ALPHA"};
 
 void provider_local_filesystem_alpha_detail_emit_validation_error(DiagnosticBag &diagnostics,
                                                                   std::string message) {

@@ -12,13 +12,14 @@ struct PassTimingRecord {
 };
 
 class PassProfiler {
-public:
+  public:
     void begin_pass(std::string name);
     void end_pass();
     [[nodiscard]] std::vector<PassTimingRecord> records() const;
     [[nodiscard]] std::chrono::nanoseconds total_time() const;
     void clear();
-private:
+
+  private:
     std::vector<PassTimingRecord> records_;
     std::string current_pass_;
     std::chrono::steady_clock::time_point current_start_;

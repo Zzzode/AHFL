@@ -22,6 +22,6 @@ struct TerraformOutput {
     std::string hcl;
 };
 
-[[nodiscard]] TerraformOutput generate_terraform(const TerraformConfig& config);
+[[nodiscard]] TerraformOutput generate_terraform(const TerraformConfig &config);
 
 } // namespace ahfl::backends

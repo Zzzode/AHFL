@@ -26,7 +26,7 @@ struct CounterexampleAssignment {
 
 /// A single state in the counterexample trace.
 struct CounterexampleState {
-    std::string label;  // e.g. "1.1", "1.2"
+    std::string label; // e.g. "1.1", "1.2"
     std::vector<CounterexampleAssignment> assignments;
 };
 
@@ -36,7 +36,7 @@ struct CounterexampleTrace {
     std::string trace_type;
     std::string violated_spec;
     std::vector<CounterexampleState> states;
-    std::optional<std::size_t> loop_start_index;  // index into states where loop begins
+    std::optional<std::size_t> loop_start_index; // index into states where loop begins
 };
 
 /// Human-readable explanation of why verification failed.

@@ -353,11 +353,11 @@ serialize_full_diagnostic_report(const std::vector<LspDiagnostic> &diagnostics,
     return report;
 }
 
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_workspace_diagnostic_item(
-    std::string_view uri,
-    std::optional<int> version,
-    const std::vector<LspDiagnostic> &diagnostics,
-    std::optional<std::string_view> result_id = std::nullopt) {
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_workspace_diagnostic_item(std::string_view uri,
+                                    std::optional<int> version,
+                                    const std::vector<LspDiagnostic> &diagnostics,
+                                    std::optional<std::string_view> result_id = std::nullopt) {
     auto item = serialize_full_diagnostic_report(diagnostics, result_id);
     item->set("uri", json::JsonValue::make_string(std::string(uri)));
     if (version.has_value()) {
@@ -381,14 +381,12 @@ void send_invalid_params(JsonRpcTransport &transport, const std::string &id, std
         return std::string(uri) + "#v0";
     }
     const auto *source = snapshot->source_for_uri(uri);
-    const std::uint64_t content_hash =
-        source != nullptr && source->source != nullptr
-            ? std::hash<std::string>{}(source->source->content)
-            : snapshot->content_hash;
+    const std::uint64_t content_hash = source != nullptr && source->source != nullptr
+                                           ? std::hash<std::string>{}(source->source->content)
+                                           : snapshot->content_hash;
     return std::string(uri) + "#v" + std::to_string(snapshot->document_version) + "-" +
            std::to_string(snapshot->document_revision) + "-" +
-           std::to_string(snapshot->workspace_revision) + "-" +
-           std::to_string(content_hash);
+           std::to_string(snapshot->workspace_revision) + "-" + std::to_string(content_hash);
 }
 
 [[nodiscard]] bool text_document_id(const json::JsonValue &params, std::string &uri) {
@@ -1015,8 +1013,7 @@ void append_symbol_children(DocumentSymbol &symbol,
         // Detect top-level declaration starts for region folding
         for (auto kw : kTopLevelKeywords) {
             if (line.starts_with(kw) ||
-                (line.size() > kw.size() &&
-                 line.substr(0, kw.size()) == kw &&
+                (line.size() > kw.size() && line.substr(0, kw.size()) == kw &&
                  (line[kw.size()] == ' ' || line[kw.size()] == '\t'))) {
                 if (in_top_level && line_number > last_top_level_start) {
                     ranges.push_back(FoldingRange{
@@ -1667,8 +1664,8 @@ void LspServer::handle_workspace_diagnostic(const JsonRpcRequest &req) {
                 continue;
             }
 
-            items->push(serialize_workspace_diagnostic_item(
-                source.uri, version, diagnostics, result_id));
+            items->push(
+                serialize_workspace_diagnostic_item(source.uri, version, diagnostics, result_id));
         }
     }
 
@@ -1901,8 +1898,8 @@ void LspServer::handle_document_formatting(const JsonRpcRequest &req) {
 
     TextEdit edit;
     edit.range.start = Position{0, 0};
-    edit.range.end = Position{static_cast<uint32_t>(line_count),
-                              static_cast<uint32_t>(last_line_length)};
+    edit.range.end =
+        Position{static_cast<uint32_t>(line_count), static_cast<uint32_t>(last_line_length)};
     edit.new_text = result.formatted;
 
     auto edits_array = json::JsonValue::make_array();

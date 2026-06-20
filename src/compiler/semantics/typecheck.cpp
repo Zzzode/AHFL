@@ -86,129 +86,146 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                                                              const TypeEnvironment &environment,
                                                              std::optional<SourceId> source_id) {
     std::vector<TypedExprChild> children;
-    std::visit(Overloaded{
-        [&](const ast::NoneLiteralExpr &) {},
-        [&](const ast::BoolLiteralExpr &) {},
-        [&](const ast::IntegerLiteralExpr &) {},
-        [&](const ast::FloatLiteralExpr &) {},
-        [&](const ast::DecimalLiteralExpr &) {},
-        [&](const ast::StringLiteralExpr &) {},
-        [&](const ast::DurationLiteralExpr &) {},
-        [&](const ast::SomeExpr &e) {
-            append_typed_child(
-                children, program, e.value.get(), source_id, TypedExprChildRole::Operand);
-        },
-        [&](const ast::PathExpr &) {},
-        [&](const ast::QualifiedValueExpr &) {},
-        [&](const ast::CallExpr &e) {
-            std::vector<std::string> parameter_names;
-            if (e.callee != nullptr) {
-                if (const auto reference = resolve_result.find_reference(
-                        ReferenceKind::CallTarget, e.callee->range, source_id);
-                    reference.has_value()) {
-                    if (const auto capability = environment.get_capability(reference->get().target);
-                        capability.has_value()) {
-                        parameter_names.reserve(capability->get().params.size());
-                        for (const auto &param : capability->get().params) {
-                            parameter_names.push_back(param.name);
-                        }
-                    } else if (const auto predicate =
-                                   environment.get_predicate(reference->get().target);
-                               predicate.has_value()) {
-                        parameter_names.reserve(predicate->get().params.size());
-                        for (const auto &param : predicate->get().params) {
-                            parameter_names.push_back(param.name);
+    std::visit(
+        Overloaded{
+            [&](const ast::NoneLiteralExpr &) {},
+            [&](const ast::BoolLiteralExpr &) {},
+            [&](const ast::IntegerLiteralExpr &) {},
+            [&](const ast::FloatLiteralExpr &) {},
+            [&](const ast::DecimalLiteralExpr &) {},
+            [&](const ast::StringLiteralExpr &) {},
+            [&](const ast::DurationLiteralExpr &) {},
+            [&](const ast::SomeExpr &e) {
+                append_typed_child(
+                    children, program, e.value.get(), source_id, TypedExprChildRole::Operand);
+            },
+            [&](const ast::PathExpr &) {},
+            [&](const ast::QualifiedValueExpr &) {},
+            [&](const ast::CallExpr &e) {
+                std::vector<std::string> parameter_names;
+                if (e.callee != nullptr) {
+                    if (const auto reference = resolve_result.find_reference(
+                            ReferenceKind::CallTarget, e.callee->range, source_id);
+                        reference.has_value()) {
+                        if (const auto capability =
+                                environment.get_capability(reference->get().target);
+                            capability.has_value()) {
+                            parameter_names.reserve(capability->get().params.size());
+                            for (const auto &param : capability->get().params) {
+                                parameter_names.push_back(param.name);
+                            }
+                        } else if (const auto predicate =
+                                       environment.get_predicate(reference->get().target);
+                                   predicate.has_value()) {
+                            parameter_names.reserve(predicate->get().params.size());
+                            for (const auto &param : predicate->get().params) {
+                                parameter_names.push_back(param.name);
+                            }
                         }
                     }
                 }
-            }
-            for (std::size_t index = 0; index < e.arguments.size(); ++index) {
-                append_typed_child(children,
-                                   program,
-                                   e.arguments[index].get(),
-                                   source_id,
-                                   TypedExprChildRole::Argument,
-                                   index < parameter_names.size() ? parameter_names[index]
-                                                                  : std::string{});
-            }
-        },
-        [&](const ast::StructLiteralExpr &e) {
-            for (const auto &field : e.fields) {
-                append_typed_child(children,
-                                   program,
-                                   field->value.get(),
-                                   source_id,
-                                   TypedExprChildRole::StructFieldValue,
-                                   field->field_name);
-            }
-        },
-        [&](const ast::ListLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                append_typed_child(children, program, item.get(), source_id,
-                                   TypedExprChildRole::CollectionElement);
-            }
-        },
-        [&](const ast::SetLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                append_typed_child(children, program, item.get(), source_id,
-                                   TypedExprChildRole::CollectionElement);
-            }
-        },
-        [&](const ast::MapLiteralExpr &e) {
-            for (const auto &entry : e.entries) {
+                for (std::size_t index = 0; index < e.arguments.size(); ++index) {
+                    append_typed_child(children,
+                                       program,
+                                       e.arguments[index].get(),
+                                       source_id,
+                                       TypedExprChildRole::Argument,
+                                       index < parameter_names.size() ? parameter_names[index]
+                                                                      : std::string{});
+                }
+            },
+            [&](const ast::StructLiteralExpr &e) {
+                for (const auto &field : e.fields) {
+                    append_typed_child(children,
+                                       program,
+                                       field->value.get(),
+                                       source_id,
+                                       TypedExprChildRole::StructFieldValue,
+                                       field->field_name);
+                }
+            },
+            [&](const ast::ListLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    append_typed_child(children,
+                                       program,
+                                       item.get(),
+                                       source_id,
+                                       TypedExprChildRole::CollectionElement);
+                }
+            },
+            [&](const ast::SetLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    append_typed_child(children,
+                                       program,
+                                       item.get(),
+                                       source_id,
+                                       TypedExprChildRole::CollectionElement);
+                }
+            },
+            [&](const ast::MapLiteralExpr &e) {
+                for (const auto &entry : e.entries) {
+                    append_typed_child(
+                        children, program, entry->key.get(), source_id, TypedExprChildRole::MapKey);
+                    append_typed_child(children,
+                                       program,
+                                       entry->value.get(),
+                                       source_id,
+                                       TypedExprChildRole::MapValue);
+                }
+            },
+            [&](const ast::UnaryExpr &e) {
                 append_typed_child(
-                    children, program, entry->key.get(), source_id, TypedExprChildRole::MapKey);
+                    children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
+            },
+            [&](const ast::BinaryExpr &e) {
                 append_typed_child(
-                    children, program, entry->value.get(), source_id, TypedExprChildRole::MapValue);
-            }
+                    children, program, e.lhs.get(), source_id, TypedExprChildRole::LeftOperand);
+                append_typed_child(
+                    children, program, e.rhs.get(), source_id, TypedExprChildRole::RightOperand);
+            },
+            [&](const ast::MemberAccessExpr &e) {
+                append_typed_child(
+                    children, program, e.base.get(), source_id, TypedExprChildRole::Base);
+            },
+            [&](const ast::IndexAccessExpr &e) {
+                append_typed_child(
+                    children, program, e.base.get(), source_id, TypedExprChildRole::Base);
+                append_typed_child(
+                    children, program, e.index.get(), source_id, TypedExprChildRole::Index);
+            },
+            [&](const ast::GroupExpr &e) {
+                append_typed_child(
+                    children, program, e.inner.get(), source_id, TypedExprChildRole::Grouped);
+            },
         },
-        [&](const ast::UnaryExpr &e) {
-            append_typed_child(
-                children, program, e.operand.get(), source_id, TypedExprChildRole::Operand);
-        },
-        [&](const ast::BinaryExpr &e) {
-            append_typed_child(
-                children, program, e.lhs.get(), source_id, TypedExprChildRole::LeftOperand);
-            append_typed_child(
-                children, program, e.rhs.get(), source_id, TypedExprChildRole::RightOperand);
-        },
-        [&](const ast::MemberAccessExpr &e) {
-            append_typed_child(
-                children, program, e.base.get(), source_id, TypedExprChildRole::Base);
-        },
-        [&](const ast::IndexAccessExpr &e) {
-            append_typed_child(
-                children, program, e.base.get(), source_id, TypedExprChildRole::Base);
-            append_typed_child(
-                children, program, e.index.get(), source_id, TypedExprChildRole::Index);
-        },
-        [&](const ast::GroupExpr &e) {
-            append_typed_child(
-                children, program, e.inner.get(), source_id, TypedExprChildRole::Grouped);
-        },
-    }, expr.node);
+        expr.node);
     return children;
 }
 
 [[nodiscard]] std::optional<Place> place_of_expr(const ast::ExprSyntax &expr) {
     return std::visit(Overloaded{
-        [](const ast::GroupExpr &e) -> std::optional<Place> {
-            if (e.inner) return place_of_expr(*e.inner);
-            return std::nullopt;
-        },
-        [](const ast::MemberAccessExpr &e) -> std::optional<Place> {
-            if (!e.base) return std::nullopt;
-            auto place = place_of_expr(*e.base);
-            if (!place.has_value()) return std::nullopt;
-            place->members.push_back(e.member);
-            return place;
-        },
-        [](const ast::PathExpr &e) -> std::optional<Place> {
-            if (!e.path) return std::nullopt;
-            return Place{.root = e.path->root_name, .members = e.path->members};
-        },
-        [](const auto &) -> std::optional<Place> { return std::nullopt; },
-    }, expr.node);
+                          [](const ast::GroupExpr &e) -> std::optional<Place> {
+                              if (e.inner)
+                                  return place_of_expr(*e.inner);
+                              return std::nullopt;
+                          },
+                          [](const ast::MemberAccessExpr &e) -> std::optional<Place> {
+                              if (!e.base)
+                                  return std::nullopt;
+                              auto place = place_of_expr(*e.base);
+                              if (!place.has_value())
+                                  return std::nullopt;
+                              place->members.push_back(e.member);
+                              return place;
+                          },
+                          [](const ast::PathExpr &e) -> std::optional<Place> {
+                              if (!e.path)
+                                  return std::nullopt;
+                              return Place{.root = e.path->root_name, .members = e.path->members};
+                          },
+                          [](const auto &) -> std::optional<Place> { return std::nullopt; },
+                      },
+                      expr.node);
 }
 
 [[nodiscard]] std::string path_spelling(const ast::PathSyntax &path) {
@@ -286,83 +303,89 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 }
 
 [[nodiscard]] std::string expr_spelling(const ast::ExprSyntax &expr) {
-    return std::visit(Overloaded{
-        [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
-        [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
-        [](const ast::IntegerLiteralExpr &e) -> std::string {
-            if (e.literal) return e.literal->spelling;
-            return "0";
+    return std::visit(
+        Overloaded{
+            [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
+            [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
+            [](const ast::IntegerLiteralExpr &e) -> std::string {
+                if (e.literal)
+                    return e.literal->spelling;
+                return "0";
+            },
+            [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::DurationLiteralExpr &e) -> std::string {
+                if (e.literal)
+                    return e.literal->spelling;
+                return "";
+            },
+            [](const ast::PathExpr &e) -> std::string {
+                return e.path ? path_spelling(*e.path) : "<path>";
+            },
+            [](const ast::MemberAccessExpr &e) -> std::string {
+                if (e.base)
+                    return expr_spelling(*e.base) + "." + e.member;
+                return e.member;
+            },
+            [](const ast::GroupExpr &e) -> std::string {
+                return e.inner ? expr_spelling(*e.inner) : "<group>";
+            },
+            [](const ast::BinaryExpr &e) -> std::string {
+                if (e.lhs && e.rhs) {
+                    return expr_spelling(*e.lhs) + " " + std::string(binary_op_spelling(e.op)) +
+                           " " + expr_spelling(*e.rhs);
+                }
+                return "<binary>";
+            },
+            [](const auto &) -> std::string { return "condition"; },
         },
-        [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::DurationLiteralExpr &e) -> std::string {
-            if (e.literal) return e.literal->spelling;
-            return "";
-        },
-        [](const ast::PathExpr &e) -> std::string {
-            return e.path ? path_spelling(*e.path) : "<path>";
-        },
-        [](const ast::MemberAccessExpr &e) -> std::string {
-            if (e.base) return expr_spelling(*e.base) + "." + e.member;
-            return e.member;
-        },
-        [](const ast::GroupExpr &e) -> std::string {
-            return e.inner ? expr_spelling(*e.inner) : "<group>";
-        },
-        [](const ast::BinaryExpr &e) -> std::string {
-            if (e.lhs && e.rhs) {
-                return expr_spelling(*e.lhs) + " " +
-                       std::string(binary_op_spelling(e.op)) + " " +
-                       expr_spelling(*e.rhs);
-            }
-            return "<binary>";
-        },
-        [](const auto &) -> std::string { return "condition"; },
-    }, expr.node);
+        expr.node);
 }
 
 [[nodiscard]] std::optional<SymbolId> resolved_symbol_for(const ast::ExprSyntax &expr,
                                                           const ResolveResult &resolve_result,
                                                           std::optional<SourceId> source_id) {
-    return std::visit(Overloaded{
-        [&](const ast::CallExpr &e) -> std::optional<SymbolId> {
-            if (e.callee != nullptr) {
-                if (const auto reference = resolve_result.find_reference(
-                        ReferenceKind::CallTarget, e.callee->range, source_id);
-                    reference.has_value()) {
-                    return reference->get().target;
+    return std::visit(
+        Overloaded{
+            [&](const ast::CallExpr &e) -> std::optional<SymbolId> {
+                if (e.callee != nullptr) {
+                    if (const auto reference = resolve_result.find_reference(
+                            ReferenceKind::CallTarget, e.callee->range, source_id);
+                        reference.has_value()) {
+                        return reference->get().target;
+                    }
                 }
-            }
-            return std::nullopt;
+                return std::nullopt;
+            },
+            [&](const ast::StructLiteralExpr &e) -> std::optional<SymbolId> {
+                if (e.type_name != nullptr) {
+                    if (const auto reference = resolve_result.find_reference(
+                            ReferenceKind::TypeName, e.type_name->range, source_id);
+                        reference.has_value()) {
+                        return reference->get().target;
+                    }
+                }
+                return std::nullopt;
+            },
+            [&](const ast::QualifiedValueExpr &e) -> std::optional<SymbolId> {
+                if (e.name != nullptr) {
+                    if (const auto const_reference = resolve_result.find_reference(
+                            ReferenceKind::ConstValue, e.name->range, source_id);
+                        const_reference.has_value()) {
+                        return const_reference->get().target;
+                    }
+                    if (const auto owner_reference = resolve_result.find_reference(
+                            ReferenceKind::QualifiedValueOwnerType, e.name->range, source_id);
+                        owner_reference.has_value()) {
+                        return owner_reference->get().target;
+                    }
+                }
+                return std::nullopt;
+            },
+            [](const auto &) -> std::optional<SymbolId> { return std::nullopt; },
         },
-        [&](const ast::StructLiteralExpr &e) -> std::optional<SymbolId> {
-            if (e.type_name != nullptr) {
-                if (const auto reference = resolve_result.find_reference(
-                        ReferenceKind::TypeName, e.type_name->range, source_id);
-                    reference.has_value()) {
-                    return reference->get().target;
-                }
-            }
-            return std::nullopt;
-        },
-        [&](const ast::QualifiedValueExpr &e) -> std::optional<SymbolId> {
-            if (e.name != nullptr) {
-                if (const auto const_reference = resolve_result.find_reference(
-                        ReferenceKind::ConstValue, e.name->range, source_id);
-                    const_reference.has_value()) {
-                    return const_reference->get().target;
-                }
-                if (const auto owner_reference = resolve_result.find_reference(
-                        ReferenceKind::QualifiedValueOwnerType, e.name->range, source_id);
-                    owner_reference.has_value()) {
-                    return owner_reference->get().target;
-                }
-            }
-            return std::nullopt;
-        },
-        [](const auto &) -> std::optional<SymbolId> { return std::nullopt; },
-    }, expr.node);
+        expr.node);
 }
 
 [[nodiscard]] TypedCallTargetKind call_target_kind_for(const ast::ExprSyntax &expr,
@@ -376,8 +399,8 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         return TypedCallTargetKind::None;
     }
 
-    const auto reference = resolve_result.find_reference(
-        ReferenceKind::CallTarget, call.callee->range, source_id);
+    const auto reference =
+        resolve_result.find_reference(ReferenceKind::CallTarget, call.callee->range, source_id);
     if (!reference.has_value()) {
         return TypedCallTargetKind::None;
     }
@@ -404,40 +427,38 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 }
 
 [[nodiscard]] std::string semantic_name_for(const ast::ExprSyntax &expr) {
-    return std::visit(Overloaded{
-        [](const ast::PathExpr &e) -> std::string {
-            return e.path ? path_spelling(*e.path) : std::string{};
+    return std::visit(
+        Overloaded{
+            [](const ast::PathExpr &e) -> std::string {
+                return e.path ? path_spelling(*e.path) : std::string{};
+            },
+            [](const ast::CallExpr &e) -> std::string {
+                return e.callee ? e.callee->spelling() : std::string{};
+            },
+            [](const ast::StructLiteralExpr &e) -> std::string {
+                return e.type_name ? e.type_name->spelling() : std::string{};
+            },
+            [](const ast::QualifiedValueExpr &e) -> std::string {
+                return e.name ? e.name->spelling() : std::string{};
+            },
+            [&](const ast::MemberAccessExpr &) -> std::string { return expr_spelling(expr); },
+            [](const ast::GroupExpr &e) -> std::string {
+                return e.inner ? expr_spelling(*e.inner) : std::string{};
+            },
+            [](const ast::BoolLiteralExpr &e) -> std::string { return e.value ? "true" : "false"; },
+            [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
+            [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::IntegerLiteralExpr &e) -> std::string {
+                return e.literal ? e.literal->spelling : std::string{};
+            },
+            [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::DurationLiteralExpr &e) -> std::string {
+                return e.literal ? e.literal->spelling : std::string{};
+            },
+            [](const auto &) -> std::string { return {}; },
         },
-        [](const ast::CallExpr &e) -> std::string {
-            return e.callee ? e.callee->spelling() : std::string{};
-        },
-        [](const ast::StructLiteralExpr &e) -> std::string {
-            return e.type_name ? e.type_name->spelling() : std::string{};
-        },
-        [](const ast::QualifiedValueExpr &e) -> std::string {
-            return e.name ? e.name->spelling() : std::string{};
-        },
-        [&](const ast::MemberAccessExpr &) -> std::string {
-            return expr_spelling(expr);
-        },
-        [](const ast::GroupExpr &e) -> std::string {
-            return e.inner ? expr_spelling(*e.inner) : std::string{};
-        },
-        [](const ast::BoolLiteralExpr &e) -> std::string {
-            return e.value ? "true" : "false";
-        },
-        [](const ast::NoneLiteralExpr &) -> std::string { return "none"; },
-        [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::IntegerLiteralExpr &e) -> std::string {
-            return e.literal ? e.literal->spelling : std::string{};
-        },
-        [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::DurationLiteralExpr &e) -> std::string {
-            return e.literal ? e.literal->spelling : std::string{};
-        },
-        [](const auto &) -> std::string { return {}; },
-    }, expr.node);
+        expr.node);
 }
 
 // Literal spelling kept as a dedicated field distinct from semantic_name:
@@ -448,20 +469,24 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 //     (integer_literal->spelling, duration_literal->spelling, ...) so typed-
 //     tree lowering can reproduce token payloads without needing AST.
 [[nodiscard]] std::string literal_spelling_for(const ast::ExprSyntax &expr) {
-    return std::visit(Overloaded{
-        [](const ast::IntegerLiteralExpr &e) -> std::string {
-            if (e.literal) return e.literal->spelling;
-            return "0";
+    return std::visit(
+        Overloaded{
+            [](const ast::IntegerLiteralExpr &e) -> std::string {
+                if (e.literal)
+                    return e.literal->spelling;
+                return "0";
+            },
+            [](const ast::DurationLiteralExpr &e) -> std::string {
+                if (e.literal)
+                    return e.literal->spelling;
+                return "";
+            },
+            [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
+            [](const auto &) -> std::string { return {}; },
         },
-        [](const ast::DurationLiteralExpr &e) -> std::string {
-            if (e.literal) return e.literal->spelling;
-            return "";
-        },
-        [](const ast::FloatLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::DecimalLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const ast::StringLiteralExpr &e) -> std::string { return e.spelling; },
-        [](const auto &) -> std::string { return {}; },
-    }, expr.node);
+        expr.node);
 }
 
 [[nodiscard]] std::optional<Place> path_payload_for(const ast::ExprSyntax &expr) {
@@ -473,16 +498,17 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
 
 [[nodiscard]] bool contains_binary_op(const ast::ExprSyntax &expr, ast::ExprBinaryOp op) noexcept {
     return std::visit(Overloaded{
-        [&](const ast::GroupExpr &e) -> bool {
-            return e.inner ? contains_binary_op(*e.inner, op) : false;
-        },
-        [&](const ast::BinaryExpr &e) -> bool {
-            return e.op == op ||
-                   (e.lhs != nullptr && contains_binary_op(*e.lhs, op)) ||
-                   (e.rhs != nullptr && contains_binary_op(*e.rhs, op));
-        },
-        [](const auto &) -> bool { return false; },
-    }, expr.node);
+                          [&](const ast::GroupExpr &e) -> bool {
+                              return e.inner ? contains_binary_op(*e.inner, op) : false;
+                          },
+                          [&](const ast::BinaryExpr &e) -> bool {
+                              return e.op == op ||
+                                     (e.lhs != nullptr && contains_binary_op(*e.lhs, op)) ||
+                                     (e.rhs != nullptr && contains_binary_op(*e.rhs, op));
+                          },
+                          [](const auto &) -> bool { return false; },
+                      },
+                      expr.node);
 }
 
 [[nodiscard]] bool expr_bool_value(const ast::ExprSyntax &expr) noexcept {
@@ -892,6 +918,7 @@ void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const 
         .binary_op = expr_binary_op(expr),
         .literal_spelling = literal_spelling_for(expr),
         .member_name = expr_member_name(expr),
+        .const_value = std::nullopt,
     });
     if (expr.node_id != 0) {
         const auto index = static_cast<std::uint32_t>(result_.typed_program.expressions.size() - 1);
@@ -1200,6 +1227,7 @@ TypedValue TypeCheckPass::typed_effect(TypePtr type, ExprEffect effect) const {
         .type = std::move(type),
         .effect = effect,
         .is_pure = is_effect_pure(effect),
+        .path_root_kind = std::nullopt,
     };
 }
 
@@ -1212,6 +1240,7 @@ TypedValue TypeCheckPass::error_typed_effect(ExprEffect effect) const {
         .type = make_error_type(),
         .effect = effect,
         .is_pure = is_effect_pure(effect),
+        .path_root_kind = std::nullopt,
     };
 }
 
@@ -1242,6 +1271,8 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
             .range = declaration->range,
             .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
+            .type = nullptr,
+            .payload = {},
         };
         if (const auto contract_info = driver_->environment().get_contract(target->get().target);
             contract_info.has_value()) {
@@ -1306,116 +1337,120 @@ std::uint32_t TypeCheckPass::check_temporal_embedded_exprs(const ast::TemporalEx
     te.range = expr.range;
     te.source_id = current_source_id_;
 
-    std::visit(Overloaded{
-        [&](const ast::EmbeddedTemporalExpr &e) {
-            const auto bool_type = make_type(TypeKind::Bool);
-            const auto value = check_expr(*e.expr, context, std::cref(*bool_type));
-            if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
-                typecheck_error_here(error_codes::typecheck::TypeMismatch,
-                                     messages::typecheck::BoolExpressionRequired.format_with(
-                                         "temporal embedded expression"),
-                                     e.expr->range,
-                                     std::vector<Diagnostic::Related>{Diagnostic::Related{
-                                         .message = actual_type_note(*value.type),
-                                         .range = e.expr->range,
-                                     }});
-            }
-            if (!value.is_pure) {
-                non_pure_error_here("temporal embedded expression", value.effect, e.expr->range);
-            }
-            te.kind = TypedTemporalKind::Atom;
-            te.op = TypedTemporalOp::Atom;
-            const std::uint32_t expr_idx = resolve_payload_expr_index(*e.expr);
-            te.children_index.push_back(expr_idx);
-        },
-        [&](const ast::CalledTemporalExpr &e) {
-            te.kind = TypedTemporalKind::NameLiteral;
-            te.op = TypedTemporalOp::NameLiteralCalled;
-            std::string canonical = e.name;
-            if (const auto ref = find_reference_here(ReferenceKind::TemporalCapability, expr.range);
-                ref.has_value()) {
-                if (const auto sym = resolve_result_.symbol_table.get(ref->get().target);
-                    sym.has_value()) {
-                    canonical = sym->get().canonical_name;
+    std::visit(
+        Overloaded{
+            [&](const ast::EmbeddedTemporalExpr &e) {
+                const auto bool_type = make_type(TypeKind::Bool);
+                const auto value = check_expr(*e.expr, context, std::cref(*bool_type));
+                if (!is_bool_type(*value.type) && !is_error_type(*value.type)) {
+                    typecheck_error_here(error_codes::typecheck::TypeMismatch,
+                                         messages::typecheck::BoolExpressionRequired.format_with(
+                                             "temporal embedded expression"),
+                                         e.expr->range,
+                                         std::vector<Diagnostic::Related>{Diagnostic::Related{
+                                             .message = actual_type_note(*value.type),
+                                             .range = e.expr->range,
+                                         }});
                 }
-            }
-            // T1.7 P1: payload_spelling stores the canonical name directly
-            // (no "called:" prefix). The op enum encodes the variant.
-            te.payload_spelling = std::move(canonical);
+                if (!value.is_pure) {
+                    non_pure_error_here(
+                        "temporal embedded expression", value.effect, e.expr->range);
+                }
+                te.kind = TypedTemporalKind::Atom;
+                te.op = TypedTemporalOp::Atom;
+                const std::uint32_t expr_idx = resolve_payload_expr_index(*e.expr);
+                te.children_index.push_back(expr_idx);
+            },
+            [&](const ast::CalledTemporalExpr &e) {
+                te.kind = TypedTemporalKind::NameLiteral;
+                te.op = TypedTemporalOp::NameLiteralCalled;
+                std::string canonical = e.name;
+                if (const auto ref =
+                        find_reference_here(ReferenceKind::TemporalCapability, expr.range);
+                    ref.has_value()) {
+                    if (const auto sym = resolve_result_.symbol_table.get(ref->get().target);
+                        sym.has_value()) {
+                        canonical = sym->get().canonical_name;
+                    }
+                }
+                // T1.7 P1: payload_spelling stores the canonical name directly
+                // (no "called:" prefix). The op enum encodes the variant.
+                te.payload_spelling = std::move(canonical);
+            },
+            [&](const ast::InStateTemporalExpr &e) {
+                te.kind = TypedTemporalKind::StateLiteral;
+                te.op = TypedTemporalOp::StateLiteral;
+                // payload_spelling stores the state name directly (no "state:" prefix).
+                te.payload_spelling = e.name;
+            },
+            [&](const ast::RunningTemporalExpr &e) {
+                te.kind = TypedTemporalKind::NameLiteral;
+                te.op = TypedTemporalOp::NameLiteralRunning;
+                // payload_spelling stores the node name directly (no "running:" prefix).
+                te.payload_spelling = e.name;
+            },
+            [&](const ast::CompletedTemporalExpr &e) {
+                te.kind = TypedTemporalKind::NameLiteral;
+                te.op = TypedTemporalOp::NameLiteralCompleted;
+                // payload_spelling encodes "node_name|optional_state_name" for the
+                // Completed variant so lowering can extract both without AST.
+                std::string data = e.name;
+                if (e.state_name.has_value()) {
+                    data += "|";
+                    data += *e.state_name;
+                }
+                te.payload_spelling = std::move(data);
+            },
+            [&](const ast::UnaryTemporalExpr &e) {
+                const std::uint32_t child_idx = check_temporal_embedded_exprs(*e.operand, context);
+                te.kind = TypedTemporalKind::Unary;
+                te.children_index.push_back(child_idx);
+                switch (e.op) {
+                case ast::TemporalUnaryOp::Always:
+                    te.op = TypedTemporalOp::TemporalAlways;
+                    te.payload_spelling = "always";
+                    break;
+                case ast::TemporalUnaryOp::Eventually:
+                    te.op = TypedTemporalOp::TemporalEventually;
+                    te.payload_spelling = "eventually";
+                    break;
+                case ast::TemporalUnaryOp::Next:
+                    te.op = TypedTemporalOp::TemporalNext;
+                    te.payload_spelling = "next";
+                    break;
+                case ast::TemporalUnaryOp::Not:
+                    te.op = TypedTemporalOp::TemporalNot;
+                    te.payload_spelling = "not";
+                    break;
+                }
+            },
+            [&](const ast::BinaryTemporalExpr &e) {
+                const std::uint32_t lhs_idx = check_temporal_embedded_exprs(*e.lhs, context);
+                const std::uint32_t rhs_idx = check_temporal_embedded_exprs(*e.rhs, context);
+                te.kind = TypedTemporalKind::Binary;
+                te.children_index.push_back(lhs_idx);
+                te.children_index.push_back(rhs_idx);
+                switch (e.op) {
+                case ast::TemporalBinaryOp::Implies:
+                    te.op = TypedTemporalOp::TemporalImply;
+                    te.payload_spelling = "implies";
+                    break;
+                case ast::TemporalBinaryOp::Or:
+                    te.op = TypedTemporalOp::TemporalOr;
+                    te.payload_spelling = "or";
+                    break;
+                case ast::TemporalBinaryOp::And:
+                    te.op = TypedTemporalOp::TemporalAnd;
+                    te.payload_spelling = "and";
+                    break;
+                case ast::TemporalBinaryOp::Until:
+                    te.op = TypedTemporalOp::TemporalUntil;
+                    te.payload_spelling = "until";
+                    break;
+                }
+            },
         },
-        [&](const ast::InStateTemporalExpr &e) {
-            te.kind = TypedTemporalKind::StateLiteral;
-            te.op = TypedTemporalOp::StateLiteral;
-            // payload_spelling stores the state name directly (no "state:" prefix).
-            te.payload_spelling = e.name;
-        },
-        [&](const ast::RunningTemporalExpr &e) {
-            te.kind = TypedTemporalKind::NameLiteral;
-            te.op = TypedTemporalOp::NameLiteralRunning;
-            // payload_spelling stores the node name directly (no "running:" prefix).
-            te.payload_spelling = e.name;
-        },
-        [&](const ast::CompletedTemporalExpr &e) {
-            te.kind = TypedTemporalKind::NameLiteral;
-            te.op = TypedTemporalOp::NameLiteralCompleted;
-            // payload_spelling encodes "node_name|optional_state_name" for the
-            // Completed variant so lowering can extract both without AST.
-            std::string data = e.name;
-            if (e.state_name.has_value()) {
-                data += "|";
-                data += *e.state_name;
-            }
-            te.payload_spelling = std::move(data);
-        },
-        [&](const ast::UnaryTemporalExpr &e) {
-            const std::uint32_t child_idx = check_temporal_embedded_exprs(*e.operand, context);
-            te.kind = TypedTemporalKind::Unary;
-            te.children_index.push_back(child_idx);
-            switch (e.op) {
-            case ast::TemporalUnaryOp::Always:
-                te.op = TypedTemporalOp::TemporalAlways;
-                te.payload_spelling = "always";
-                break;
-            case ast::TemporalUnaryOp::Eventually:
-                te.op = TypedTemporalOp::TemporalEventually;
-                te.payload_spelling = "eventually";
-                break;
-            case ast::TemporalUnaryOp::Next:
-                te.op = TypedTemporalOp::TemporalNext;
-                te.payload_spelling = "next";
-                break;
-            case ast::TemporalUnaryOp::Not:
-                te.op = TypedTemporalOp::TemporalNot;
-                te.payload_spelling = "not";
-                break;
-            }
-        },
-        [&](const ast::BinaryTemporalExpr &e) {
-            const std::uint32_t lhs_idx = check_temporal_embedded_exprs(*e.lhs, context);
-            const std::uint32_t rhs_idx = check_temporal_embedded_exprs(*e.rhs, context);
-            te.kind = TypedTemporalKind::Binary;
-            te.children_index.push_back(lhs_idx);
-            te.children_index.push_back(rhs_idx);
-            switch (e.op) {
-            case ast::TemporalBinaryOp::Implies:
-                te.op = TypedTemporalOp::TemporalImply;
-                te.payload_spelling = "implies";
-                break;
-            case ast::TemporalBinaryOp::Or:
-                te.op = TypedTemporalOp::TemporalOr;
-                te.payload_spelling = "or";
-                break;
-            case ast::TemporalBinaryOp::And:
-                te.op = TypedTemporalOp::TemporalAnd;
-                te.payload_spelling = "and";
-                break;
-            case ast::TemporalBinaryOp::Until:
-                te.op = TypedTemporalOp::TemporalUntil;
-                te.payload_spelling = "until";
-                break;
-            }
-        },
-    }, expr.node);
+        expr.node);
 
     return hir_builder_.append_temporal_expr(std::move(te));
 }
@@ -1447,6 +1482,8 @@ void FlowSema::check_flows_in_program(const ast::Program &program) {
             .range = declaration->range,
             .source_id = driver_->current_source_id_,
             .associated_agent_symbol = target->get().target,
+            .type = nullptr,
+            .payload = {},
         };
         if (const auto flow_info = driver_->environment().get_flow(target->get().target);
             flow_info.has_value()) {
@@ -1744,8 +1781,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.let_stmt->initializer)},
             .target_name = statement.let_stmt->name,
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
             .let_type_ref_strategy = let_strategy,
             .let_type = std::move(let_type),
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
         });
         break;
     }
@@ -1782,13 +1824,20 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                              *statement.assign_stmt->value)}
                                        : std::vector<std::uint32_t>{UINT32_MAX},
             .target_name = path_spelling(*statement.assign_stmt->target),
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
             .assign_target_root_kind = assign_target_root_kind_of(*statement.assign_stmt->target),
+            .assert_message = {},
         });
         break;
     }
     case ast::StatementSyntaxKind::If: {
         auto condition_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
+            .flow_facts = {},
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };
@@ -1877,10 +1926,16 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.if_stmt->condition)},
+            .target_name = {},
+            .goto_target_state = {},
             .then_block_index = find_block_index_by_range(*statement.if_stmt->then_block),
             .else_block_index = statement.if_stmt->else_block
                                     ? find_block_index_by_range(*statement.if_stmt->else_block)
                                     : UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
         });
         break;
     }
@@ -1894,7 +1949,15 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .kind = TypedStmtKind::Goto,
             .range = statement.range,
             .source_id = current_source_id_,
+            .children_expr_index = {},
+            .target_name = {},
             .goto_target_state = target_state,
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
         });
         break;
     }
@@ -1939,12 +2002,21 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {value_index},
+            .target_name = {},
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
         });
         break;
     }
     case ast::StatementSyntaxKind::Assert: {
         auto condition_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
+            .flow_facts = {},
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };
@@ -1974,6 +2046,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.assert_stmt->condition)},
+            .target_name = {},
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
             .assert_message = std::move(assert_msg),
         });
         break;
@@ -1986,6 +2065,14 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
             .range = statement.range,
             .source_id = current_source_id_,
             .children_expr_index = {resolve_payload_expr_index(*statement.expr_stmt->expr)},
+            .target_name = {},
+            .goto_target_state = {},
+            .then_block_index = UINT32_MAX,
+            .else_block_index = UINT32_MAX,
+            .let_type_ref_strategy = LetTypeRefStrategy::NoAnnotation,
+            .let_type = nullptr,
+            .assign_target_root_kind = AssignTargetRootKind::Identifier,
+            .assert_message = {},
         });
         break;
     }

@@ -6,10 +6,10 @@
 #include <string_view>
 #include <vector>
 
-#include "pipeline/execution/execution_journal/journal.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
-#include "pipeline/execution/runtime_session/session.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
+#include "pipeline/execution/execution_journal/journal.hpp"
+#include "pipeline/execution/runtime_session/session.hpp"
 
 namespace ahfl::replay_view {
 

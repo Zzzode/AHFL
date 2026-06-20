@@ -22,10 +22,10 @@ void HotspotAnalyzer::record_call(std::string name, std::chrono::nanoseconds dur
 std::vector<HotspotEntry> HotspotAnalyzer::top_hotspots(std::size_t n) const {
     std::vector<HotspotEntry> result;
     result.reserve(entries_.size());
-    for (const auto& [key, entry] : entries_) {
+    for (const auto &[key, entry] : entries_) {
         result.push_back(entry);
     }
-    std::sort(result.begin(), result.end(), [](const HotspotEntry& a, const HotspotEntry& b) {
+    std::sort(result.begin(), result.end(), [](const HotspotEntry &a, const HotspotEntry &b) {
         return a.total_time > b.total_time;
     });
     if (result.size() > n) {

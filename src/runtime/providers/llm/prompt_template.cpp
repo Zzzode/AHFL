@@ -6,8 +6,7 @@ namespace ahfl::llm_provider {
 
 PromptTemplate::PromptTemplate(std::string text) : text_(std::move(text)) {}
 
-std::string
-PromptTemplate::render(const std::unordered_map<std::string, std::string> &vars) const {
+std::string PromptTemplate::render(const std::unordered_map<std::string, std::string> &vars) const {
     std::string result;
     result.reserve(text_.size());
 

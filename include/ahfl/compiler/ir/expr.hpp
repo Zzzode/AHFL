@@ -1,8 +1,8 @@
 #pragma once
 
 #include <cassert>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <variant>
@@ -21,8 +21,8 @@ namespace ahfl::ir {
 /// Path expression (e.g. input.category, classify.confidence)
 struct Path {
     PathRootKind root_kind{PathRootKind::Identifier};
-    std::string root_name;            // Root name ("input", "ctx", or an identifier name)
-    std::vector<std::string> members; // Member access chain
+    std::string root_name{};            // Root name ("input", "ctx", or an identifier name)
+    std::vector<std::string> members{}; // Member access chain
 };
 
 // ----------------------------------------------------------------------------
@@ -52,9 +52,15 @@ struct ExprRef {
         return *this;
     }
 
-    [[nodiscard]] bool has_value() const noexcept { return ptr != nullptr; }
-    [[nodiscard]] explicit operator bool() const noexcept { return has_value(); }
-    [[nodiscard]] Expr *get() const noexcept { return ptr; }
+    [[nodiscard]] bool has_value() const noexcept {
+        return ptr != nullptr;
+    }
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return has_value();
+    }
+    [[nodiscard]] Expr *get() const noexcept {
+        return ptr;
+    }
     [[nodiscard]] Expr &operator*() const noexcept {
         assert(ptr != nullptr);
         return *ptr;
@@ -224,7 +230,7 @@ struct Expr {
     ExprNode node;
     SourceRangeOpt source_range;
     TypeRef resolved_type; // Populated during lowering; kind=Unresolved if unavailable
-    std::uint32_t id{0};  // Monotonic node ID assigned during lowering (E-2)
+    std::uint32_t id{0};   // Monotonic node ID assigned during lowering (E-2)
 };
 
 // ----------------------------------------------------------------------------

@@ -153,11 +153,11 @@ struct Type {
         return std::visit(std::forward<Visitor>(visitor), payload);
     }
 
-    template <typename Alt>[[nodiscard]] const Alt *get_if() const noexcept {
+    template <typename Alt> [[nodiscard]] const Alt *get_if() const noexcept {
         return std::get_if<Alt>(&payload);
     }
 
-    template <typename Alt>[[nodiscard]] bool holds() const noexcept {
+    template <typename Alt> [[nodiscard]] bool holds() const noexcept {
         return std::holds_alternative<Alt>(payload);
     }
 

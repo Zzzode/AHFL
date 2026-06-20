@@ -261,12 +261,8 @@ namespace {
             seed = fingerprint_mix(seed, fingerprint_string(e.canonical_name));
             seed = fingerprint_mix(seed, fingerprint_optional_symbol(e.symbol));
         },
-        [&](const types::OptionalT &o) {
-            seed = fingerprint_mix(seed, fingerprint_type(o.inner));
-        },
-        [&](const types::ListT &l) {
-            seed = fingerprint_mix(seed, fingerprint_type(l.element));
-        },
+        [&](const types::OptionalT &o) { seed = fingerprint_mix(seed, fingerprint_type(o.inner)); },
+        [&](const types::ListT &l) { seed = fingerprint_mix(seed, fingerprint_type(l.element)); },
         [&](const types::SetT &s) { seed = fingerprint_mix(seed, fingerprint_type(s.element)); },
         [&](const types::MapT &m) {
             seed = fingerprint_mix(seed, fingerprint_type(m.key));

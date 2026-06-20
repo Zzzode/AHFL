@@ -6,8 +6,7 @@
 
 namespace ahfl::formal {
 
-[[nodiscard]] std::unique_ptr<ModelCheckerBackend>
-create_backend(ModelCheckerKind kind) {
+[[nodiscard]] std::unique_ptr<ModelCheckerBackend> create_backend(ModelCheckerKind kind) {
     switch (kind) {
     case ModelCheckerKind::NuSMV:
     case ModelCheckerKind::NuXmv:

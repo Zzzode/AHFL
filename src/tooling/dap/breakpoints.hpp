@@ -1,14 +1,14 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
 
 namespace ahfl::dap {
 
 enum class BreakpointKind {
-    State,          // Break on entering a state
-    Capability,     // Break on capability invocation
-    Line            // Source line breakpoint
+    State,      // Break on entering a state
+    Capability, // Break on capability invocation
+    Line        // Source line breakpoint
 };
 
 struct Breakpoint {
@@ -16,7 +16,7 @@ struct Breakpoint {
     BreakpointKind kind = BreakpointKind::Line;
     std::string source_file;
     int line = 0;
-    std::string condition;   // state name or capability name
+    std::string condition; // state name or capability name
     bool enabled = true;
     bool verified = false;
 };
@@ -29,22 +29,22 @@ struct BreakpointHit {
 };
 
 class BreakpointManager {
-public:
+  public:
     int add_breakpoint(Breakpoint bp);
     bool remove_breakpoint(int id);
     void clear_all();
-    
+
     [[nodiscard]] std::optional<Breakpoint> get_breakpoint(int id) const;
     [[nodiscard]] std::vector<Breakpoint> all_breakpoints() const;
     [[nodiscard]] size_t count() const;
-    
-    [[nodiscard]] std::vector<BreakpointHit> check_state_breakpoints(
-        const std::string& agent_id, const std::string& state) const;
-    
-    [[nodiscard]] std::vector<BreakpointHit> check_capability_breakpoints(
-        const std::string& agent_id, const std::string& capability) const;
-    
-private:
+
+    [[nodiscard]] std::vector<BreakpointHit>
+    check_state_breakpoints(const std::string &agent_id, const std::string &state) const;
+
+    [[nodiscard]] std::vector<BreakpointHit>
+    check_capability_breakpoints(const std::string &agent_id, const std::string &capability) const;
+
+  private:
     std::vector<Breakpoint> breakpoints_;
     int next_id_ = 1;
 };

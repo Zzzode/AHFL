@@ -41,18 +41,18 @@ struct ResolveResult {
 };
 
 class Resolver {
-public:
-    void add_available(const std::string& name, const std::vector<SemVer>& versions);
+  public:
+    void add_available(const std::string &name, const std::vector<SemVer> &versions);
     void add_dependency(Dependency dep);
 
     [[nodiscard]] ResolveResult resolve() const;
 
-    [[nodiscard]] static SemVer parse_version(const std::string& version_str);
-    [[nodiscard]] static bool satisfies(const SemVer& version, const std::string& constraint);
-    [[nodiscard]] static int compare(const SemVer& a, const SemVer& b);
-    [[nodiscard]] static std::string format_version(const SemVer& v);
+    [[nodiscard]] static SemVer parse_version(const std::string &version_str);
+    [[nodiscard]] static bool satisfies(const SemVer &version, const std::string &constraint);
+    [[nodiscard]] static int compare(const SemVer &a, const SemVer &b);
+    [[nodiscard]] static std::string format_version(const SemVer &v);
 
-private:
+  private:
     std::unordered_map<std::string, std::vector<SemVer>> available_;
     std::vector<Dependency> dependencies_;
 };

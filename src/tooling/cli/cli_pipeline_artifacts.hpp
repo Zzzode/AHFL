@@ -1,17 +1,17 @@
 #pragma once
 
-#include "pipeline/observation/audit_report/report.hpp"
-#include "pipeline/observation/checkpoint_record/record.hpp"
-#include "tooling/cli/command_catalog.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
 #include "pipeline/execution/dry_run/runner.hpp"
 #include "pipeline/execution/execution_journal/journal.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
-#include "pipeline/persistence/descriptor/descriptor.hpp"
-#include "pipeline/persistence/export/manifest.hpp"
 #include "pipeline/execution/replay_view/replay.hpp"
 #include "pipeline/execution/runtime_session/session.hpp"
+#include "pipeline/observation/audit_report/report.hpp"
+#include "pipeline/observation/checkpoint_record/record.hpp"
 #include "pipeline/observation/scheduler_snapshot/snapshot.hpp"
+#include "pipeline/persistence/descriptor/descriptor.hpp"
+#include "pipeline/persistence/export/manifest.hpp"
 #include "pipeline/persistence/store_import/descriptor.hpp"
+#include "tooling/cli/command_catalog.hpp"
 
 #include <iostream>
 #include <optional>
@@ -20,11 +20,9 @@
 
 namespace ahfl::cli {
 
-template <typename T>
-class LazyArtifact {
+template <typename T> class LazyArtifact {
   public:
-    template <typename Builder>
-    const T *get(Builder &&build) {
+    template <typename Builder> const T *get(Builder &&build) {
         if (!loaded_) {
             loaded_ = true;
             value_ = build();

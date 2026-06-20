@@ -8,7 +8,9 @@ namespace ahfl::passes {
 /// A state is unreachable if there's no path from initial_state via transitions.
 class DeadStateEliminationPass final : public Pass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "dead-state-elimination"; }
+    [[nodiscard]] std::string_view name() const override {
+        return "dead-state-elimination";
+    }
     [[nodiscard]] bool run(ir::Program &program) override;
 };
 

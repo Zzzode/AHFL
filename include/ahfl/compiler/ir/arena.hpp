@@ -28,7 +28,9 @@ class ExprArena {
     ExprArena() = default;
     ExprArena(const ExprArena &) = delete;
     ExprArena &operator=(const ExprArena &) = delete;
-    ExprArena(ExprArena &&other) noexcept { move_from(std::move(other)); }
+    ExprArena(ExprArena &&other) noexcept {
+        move_from(std::move(other));
+    }
     ExprArena &operator=(ExprArena &&other) noexcept {
         if (this != &other) {
             clear();
@@ -36,7 +38,9 @@ class ExprArena {
         }
         return *this;
     }
-    ~ExprArena() { clear(); }
+    ~ExprArena() {
+        clear();
+    }
 
     /// Allocate an expression in the arena and return its stable handle.
     [[nodiscard]] ExprRef make(ExprNode node,
@@ -65,13 +69,19 @@ class ExprArena {
     }
 
     /// Number of expressions registered.
-    [[nodiscard]] std::size_t size() const noexcept { return index_.size(); }
+    [[nodiscard]] std::size_t size() const noexcept {
+        return index_.size();
+    }
 
     /// Whether the arena is empty.
-    [[nodiscard]] bool empty() const noexcept { return index_.empty(); }
+    [[nodiscard]] bool empty() const noexcept {
+        return index_.empty();
+    }
 
     /// Span over all registered expression pointers (for O(1) iteration).
-    [[nodiscard]] std::span<Expr *const> span() noexcept { return index_; }
+    [[nodiscard]] std::span<Expr *const> span() noexcept {
+        return index_;
+    }
 
     /// Const span over all registered expression pointers.
     [[nodiscard]] std::span<const Expr *const> span() const noexcept {

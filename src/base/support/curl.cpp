@@ -281,7 +281,9 @@ CurlResponse execute_curl(const CurlRequest &request) {
                                 .exit_code = -1,
                                 .body = {},
                                 .error = "failed to write curl body file: " + body_file->error(),
-                                .timed_out = false};
+                                .timed_out = false,
+                                .response_headers = {},
+                                .response_header_blocks = {}};
         }
         body_path = body_file->path();
     }
@@ -296,7 +298,9 @@ CurlResponse execute_curl(const CurlRequest &request) {
                                 .body = {},
                                 .error =
                                     "failed to create curl header file: " + header_file->error(),
-                                .timed_out = false};
+                                .timed_out = false,
+                                .response_headers = {},
+                                .response_header_blocks = {}};
         }
         header_path = header_file->path();
     }

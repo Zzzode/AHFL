@@ -7,8 +7,8 @@
 
 #include "pipeline/persistence/durable_store_import/provider/configuration/config_bundle_validation.hpp"
 #include "pipeline/persistence/durable_store_import/provider/governance/conformance.hpp"
-#include "pipeline/persistence/durable_store_import/provider/production/production_readiness.hpp"
 #include "pipeline/persistence/durable_store_import/provider/governance/schema_compatibility.hpp"
+#include "pipeline/persistence/durable_store_import/provider/production/production_readiness.hpp"
 
 namespace ahfl::durable_store_import {
 

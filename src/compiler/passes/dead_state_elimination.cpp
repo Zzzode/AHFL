@@ -51,14 +51,17 @@ bool DeadStateEliminationPass::run(ir::Program &program) {
 
         // Remove unreachable states
         auto orig_size = agent->states.size();
-        agent->states.erase(
-            std::remove_if(agent->states.begin(), agent->states.end(),
-                           [&](const std::string &s) { return reachable.find(s) == reachable.end(); }),
-            agent->states.end());
+        agent->states.erase(std::remove_if(agent->states.begin(),
+                                           agent->states.end(),
+                                           [&](const std::string &s) {
+                                               return reachable.find(s) == reachable.end();
+                                           }),
+                            agent->states.end());
 
         // Remove transitions involving unreachable states
         agent->transitions.erase(
-            std::remove_if(agent->transitions.begin(), agent->transitions.end(),
+            std::remove_if(agent->transitions.begin(),
+                           agent->transitions.end(),
                            [&](const ir::TransitionDecl &t) {
                                return reachable.find(t.from_state) == reachable.end() ||
                                       reachable.find(t.to_state) == reachable.end();

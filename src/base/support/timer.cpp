@@ -5,8 +5,7 @@
 namespace ahfl::support {
 
 ScopedTimer::ScopedTimer(std::string label)
-    : label_(std::move(label))
-    , start_(std::chrono::steady_clock::now()) {}
+    : label_(std::move(label)), start_(std::chrono::steady_clock::now()) {}
 
 TimerResult ScopedTimer::elapsed() const {
     auto now = std::chrono::steady_clock::now();

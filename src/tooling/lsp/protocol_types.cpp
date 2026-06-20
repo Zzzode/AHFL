@@ -345,14 +345,22 @@ std::unique_ptr<json::JsonValue> serialize_semantic_tokens(const SemanticTokens 
 namespace {
 const char *code_action_kind_name(CodeActionKind kind) noexcept {
     switch (kind) {
-    case CodeActionKind::QuickFix: return "quickfix";
-    case CodeActionKind::Refactor: return "refactor";
-    case CodeActionKind::RefactorExtract: return "refactor.extract";
-    case CodeActionKind::RefactorInline: return "refactor.inline";
-    case CodeActionKind::RefactorRewrite: return "refactor.rewrite";
-    case CodeActionKind::Source: return "source";
-    case CodeActionKind::SourceOrganizeImports: return "source.organizeImports";
-    case CodeActionKind::SourceFixAll: return "source.fixAll";
+    case CodeActionKind::QuickFix:
+        return "quickfix";
+    case CodeActionKind::Refactor:
+        return "refactor";
+    case CodeActionKind::RefactorExtract:
+        return "refactor.extract";
+    case CodeActionKind::RefactorInline:
+        return "refactor.inline";
+    case CodeActionKind::RefactorRewrite:
+        return "refactor.rewrite";
+    case CodeActionKind::Source:
+        return "source";
+    case CodeActionKind::SourceOrganizeImports:
+        return "source.organizeImports";
+    case CodeActionKind::SourceFixAll:
+        return "source.fixAll";
     }
     return "";
 }
@@ -388,9 +396,12 @@ std::unique_ptr<json::JsonValue> serialize_code_action(const CodeAction &action)
 namespace {
 const char *folding_range_kind_name(FoldingRangeKind kind) noexcept {
     switch (kind) {
-    case FoldingRangeKind::Comment: return "comment";
-    case FoldingRangeKind::Imports: return "imports";
-    case FoldingRangeKind::Region: return "region";
+    case FoldingRangeKind::Comment:
+        return "comment";
+    case FoldingRangeKind::Imports:
+        return "imports";
+    case FoldingRangeKind::Region:
+        return "region";
     }
     return "";
 }
@@ -400,11 +411,13 @@ std::unique_ptr<json::JsonValue> serialize_folding_range(const FoldingRange &ran
     auto obj = json::JsonValue::make_object();
     obj->set("startLine", json::JsonValue::make_int(static_cast<int64_t>(range.start_line)));
     if (range.start_character > 0) {
-        obj->set("startCharacter", json::JsonValue::make_int(static_cast<int64_t>(range.start_character)));
+        obj->set("startCharacter",
+                 json::JsonValue::make_int(static_cast<int64_t>(range.start_character)));
     }
     obj->set("endLine", json::JsonValue::make_int(static_cast<int64_t>(range.end_line)));
     if (range.end_character > 0) {
-        obj->set("endCharacter", json::JsonValue::make_int(static_cast<int64_t>(range.end_character)));
+        obj->set("endCharacter",
+                 json::JsonValue::make_int(static_cast<int64_t>(range.end_character)));
     }
     if (range.kind) {
         obj->set("kind", json::JsonValue::make_string(folding_range_kind_name(*range.kind)));

@@ -46,7 +46,7 @@ struct Harness {
     const char *suite_name{nullptr};
     int passed{0};
     int failed{0};
-    std::mutex mu;
+    std::mutex mu{};
 
     void run(const char *name, void (*fn)()) {
         try {

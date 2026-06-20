@@ -9,14 +9,15 @@ void DependencyGraph::add_module(ModuleNode node) {
     modules_[node.module_path] = std::move(node);
 }
 
-void DependencyGraph::remove_module(const std::string& path) {
+void DependencyGraph::remove_module(const std::string &path) {
     modules_.erase(path);
 }
 
-[[nodiscard]] std::vector<std::string> DependencyGraph::dependents_of(const std::string& path) const {
+[[nodiscard]] std::vector<std::string>
+DependencyGraph::dependents_of(const std::string &path) const {
     std::vector<std::string> result;
-    for (const auto& [mod_path, node] : modules_) {
-        for (const auto& imp : node.imports) {
+    for (const auto &[mod_path, node] : modules_) {
+        for (const auto &imp : node.imports) {
             if (imp == path) {
                 result.push_back(mod_path);
                 break;
@@ -27,7 +28,8 @@ void DependencyGraph::remove_module(const std::string& path) {
     return result;
 }
 
-[[nodiscard]] std::vector<std::string> DependencyGraph::dependencies_of(const std::string& path) const {
+[[nodiscard]] std::vector<std::string>
+DependencyGraph::dependencies_of(const std::string &path) const {
     auto it = modules_.find(path);
     if (it == modules_.end()) {
         return {};
@@ -42,9 +44,9 @@ void DependencyGraph::remove_module(const std::string& path) {
     std::unordered_set<std::string> visited;
     std::unordered_set<std::string> in_stack;
 
-    auto dfs = [&](auto& self, const std::string& path) -> bool {
+    auto dfs = [&](auto &self, const std::string &path) -> bool {
         if (in_stack.count(path) > 0) {
-            return false;  // cycle
+            return false; // cycle
         }
         if (visited.count(path) > 0) {
             return true;
@@ -54,7 +56,7 @@ void DependencyGraph::remove_module(const std::string& path) {
 
         auto it = modules_.find(path);
         if (it != modules_.end()) {
-            for (const auto& dep : it->second.imports) {
+            for (const auto &dep : it->second.imports) {
                 if (modules_.count(dep) > 0) {
                     if (!self(self, dep)) {
                         return false;
@@ -70,13 +72,13 @@ void DependencyGraph::remove_module(const std::string& path) {
     // Collect and sort keys for deterministic output
     std::vector<std::string> keys;
     keys.reserve(modules_.size());
-    for (const auto& [k, v] : modules_) {
+    for (const auto &[k, v] : modules_) {
         (void)v;
         keys.push_back(k);
     }
     std::sort(keys.begin(), keys.end());
 
-    for (const auto& key : keys) {
+    for (const auto &key : keys) {
         if (visited.count(key) == 0) {
             dfs(dfs, key);
         }
@@ -88,9 +90,9 @@ void DependencyGraph::remove_module(const std::string& path) {
     std::unordered_set<std::string> visited;
     std::unordered_set<std::string> in_stack;
 
-    auto dfs = [&](auto& self, const std::string& path) -> bool {
+    auto dfs = [&](auto &self, const std::string &path) -> bool {
         if (in_stack.count(path) > 0) {
-            return true;  // cycle found
+            return true; // cycle found
         }
         if (visited.count(path) > 0) {
             return false;
@@ -100,7 +102,7 @@ void DependencyGraph::remove_module(const std::string& path) {
 
         auto it = modules_.find(path);
         if (it != modules_.end()) {
-            for (const auto& dep : it->second.imports) {
+            for (const auto &dep : it->second.imports) {
                 if (modules_.count(dep) > 0) {
                     if (self(self, dep)) {
                         return true;
@@ -112,7 +114,7 @@ void DependencyGraph::remove_module(const std::string& path) {
         return false;
     };
 
-    for (const auto& [path, node] : modules_) {
+    for (const auto &[path, node] : modules_) {
         (void)node;
         if (visited.count(path) == 0) {
             if (dfs(dfs, path)) {

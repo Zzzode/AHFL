@@ -352,46 +352,49 @@ class ValidationPass final {
     void check_contract_temporal_expr(const ast::TemporalExprSyntax &expr,
                                       const ast::AgentDecl &agent_decl,
                                       std::string_view agent_name) {
-        std::visit(Overloaded{
-            [&](const ast::EmbeddedTemporalExpr &e) {
-                if (e.expr) {
-                    check_typed_temporal_expr(*e.expr);
-                }
+        std::visit(
+            Overloaded{
+                [&](const ast::EmbeddedTemporalExpr &e) {
+                    if (e.expr) {
+                        check_typed_temporal_expr(*e.expr);
+                    }
+                },
+                [&](const ast::CalledTemporalExpr &) {
+                    // Called is valid in contract context
+                },
+                [&](const ast::InStateTemporalExpr &e) {
+                    const auto state =
+                        std::find(agent_decl.states.begin(), agent_decl.states.end(), e.name);
+                    if (state == agent_decl.states.end()) {
+                        invalid_temporal_here(
+                            messages::validation::UnknownContractState.format_with(e.name,
+                                                                                   agent_name),
+                            expr.range);
+                    }
+                },
+                [&](const ast::RunningTemporalExpr &) {
+                    invalid_temporal_here(messages::validation::RunningOnlyWorkflow.format_with(),
+                                          expr.range);
+                },
+                [&](const ast::CompletedTemporalExpr &) {
+                    invalid_temporal_here(messages::validation::CompletedOnlyWorkflow.format_with(),
+                                          expr.range);
+                },
+                [&](const ast::UnaryTemporalExpr &e) {
+                    if (e.operand) {
+                        check_contract_temporal_expr(*e.operand, agent_decl, agent_name);
+                    }
+                },
+                [&](const ast::BinaryTemporalExpr &e) {
+                    if (e.lhs) {
+                        check_contract_temporal_expr(*e.lhs, agent_decl, agent_name);
+                    }
+                    if (e.rhs) {
+                        check_contract_temporal_expr(*e.rhs, agent_decl, agent_name);
+                    }
+                },
             },
-            [&](const ast::CalledTemporalExpr &) {
-                // Called is valid in contract context
-            },
-            [&](const ast::InStateTemporalExpr &e) {
-                const auto state =
-                    std::find(agent_decl.states.begin(), agent_decl.states.end(), e.name);
-                if (state == agent_decl.states.end()) {
-                    invalid_temporal_here(
-                        messages::validation::UnknownContractState.format_with(e.name, agent_name),
-                        expr.range);
-                }
-            },
-            [&](const ast::RunningTemporalExpr &) {
-                invalid_temporal_here(messages::validation::RunningOnlyWorkflow.format_with(),
-                                      expr.range);
-            },
-            [&](const ast::CompletedTemporalExpr &) {
-                invalid_temporal_here(messages::validation::CompletedOnlyWorkflow.format_with(),
-                                      expr.range);
-            },
-            [&](const ast::UnaryTemporalExpr &e) {
-                if (e.operand) {
-                    check_contract_temporal_expr(*e.operand, agent_decl, agent_name);
-                }
-            },
-            [&](const ast::BinaryTemporalExpr &e) {
-                if (e.lhs) {
-                    check_contract_temporal_expr(*e.lhs, agent_decl, agent_name);
-                }
-                if (e.rhs) {
-                    check_contract_temporal_expr(*e.rhs, agent_decl, agent_name);
-                }
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void check_contracts_in_program(const ast::Program &program) {
@@ -629,64 +632,68 @@ class ValidationPass final {
     void
     check_workflow_temporal_expr(const ast::TemporalExprSyntax &expr,
                                  const std::unordered_map<std::string, SymbolId> &node_agent_ids) {
-        std::visit(Overloaded{
-            [&](const ast::EmbeddedTemporalExpr &e) {
-                if (e.expr) {
-                    check_typed_temporal_expr(*e.expr);
-                }
-            },
-            [&](const ast::CalledTemporalExpr &) {
-                invalid_temporal_here(messages::validation::CalledOnlyAgentContracts.format_with(),
-                                      expr.range);
-            },
-            [&](const ast::InStateTemporalExpr &) {
-                invalid_temporal_here(messages::validation::InStateOnlyAgentContracts.format_with(),
-                                      expr.range);
-            },
-            [&](const ast::RunningTemporalExpr &e) {
-                if (!node_agent_ids.contains(e.name)) {
+        std::visit(
+            Overloaded{
+                [&](const ast::EmbeddedTemporalExpr &e) {
+                    if (e.expr) {
+                        check_typed_temporal_expr(*e.expr);
+                    }
+                },
+                [&](const ast::CalledTemporalExpr &) {
                     invalid_temporal_here(
-                        messages::validation::UnknownWorkflowNode.format_with(e.name), expr.range);
-                }
-            },
-            [&](const ast::CompletedTemporalExpr &e) {
-                const auto node = node_agent_ids.find(e.name);
-                if (node == node_agent_ids.end()) {
+                        messages::validation::CalledOnlyAgentContracts.format_with(), expr.range);
+                },
+                [&](const ast::InStateTemporalExpr &) {
                     invalid_temporal_here(
-                        messages::validation::UnknownWorkflowNode.format_with(e.name), expr.range);
-                    return;
-                }
+                        messages::validation::InStateOnlyAgentContracts.format_with(), expr.range);
+                },
+                [&](const ast::RunningTemporalExpr &e) {
+                    if (!node_agent_ids.contains(e.name)) {
+                        invalid_temporal_here(
+                            messages::validation::UnknownWorkflowNode.format_with(e.name),
+                            expr.range);
+                    }
+                },
+                [&](const ast::CompletedTemporalExpr &e) {
+                    const auto node = node_agent_ids.find(e.name);
+                    if (node == node_agent_ids.end()) {
+                        invalid_temporal_here(
+                            messages::validation::UnknownWorkflowNode.format_with(e.name),
+                            expr.range);
+                        return;
+                    }
 
-                if (!e.state_name.has_value()) {
-                    return;
-                }
+                    if (!e.state_name.has_value()) {
+                        return;
+                    }
 
-                const auto agent_decl = agent_decl_of(node->second);
-                if (!agent_decl.has_value()) {
-                    return;
-                }
+                    const auto agent_decl = agent_decl_of(node->second);
+                    if (!agent_decl.has_value()) {
+                        return;
+                    }
 
-                if (!contains_name(agent_decl->get().final_states, *e.state_name)) {
-                    invalid_temporal_here(
-                        messages::validation::WorkflowCompletedStateNotFinal.format_with(
-                            *e.state_name, e.name),
-                        expr.range);
-                }
+                    if (!contains_name(agent_decl->get().final_states, *e.state_name)) {
+                        invalid_temporal_here(
+                            messages::validation::WorkflowCompletedStateNotFinal.format_with(
+                                *e.state_name, e.name),
+                            expr.range);
+                    }
+                },
+                [&](const ast::UnaryTemporalExpr &e) {
+                    if (e.operand) {
+                        check_workflow_temporal_expr(*e.operand, node_agent_ids);
+                    }
+                },
+                [&](const ast::BinaryTemporalExpr &e) {
+                    if (e.lhs) {
+                        check_workflow_temporal_expr(*e.lhs, node_agent_ids);
+                    }
+                    if (e.rhs) {
+                        check_workflow_temporal_expr(*e.rhs, node_agent_ids);
+                    }
+                },
             },
-            [&](const ast::UnaryTemporalExpr &e) {
-                if (e.operand) {
-                    check_workflow_temporal_expr(*e.operand, node_agent_ids);
-                }
-            },
-            [&](const ast::BinaryTemporalExpr &e) {
-                if (e.lhs) {
-                    check_workflow_temporal_expr(*e.lhs, node_agent_ids);
-                }
-                if (e.rhs) {
-                    check_workflow_temporal_expr(*e.rhs, node_agent_ids);
-                }
-            },
-        }, expr.node);
+            expr.node);
     }
 
     void check_workflows_in_program(const ast::Program &program) {

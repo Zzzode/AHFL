@@ -75,9 +75,8 @@ void TypedProgram::rebuild_resolver_indices() {
                 .kind = reference.kind,
                 .begin_offset = reference.range.begin_offset,
                 .end_offset = reference.range.end_offset,
-                .source_id_value = reference.source_id.has_value()
-                                       ? reference.source_id->value
-                                       : std::size_t{0},
+                .source_id_value =
+                    reference.source_id.has_value() ? reference.source_id->value : std::size_t{0},
                 .has_source_id = reference.source_id.has_value(),
             },
             compact_index);
@@ -104,8 +103,8 @@ void TypedProgram::rebuild_indices() {
         expr_index_.insert_or_assign(
             ExprIndexKey{
                 .node_id = expr.node_id,
-                .source_id_value = expr.source_id.has_value() ? expr.source_id->value
-                                                              : std::size_t{0},
+                .source_id_value =
+                    expr.source_id.has_value() ? expr.source_id->value : std::size_t{0},
                 .has_source_id = expr.source_id.has_value(),
             },
             static_cast<std::uint32_t>(index));
@@ -137,10 +136,9 @@ MaybeCRef<Symbol> TypedProgram::find_local_symbol(SymbolNamespace name_space,
     return std::nullopt;
 }
 
-MaybeCRef<ResolvedReference>
-TypedProgram::find_reference(ReferenceKind kind,
-                             SourceRange range,
-                             std::optional<SourceId> source_id) const {
+MaybeCRef<ResolvedReference> TypedProgram::find_reference(ReferenceKind kind,
+                                                          SourceRange range,
+                                                          std::optional<SourceId> source_id) const {
     if (source_id.has_value()) {
         const auto found = reference_index_.find(TypedReferenceKey{
             .kind = kind,
@@ -165,17 +163,19 @@ TypedProgram::find_reference(ReferenceKind kind,
     return std::nullopt;
 }
 
-const TypedExpr *
-resolve_child(const TypedProgram &program, const TypedExprChild &child) noexcept {
-    if (child.expr_index == UINT32_MAX) return nullptr;
-    if (child.expr_index >= program.expressions.size()) return nullptr;
+const TypedExpr *resolve_child(const TypedProgram &program, const TypedExprChild &child) noexcept {
+    if (child.expr_index == UINT32_MAX)
+        return nullptr;
+    if (child.expr_index >= program.expressions.size())
+        return nullptr;
     return &program.expressions[child.expr_index];
 }
 
-TypedExpr *
-resolve_child_mut(TypedProgram &program, const TypedExprChild &child) noexcept {
-    if (child.expr_index == UINT32_MAX) return nullptr;
-    if (child.expr_index >= program.expressions.size()) return nullptr;
+TypedExpr *resolve_child_mut(TypedProgram &program, const TypedExprChild &child) noexcept {
+    if (child.expr_index == UINT32_MAX)
+        return nullptr;
+    if (child.expr_index >= program.expressions.size())
+        return nullptr;
     return &program.expressions[child.expr_index];
 }
 
@@ -185,8 +185,7 @@ const TypedExpr *TypedProgram::find_expr(std::uint64_t node_id,
     if (node_id != 0) {
         const auto it = expr_index_.find(ExprIndexKey{
             .node_id = node_id,
-            .source_id_value = source_id.has_value() ? source_id->value
-                                                     : std::size_t{0},
+            .source_id_value = source_id.has_value() ? source_id->value : std::size_t{0},
             .has_source_id = source_id.has_value(),
         });
         if (it != expr_index_.end() && it->second < expressions.size()) {
@@ -208,8 +207,7 @@ TypedExpr *TypedProgram::find_expr(std::uint64_t node_id,
     if (node_id != 0) {
         const auto it = expr_index_.find(ExprIndexKey{
             .node_id = node_id,
-            .source_id_value = source_id.has_value() ? source_id->value
-                                                     : std::size_t{0},
+            .source_id_value = source_id.has_value() ? source_id->value : std::size_t{0},
             .has_source_id = source_id.has_value(),
         });
         if (it != expr_index_.end() && it->second < expressions.size()) {
@@ -225,8 +223,9 @@ TypedExpr *TypedProgram::find_expr(std::uint64_t node_id,
     return nullptr;
 }
 
-const TypedExpr *TypedProgram::find_expr_by_range(SourceRange range,
-                                                  std::optional<SourceId> source_id) const noexcept {
+const TypedExpr *
+TypedProgram::find_expr_by_range(SourceRange range,
+                                 std::optional<SourceId> source_id) const noexcept {
     for (const auto &expr : expressions) {
         if (expr.range.begin_offset == range.begin_offset &&
             expr.range.end_offset == range.end_offset && expr.source_id == source_id) {
@@ -248,7 +247,8 @@ TypedExpr *TypedProgram::find_expr_by_range(SourceRange range,
 }
 
 const TypedExpr *
-TypedProgram::find_expr_containing(std::size_t offset, std::optional<SourceId> source_id) const noexcept {
+TypedProgram::find_expr_containing(std::size_t offset,
+                                   std::optional<SourceId> source_id) const noexcept {
     const TypedExpr *best = nullptr;
     std::size_t best_size = 0;
     for (const auto &expr : expressions) {
@@ -267,8 +267,9 @@ TypedProgram::find_expr_containing(std::size_t offset, std::optional<SourceId> s
     return best;
 }
 
-const TypedBlock *TypedProgram::find_block_by_range(SourceRange range,
-                                                    std::optional<SourceId> source_id) const noexcept {
+const TypedBlock *
+TypedProgram::find_block_by_range(SourceRange range,
+                                  std::optional<SourceId> source_id) const noexcept {
     for (const auto &block : blocks) {
         if (block.range.begin_offset == range.begin_offset &&
             block.range.end_offset == range.end_offset && block.source_id == source_id) {
@@ -289,9 +290,8 @@ TypedBlock *TypedProgram::find_block_by_range(SourceRange range,
     return nullptr;
 }
 
-const TypedStatement *TypedProgram::find_statement_by_range(SourceRange range,
-                                                            TypedStmtKind kind,
-                                                            std::optional<SourceId> source_id) const noexcept {
+const TypedStatement *TypedProgram::find_statement_by_range(
+    SourceRange range, TypedStmtKind kind, std::optional<SourceId> source_id) const noexcept {
     for (const auto &stmt : statements) {
         if (stmt.range.begin_offset == range.begin_offset &&
             stmt.range.end_offset == range.end_offset && stmt.kind == kind &&

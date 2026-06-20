@@ -42,9 +42,7 @@ class CounterexampleJsonWriter : public ahfl::PrettyJsonWriter {
             field("description", [&]() { write_string(trace.trace_description); });
             field("type", [&]() { write_string(trace.trace_type); });
             if (trace.loop_start_index.has_value()) {
-                field("loop_start_index", [&]() {
-                    out_ << *trace.loop_start_index;
-                });
+                field("loop_start_index", [&]() { out_ << *trace.loop_start_index; });
             }
             field("states", [&]() {
                 print_array(indent + 1, [&](auto item) {
@@ -76,7 +74,8 @@ class CounterexampleJsonWriter : public ahfl::PrettyJsonWriter {
             if (assignment.mapping.has_value()) {
                 field("description", [&]() { write_string(assignment.mapping->description); });
                 if (!assignment.mapping->source_path.empty()) {
-                    field("source", [&]() { write_source_location(*assignment.mapping, indent + 1); });
+                    field("source",
+                          [&]() { write_source_location(*assignment.mapping, indent + 1); });
                 }
             }
         });
@@ -101,7 +100,7 @@ void write_counterexample_json(const CounterexampleTrace &trace,
 }
 
 std::string counterexample_to_json(const CounterexampleTrace &trace,
-                                    const ViolationExplanation &explanation) {
+                                   const ViolationExplanation &explanation) {
     std::ostringstream oss;
     write_counterexample_json(trace, explanation, oss);
     return oss.str();

@@ -41,7 +41,7 @@ struct JsonRpcResponse {
 
 /// JSON-RPC transport using Content-Length framing over stdin/stdout.
 class JsonRpcTransport {
-public:
+  public:
     explicit JsonRpcTransport(std::istream &in, std::ostream &out);
 
     /// Read one complete JSON-RPC message. Returns nullopt on EOF.
@@ -53,7 +53,7 @@ public:
     /// Send a notification (server → client).
     void send_notification(const std::string &method, std::unique_ptr<json::JsonValue> params);
 
-private:
+  private:
     std::istream &in_;
     std::ostream &out_;
 

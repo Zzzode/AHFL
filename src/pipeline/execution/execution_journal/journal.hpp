@@ -6,8 +6,8 @@
 #include <string_view>
 #include <vector>
 
-#include "pipeline/execution/runtime_session/session.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
+#include "pipeline/execution/runtime_session/session.hpp"
 
 namespace ahfl::execution_journal {
 

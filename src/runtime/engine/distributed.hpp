@@ -1,15 +1,15 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <optional>
 #include <chrono>
+#include <optional>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ahfl::runtime {
 
 struct RemoteNodeSpec {
     std::string node_id;
-    std::string endpoint;  // e.g. "grpc://host:port"
+    std::string endpoint; // e.g. "grpc://host:port"
     std::string region;
     int priority = 0;
 };
@@ -35,9 +35,9 @@ struct CheckpointResult {
 };
 
 enum class FailoverStrategy {
-    Retry,          // Retry on same node
-    Reschedule,     // Schedule on different node
-    Abort           // Give up
+    Retry,      // Retry on same node
+    Reschedule, // Schedule on different node
+    Abort       // Give up
 };
 
 struct FailoverPolicy {
@@ -53,24 +53,25 @@ struct RegionConfig {
 };
 
 class DistributedScheduler {
-public:
+  public:
     void add_region(RegionConfig region);
     void set_failover_policy(FailoverPolicy policy);
 
-    [[nodiscard]] StateSnapshot create_snapshot(const std::string& agent_id,
-                                                 const std::string& state,
-                                                 const std::unordered_map<std::string, std::string>& context) const;
+    [[nodiscard]] StateSnapshot
+    create_snapshot(const std::string &agent_id,
+                    const std::string &state,
+                    const std::unordered_map<std::string, std::string> &context) const;
 
-    [[nodiscard]] std::string serialize_snapshot(const StateSnapshot& snapshot) const;
-    [[nodiscard]] std::optional<StateSnapshot> deserialize_snapshot(const std::string& data) const;
+    [[nodiscard]] std::string serialize_snapshot(const StateSnapshot &snapshot) const;
+    [[nodiscard]] std::optional<StateSnapshot> deserialize_snapshot(const std::string &data) const;
 
-    [[nodiscard]] CheckpointResult checkpoint(const StateSnapshot& snapshot) const;
-    [[nodiscard]] std::optional<StateSnapshot> restore(const std::string& checkpoint_id) const;
+    [[nodiscard]] CheckpointResult checkpoint(const StateSnapshot &snapshot) const;
+    [[nodiscard]] std::optional<StateSnapshot> restore(const std::string &checkpoint_id) const;
 
     [[nodiscard]] size_t region_count() const;
     [[nodiscard]] size_t total_node_count() const;
 
-private:
+  private:
     std::vector<RegionConfig> regions_;
     FailoverPolicy failover_policy_;
 };

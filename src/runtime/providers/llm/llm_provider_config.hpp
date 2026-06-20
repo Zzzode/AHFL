@@ -16,31 +16,31 @@ struct SecretProviderConfig {
 
     // Vault / cloud Secret Manager settings.
     std::string address{"http://127.0.0.1:8200"};
-    std::string token;
-    std::string token_env;
+    std::string token{};
+    std::string token_env{};
     std::string mount_path{"secret"};
-    std::string namespace_path;
-    std::string project;
+    std::string namespace_path{};
+    std::string project{};
     std::string version{"latest"};
     int timeout_seconds{5};
     bool verify_tls{true};
 };
 
 struct LLMCapabilityTokenBudget {
-    std::string capability_name;
-    std::optional<int> max_tokens;
-    std::optional<int> max_prompt_tokens;
-    std::optional<int> max_total_tokens;
-    std::optional<double> max_total_cost_usd;
-    std::optional<std::string> policy;
+    std::string capability_name{};
+    std::optional<int> max_tokens{};
+    std::optional<int> max_prompt_tokens{};
+    std::optional<int> max_total_tokens{};
+    std::optional<double> max_total_cost_usd{};
+    std::optional<std::string> policy{};
 };
 
 // LLM service configuration
 struct LLMProviderConfig {
-    std::string endpoint;              // API endpoint, e.g. "https://open.bigmodel.cn/api/paas/v4"
-    std::string model;                 // Model name, e.g. "glm-4"
-    std::string api_key;               // API key, only allowed as a compatibility path
-    std::string api_key_secret;        // Environment variable secret handle, takes precedence over api_key
+    std::string endpoint;       // API endpoint, e.g. "https://open.bigmodel.cn/api/paas/v4"
+    std::string model;          // Model name, e.g. "glm-4"
+    std::string api_key;        // API key, only allowed as a compatibility path
+    std::string api_key_secret; // Environment variable secret handle, takes precedence over api_key
     std::string oauth2_token_secret;   // OAuth2 access token secret handle
     std::string mtls_client_cert_path; // mTLS client certificate path reference
     std::string mtls_client_key_path;  // mTLS client private key path reference

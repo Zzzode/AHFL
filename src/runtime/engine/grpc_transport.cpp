@@ -21,9 +21,12 @@ namespace {
             const auto hi = encoded[i + 1];
             const auto lo = encoded[i + 2];
             auto hex_digit = [](char c) -> int {
-                if (c >= '0' && c <= '9') return c - '0';
-                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                if (c >= '0' && c <= '9')
+                    return c - '0';
+                if (c >= 'a' && c <= 'f')
+                    return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F')
+                    return c - 'A' + 10;
                 return 0;
             };
             decoded += static_cast<char>((hex_digit(hi) << 4) | hex_digit(lo));
@@ -36,7 +39,8 @@ namespace {
 }
 
 [[nodiscard]] bool case_insensitive_equals(const std::string &a, const std::string &b) {
-    if (a.size() != b.size()) return false;
+    if (a.size() != b.size())
+        return false;
     return std::equal(a.begin(), a.end(), b.begin(), [](char lhs, char rhs) {
         return std::tolower(static_cast<unsigned char>(lhs)) ==
                std::tolower(static_cast<unsigned char>(rhs));
