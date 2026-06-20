@@ -12,6 +12,18 @@ namespace {
 
 using namespace ahfl::passes;
 
+[[nodiscard]] ahfl::ir::TypeRef unit_type_ref() {
+    return ahfl::ir::TypeRef{
+        .kind = ahfl::ir::TypeRefKind::Unit,
+        .display_name = "Unit",
+        .canonical_name = {},
+        .string_bounds = {},
+        .decimal_scale = {},
+        .first = nullptr,
+        .second = nullptr,
+    };
+}
+
 class NoOpPass final : public Pass {
   public:
     [[nodiscard]] std::string_view name() const override {
@@ -76,21 +88,9 @@ TEST_CASE("PassManager: modifying pass recomputes derived IR analyses") {
         .final_states = {"Done"},
         .quota = {},
         .transitions = {},
-        .input_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Unit,
-                .display_name = "Unit",
-            },
-        .context_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Unit,
-                .display_name = "Unit",
-            },
-        .output_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Unit,
-                .display_name = "Unit",
-            },
+        .input_type_ref = unit_type_ref(),
+        .context_type_ref = unit_type_ref(),
+        .output_type_ref = unit_type_ref(),
         .capability_refs =
             {
                 ahfl::ir::SymbolRef{

@@ -28,6 +28,20 @@ namespace {
     });
 }
 
+[[nodiscard]] ahfl::ir::TypeRef type_ref(ahfl::ir::TypeRefKind kind,
+                                         std::string display_name,
+                                         std::string canonical_name = {}) {
+    return ahfl::ir::TypeRef{
+        .kind = kind,
+        .display_name = std::move(display_name),
+        .canonical_name = std::move(canonical_name),
+        .string_bounds = {},
+        .decimal_scale = {},
+        .first = nullptr,
+        .second = nullptr,
+    };
+}
+
 class CountingVisitor final : public ahfl::ir::ProgramVisitor {
   public:
     int expression_count{0};
@@ -68,11 +82,7 @@ TEST_CASE("IR identity helpers prefer structured canonical references") {
     CHECK(ahfl::ir::symbol_canonical_name(symbol, "Fallback") == "pkg::Agent");
     CHECK(ahfl::ir::symbol_display_name(symbol, "Fallback") == "Agent");
 
-    const ahfl::ir::TypeRef type{
-        .kind = ahfl::ir::TypeRefKind::Struct,
-        .display_name = "Request",
-        .canonical_name = "pkg::Request",
-    };
+    const auto type = type_ref(ahfl::ir::TypeRefKind::Struct, "Request", "pkg::Request");
     CHECK(ahfl::ir::has_resolved_type(type));
     CHECK(ahfl::ir::type_canonical_name(type, "Fallback") == "pkg::Request");
     CHECK(ahfl::ir::type_display_name(type, "Fallback") == "Request");
@@ -89,22 +99,10 @@ TEST_CASE("ProgramIndex and handoff lowering use SymbolRef canonical names") {
         .quota = {},
         .transitions = {},
         .input_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Struct,
-                .display_name = "LocalRequest",
-                .canonical_name = "pkg::Request",
-            },
-        .context_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Unit,
-                .display_name = "Unit",
-            },
+            type_ref(ahfl::ir::TypeRefKind::Struct, "LocalRequest", "pkg::Request"),
+        .context_type_ref = type_ref(ahfl::ir::TypeRefKind::Unit, "Unit"),
         .output_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Struct,
-                .display_name = "LocalResponse",
-                .canonical_name = "pkg::Response",
-            },
+            type_ref(ahfl::ir::TypeRefKind::Struct, "LocalResponse", "pkg::Response"),
         .capability_refs =
             {
                 ahfl::ir::SymbolRef{
@@ -144,16 +142,8 @@ TEST_CASE("IR visitor and rewriter traverse workflow node inputs") {
         .safety = {},
         .liveness = {},
         .return_value = make_call_expr("ReturnCall"),
-        .input_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Unit,
-                .display_name = "Unit",
-            },
-        .output_type_ref =
-            ahfl::ir::TypeRef{
-                .kind = ahfl::ir::TypeRefKind::Unit,
-                .display_name = "Unit",
-            },
+        .input_type_ref = type_ref(ahfl::ir::TypeRefKind::Unit, "Unit"),
+        .output_type_ref = type_ref(ahfl::ir::TypeRefKind::Unit, "Unit"),
         .symbol_ref = {},
     };
     workflow.nodes.push_back(ahfl::ir::WorkflowNode{
