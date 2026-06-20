@@ -13,6 +13,13 @@ VS Code language support for AHFL (Agent Handoff Flow Language).
 Platform release VSIX packages include the matching release `ahfl-lsp` server
 binary under `server/`.
 
+Extension dependency installation uses pnpm through Corepack:
+
+```bash
+corepack enable
+corepack prepare pnpm@10.10.0 --activate
+```
+
 The default configuration uses the bundled server when present. To override it,
 set:
 
@@ -58,7 +65,7 @@ Run the VS Code extension-host regression after building the LSP server:
 ```bash
 cmake --build --preset build-dev --target ahfl-lsp
 cd tools/vscode
-npm run test:extension
+pnpm run test:extension
 ```
 
 The test opens `tests/integration/check_ok` in a VS Code Extension Development
@@ -77,7 +84,7 @@ Generate and validate a Problems diagnostics transcript:
 
 ```bash
 cd tools/vscode
-npm run test:problems-transcript
+pnpm run test:problems-transcript
 ```
 
 The transcript is written to `tools/vscode/dist/problems-transcript.json` and is
@@ -104,16 +111,16 @@ temporary VS Code profile:
 
 ```bash
 cd tools/vscode
-npm run test:package-inventory
-npm run test:vsix-install
+pnpm run test:package-inventory
+pnpm run test:vsix-install
 ```
 
 For client-only extension development, package from `tools/vscode`:
 
 ```bash
 cd tools/vscode
-npm ci
-npm run package
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run package
 ```
 
 The VSIX is written to:
@@ -143,5 +150,5 @@ Publish the generated platform artifact from `tools/vscode`:
 
 ```bash
 cd tools/vscode
-npm run publish:vsix -- dist/ahfl-language-<version>-<target>.vsix --pat "$VSCE_PAT"
+pnpm run publish:vsix -- dist/ahfl-language-<version>-<target>.vsix --pat "$VSCE_PAT"
 ```

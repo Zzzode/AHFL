@@ -53,7 +53,7 @@ function main() {
   }
 
   const forbiddenPrefixes = ['.vscode/', '.vscode-test/', 'dist/', 'node_modules/', 'src/', 'test/'];
-  const forbiddenFiles = ['package-lock.json', 'tsconfig.json'];
+  const forbiddenFiles = ['package-lock.json', 'pnpm-lock.yaml', 'tsconfig.json'];
   for (const file of files) {
     assert.ok(
       !forbiddenPrefixes.some((prefix) => file.startsWith(prefix)),

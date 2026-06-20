@@ -61,14 +61,19 @@ VSIX_NAME="ahfl-language-${EXTENSION_VERSION}-${TARGET}.vsix"
 (
   cd tools/vscode
   if [[ ! -x node_modules/.bin/vsce ]]; then
-    npm ci --ignore-scripts
+    if ! command -v pnpm >/dev/null 2>&1; then
+      corepack enable
+      corepack prepare pnpm@10.10.0 --activate
+    fi
+    pnpm install --frozen-lockfile --ignore-scripts
     if [[ ! -x node_modules/.bin/vsce ]]; then
       echo "error: VS Code extension dependencies were not installed correctly" >&2
       exit 1
     fi
   fi
   mkdir -p dist
-  npm run package:target -- --target "$TARGET" --out "dist/$VSIX_NAME"
+  pnpm run compile
+  pnpm exec vsce package --no-dependencies --target "$TARGET" --out "dist/$VSIX_NAME"
 )
 
 echo "tools/vscode/dist/$VSIX_NAME"
