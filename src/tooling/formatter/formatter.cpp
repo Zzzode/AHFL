@@ -1,10 +1,12 @@
 #include "tooling/formatter/formatter.hpp"
 
 #include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <sstream>
 #include <string_view>
+#include <variant>
 
 namespace ahfl::formatter {
 
@@ -501,159 +503,162 @@ class AstFormatter {
     }
 
     void format_expr(const ahfl::ast::ExprSyntax &expr) {
-        using Kind = ahfl::ast::ExprSyntaxKind;
-        switch (expr.kind) {
-        case Kind::BoolLiteral:
-            write(expr.bool_value ? "true" : "false");
-            break;
-        case Kind::IntegerLiteral:
-            if (expr.integer_literal) {
-                write(expr.integer_literal->spelling);
-            } else {
-                write(expr.text);
-            }
-            break;
-        case Kind::FloatLiteral:
-        case Kind::DecimalLiteral:
-        case Kind::StringLiteral:
-            write(expr.text);
-            break;
-        case Kind::DurationLiteral:
-            if (expr.duration_literal) {
-                write(expr.duration_literal->spelling);
-            } else {
-                write(expr.text);
-            }
-            break;
-        case Kind::NoneLiteral:
-            write("none");
-            break;
-        case Kind::Some:
-            write("some(");
-            if (expr.first) {
-                format_expr(*expr.first);
-            }
-            write(")");
-            break;
-        case Kind::Path:
-            if (expr.path) {
-                write(expr.path->spelling());
-            }
-            break;
-        case Kind::QualifiedValue:
-            if (expr.qualified_name) {
-                write(expr.qualified_name->spelling());
-            }
-            break;
-        case Kind::Call:
-            if (expr.qualified_name) {
-                write(expr.qualified_name->spelling());
-            }
-            write("(");
-            for (std::size_t i = 0; i < expr.items.size(); ++i) {
-                if (i > 0)
-                    out_ << ", ";
-                if (expr.items[i]) {
-                    format_expr(*expr.items[i]);
+        std::visit(Overloaded{
+            [&](const ahfl::ast::NoneLiteralExpr &) {
+                write("none");
+            },
+            [&](const ahfl::ast::BoolLiteralExpr &e) {
+                write(e.value ? "true" : "false");
+            },
+            [&](const ahfl::ast::IntegerLiteralExpr &e) {
+                if (e.literal) {
+                    write(e.literal->spelling);
+                } else {
+                    write(expr.text);
                 }
-            }
-            write(")");
-            break;
-        case Kind::StructLiteral:
-            if (expr.qualified_name) {
-                write(expr.qualified_name->spelling());
-            }
-            write(" { ");
-            for (std::size_t i = 0; i < expr.struct_fields.size(); ++i) {
-                if (i > 0)
-                    out_ << ", ";
-                const auto &field = expr.struct_fields[i];
-                out_ << field->field_name << ": ";
-                if (field->value) {
-                    format_expr(*field->value);
+            },
+            [&](const ahfl::ast::FloatLiteralExpr &e) {
+                write(e.spelling);
+            },
+            [&](const ahfl::ast::DecimalLiteralExpr &e) {
+                write(e.spelling);
+            },
+            [&](const ahfl::ast::StringLiteralExpr &e) {
+                write(e.spelling);
+            },
+            [&](const ahfl::ast::DurationLiteralExpr &e) {
+                if (e.literal) {
+                    write(e.literal->spelling);
+                } else {
+                    write(expr.text);
                 }
-            }
-            write(" }");
-            break;
-        case Kind::ListLiteral:
-            write("[");
-            for (std::size_t i = 0; i < expr.items.size(); ++i) {
-                if (i > 0)
-                    out_ << ", ";
-                if (expr.items[i]) {
-                    format_expr(*expr.items[i]);
+            },
+            [&](const ahfl::ast::SomeExpr &e) {
+                write("some(");
+                if (e.value) {
+                    format_expr(*e.value);
                 }
-            }
-            write("]");
-            break;
-        case Kind::SetLiteral:
-            write("{");
-            for (std::size_t i = 0; i < expr.items.size(); ++i) {
-                if (i > 0)
-                    out_ << ", ";
-                if (expr.items[i]) {
-                    format_expr(*expr.items[i]);
+                write(")");
+            },
+            [&](const ahfl::ast::PathExpr &e) {
+                if (e.path) {
+                    write(e.path->spelling());
                 }
-            }
-            write("}");
-            break;
-        case Kind::MapLiteral:
-            write("{");
-            for (std::size_t i = 0; i < expr.map_entries.size(); ++i) {
-                if (i > 0)
-                    out_ << ", ";
-                const auto &entry = expr.map_entries[i];
-                if (entry->key) {
-                    format_expr(*entry->key);
+            },
+            [&](const ahfl::ast::QualifiedValueExpr &e) {
+                if (e.name) {
+                    write(e.name->spelling());
                 }
-                out_ << ": ";
-                if (entry->value) {
-                    format_expr(*entry->value);
+            },
+            [&](const ahfl::ast::CallExpr &e) {
+                if (e.callee) {
+                    write(e.callee->spelling());
                 }
-            }
-            write("}");
-            break;
-        case Kind::Unary:
-            format_unary_op(expr.unary_op);
-            if (expr.first) {
-                format_expr(*expr.first);
-            }
-            break;
-        case Kind::Binary:
-            if (expr.first) {
-                format_expr(*expr.first);
-            }
-            out_ << " ";
-            format_binary_op(expr.binary_op);
-            out_ << " ";
-            if (expr.second) {
-                format_expr(*expr.second);
-            }
-            break;
-        case Kind::MemberAccess:
-            if (expr.first) {
-                format_expr(*expr.first);
-            }
-            out_ << "." << expr.name;
-            break;
-        case Kind::IndexAccess:
-            if (expr.first) {
-                format_expr(*expr.first);
-            }
-            write("[");
-            if (expr.second) {
-                format_expr(*expr.second);
-            }
-            write("]");
-            break;
-        case Kind::Group:
-            write("(");
-            if (expr.first) {
-                format_expr(*expr.first);
-            }
-            write(")");
-            break;
-        }
+                write("(");
+                for (std::size_t i = 0; i < e.arguments.size(); ++i) {
+                    if (i > 0)
+                        out_ << ", ";
+                    if (e.arguments[i]) {
+                        format_expr(*e.arguments[i]);
+                    }
+                }
+                write(")");
+            },
+            [&](const ahfl::ast::StructLiteralExpr &e) {
+                if (e.type_name) {
+                    write(e.type_name->spelling());
+                }
+                write(" { ");
+                for (std::size_t i = 0; i < e.fields.size(); ++i) {
+                    if (i > 0)
+                        out_ << ", ";
+                    const auto &field = e.fields[i];
+                    out_ << field->field_name << ": ";
+                    if (field->value) {
+                        format_expr(*field->value);
+                    }
+                }
+                write(" }");
+            },
+            [&](const ahfl::ast::ListLiteralExpr &e) {
+                write("[");
+                for (std::size_t i = 0; i < e.items.size(); ++i) {
+                    if (i > 0)
+                        out_ << ", ";
+                    if (e.items[i]) {
+                        format_expr(*e.items[i]);
+                    }
+                }
+                write("]");
+            },
+            [&](const ahfl::ast::SetLiteralExpr &e) {
+                write("{");
+                for (std::size_t i = 0; i < e.items.size(); ++i) {
+                    if (i > 0)
+                        out_ << ", ";
+                    if (e.items[i]) {
+                        format_expr(*e.items[i]);
+                    }
+                }
+                write("}");
+            },
+            [&](const ahfl::ast::MapLiteralExpr &e) {
+                write("{");
+                for (std::size_t i = 0; i < e.entries.size(); ++i) {
+                    if (i > 0)
+                        out_ << ", ";
+                    const auto &entry = e.entries[i];
+                    if (entry->key) {
+                        format_expr(*entry->key);
+                    }
+                    out_ << ": ";
+                    if (entry->value) {
+                        format_expr(*entry->value);
+                    }
+                }
+                write("}");
+            },
+            [&](const ahfl::ast::UnaryExpr &e) {
+                format_unary_op(e.op);
+                if (e.operand) {
+                    format_expr(*e.operand);
+                }
+            },
+            [&](const ahfl::ast::BinaryExpr &e) {
+                if (e.lhs) {
+                    format_expr(*e.lhs);
+                }
+                out_ << " ";
+                format_binary_op(e.op);
+                out_ << " ";
+                if (e.rhs) {
+                    format_expr(*e.rhs);
+                }
+            },
+            [&](const ahfl::ast::MemberAccessExpr &e) {
+                if (e.base) {
+                    format_expr(*e.base);
+                }
+                out_ << "." << e.member;
+            },
+            [&](const ahfl::ast::IndexAccessExpr &e) {
+                if (e.base) {
+                    format_expr(*e.base);
+                }
+                write("[");
+                if (e.index) {
+                    format_expr(*e.index);
+                }
+                write("]");
+            },
+            [&](const ahfl::ast::GroupExpr &e) {
+                write("(");
+                if (e.inner) {
+                    format_expr(*e.inner);
+                }
+                write(")");
+            },
+        }, expr.node);
     }
 
     void format_unary_op(ahfl::ast::ExprUnaryOp op) {
@@ -720,49 +725,47 @@ class AstFormatter {
     }
 
     void format_temporal_expr(const ahfl::ast::TemporalExprSyntax &expr) {
-        using Kind = ahfl::ast::TemporalExprSyntaxKind;
-        switch (expr.kind) {
-        case Kind::EmbeddedExpr:
-            if (expr.expr) {
-                format_expr(*expr.expr);
-            }
-            break;
-        case Kind::Called:
-            write("called(" + expr.name + ")");
-            break;
-        case Kind::InState:
-            write("in_state(" + expr.name);
-            if (expr.state_name) {
-                out_ << ", " << *expr.state_name;
-            }
-            write(")");
-            break;
-        case Kind::Running:
-            write("running(" + expr.name + ")");
-            break;
-        case Kind::Completed:
-            write("completed(" + expr.name + ")");
-            break;
-        case Kind::Unary: {
-            format_temporal_unary_op(expr.unary_op);
-            write(" ");
-            if (expr.first) {
-                format_temporal_expr(*expr.first);
-            }
-            break;
-        }
-        case Kind::Binary:
-            if (expr.first) {
-                format_temporal_expr(*expr.first);
-            }
-            out_ << " ";
-            format_temporal_binary_op(expr.binary_op);
-            out_ << " ";
-            if (expr.second) {
-                format_temporal_expr(*expr.second);
-            }
-            break;
-        }
+        std::visit(Overloaded{
+            [&](const ahfl::ast::EmbeddedTemporalExpr &e) {
+                if (e.expr) {
+                    format_expr(*e.expr);
+                }
+            },
+            [&](const ahfl::ast::CalledTemporalExpr &e) {
+                write("called(" + e.name + ")");
+            },
+            [&](const ahfl::ast::InStateTemporalExpr &e) {
+                write("in_state(" + e.name + ")");
+            },
+            [&](const ahfl::ast::RunningTemporalExpr &e) {
+                write("running(" + e.name + ")");
+            },
+            [&](const ahfl::ast::CompletedTemporalExpr &e) {
+                write("completed(" + e.name);
+                if (e.state_name) {
+                    out_ << ", " << *e.state_name;
+                }
+                write(")");
+            },
+            [&](const ahfl::ast::UnaryTemporalExpr &e) {
+                format_temporal_unary_op(e.op);
+                write(" ");
+                if (e.operand) {
+                    format_temporal_expr(*e.operand);
+                }
+            },
+            [&](const ahfl::ast::BinaryTemporalExpr &e) {
+                if (e.lhs) {
+                    format_temporal_expr(*e.lhs);
+                }
+                out_ << " ";
+                format_temporal_binary_op(e.op);
+                out_ << " ";
+                if (e.rhs) {
+                    format_temporal_expr(*e.rhs);
+                }
+            },
+        }, expr.node);
     }
 
     void format_temporal_unary_op(ahfl::ast::TemporalUnaryOp op) {
