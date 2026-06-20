@@ -56,12 +56,12 @@ struct SourceGraph {
 };
 
 struct ProjectInput {
-    std::vector<std::filesystem::path> entry_files;
-    std::vector<std::filesystem::path> search_roots;
+    std::vector<std::filesystem::path> entry_files{};
+    std::vector<std::filesystem::path> search_roots{};
     // Normalized absolute path string -> unsaved document text. LSP and other
     // project-aware tooling use this to overlay open editor buffers while
     // reusing the canonical SourceGraph loader.
-    std::unordered_map<std::string, std::string> source_overlays;
+    std::unordered_map<std::string, std::string> source_overlays{};
 };
 
 struct ProjectDescriptor {

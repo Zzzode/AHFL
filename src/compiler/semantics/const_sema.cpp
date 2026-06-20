@@ -22,6 +22,22 @@ namespace ahfl {
 
 namespace {
 
+[[nodiscard]] ConstValue make_const_value(ConstValueKind kind,
+                                          std::string scalar = {},
+                                          std::optional<SymbolId> symbol = std::nullopt) {
+    return ConstValue{
+        .kind = kind,
+        .scalar = std::move(scalar),
+        .symbol = symbol,
+        .child_names = {},
+        .children = {},
+    };
+}
+
+[[nodiscard]] ConstValue make_bool_const(bool value) {
+    return make_const_value(ConstValueKind::Bool, value ? "true" : "false");
+}
+
 [[nodiscard]] std::optional<std::int64_t> parse_int_const(std::string_view text) {
     std::int64_t value = 0;
     const auto *begin = text.data();
@@ -276,83 +292,80 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
 }
 
 [[nodiscard]] bool is_const_expr_syntax(const ast::ExprSyntax &expr, std::string_view &reason) {
-    return std::visit(Overloaded{
-        [](const ast::NoneLiteralExpr &) { return true; },
-        [](const ast::BoolLiteralExpr &) { return true; },
-        [](const ast::IntegerLiteralExpr &) { return true; },
-        [](const ast::FloatLiteralExpr &) { return true; },
-        [](const ast::DecimalLiteralExpr &) { return true; },
-        [](const ast::StringLiteralExpr &) { return true; },
-        [](const ast::DurationLiteralExpr &) { return true; },
-        [](const ast::QualifiedValueExpr &) { return true; },
-        [&reason](const ast::SomeExpr &e) {
-            return is_const_expr_syntax(*e.value, reason);
-        },
-        [&reason](const ast::GroupExpr &e) {
-            return is_const_expr_syntax(*e.inner, reason);
-        },
-        [&reason](const ast::StructLiteralExpr &e) {
-            for (const auto &field : e.fields) {
-                if (!is_const_expr_syntax(*field->value, reason)) {
-                    return false;
+    return std::visit(
+        Overloaded{
+            [](const ast::NoneLiteralExpr &) { return true; },
+            [](const ast::BoolLiteralExpr &) { return true; },
+            [](const ast::IntegerLiteralExpr &) { return true; },
+            [](const ast::FloatLiteralExpr &) { return true; },
+            [](const ast::DecimalLiteralExpr &) { return true; },
+            [](const ast::StringLiteralExpr &) { return true; },
+            [](const ast::DurationLiteralExpr &) { return true; },
+            [](const ast::QualifiedValueExpr &) { return true; },
+            [&reason](const ast::SomeExpr &e) { return is_const_expr_syntax(*e.value, reason); },
+            [&reason](const ast::GroupExpr &e) { return is_const_expr_syntax(*e.inner, reason); },
+            [&reason](const ast::StructLiteralExpr &e) {
+                for (const auto &field : e.fields) {
+                    if (!is_const_expr_syntax(*field->value, reason)) {
+                        return false;
+                    }
                 }
-            }
-            return true;
-        },
-        [&reason](const ast::ListLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (!is_const_expr_syntax(*item, reason)) {
-                    return false;
+                return true;
+            },
+            [&reason](const ast::ListLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    if (!is_const_expr_syntax(*item, reason)) {
+                        return false;
+                    }
                 }
-            }
-            return true;
-        },
-        [&reason](const ast::SetLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (!is_const_expr_syntax(*item, reason)) {
-                    return false;
+                return true;
+            },
+            [&reason](const ast::SetLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    if (!is_const_expr_syntax(*item, reason)) {
+                        return false;
+                    }
                 }
-            }
-            return true;
-        },
-        [&reason](const ast::MapLiteralExpr &e) {
-            for (const auto &entry : e.entries) {
-                if (!is_const_expr_syntax(*entry->key, reason) ||
-                    !is_const_expr_syntax(*entry->value, reason)) {
-                    return false;
+                return true;
+            },
+            [&reason](const ast::MapLiteralExpr &e) {
+                for (const auto &entry : e.entries) {
+                    if (!is_const_expr_syntax(*entry->key, reason) ||
+                        !is_const_expr_syntax(*entry->value, reason)) {
+                        return false;
+                    }
                 }
-            }
-            return true;
+                return true;
+            },
+            [&reason](const ast::MemberAccessExpr &e) {
+                return is_const_expr_syntax(*e.base, reason);
+            },
+            [&reason](const ast::IndexAccessExpr &e) {
+                return is_const_expr_syntax(*e.base, reason) &&
+                       is_const_expr_syntax(*e.index, reason);
+            },
+            [&reason](const ast::UnaryExpr &e) {
+                // Pure unary operators (!, -, +) over constant operands are themselves
+                // constants. The full type-check pass still validates the operator
+                // applies to the operand kind; we only relax the syntactic gate.
+                return is_const_expr_syntax(*e.operand, reason);
+            },
+            [&reason](const ast::BinaryExpr &e) {
+                // Same rationale as Unary: arithmetic/logical/comparison operators
+                // applied to constant operands fold to a constant. Type errors are
+                // still surfaced by check_binary_expr.
+                return is_const_expr_syntax(*e.lhs, reason) && is_const_expr_syntax(*e.rhs, reason);
+            },
+            [&reason](const ast::PathExpr &) {
+                reason = "runtime path references are not compile-time constants";
+                return false;
+            },
+            [&reason](const ast::CallExpr &) {
+                reason = "capability and predicate calls are not compile-time constants";
+                return false;
+            },
         },
-        [&reason](const ast::MemberAccessExpr &e) {
-            return is_const_expr_syntax(*e.base, reason);
-        },
-        [&reason](const ast::IndexAccessExpr &e) {
-            return is_const_expr_syntax(*e.base, reason) &&
-                   is_const_expr_syntax(*e.index, reason);
-        },
-        [&reason](const ast::UnaryExpr &e) {
-            // Pure unary operators (!, -, +) over constant operands are themselves
-            // constants. The full type-check pass still validates the operator
-            // applies to the operand kind; we only relax the syntactic gate.
-            return is_const_expr_syntax(*e.operand, reason);
-        },
-        [&reason](const ast::BinaryExpr &e) {
-            // Same rationale as Unary: arithmetic/logical/comparison operators
-            // applied to constant operands fold to a constant. Type errors are
-            // still surfaced by check_binary_expr.
-            return is_const_expr_syntax(*e.lhs, reason) &&
-                   is_const_expr_syntax(*e.rhs, reason);
-        },
-        [&reason](const ast::PathExpr &) {
-            reason = "runtime path references are not compile-time constants";
-            return false;
-        },
-        [&reason](const ast::CallExpr &) {
-            reason = "capability and predicate calls are not compile-time constants";
-            return false;
-        },
-    }, expr.node);
+        expr.node);
 }
 
 [[nodiscard]] bool is_const_error_type(const Type &type) noexcept {
@@ -630,10 +643,9 @@ const ConstValue &effective_const_value(const ConstValue &value) {
 
 ConstValue duration_const_value(std::string_view text) {
     if (const auto milliseconds = parse_duration_milliseconds(text); milliseconds.has_value()) {
-        return ConstValue{.kind = ConstValueKind::Duration,
-                          .scalar = std::to_string(*milliseconds) + "ms"};
+        return make_const_value(ConstValueKind::Duration, std::to_string(*milliseconds) + "ms");
     }
-    return ConstValue{.kind = ConstValueKind::Duration, .scalar = std::string{text}};
+    return make_const_value(ConstValueKind::Duration, std::string{text});
 }
 
 bool const_values_equal(const ConstValue &lhs, const ConstValue &rhs) {
@@ -720,8 +732,7 @@ std::optional<ConstValue> fold_unary_const(ast::ExprUnaryOp op, const ConstValue
     switch (op) {
     case ast::ExprUnaryOp::Not:
         if (const auto bool_value = parse_bool_const(value); bool_value.has_value()) {
-            return ConstValue{.kind = ConstValueKind::Bool,
-                              .scalar = *bool_value ? "false" : "true"};
+            return make_bool_const(!*bool_value);
         }
         break;
     case ast::ExprUnaryOp::Positive:
@@ -733,21 +744,18 @@ std::optional<ConstValue> fold_unary_const(ast::ExprUnaryOp op, const ConstValue
     case ast::ExprUnaryOp::Negate:
         if (value.kind == ConstValueKind::Integer) {
             if (const auto int_value = parse_int_const(value.scalar); int_value.has_value()) {
-                return ConstValue{.kind = ConstValueKind::Integer,
-                                  .scalar = std::to_string(-*int_value)};
+                return make_const_value(ConstValueKind::Integer, std::to_string(-*int_value));
             }
         }
         if (value.kind == ConstValueKind::Float) {
             if (const auto float_value = parse_float_const(value.scalar); float_value.has_value()) {
-                return ConstValue{.kind = ConstValueKind::Float,
-                                  .scalar = render_float_const(-*float_value)};
+                return make_const_value(ConstValueKind::Float, render_float_const(-*float_value));
             }
         }
         if (value.kind == ConstValueKind::Decimal) {
             if (auto decimal = parse_decimal_const(value.scalar); decimal.has_value()) {
                 decimal->units = -decimal->units;
-                return ConstValue{.kind = ConstValueKind::Decimal,
-                                  .scalar = render_decimal_const(*decimal)};
+                return make_const_value(ConstValueKind::Decimal, render_decimal_const(*decimal));
             }
         }
         break;
@@ -776,7 +784,7 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
         } else {
             result = !*left_bool || *right_bool;
         }
-        return ConstValue{.kind = ConstValueKind::Bool, .scalar = result ? "true" : "false"};
+        return make_bool_const(result);
     }
     case ast::ExprBinaryOp::Equal:
     case ast::ExprBinaryOp::NotEqual: {
@@ -789,7 +797,7 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
             }
         }
         const bool result = op == ast::ExprBinaryOp::Equal ? equal : !equal;
-        return ConstValue{.kind = ConstValueKind::Bool, .scalar = result ? "true" : "false"};
+        return make_bool_const(result);
     }
     case ast::ExprBinaryOp::Add:
     case ast::ExprBinaryOp::Subtract:
@@ -808,17 +816,13 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
             }
             switch (op) {
             case ast::ExprBinaryOp::Less:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_duration < *right_duration ? "true" : "false"};
+                return make_bool_const(*left_duration < *right_duration);
             case ast::ExprBinaryOp::LessEqual:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_duration <= *right_duration ? "true" : "false"};
+                return make_bool_const(*left_duration <= *right_duration);
             case ast::ExprBinaryOp::Greater:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_duration > *right_duration ? "true" : "false"};
+                return make_bool_const(*left_duration > *right_duration);
             case ast::ExprBinaryOp::GreaterEqual:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_duration >= *right_duration ? "true" : "false"};
+                return make_bool_const(*left_duration >= *right_duration);
             case ast::ExprBinaryOp::And:
             case ast::ExprBinaryOp::Or:
             case ast::ExprBinaryOp::Implies:
@@ -836,7 +840,7 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
             right.kind == ConstValueKind::String) {
             if (auto concatenated = concatenate_string_const(left.scalar, right.scalar);
                 concatenated.has_value()) {
-                return ConstValue{.kind = ConstValueKind::String, .scalar = *concatenated};
+                return make_const_value(ConstValueKind::String, *concatenated);
             }
         }
         if (left.kind == ConstValueKind::Float && right.kind == ConstValueKind::Float &&
@@ -848,32 +852,28 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
             }
             switch (op) {
             case ast::ExprBinaryOp::Add:
-                return ConstValue{.kind = ConstValueKind::Float,
-                                  .scalar = render_float_const(*left_float + *right_float)};
+                return make_const_value(ConstValueKind::Float,
+                                        render_float_const(*left_float + *right_float));
             case ast::ExprBinaryOp::Subtract:
-                return ConstValue{.kind = ConstValueKind::Float,
-                                  .scalar = render_float_const(*left_float - *right_float)};
+                return make_const_value(ConstValueKind::Float,
+                                        render_float_const(*left_float - *right_float));
             case ast::ExprBinaryOp::Multiply:
-                return ConstValue{.kind = ConstValueKind::Float,
-                                  .scalar = render_float_const(*left_float * *right_float)};
+                return make_const_value(ConstValueKind::Float,
+                                        render_float_const(*left_float * *right_float));
             case ast::ExprBinaryOp::Divide:
                 if (*right_float == 0.0L) {
                     return std::nullopt;
                 }
-                return ConstValue{.kind = ConstValueKind::Float,
-                                  .scalar = render_float_const(*left_float / *right_float)};
+                return make_const_value(ConstValueKind::Float,
+                                        render_float_const(*left_float / *right_float));
             case ast::ExprBinaryOp::Less:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_float < *right_float ? "true" : "false"};
+                return make_bool_const(*left_float < *right_float);
             case ast::ExprBinaryOp::LessEqual:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_float <= *right_float ? "true" : "false"};
+                return make_bool_const(*left_float <= *right_float);
             case ast::ExprBinaryOp::Greater:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_float > *right_float ? "true" : "false"};
+                return make_bool_const(*left_float > *right_float);
             case ast::ExprBinaryOp::GreaterEqual:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = *left_float >= *right_float ? "true" : "false"};
+                return make_bool_const(*left_float >= *right_float);
             case ast::ExprBinaryOp::And:
             case ast::ExprBinaryOp::Or:
             case ast::ExprBinaryOp::Implies:
@@ -894,33 +894,25 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
             }
             switch (op) {
             case ast::ExprBinaryOp::Add:
-                return ConstValue{.kind = ConstValueKind::Decimal,
-                                  .scalar = render_decimal_const(DecimalConst{
-                                      .units = left_decimal->units + right_decimal->units,
-                                      .scale = left_decimal->scale,
-                                  })};
+                return make_const_value(ConstValueKind::Decimal,
+                                        render_decimal_const(DecimalConst{
+                                            .units = left_decimal->units + right_decimal->units,
+                                            .scale = left_decimal->scale,
+                                        }));
             case ast::ExprBinaryOp::Subtract:
-                return ConstValue{.kind = ConstValueKind::Decimal,
-                                  .scalar = render_decimal_const(DecimalConst{
-                                      .units = left_decimal->units - right_decimal->units,
-                                      .scale = left_decimal->scale,
-                                  })};
+                return make_const_value(ConstValueKind::Decimal,
+                                        render_decimal_const(DecimalConst{
+                                            .units = left_decimal->units - right_decimal->units,
+                                            .scale = left_decimal->scale,
+                                        }));
             case ast::ExprBinaryOp::Less:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = left_decimal->units < right_decimal->units ? "true"
-                                                                                       : "false"};
+                return make_bool_const(left_decimal->units < right_decimal->units);
             case ast::ExprBinaryOp::LessEqual:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = left_decimal->units <= right_decimal->units ? "true"
-                                                                                        : "false"};
+                return make_bool_const(left_decimal->units <= right_decimal->units);
             case ast::ExprBinaryOp::Greater:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = left_decimal->units > right_decimal->units ? "true"
-                                                                                       : "false"};
+                return make_bool_const(left_decimal->units > right_decimal->units);
             case ast::ExprBinaryOp::GreaterEqual:
-                return ConstValue{.kind = ConstValueKind::Bool,
-                                  .scalar = left_decimal->units >= right_decimal->units ? "true"
-                                                                                        : "false"};
+                return make_bool_const(left_decimal->units >= right_decimal->units);
             case ast::ExprBinaryOp::And:
             case ast::ExprBinaryOp::Or:
             case ast::ExprBinaryOp::Implies:
@@ -942,38 +934,34 @@ fold_binary_const(ast::ExprBinaryOp op, const ConstValue &lhs, const ConstValue 
         }
         switch (op) {
         case ast::ExprBinaryOp::Add:
-            return ConstValue{.kind = ConstValueKind::Integer,
-                              .scalar = std::to_string(*left_int + *right_int)};
+            return make_const_value(ConstValueKind::Integer,
+                                    std::to_string(*left_int + *right_int));
         case ast::ExprBinaryOp::Subtract:
-            return ConstValue{.kind = ConstValueKind::Integer,
-                              .scalar = std::to_string(*left_int - *right_int)};
+            return make_const_value(ConstValueKind::Integer,
+                                    std::to_string(*left_int - *right_int));
         case ast::ExprBinaryOp::Multiply:
-            return ConstValue{.kind = ConstValueKind::Integer,
-                              .scalar = std::to_string(*left_int * *right_int)};
+            return make_const_value(ConstValueKind::Integer,
+                                    std::to_string(*left_int * *right_int));
         case ast::ExprBinaryOp::Divide:
             if (*right_int == 0) {
                 return std::nullopt;
             }
-            return ConstValue{.kind = ConstValueKind::Integer,
-                              .scalar = std::to_string(*left_int / *right_int)};
+            return make_const_value(ConstValueKind::Integer,
+                                    std::to_string(*left_int / *right_int));
         case ast::ExprBinaryOp::Modulo:
             if (*right_int == 0) {
                 return std::nullopt;
             }
-            return ConstValue{.kind = ConstValueKind::Integer,
-                              .scalar = std::to_string(*left_int % *right_int)};
+            return make_const_value(ConstValueKind::Integer,
+                                    std::to_string(*left_int % *right_int));
         case ast::ExprBinaryOp::Less:
-            return ConstValue{.kind = ConstValueKind::Bool,
-                              .scalar = *left_int < *right_int ? "true" : "false"};
+            return make_bool_const(*left_int < *right_int);
         case ast::ExprBinaryOp::LessEqual:
-            return ConstValue{.kind = ConstValueKind::Bool,
-                              .scalar = *left_int <= *right_int ? "true" : "false"};
+            return make_bool_const(*left_int <= *right_int);
         case ast::ExprBinaryOp::Greater:
-            return ConstValue{.kind = ConstValueKind::Bool,
-                              .scalar = *left_int > *right_int ? "true" : "false"};
+            return make_bool_const(*left_int > *right_int);
         case ast::ExprBinaryOp::GreaterEqual:
-            return ConstValue{.kind = ConstValueKind::Bool,
-                              .scalar = *left_int >= *right_int ? "true" : "false"};
+            return make_bool_const(*left_int >= *right_int);
         case ast::ExprBinaryOp::And:
         case ast::ExprBinaryOp::Or:
         case ast::ExprBinaryOp::Implies:
@@ -1035,215 +1023,206 @@ ConstEvaluator::ConstEvaluator(const ResolveResult &resolve_result,
     : resolve_result_(resolve_result), source_id_(source_id), const_values_(const_values) {}
 
 std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) const {
-    return std::visit(Overloaded{
-        [](const ast::NoneLiteralExpr &) -> std::optional<ConstValue> {
-            return ConstValue{.kind = ConstValueKind::NoneLiteral, .scalar = "none"};
-        },
-        [](const ast::BoolLiteralExpr &e) -> std::optional<ConstValue> {
-            return ConstValue{.kind = ConstValueKind::Bool,
-                              .scalar = e.value ? "true" : "false"};
-        },
-        [](const ast::IntegerLiteralExpr &e) -> std::optional<ConstValue> {
-            return ConstValue{.kind = ConstValueKind::Integer, .scalar = e.literal->spelling};
-        },
-        [](const ast::FloatLiteralExpr &e) -> std::optional<ConstValue> {
-            return ConstValue{.kind = ConstValueKind::Float, .scalar = e.spelling};
-        },
-        [](const ast::DecimalLiteralExpr &e) -> std::optional<ConstValue> {
-            return ConstValue{.kind = ConstValueKind::Decimal, .scalar = e.spelling};
-        },
-        [](const ast::StringLiteralExpr &e) -> std::optional<ConstValue> {
-            return ConstValue{.kind = ConstValueKind::String, .scalar = e.spelling};
-        },
-        [](const ast::DurationLiteralExpr &e) -> std::optional<ConstValue> {
-            return duration_const_value(e.literal->spelling);
-        },
-        [this](const ast::QualifiedValueExpr &e) -> std::optional<ConstValue> {
-            if (e.name == nullptr) {
+    return std::visit(
+        Overloaded{
+            [](const ast::NoneLiteralExpr &) -> std::optional<ConstValue> {
+                return make_const_value(ConstValueKind::NoneLiteral, "none");
+            },
+            [](const ast::BoolLiteralExpr &e) -> std::optional<ConstValue> {
+                return make_bool_const(e.value);
+            },
+            [](const ast::IntegerLiteralExpr &e) -> std::optional<ConstValue> {
+                return make_const_value(ConstValueKind::Integer, e.literal->spelling);
+            },
+            [](const ast::FloatLiteralExpr &e) -> std::optional<ConstValue> {
+                return make_const_value(ConstValueKind::Float, e.spelling);
+            },
+            [](const ast::DecimalLiteralExpr &e) -> std::optional<ConstValue> {
+                return make_const_value(ConstValueKind::Decimal, e.spelling);
+            },
+            [](const ast::StringLiteralExpr &e) -> std::optional<ConstValue> {
+                return make_const_value(ConstValueKind::String, e.spelling);
+            },
+            [](const ast::DurationLiteralExpr &e) -> std::optional<ConstValue> {
+                return duration_const_value(e.literal->spelling);
+            },
+            [this](const ast::QualifiedValueExpr &e) -> std::optional<ConstValue> {
+                if (e.name == nullptr) {
+                    return std::nullopt;
+                }
+                if (const auto reference = resolve_result_.find_reference(
+                        ReferenceKind::ConstValue, e.name->range, source_id_);
+                    reference.has_value()) {
+                    auto value = make_const_value(ConstValueKind::ConstReference,
+                                                  e.name->spelling(),
+                                                  reference->get().target);
+                    if (const auto iter = const_values_.find(reference->get().target.value);
+                        iter != const_values_.end()) {
+                        add_const_child(value, "value", iter->second);
+                    }
+                    return value;
+                }
+                if (const auto reference = resolve_result_.find_reference(
+                        ReferenceKind::QualifiedValueOwnerType, e.name->range, source_id_);
+                    reference.has_value()) {
+                    return make_const_value(
+                        ConstValueKind::EnumVariant, e.name->spelling(), reference->get().target);
+                }
                 return std::nullopt;
-            }
-            if (const auto reference = resolve_result_.find_reference(
-                    ReferenceKind::ConstValue, e.name->range, source_id_);
-                reference.has_value()) {
-                ConstValue value{
-                    .kind = ConstValueKind::ConstReference,
-                    .scalar = e.name->spelling(),
-                    .symbol = reference->get().target,
-                };
-                if (const auto iter = const_values_.find(reference->get().target.value);
-                    iter != const_values_.end()) {
-                    add_const_child(value, "value", iter->second);
+            },
+            [this](const ast::SomeExpr &e) -> std::optional<ConstValue> {
+                if (!e.value) {
+                    return std::nullopt;
+                }
+                auto child = evaluate(*e.value);
+                if (!child.has_value()) {
+                    return std::nullopt;
+                }
+                auto value = make_const_value(ConstValueKind::Some, "some");
+                add_const_child(value, "value", std::move(*child));
+                return value;
+            },
+            [this, &expr](const ast::StructLiteralExpr &e) -> std::optional<ConstValue> {
+                auto value =
+                    make_const_value(ConstValueKind::Struct,
+                                     e.type_name ? e.type_name->spelling() : std::string{},
+                                     const_struct_symbol_for(expr, resolve_result_, source_id_));
+                for (const auto &field : e.fields) {
+                    if (field == nullptr || field->value == nullptr) {
+                        return std::nullopt;
+                    }
+                    auto child = evaluate(*field->value);
+                    if (!child.has_value()) {
+                        return std::nullopt;
+                    }
+                    add_const_child(value, field->field_name, std::move(*child));
                 }
                 return value;
-            }
-            if (const auto reference = resolve_result_.find_reference(
-                    ReferenceKind::QualifiedValueOwnerType, e.name->range, source_id_);
-                reference.has_value()) {
-                return ConstValue{
-                    .kind = ConstValueKind::EnumVariant,
-                    .scalar = e.name->spelling(),
-                    .symbol = reference->get().target,
-                };
-            }
-            return std::nullopt;
-        },
-        [this](const ast::SomeExpr &e) -> std::optional<ConstValue> {
-            if (!e.value) {
-                return std::nullopt;
-            }
-            auto child = evaluate(*e.value);
-            if (!child.has_value()) {
-                return std::nullopt;
-            }
-            ConstValue value{.kind = ConstValueKind::Some, .scalar = "some"};
-            add_const_child(value, "value", std::move(*child));
-            return value;
-        },
-        [this, &expr](const ast::StructLiteralExpr &e) -> std::optional<ConstValue> {
-            ConstValue value{
-                .kind = ConstValueKind::Struct,
-                .scalar = e.type_name ? e.type_name->spelling() : std::string{},
-                .symbol = const_struct_symbol_for(expr, resolve_result_, source_id_),
-            };
-            for (const auto &field : e.fields) {
-                if (field == nullptr || field->value == nullptr) {
+            },
+            [this](const ast::ListLiteralExpr &e) -> std::optional<ConstValue> {
+                auto value = make_const_value(ConstValueKind::List);
+                for (const auto &item : e.items) {
+                    if (item == nullptr) {
+                        return std::nullopt;
+                    }
+                    auto child = evaluate(*item);
+                    if (!child.has_value()) {
+                        return std::nullopt;
+                    }
+                    add_const_child(value, "", std::move(*child));
+                }
+                return value;
+            },
+            [this](const ast::SetLiteralExpr &e) -> std::optional<ConstValue> {
+                auto value = make_const_value(ConstValueKind::Set);
+                for (const auto &item : e.items) {
+                    if (item == nullptr) {
+                        return std::nullopt;
+                    }
+                    auto child = evaluate(*item);
+                    if (!child.has_value()) {
+                        return std::nullopt;
+                    }
+                    add_const_child(value, "", std::move(*child));
+                }
+                normalize_set_const_value(value);
+                return value;
+            },
+            [this](const ast::MapLiteralExpr &e) -> std::optional<ConstValue> {
+                auto value = make_const_value(ConstValueKind::Map);
+                for (const auto &entry : e.entries) {
+                    if (entry == nullptr || entry->key == nullptr || entry->value == nullptr) {
+                        return std::nullopt;
+                    }
+                    auto key = evaluate(*entry->key);
+                    auto map_value = evaluate(*entry->value);
+                    if (!key.has_value() || !map_value.has_value()) {
+                        return std::nullopt;
+                    }
+                    add_const_child(value, "key", std::move(*key));
+                    add_const_child(value, "value", std::move(*map_value));
+                }
+                normalize_map_const_value(value);
+                return value;
+            },
+            [this](const ast::UnaryExpr &e) -> std::optional<ConstValue> {
+                if (!e.operand) {
                     return std::nullopt;
                 }
-                auto child = evaluate(*field->value);
+                auto child = evaluate(*e.operand);
                 if (!child.has_value()) {
                     return std::nullopt;
                 }
-                add_const_child(value, field->field_name, std::move(*child));
-            }
-            return value;
-        },
-        [this](const ast::ListLiteralExpr &e) -> std::optional<ConstValue> {
-            ConstValue value{.kind = ConstValueKind::List};
-            for (const auto &item : e.items) {
-                if (item == nullptr) {
+                if (auto folded = fold_unary_const(e.op, *child); folded.has_value()) {
+                    return folded;
+                }
+                auto value = make_const_value(ConstValueKind::Unary,
+                                              e.op == ast::ExprUnaryOp::Not      ? "!"
+                                              : e.op == ast::ExprUnaryOp::Negate ? "-"
+                                                                                 : "+");
+                add_const_child(value, "operand", std::move(*child));
+                return value;
+            },
+            [this](const ast::BinaryExpr &e) -> std::optional<ConstValue> {
+                if (!e.lhs || !e.rhs) {
                     return std::nullopt;
                 }
-                auto child = evaluate(*item);
-                if (!child.has_value()) {
+                auto lhs = evaluate(*e.lhs);
+                auto rhs = evaluate(*e.rhs);
+                if (!lhs.has_value() || !rhs.has_value()) {
                     return std::nullopt;
                 }
-                add_const_child(value, "", std::move(*child));
-            }
-            return value;
-        },
-        [this](const ast::SetLiteralExpr &e) -> std::optional<ConstValue> {
-            ConstValue value{.kind = ConstValueKind::Set};
-            for (const auto &item : e.items) {
-                if (item == nullptr) {
+                if (auto folded = fold_binary_const(e.op, *lhs, *rhs); folded.has_value()) {
+                    return folded;
+                }
+                auto value = make_const_value(ConstValueKind::Binary,
+                                              std::string(const_binary_op_spelling(e.op)));
+                add_const_child(value, "lhs", std::move(*lhs));
+                add_const_child(value, "rhs", std::move(*rhs));
+                return value;
+            },
+            [this](const ast::MemberAccessExpr &e) -> std::optional<ConstValue> {
+                if (!e.base) {
                     return std::nullopt;
                 }
-                auto child = evaluate(*item);
-                if (!child.has_value()) {
+                auto base = evaluate(*e.base);
+                if (!base.has_value()) {
                     return std::nullopt;
                 }
-                add_const_child(value, "", std::move(*child));
-            }
-            normalize_set_const_value(value);
-            return value;
-        },
-        [this](const ast::MapLiteralExpr &e) -> std::optional<ConstValue> {
-            ConstValue value{.kind = ConstValueKind::Map};
-            for (const auto &entry : e.entries) {
-                if (entry == nullptr || entry->key == nullptr || entry->value == nullptr) {
+                if (auto folded = fold_member_const(*base, e.member); folded.has_value()) {
+                    return folded;
+                }
+                auto value = make_const_value(ConstValueKind::MemberAccess, e.member);
+                add_const_child(value, "base", std::move(*base));
+                return value;
+            },
+            [this](const ast::IndexAccessExpr &e) -> std::optional<ConstValue> {
+                if (!e.base || !e.index) {
                     return std::nullopt;
                 }
-                auto key = evaluate(*entry->key);
-                auto map_value = evaluate(*entry->value);
-                if (!key.has_value() || !map_value.has_value()) {
+                auto base = evaluate(*e.base);
+                auto index = evaluate(*e.index);
+                if (!base.has_value() || !index.has_value()) {
                     return std::nullopt;
                 }
-                add_const_child(value, "key", std::move(*key));
-                add_const_child(value, "value", std::move(*map_value));
-            }
-            normalize_map_const_value(value);
-            return value;
+                if (auto folded = fold_index_const(*base, *index); folded.has_value()) {
+                    return folded;
+                }
+                auto value = make_const_value(ConstValueKind::IndexAccess);
+                add_const_child(value, "base", std::move(*base));
+                add_const_child(value, "index", std::move(*index));
+                return value;
+            },
+            [this](const ast::GroupExpr &e) -> std::optional<ConstValue> {
+                if (!e.inner) {
+                    return std::nullopt;
+                }
+                return evaluate(*e.inner);
+            },
+            [](const ast::PathExpr &) -> std::optional<ConstValue> { return std::nullopt; },
+            [](const ast::CallExpr &) -> std::optional<ConstValue> { return std::nullopt; },
         },
-        [this](const ast::UnaryExpr &e) -> std::optional<ConstValue> {
-            if (!e.operand) {
-                return std::nullopt;
-            }
-            auto child = evaluate(*e.operand);
-            if (!child.has_value()) {
-                return std::nullopt;
-            }
-            if (auto folded = fold_unary_const(e.op, *child); folded.has_value()) {
-                return folded;
-            }
-            ConstValue value{.kind = ConstValueKind::Unary,
-                             .scalar = e.op == ast::ExprUnaryOp::Not      ? "!"
-                                       : e.op == ast::ExprUnaryOp::Negate ? "-"
-                                                                          : "+"};
-            add_const_child(value, "operand", std::move(*child));
-            return value;
-        },
-        [this](const ast::BinaryExpr &e) -> std::optional<ConstValue> {
-            if (!e.lhs || !e.rhs) {
-                return std::nullopt;
-            }
-            auto lhs = evaluate(*e.lhs);
-            auto rhs = evaluate(*e.rhs);
-            if (!lhs.has_value() || !rhs.has_value()) {
-                return std::nullopt;
-            }
-            if (auto folded = fold_binary_const(e.op, *lhs, *rhs); folded.has_value()) {
-                return folded;
-            }
-            ConstValue value{.kind = ConstValueKind::Binary,
-                             .scalar = std::string(const_binary_op_spelling(e.op))};
-            add_const_child(value, "lhs", std::move(*lhs));
-            add_const_child(value, "rhs", std::move(*rhs));
-            return value;
-        },
-        [this](const ast::MemberAccessExpr &e) -> std::optional<ConstValue> {
-            if (!e.base) {
-                return std::nullopt;
-            }
-            auto base = evaluate(*e.base);
-            if (!base.has_value()) {
-                return std::nullopt;
-            }
-            if (auto folded = fold_member_const(*base, e.member); folded.has_value()) {
-                return folded;
-            }
-            ConstValue value{.kind = ConstValueKind::MemberAccess, .scalar = e.member};
-            add_const_child(value, "base", std::move(*base));
-            return value;
-        },
-        [this](const ast::IndexAccessExpr &e) -> std::optional<ConstValue> {
-            if (!e.base || !e.index) {
-                return std::nullopt;
-            }
-            auto base = evaluate(*e.base);
-            auto index = evaluate(*e.index);
-            if (!base.has_value() || !index.has_value()) {
-                return std::nullopt;
-            }
-            if (auto folded = fold_index_const(*base, *index); folded.has_value()) {
-                return folded;
-            }
-            ConstValue value{.kind = ConstValueKind::IndexAccess};
-            add_const_child(value, "base", std::move(*base));
-            add_const_child(value, "index", std::move(*index));
-            return value;
-        },
-        [this](const ast::GroupExpr &e) -> std::optional<ConstValue> {
-            if (!e.inner) {
-                return std::nullopt;
-            }
-            return evaluate(*e.inner);
-        },
-        [](const ast::PathExpr &) -> std::optional<ConstValue> {
-            return std::nullopt;
-        },
-        [](const ast::CallExpr &) -> std::optional<ConstValue> {
-            return std::nullopt;
-        },
-    }, expr.node);
+        expr.node);
 }
 
 ConstValueTreeRecorder::ConstValueTreeRecorder(
@@ -1270,77 +1249,78 @@ void ConstValueTreeRecorder::record(const ast::ExprSyntax &expr) const {
 
 void ConstValueTreeRecorder::record_children(const ast::ExprSyntax &expr) const {
     std::visit(Overloaded{
-        [this](const ast::SomeExpr &e) {
-            if (e.value != nullptr) {
-                record(*e.value);
-            }
-        },
-        [this](const ast::UnaryExpr &e) {
-            if (e.operand != nullptr) {
-                record(*e.operand);
-            }
-        },
-        [this](const ast::MemberAccessExpr &e) {
-            if (e.base != nullptr) {
-                record(*e.base);
-            }
-        },
-        [this](const ast::GroupExpr &e) {
-            if (e.inner != nullptr) {
-                record(*e.inner);
-            }
-        },
-        [this](const ast::BinaryExpr &e) {
-            if (e.lhs != nullptr) {
-                record(*e.lhs);
-            }
-            if (e.rhs != nullptr) {
-                record(*e.rhs);
-            }
-        },
-        [this](const ast::IndexAccessExpr &e) {
-            if (e.base != nullptr) {
-                record(*e.base);
-            }
-            if (e.index != nullptr) {
-                record(*e.index);
-            }
-        },
-        [this](const ast::StructLiteralExpr &e) {
-            for (const auto &field : e.fields) {
-                if (field != nullptr && field->value != nullptr) {
-                    record(*field->value);
-                }
-            }
-        },
-        [this](const ast::ListLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (item != nullptr) {
-                    record(*item);
-                }
-            }
-        },
-        [this](const ast::SetLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (item != nullptr) {
-                    record(*item);
-                }
-            }
-        },
-        [this](const ast::MapLiteralExpr &e) {
-            for (const auto &entry : e.entries) {
-                if (entry != nullptr && entry->key != nullptr) {
-                    record(*entry->key);
-                }
-                if (entry != nullptr && entry->value != nullptr) {
-                    record(*entry->value);
-                }
-            }
-        },
-        [](const auto &) {
-            // No children for leaf nodes
-        },
-    }, expr.node);
+                   [this](const ast::SomeExpr &e) {
+                       if (e.value != nullptr) {
+                           record(*e.value);
+                       }
+                   },
+                   [this](const ast::UnaryExpr &e) {
+                       if (e.operand != nullptr) {
+                           record(*e.operand);
+                       }
+                   },
+                   [this](const ast::MemberAccessExpr &e) {
+                       if (e.base != nullptr) {
+                           record(*e.base);
+                       }
+                   },
+                   [this](const ast::GroupExpr &e) {
+                       if (e.inner != nullptr) {
+                           record(*e.inner);
+                       }
+                   },
+                   [this](const ast::BinaryExpr &e) {
+                       if (e.lhs != nullptr) {
+                           record(*e.lhs);
+                       }
+                       if (e.rhs != nullptr) {
+                           record(*e.rhs);
+                       }
+                   },
+                   [this](const ast::IndexAccessExpr &e) {
+                       if (e.base != nullptr) {
+                           record(*e.base);
+                       }
+                       if (e.index != nullptr) {
+                           record(*e.index);
+                       }
+                   },
+                   [this](const ast::StructLiteralExpr &e) {
+                       for (const auto &field : e.fields) {
+                           if (field != nullptr && field->value != nullptr) {
+                               record(*field->value);
+                           }
+                       }
+                   },
+                   [this](const ast::ListLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           if (item != nullptr) {
+                               record(*item);
+                           }
+                       }
+                   },
+                   [this](const ast::SetLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           if (item != nullptr) {
+                               record(*item);
+                           }
+                       }
+                   },
+                   [this](const ast::MapLiteralExpr &e) {
+                       for (const auto &entry : e.entries) {
+                           if (entry != nullptr && entry->key != nullptr) {
+                               record(*entry->key);
+                           }
+                           if (entry != nullptr && entry->value != nullptr) {
+                               record(*entry->value);
+                           }
+                       }
+                   },
+                   [](const auto &) {
+                       // No children for leaf nodes
+                   },
+               },
+               expr.node);
 }
 
 ConstValueResolutionState::ConstValueResolutionState(
@@ -1425,91 +1405,92 @@ ConstDependencyResolver::collect(const ast::ExprSyntax &expr) const {
 void ConstDependencyResolver::collect_into(
     const ast::ExprSyntax &expr, std::vector<ConstDependencyReference> &references) const {
     std::visit(Overloaded{
-        [this, &expr, &references](const ast::QualifiedValueExpr &e) {
-            if (e.name != nullptr) {
-                if (const auto reference = resolve_result_.find_reference(
-                        ReferenceKind::ConstValue, e.name->range, source_id_);
-                    reference.has_value()) {
-                    references.push_back(ConstDependencyReference{
-                        .target = reference->get().target,
-                        .use_range = expr.range,
-                        .reference_range = reference->get().range,
-                        .source_id = reference->get().source_id,
-                    });
-                }
-            }
-        },
-        [this, &references](const ast::SomeExpr &e) {
-            if (e.value != nullptr) {
-                collect_into(*e.value, references);
-            }
-        },
-        [this, &references](const ast::UnaryExpr &e) {
-            if (e.operand != nullptr) {
-                collect_into(*e.operand, references);
-            }
-        },
-        [this, &references](const ast::MemberAccessExpr &e) {
-            if (e.base != nullptr) {
-                collect_into(*e.base, references);
-            }
-        },
-        [this, &references](const ast::GroupExpr &e) {
-            if (e.inner != nullptr) {
-                collect_into(*e.inner, references);
-            }
-        },
-        [this, &references](const ast::BinaryExpr &e) {
-            if (e.lhs != nullptr) {
-                collect_into(*e.lhs, references);
-            }
-            if (e.rhs != nullptr) {
-                collect_into(*e.rhs, references);
-            }
-        },
-        [this, &references](const ast::IndexAccessExpr &e) {
-            if (e.base != nullptr) {
-                collect_into(*e.base, references);
-            }
-            if (e.index != nullptr) {
-                collect_into(*e.index, references);
-            }
-        },
-        [this, &references](const ast::StructLiteralExpr &e) {
-            for (const auto &field : e.fields) {
-                if (field != nullptr && field->value != nullptr) {
-                    collect_into(*field->value, references);
-                }
-            }
-        },
-        [this, &references](const ast::ListLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (item != nullptr) {
-                    collect_into(*item, references);
-                }
-            }
-        },
-        [this, &references](const ast::SetLiteralExpr &e) {
-            for (const auto &item : e.items) {
-                if (item != nullptr) {
-                    collect_into(*item, references);
-                }
-            }
-        },
-        [this, &references](const ast::MapLiteralExpr &e) {
-            for (const auto &entry : e.entries) {
-                if (entry != nullptr && entry->key != nullptr) {
-                    collect_into(*entry->key, references);
-                }
-                if (entry != nullptr && entry->value != nullptr) {
-                    collect_into(*entry->value, references);
-                }
-            }
-        },
-        [](const auto &) {
-            // Leaf nodes carry no const dependencies.
-        },
-    }, expr.node);
+                   [this, &expr, &references](const ast::QualifiedValueExpr &e) {
+                       if (e.name != nullptr) {
+                           if (const auto reference = resolve_result_.find_reference(
+                                   ReferenceKind::ConstValue, e.name->range, source_id_);
+                               reference.has_value()) {
+                               references.push_back(ConstDependencyReference{
+                                   .target = reference->get().target,
+                                   .use_range = expr.range,
+                                   .reference_range = reference->get().range,
+                                   .source_id = reference->get().source_id,
+                               });
+                           }
+                       }
+                   },
+                   [this, &references](const ast::SomeExpr &e) {
+                       if (e.value != nullptr) {
+                           collect_into(*e.value, references);
+                       }
+                   },
+                   [this, &references](const ast::UnaryExpr &e) {
+                       if (e.operand != nullptr) {
+                           collect_into(*e.operand, references);
+                       }
+                   },
+                   [this, &references](const ast::MemberAccessExpr &e) {
+                       if (e.base != nullptr) {
+                           collect_into(*e.base, references);
+                       }
+                   },
+                   [this, &references](const ast::GroupExpr &e) {
+                       if (e.inner != nullptr) {
+                           collect_into(*e.inner, references);
+                       }
+                   },
+                   [this, &references](const ast::BinaryExpr &e) {
+                       if (e.lhs != nullptr) {
+                           collect_into(*e.lhs, references);
+                       }
+                       if (e.rhs != nullptr) {
+                           collect_into(*e.rhs, references);
+                       }
+                   },
+                   [this, &references](const ast::IndexAccessExpr &e) {
+                       if (e.base != nullptr) {
+                           collect_into(*e.base, references);
+                       }
+                       if (e.index != nullptr) {
+                           collect_into(*e.index, references);
+                       }
+                   },
+                   [this, &references](const ast::StructLiteralExpr &e) {
+                       for (const auto &field : e.fields) {
+                           if (field != nullptr && field->value != nullptr) {
+                               collect_into(*field->value, references);
+                           }
+                       }
+                   },
+                   [this, &references](const ast::ListLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           if (item != nullptr) {
+                               collect_into(*item, references);
+                           }
+                       }
+                   },
+                   [this, &references](const ast::SetLiteralExpr &e) {
+                       for (const auto &item : e.items) {
+                           if (item != nullptr) {
+                               collect_into(*item, references);
+                           }
+                       }
+                   },
+                   [this, &references](const ast::MapLiteralExpr &e) {
+                       for (const auto &entry : e.entries) {
+                           if (entry != nullptr && entry->key != nullptr) {
+                               collect_into(*entry->key, references);
+                           }
+                           if (entry != nullptr && entry->value != nullptr) {
+                               collect_into(*entry->value, references);
+                           }
+                       }
+                   },
+                   [](const auto &) {
+                       // Leaf nodes carry no const dependencies.
+                   },
+               },
+               expr.node);
 }
 
 ConstDependencyScheduler::ConstDependencyScheduler(

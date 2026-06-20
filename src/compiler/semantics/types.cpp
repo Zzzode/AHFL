@@ -211,10 +211,8 @@ TypePtr TypeContext::enum_type(std::string canonical_name, std::optional<SymbolI
     });
 }
 
-TypePtr TypeContext::enum_variant_type(std::string canonical_name,
-                                       std::string variant_name) {
-    return enum_variant_type(
-        std::move(canonical_name), std::move(variant_name), std::nullopt);
+TypePtr TypeContext::enum_variant_type(std::string canonical_name, std::string variant_name) {
+    return enum_variant_type(std::move(canonical_name), std::move(variant_name), std::nullopt);
 }
 
 TypePtr TypeContext::enum_variant_type(std::string canonical_name,

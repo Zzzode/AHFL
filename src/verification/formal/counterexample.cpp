@@ -244,9 +244,8 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
 
     // Generate summary
     const auto spec_abbrev = abbreviate_spec(trace.violated_spec);
-    explanation.summary = "Verification failed: property " + spec_abbrev +
-                          " violated after " + std::to_string(trace.states.size()) +
-                          " execution steps";
+    explanation.summary = "Verification failed: property " + spec_abbrev + " violated after " +
+                          std::to_string(trace.states.size()) + " execution steps";
 
     // Generate steps
     for (std::size_t i = 0; i < trace.states.size(); ++i) {
@@ -285,16 +284,15 @@ ViolationExplanation explain_counterexample(const CounterexampleTrace &trace) {
             const auto prev_it = prev_values.find(assignment.variable);
             if (prev_it == prev_values.end()) {
                 // New variable appeared — treat as a change from unknown
-                const auto &desc = assignment.mapping.has_value()
-                                       ? assignment.mapping->description
-                                       : assignment.variable;
+                const auto &desc = assignment.mapping.has_value() ? assignment.mapping->description
+                                                                  : assignment.variable;
                 changes.push_back(desc + " changed to " + assignment.value);
             } else if (prev_it->second != assignment.value) {
                 // Value changed
-                const auto &desc = assignment.mapping.has_value()
-                                       ? assignment.mapping->description
-                                       : assignment.variable;
-                changes.push_back(desc + " changed from " + prev_it->second + " to " + assignment.value);
+                const auto &desc = assignment.mapping.has_value() ? assignment.mapping->description
+                                                                  : assignment.variable;
+                changes.push_back(desc + " changed from " + prev_it->second + " to " +
+                                  assignment.value);
             }
         }
 

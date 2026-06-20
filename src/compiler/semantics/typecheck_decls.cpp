@@ -13,6 +13,7 @@
 #include "compiler/semantics/typecheck_internal.hpp"
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -42,6 +43,8 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                 .symbol = {},
                 .range = declaration->range,
                 .source_id = state_->current_source_id,
+                .associated_agent_symbol = std::nullopt,
+                .type = nullptr,
                 .payload =
                     ModuleDeclInfo{
                         .name = decl.name ? decl.name->spelling() : std::string{},
@@ -57,6 +60,8 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                 .symbol = {},
                 .range = declaration->range,
                 .source_id = state_->current_source_id,
+                .associated_agent_symbol = std::nullopt,
+                .type = nullptr,
                 .payload =
                     ImportDeclInfo{
                         .target_module = decl.path ? decl.path->spelling() : std::string{},
@@ -76,6 +81,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -90,6 +98,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -104,6 +115,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -118,6 +132,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -132,6 +149,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -146,6 +166,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -160,6 +183,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -174,6 +200,9 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
                     .symbol = symbol->get().id,
                     .range = declaration->range,
                     .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
                 });
             }
             break;
@@ -342,6 +371,7 @@ void TypeCheckPass::build_struct_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .fields = {},
                 .declaration_range = decl.get().range,
+                .field_index_ = {},
             };
 
             std::unordered_set<std::string> seen_fields;
@@ -381,6 +411,7 @@ void TypeCheckPass::build_enum_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .variants = {},
                 .declaration_range = decl.get().range,
+                .variant_set_ = {},
             };
 
             std::unordered_set<std::string> seen_variants;
@@ -417,6 +448,7 @@ void TypeCheckPass::build_capability_types() {
                 .params = {},
                 .return_type = nullptr,
                 .declaration_range = decl.get().range,
+                .effect = {},
             };
 
             for (const auto &param : decl.get().params) {
@@ -502,6 +534,11 @@ void TypeCheckPass::build_agent_types() {
                 .input_type_range = decl.get().input_type->range,
                 .context_type_range = decl.get().context_type->range,
                 .output_type_range = decl.get().output_type->range,
+                .states = {},
+                .initial_state = {},
+                .final_states = {},
+                .transitions = {},
+                .quota = {},
             };
 
             check_schema_boundary_decl_type(
@@ -591,6 +628,10 @@ void TypeCheckPass::build_workflow_types() {
                 .declaration_range = decl.get().range,
                 .input_type_range = decl.get().input_type->range,
                 .output_type_range = decl.get().output_type->range,
+                .nodes = {},
+                .safety_ranges = {},
+                .liveness_ranges = {},
+                .return_value_range = {},
             };
 
             check_schema_boundary_decl_type(

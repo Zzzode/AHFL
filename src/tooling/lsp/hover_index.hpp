@@ -44,15 +44,15 @@ enum class HoverTargetKind {
 struct HoverTarget {
     HoverTargetKind kind{HoverTargetKind::Expression};
     SourceRange token_range;
-    std::optional<SourceId> source_id;
-    std::optional<SymbolId> symbol_id;
-    std::optional<SymbolId> owner_symbol_id;
-    std::optional<std::uint32_t> typed_expr_index;
-    std::optional<std::uint32_t> typed_decl_index;
-    std::string local_name;
-    std::string role;
-    std::string declared_spelling;
-    std::string source_label;
+    std::optional<SourceId> source_id{};
+    std::optional<SymbolId> symbol_id{};
+    std::optional<SymbolId> owner_symbol_id{};
+    std::optional<std::uint32_t> typed_expr_index{};
+    std::optional<std::uint32_t> typed_decl_index{};
+    std::string local_name{};
+    std::string role{};
+    std::string declared_spelling{};
+    std::string source_label{};
     int priority{10};
 };
 

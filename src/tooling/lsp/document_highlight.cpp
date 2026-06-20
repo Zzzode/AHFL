@@ -78,8 +78,8 @@ find_word_at_offset(std::string_view source, std::size_t offset) {
 
 } // namespace
 
-std::vector<DocumentHighlight>
-compute_document_highlights(const std::string &source, const Position &position) {
+std::vector<DocumentHighlight> compute_document_highlights(const std::string &source,
+                                                           const Position &position) {
     std::vector<DocumentHighlight> result;
 
     const std::size_t cursor_offset = position_to_offset(source, position);
@@ -103,10 +103,8 @@ compute_document_highlights(const std::string &source, const Position &position)
         const std::size_t match_end = search_pos + word.size();
 
         // Check that the match is a whole word (not part of a longer identifier).
-        const bool at_word_start =
-            match_start == 0 || !is_word_char(source[match_start - 1]);
-        const bool at_word_end =
-            match_end == source.size() || !is_word_char(source[match_end]);
+        const bool at_word_start = match_start == 0 || !is_word_char(source[match_start - 1]);
+        const bool at_word_end = match_end == source.size() || !is_word_char(source[match_end]);
 
         if (at_word_start && at_word_end) {
             const Position start_pos = offset_to_position(source, match_start);

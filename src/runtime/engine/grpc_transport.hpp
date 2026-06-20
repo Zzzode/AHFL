@@ -65,10 +65,10 @@ struct GrpcJsonTranscodingRequest {
 /// HTTP/2 JSON-transcoding response mapped onto gRPC status codes.
 struct GrpcJsonTranscodingResponse {
     GrpcStatusCode status_code{GrpcStatusCode::Unknown};
-    std::string body;
-    std::string error_message;
-    std::vector<std::pair<std::string, std::string>> response_metadata;
-    std::vector<std::pair<std::string, std::string>> trailers;
+    std::string body{};
+    std::string error_message{};
+    std::vector<std::pair<std::string, std::string>> response_metadata{};
+    std::vector<std::pair<std::string, std::string>> trailers{};
 
     [[nodiscard]] bool is_ok() const {
         return status_code == GrpcStatusCode::Ok;
