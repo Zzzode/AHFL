@@ -8,7 +8,7 @@
 #include <variant>
 #include <vector>
 
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 #include "compiler/backends/pipeline/json_helpers.hpp"
 
 namespace ahfl {

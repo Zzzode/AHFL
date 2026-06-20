@@ -2,7 +2,7 @@
 
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/typed_hir_lower.hpp"
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
 
 #include <cstddef>

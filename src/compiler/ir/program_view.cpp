@@ -1,7 +1,7 @@
 #include "ahfl/compiler/ir/program_view.hpp"
 
 #include "ahfl/compiler/ir/identity.hpp"
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 
 #include <cstddef>
 #include <unordered_set>

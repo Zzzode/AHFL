@@ -176,72 +176,74 @@ struct NoneComparisonFinder {
     const ahfl::ast::ExprSyntax **out;
 
     void visit_binary(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.binary_op == ahfl::ast::ExprBinaryOp::NotEqual && *out == nullptr) {
+        const auto &node = expr.as<ahfl::ast::BinaryExpr>();
+        if (node.op == ahfl::ast::ExprBinaryOp::NotEqual && *out == nullptr) {
             *out = &expr;
         }
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
+        if (node.lhs) {
+            ahfl::ast::visit_expr_syntax(*node.lhs, *this);
         }
-        if (expr.second) {
-            ahfl::ast::visit_expr_syntax(*expr.second, *this);
+        if (node.rhs) {
+            ahfl::ast::visit_expr_syntax(*node.rhs, *this);
         }
     }
     void visit_group(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
+        const auto &inner = expr.as<ahfl::ast::GroupExpr>().inner;
+        if (inner) {
+            ahfl::ast::visit_expr_syntax(*inner, *this);
         }
     }
     void visit_unary(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
+        const auto &operand = expr.as<ahfl::ast::UnaryExpr>().operand;
+        if (operand) {
+            ahfl::ast::visit_expr_syntax(*operand, *this);
         }
     }
     void visit_member_access(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
+        const auto &base = expr.as<ahfl::ast::MemberAccessExpr>().base;
+        if (base) {
+            ahfl::ast::visit_expr_syntax(*base, *this);
         }
     }
     void visit_index_access(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
+        const auto &node = expr.as<ahfl::ast::IndexAccessExpr>();
+        if (node.base) {
+            ahfl::ast::visit_expr_syntax(*node.base, *this);
         }
-        if (expr.second) {
-            ahfl::ast::visit_expr_syntax(*expr.second, *this);
+        if (node.index) {
+            ahfl::ast::visit_expr_syntax(*node.index, *this);
         }
     }
     void visit_call(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
-        }
-        for (const auto &item : expr.items) {
-            if (item) {
-                ahfl::ast::visit_expr_syntax(*item, *this);
+        for (const auto &arg : expr.as<ahfl::ast::CallExpr>().arguments) {
+            if (arg) {
+                ahfl::ast::visit_expr_syntax(*arg, *this);
             }
         }
     }
     void visit_struct_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &field : expr.struct_fields) {
+        for (const auto &field : expr.as<ahfl::ast::StructLiteralExpr>().fields) {
             if (field->value) {
                 ahfl::ast::visit_expr_syntax(*field->value, *this);
             }
         }
     }
     void visit_list_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &elem : expr.items) {
+        for (const auto &elem : expr.as<ahfl::ast::ListLiteralExpr>().items) {
             if (elem) {
                 ahfl::ast::visit_expr_syntax(*elem, *this);
             }
         }
     }
     void visit_set_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &elem : expr.items) {
+        for (const auto &elem : expr.as<ahfl::ast::SetLiteralExpr>().items) {
             if (elem) {
                 ahfl::ast::visit_expr_syntax(*elem, *this);
             }
         }
     }
     void visit_map_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &entry : expr.map_entries) {
+        for (const auto &entry : expr.as<ahfl::ast::MapLiteralExpr>().entries) {
             if (entry->key) {
                 ahfl::ast::visit_expr_syntax(*entry->key, *this);
             }
@@ -251,8 +253,9 @@ struct NoneComparisonFinder {
         }
     }
     void visit_some(const ahfl::ast::ExprSyntax &expr) {
-        if (expr.first) {
-            ahfl::ast::visit_expr_syntax(*expr.first, *this);
+        const auto &value = expr.as<ahfl::ast::SomeExpr>().value;
+        if (value) {
+            ahfl::ast::visit_expr_syntax(*value, *this);
         }
     }
     // Leaf nodes — no children.
@@ -265,7 +268,6 @@ struct NoneComparisonFinder {
     void visit_none_literal(const ahfl::ast::ExprSyntax &) {}
     void visit_path(const ahfl::ast::ExprSyntax &) {}
     void visit_qualified_value(const ahfl::ast::ExprSyntax &) {}
-    void visit_unknown(const ahfl::ast::ExprSyntax &) {}
 };
 
 } // namespace

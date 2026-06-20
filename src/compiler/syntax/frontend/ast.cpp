@@ -1,7 +1,10 @@
 #include "ahfl/compiler/frontend/ast.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
+
 #include <sstream>
 #include <utility>
+#include <variant>
 
 namespace ahfl::ast {
 
@@ -32,74 +35,6 @@ std::string join_segments(const std::vector<std::string> &segments) {
     }
 
     return text;
-}
-
-std::string_view expr_kind_name(ExprSyntaxKind kind) {
-    switch (kind) {
-    case ExprSyntaxKind::BoolLiteral:
-        return "BoolLiteral";
-    case ExprSyntaxKind::IntegerLiteral:
-        return "IntegerLiteral";
-    case ExprSyntaxKind::FloatLiteral:
-        return "FloatLiteral";
-    case ExprSyntaxKind::DecimalLiteral:
-        return "DecimalLiteral";
-    case ExprSyntaxKind::StringLiteral:
-        return "StringLiteral";
-    case ExprSyntaxKind::DurationLiteral:
-        return "DurationLiteral";
-    case ExprSyntaxKind::NoneLiteral:
-        return "NoneLiteral";
-    case ExprSyntaxKind::Some:
-        return "Some";
-    case ExprSyntaxKind::Path:
-        return "Path";
-    case ExprSyntaxKind::QualifiedValue:
-        return "QualifiedValue";
-    case ExprSyntaxKind::Call:
-        return "Call";
-    case ExprSyntaxKind::StructLiteral:
-        return "StructLiteral";
-    case ExprSyntaxKind::ListLiteral:
-        return "ListLiteral";
-    case ExprSyntaxKind::SetLiteral:
-        return "SetLiteral";
-    case ExprSyntaxKind::MapLiteral:
-        return "MapLiteral";
-    case ExprSyntaxKind::Unary:
-        return "Unary";
-    case ExprSyntaxKind::Binary:
-        return "Binary";
-    case ExprSyntaxKind::MemberAccess:
-        return "MemberAccess";
-    case ExprSyntaxKind::IndexAccess:
-        return "IndexAccess";
-    case ExprSyntaxKind::Group:
-        return "Group";
-    }
-
-    return "Unknown";
-}
-
-std::string_view temporal_kind_name(TemporalExprSyntaxKind kind) {
-    switch (kind) {
-    case TemporalExprSyntaxKind::EmbeddedExpr:
-        return "EmbeddedExpr";
-    case TemporalExprSyntaxKind::Called:
-        return "Called";
-    case TemporalExprSyntaxKind::InState:
-        return "InState";
-    case TemporalExprSyntaxKind::Running:
-        return "Running";
-    case TemporalExprSyntaxKind::Completed:
-        return "Completed";
-    case TemporalExprSyntaxKind::Unary:
-        return "Unary";
-    case TemporalExprSyntaxKind::Binary:
-        return "Binary";
-    }
-
-    return "Unknown";
 }
 
 class AstInvariantValidator final {
@@ -160,174 +95,201 @@ class AstInvariantValidator final {
     }
 
     void validate_type(const TypeSyntax &type) {
-        switch (type.kind) {
-        case TypeSyntaxKind::Unit:
-        case TypeSyntaxKind::Bool:
-        case TypeSyntaxKind::Int:
-        case TypeSyntaxKind::Float:
-        case TypeSyntaxKind::String:
-        case TypeSyntaxKind::UUID:
-        case TypeSyntaxKind::Timestamp:
-        case TypeSyntaxKind::Duration:
-            require(!type.name && !type.string_bounds && !type.decimal_scale && !type.first &&
-                        !type.second,
-                    type.range,
-                    "primitive TypeSyntax has unexpected payload fields");
-            break;
-        case TypeSyntaxKind::BoundedString:
-            require(type.string_bounds.has_value(),
-                    type.range,
-                    "BoundedString TypeSyntax is missing string_bounds");
-            require(!type.name && !type.decimal_scale && !type.first && !type.second,
-                    type.range,
-                    "BoundedString TypeSyntax has unexpected payload fields");
-            break;
-        case TypeSyntaxKind::Decimal:
-            require(type.decimal_scale.has_value(),
-                    type.range,
-                    "Decimal TypeSyntax is missing decimal_scale");
-            require(!type.name && !type.string_bounds && !type.first && !type.second,
-                    type.range,
-                    "Decimal TypeSyntax has unexpected payload fields");
-            break;
-        case TypeSyntaxKind::Named:
-            validate_qualified_name(type.name.get(), type.range, "Named TypeSyntax.name");
-            require(!type.string_bounds && !type.decimal_scale && !type.first && !type.second,
-                    type.range,
-                    "Named TypeSyntax has unexpected payload fields");
-            break;
-        case TypeSyntaxKind::Optional:
-        case TypeSyntaxKind::List:
-        case TypeSyntaxKind::Set:
-            require(type.first != nullptr,
-                    type.range,
-                    std::string(to_string(type.kind)) + " TypeSyntax is missing first");
-            require(!type.name && !type.string_bounds && !type.decimal_scale && !type.second,
-                    type.range,
-                    std::string(to_string(type.kind)) +
-                        " TypeSyntax has unexpected payload fields");
-            if (type.first) {
-                validate_type(*type.first);
-            }
-            break;
-        case TypeSyntaxKind::Map:
-            require(type.first != nullptr, type.range, "Map TypeSyntax is missing key type");
-            require(type.second != nullptr, type.range, "Map TypeSyntax is missing value type");
-            require(!type.name && !type.string_bounds && !type.decimal_scale,
-                    type.range,
-                    "Map TypeSyntax has unexpected payload fields");
-            if (type.first) {
-                validate_type(*type.first);
-            }
-            if (type.second) {
-                validate_type(*type.second);
-            }
-            break;
-        }
+        std::visit(Overloaded{
+            [&](const UnitType &) {},
+            [&](const BoolType &) {},
+            [&](const IntType &) {},
+            [&](const FloatType &) {},
+            [&](const StringType &) {},
+            [&](const BoundedStringType &) {
+                // BoundedString bounds are stored as value types — presence is guaranteed by variant
+            },
+            [&](const UuidType &) {},
+            [&](const TimestampType &) {},
+            [&](const DurationType &) {},
+            [&](const DecimalType &) {
+                // Decimal scale is stored as value type — presence is guaranteed by variant
+            },
+            [&](const NamedType &t) {
+                validate_qualified_name(t.name.get(), type.range, "NamedType.name");
+            },
+            [&](const OptionalType &t) {
+                require(t.inner != nullptr, type.range, "OptionalType is missing inner");
+                if (t.inner) {
+                    validate_type(*t.inner);
+                }
+            },
+            [&](const ListType &t) {
+                require(t.element != nullptr, type.range, "ListType is missing element");
+                if (t.element) {
+                    validate_type(*t.element);
+                }
+            },
+            [&](const SetType &t) {
+                require(t.element != nullptr, type.range, "SetType is missing element");
+                if (t.element) {
+                    validate_type(*t.element);
+                }
+            },
+            [&](const MapType &t) {
+                require(t.key_type != nullptr, type.range, "MapType is missing key type");
+                require(t.value_type != nullptr, type.range, "MapType is missing value type");
+                if (t.key_type) {
+                    validate_type(*t.key_type);
+                }
+                if (t.value_type) {
+                    validate_type(*t.value_type);
+                }
+            },
+        }, type.node);
     }
 
     void validate_expr(const ExprSyntax &expr) {
-        switch (expr.kind) {
-        case ExprSyntaxKind::BoolLiteral:
-        case ExprSyntaxKind::FloatLiteral:
-        case ExprSyntaxKind::DecimalLiteral:
-        case ExprSyntaxKind::StringLiteral:
-        case ExprSyntaxKind::NoneLiteral:
-            break;
-        case ExprSyntaxKind::IntegerLiteral:
-            require(expr.integer_literal != nullptr,
-                    expr.range,
-                    "IntegerLiteral ExprSyntax is missing integer_literal");
-            break;
-        case ExprSyntaxKind::DurationLiteral:
-            require(expr.duration_literal != nullptr,
-                    expr.range,
-                    "DurationLiteral ExprSyntax is missing duration_literal");
-            break;
-        case ExprSyntaxKind::Some:
-        case ExprSyntaxKind::Unary:
-        case ExprSyntaxKind::Group:
-            require(expr.first != nullptr,
-                    expr.range,
-                    std::string(expr_kind_name(expr.kind)) + " ExprSyntax is missing first");
-            break;
-        case ExprSyntaxKind::Binary:
-            require(expr.first != nullptr, expr.range, "Binary ExprSyntax is missing lhs");
-            require(expr.second != nullptr, expr.range, "Binary ExprSyntax is missing rhs");
-            break;
-        case ExprSyntaxKind::Path:
-            require(expr.path != nullptr, expr.range, "Path ExprSyntax is missing path");
-            break;
-        case ExprSyntaxKind::QualifiedValue:
-            validate_qualified_name(
-                expr.qualified_name.get(), expr.range, "QualifiedValue ExprSyntax.qualified_name");
-            break;
-        case ExprSyntaxKind::Call:
-            validate_qualified_name(
-                expr.qualified_name.get(), expr.range, "Call ExprSyntax.qualified_name");
-            break;
-        case ExprSyntaxKind::StructLiteral:
-            validate_qualified_name(
-                expr.qualified_name.get(), expr.range, "StructLiteral ExprSyntax.qualified_name");
-            break;
-        case ExprSyntaxKind::ListLiteral:
-        case ExprSyntaxKind::SetLiteral:
-            break;
-        case ExprSyntaxKind::MapLiteral:
-            break;
-        case ExprSyntaxKind::MemberAccess:
-            require(
-                expr.first != nullptr, expr.range, "MemberAccess ExprSyntax is missing receiver");
-            require(!expr.name.empty(), expr.range, "MemberAccess ExprSyntax is missing member");
-            break;
-        case ExprSyntaxKind::IndexAccess:
-            require(expr.first != nullptr, expr.range, "IndexAccess ExprSyntax is missing base");
-            require(expr.second != nullptr, expr.range, "IndexAccess ExprSyntax is missing index");
-            break;
-        }
-
-        if (expr.first) {
-            validate_expr(*expr.first);
-        }
-        if (expr.second) {
-            validate_expr(*expr.second);
-        }
-        if (expr.path) {
-            require(
-                !expr.path->root_name.empty(), expr.path->range, "PathSyntax is missing root_name");
-        }
-        for (const auto &item : expr.items) {
-            require(item != nullptr, expr.range, "ExprSyntax.items contains null");
-            if (item) {
-                validate_expr(*item);
-            }
-        }
-        for (const auto &entry : expr.map_entries) {
-            require(entry != nullptr, expr.range, "ExprSyntax.map_entries contains null");
-            if (!entry) {
-                continue;
-            }
-            require(entry->key != nullptr, entry->range, "MapEntrySyntax is missing key");
-            require(entry->value != nullptr, entry->range, "MapEntrySyntax is missing value");
-            if (entry->key) {
-                validate_expr(*entry->key);
-            }
-            if (entry->value) {
-                validate_expr(*entry->value);
-            }
-        }
-        for (const auto &field : expr.struct_fields) {
-            require(field != nullptr, expr.range, "ExprSyntax.struct_fields contains null");
-            if (!field) {
-                continue;
-            }
-            require(
-                !field->field_name.empty(), field->range, "StructInitSyntax is missing field_name");
-            require(field->value != nullptr, field->range, "StructInitSyntax is missing value");
-            if (field->value) {
-                validate_expr(*field->value);
-            }
-        }
+        std::visit(Overloaded{
+            [&](const NoneLiteralExpr &) {
+                // No payload fields — presence guaranteed by variant
+            },
+            [&](const BoolLiteralExpr &) {
+                // Value type — presence guaranteed by variant
+            },
+            [&](const IntegerLiteralExpr &e) {
+                require(e.literal != nullptr,
+                        expr.range,
+                        "IntegerLiteralExpr is missing literal");
+            },
+            [&](const FloatLiteralExpr &) {
+                // spelling is value type — presence guaranteed by variant
+            },
+            [&](const DecimalLiteralExpr &) {
+                // spelling is value type — presence guaranteed by variant
+            },
+            [&](const StringLiteralExpr &) {
+                // spelling is value type — presence guaranteed by variant
+            },
+            [&](const DurationLiteralExpr &e) {
+                require(e.literal != nullptr,
+                        expr.range,
+                        "DurationLiteralExpr is missing literal");
+            },
+            [&](const SomeExpr &e) {
+                require(e.value != nullptr, expr.range, "SomeExpr is missing value");
+                if (e.value) {
+                    validate_expr(*e.value);
+                }
+            },
+            [&](const PathExpr &e) {
+                require(e.path != nullptr, expr.range, "PathExpr is missing path");
+                if (e.path) {
+                    require(!e.path->root_name.empty(),
+                            e.path->range,
+                            "PathSyntax is missing root_name");
+                }
+            },
+            [&](const QualifiedValueExpr &e) {
+                validate_qualified_name(
+                    e.name.get(), expr.range, "QualifiedValueExpr.name");
+            },
+            [&](const CallExpr &e) {
+                validate_qualified_name(
+                    e.callee.get(), expr.range, "CallExpr.callee");
+                for (const auto &arg : e.arguments) {
+                    require(arg != nullptr, expr.range, "CallExpr.arguments contains null");
+                    if (arg) {
+                        validate_expr(*arg);
+                    }
+                }
+            },
+            [&](const StructLiteralExpr &e) {
+                validate_qualified_name(
+                    e.type_name.get(), expr.range, "StructLiteralExpr.type_name");
+                for (const auto &field : e.fields) {
+                    require(field != nullptr, expr.range, "StructLiteralExpr.fields contains null");
+                    if (!field) {
+                        continue;
+                    }
+                    require(!field->field_name.empty(),
+                            field->range,
+                            "StructInitSyntax is missing field_name");
+                    require(field->value != nullptr,
+                            field->range,
+                            "StructInitSyntax is missing value");
+                    if (field->value) {
+                        validate_expr(*field->value);
+                    }
+                }
+            },
+            [&](const ListLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    require(item != nullptr, expr.range, "ListLiteralExpr.items contains null");
+                    if (item) {
+                        validate_expr(*item);
+                    }
+                }
+            },
+            [&](const SetLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    require(item != nullptr, expr.range, "SetLiteralExpr.items contains null");
+                    if (item) {
+                        validate_expr(*item);
+                    }
+                }
+            },
+            [&](const MapLiteralExpr &e) {
+                for (const auto &entry : e.entries) {
+                    require(entry != nullptr, expr.range, "MapLiteralExpr.entries contains null");
+                    if (!entry) {
+                        continue;
+                    }
+                    require(entry->key != nullptr, entry->range, "MapEntrySyntax is missing key");
+                    require(entry->value != nullptr, entry->range, "MapEntrySyntax is missing value");
+                    if (entry->key) {
+                        validate_expr(*entry->key);
+                    }
+                    if (entry->value) {
+                        validate_expr(*entry->value);
+                    }
+                }
+            },
+            [&](const UnaryExpr &e) {
+                require(e.operand != nullptr, expr.range, "UnaryExpr is missing operand");
+                if (e.operand) {
+                    validate_expr(*e.operand);
+                }
+            },
+            [&](const BinaryExpr &e) {
+                require(e.lhs != nullptr, expr.range, "BinaryExpr is missing lhs");
+                require(e.rhs != nullptr, expr.range, "BinaryExpr is missing rhs");
+                if (e.lhs) {
+                    validate_expr(*e.lhs);
+                }
+                if (e.rhs) {
+                    validate_expr(*e.rhs);
+                }
+            },
+            [&](const MemberAccessExpr &e) {
+                require(e.base != nullptr, expr.range, "MemberAccessExpr is missing base");
+                require(!e.member.empty(), expr.range, "MemberAccessExpr is missing member");
+                if (e.base) {
+                    validate_expr(*e.base);
+                }
+            },
+            [&](const IndexAccessExpr &e) {
+                require(e.base != nullptr, expr.range, "IndexAccessExpr is missing base");
+                require(e.index != nullptr, expr.range, "IndexAccessExpr is missing index");
+                if (e.base) {
+                    validate_expr(*e.base);
+                }
+                if (e.index) {
+                    validate_expr(*e.index);
+                }
+            },
+            [&](const GroupExpr &e) {
+                require(e.inner != nullptr, expr.range, "GroupExpr is missing inner");
+                if (e.inner) {
+                    validate_expr(*e.inner);
+                }
+            },
+        }, expr.node);
     }
 
     void validate_statement(const StatementSyntax &statement) {
@@ -458,42 +420,53 @@ class AstInvariantValidator final {
     }
 
     void validate_temporal(const TemporalExprSyntax &expr) {
-        switch (expr.kind) {
-        case TemporalExprSyntaxKind::EmbeddedExpr:
-            require(expr.expr != nullptr,
-                    expr.range,
-                    "EmbeddedExpr TemporalExprSyntax is missing expr");
-            if (expr.expr) {
-                validate_expr(*expr.expr);
-            }
-            break;
-        case TemporalExprSyntaxKind::Called:
-        case TemporalExprSyntaxKind::InState:
-        case TemporalExprSyntaxKind::Running:
-        case TemporalExprSyntaxKind::Completed:
-            require(!expr.name.empty(),
-                    expr.range,
-                    std::string(temporal_kind_name(expr.kind)) +
-                        " TemporalExprSyntax is missing name");
-            break;
-        case TemporalExprSyntaxKind::Unary:
-            require(
-                expr.first != nullptr, expr.range, "Unary TemporalExprSyntax is missing operand");
-            if (expr.first) {
-                validate_temporal(*expr.first);
-            }
-            break;
-        case TemporalExprSyntaxKind::Binary:
-            require(expr.first != nullptr, expr.range, "Binary TemporalExprSyntax is missing lhs");
-            require(expr.second != nullptr, expr.range, "Binary TemporalExprSyntax is missing rhs");
-            if (expr.first) {
-                validate_temporal(*expr.first);
-            }
-            if (expr.second) {
-                validate_temporal(*expr.second);
-            }
-            break;
-        }
+        std::visit(Overloaded{
+            [&](const EmbeddedTemporalExpr &e) {
+                require(e.expr != nullptr,
+                        expr.range,
+                        "EmbeddedExpr TemporalExprSyntax is missing expr");
+                if (e.expr) {
+                    validate_expr(*e.expr);
+                }
+            },
+            [&](const CalledTemporalExpr &e) {
+                require(!e.name.empty(),
+                        expr.range,
+                        std::string("Called") + " TemporalExprSyntax is missing name");
+            },
+            [&](const InStateTemporalExpr &e) {
+                require(!e.name.empty(),
+                        expr.range,
+                        std::string("InState") + " TemporalExprSyntax is missing name");
+            },
+            [&](const RunningTemporalExpr &e) {
+                require(!e.name.empty(),
+                        expr.range,
+                        std::string("Running") + " TemporalExprSyntax is missing name");
+            },
+            [&](const CompletedTemporalExpr &e) {
+                require(!e.name.empty(),
+                        expr.range,
+                        std::string("Completed") + " TemporalExprSyntax is missing name");
+            },
+            [&](const UnaryTemporalExpr &e) {
+                require(
+                    e.operand != nullptr, expr.range, "Unary TemporalExprSyntax is missing operand");
+                if (e.operand) {
+                    validate_temporal(*e.operand);
+                }
+            },
+            [&](const BinaryTemporalExpr &e) {
+                require(e.lhs != nullptr, expr.range, "Binary TemporalExprSyntax is missing lhs");
+                require(e.rhs != nullptr, expr.range, "Binary TemporalExprSyntax is missing rhs");
+                if (e.lhs) {
+                    validate_temporal(*e.lhs);
+                }
+                if (e.rhs) {
+                    validate_temporal(*e.rhs);
+                }
+            },
+        }, expr.node);
     }
 
     void validate_params(const std::vector<Owned<ParamDeclSyntax>> &params, SourceRange range) {
@@ -812,43 +785,6 @@ std::string_view to_string(ContractClauseKind kind) noexcept {
     return "unknown";
 }
 
-std::string_view to_string(TypeSyntaxKind kind) noexcept {
-    switch (kind) {
-    case TypeSyntaxKind::Unit:
-        return "Unit";
-    case TypeSyntaxKind::Bool:
-        return "Bool";
-    case TypeSyntaxKind::Int:
-        return "Int";
-    case TypeSyntaxKind::Float:
-        return "Float";
-    case TypeSyntaxKind::String:
-        return "String";
-    case TypeSyntaxKind::BoundedString:
-        return "BoundedString";
-    case TypeSyntaxKind::UUID:
-        return "UUID";
-    case TypeSyntaxKind::Timestamp:
-        return "Timestamp";
-    case TypeSyntaxKind::Duration:
-        return "Duration";
-    case TypeSyntaxKind::Decimal:
-        return "Decimal";
-    case TypeSyntaxKind::Named:
-        return "Named";
-    case TypeSyntaxKind::Optional:
-        return "Optional";
-    case TypeSyntaxKind::List:
-        return "List";
-    case TypeSyntaxKind::Set:
-        return "Set";
-    case TypeSyntaxKind::Map:
-        return "Map";
-    }
-
-    return "Unknown";
-}
-
 std::string_view to_string(CapabilityEffectKind kind) noexcept {
     switch (kind) {
     case CapabilityEffectKind::Unknown:
@@ -907,40 +843,48 @@ std::string PathSyntax::spelling() const {
     return text;
 }
 
-std::string TypeSyntax::spelling() const {
-    switch (kind) {
-    case TypeSyntaxKind::Unit:
-    case TypeSyntaxKind::Bool:
-    case TypeSyntaxKind::Int:
-    case TypeSyntaxKind::Float:
-    case TypeSyntaxKind::String:
-    case TypeSyntaxKind::UUID:
-    case TypeSyntaxKind::Timestamp:
-    case TypeSyntaxKind::Duration:
-        return std::string(to_string(kind));
-    case TypeSyntaxKind::BoundedString: {
-        std::ostringstream builder;
-        builder << "String(" << string_bounds->first << ", " << string_bounds->second << ")";
-        return builder.str();
-    }
-    case TypeSyntaxKind::Decimal: {
-        std::ostringstream builder;
-        builder << "Decimal(" << *decimal_scale << ")";
-        return builder.str();
-    }
-    case TypeSyntaxKind::Named:
-        return name->spelling();
-    case TypeSyntaxKind::Optional:
-        return "Optional<" + first->spelling() + ">";
-    case TypeSyntaxKind::List:
-        return "List<" + first->spelling() + ">";
-    case TypeSyntaxKind::Set:
-        return "Set<" + first->spelling() + ">";
-    case TypeSyntaxKind::Map:
-        return "Map<" + first->spelling() + ", " + second->spelling() + ">";
-    }
+namespace {
 
-    return "<invalid-type>";
+struct TypeSyntaxSpellingVisitor {
+    std::string operator()(const UnitType &) const { return "Unit"; }
+    std::string operator()(const BoolType &) const { return "Bool"; }
+    std::string operator()(const IntType &) const { return "Int"; }
+    std::string operator()(const FloatType &) const { return "Float"; }
+    std::string operator()(const StringType &) const { return "String"; }
+    std::string operator()(const BoundedStringType &t) const {
+        std::ostringstream builder;
+        builder << "String(" << t.min_length << ", " << t.max_length << ")";
+        return builder.str();
+    }
+    std::string operator()(const UuidType &) const { return "UUID"; }
+    std::string operator()(const TimestampType &) const { return "Timestamp"; }
+    std::string operator()(const DurationType &) const { return "Duration"; }
+    std::string operator()(const DecimalType &t) const {
+        std::ostringstream builder;
+        builder << "Decimal(" << int(t.scale) << ")";
+        return builder.str();
+    }
+    std::string operator()(const NamedType &t) const {
+        return t.name->spelling();
+    }
+    std::string operator()(const OptionalType &t) const {
+        return "Optional<" + t.inner->spelling() + ">";
+    }
+    std::string operator()(const ListType &t) const {
+        return "List<" + t.element->spelling() + ">";
+    }
+    std::string operator()(const SetType &t) const {
+        return "Set<" + t.element->spelling() + ">";
+    }
+    std::string operator()(const MapType &t) const {
+        return "Map<" + t.key_type->spelling() + ", " + t.value_type->spelling() + ">";
+    }
+};
+
+} // namespace
+
+std::string TypeSyntax::spelling() const {
+    return std::visit(TypeSyntaxSpellingVisitor{}, node);
 }
 
 std::vector<AstInvariantViolation> validate_program_invariants(const Program &program) {

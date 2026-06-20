@@ -3,6 +3,8 @@
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
+
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -709,140 +711,134 @@ class ResolverPass final {
     }
 
     void resolve_temporal_expr(const ast::TemporalExprSyntax &expr) {
-        switch (expr.kind) {
-        case ast::TemporalExprSyntaxKind::EmbeddedExpr:
-            resolve_declaration_expr(*expr.expr);
-            break;
-        case ast::TemporalExprSyntaxKind::Called: {
-            const auto name = make_single_segment_name(expr.name, expr.range);
-            (void)resolve_reference(SymbolNamespace::Capabilities,
-                                    name,
-                                    ReferenceKind::TemporalCapability,
-                                    "capability");
-            break;
-        }
-        case ast::TemporalExprSyntaxKind::Unary:
-            resolve_temporal_expr(*expr.first);
-            break;
-        case ast::TemporalExprSyntaxKind::Binary:
-            resolve_temporal_expr(*expr.first);
-            resolve_temporal_expr(*expr.second);
-            break;
-        case ast::TemporalExprSyntaxKind::InState:
-        case ast::TemporalExprSyntaxKind::Running:
-        case ast::TemporalExprSyntaxKind::Completed:
-            break;
-        }
+        std::visit(Overloaded{
+            [&](const ast::EmbeddedTemporalExpr &e) {
+                if (e.expr) {
+                    resolve_declaration_expr(*e.expr);
+                }
+            },
+            [&](const ast::CalledTemporalExpr &e) {
+                const auto name = make_single_segment_name(e.name, expr.range);
+                (void)resolve_reference(SymbolNamespace::Capabilities,
+                                        name,
+                                        ReferenceKind::TemporalCapability,
+                                        "capability");
+            },
+            [&](const ast::InStateTemporalExpr &) {
+                // No resolution needed for InState (state names resolved at typecheck
+            },
+            [&](const ast::RunningTemporalExpr &) {
+                // No resolution needed for Running (node names resolved at typecheck)
+            },
+            [&](const ast::CompletedTemporalExpr &) {
+                // No resolution needed for Completed (node names resolved at typecheck)
+            },
+            [&](const ast::UnaryTemporalExpr &e) {
+                if (e.operand) {
+                    resolve_temporal_expr(*e.operand);
+                }
+            },
+            [&](const ast::BinaryTemporalExpr &e) {
+                if (e.lhs) {
+                    resolve_temporal_expr(*e.lhs);
+                }
+                if (e.rhs) {
+                    resolve_temporal_expr(*e.rhs);
+                }
+            },
+        }, expr.node);
     }
 
     void resolve_type(const ast::TypeSyntax &type) {
-        switch (type.kind) {
-        case ast::TypeSyntaxKind::Named: {
-            const auto resolved = resolve_reference(
-                SymbolNamespace::Types, *type.name, ReferenceKind::TypeName, "type");
+        std::visit(Overloaded{
+            [&](const ast::NamedType &t) {
+                const auto resolved = resolve_reference(
+                    SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
 
-            if (resolved.has_value() && current_type_alias_.has_value()) {
-                const auto symbol = result_.symbol_table.get(*resolved);
-                if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
-                    type_alias_dependencies_[current_type_alias_->value].push_back(*resolved);
+                if (resolved.has_value() && current_type_alias_.has_value()) {
+                    const auto symbol = result_.symbol_table.get(*resolved);
+                    if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
+                        type_alias_dependencies_[current_type_alias_->value].push_back(*resolved);
+                    }
                 }
-            }
-            break;
-        }
-        case ast::TypeSyntaxKind::Optional:
-        case ast::TypeSyntaxKind::List:
-        case ast::TypeSyntaxKind::Set:
-            resolve_type(*type.first);
-            break;
-        case ast::TypeSyntaxKind::Map:
-            resolve_type(*type.first);
-            resolve_type(*type.second);
-            break;
-        case ast::TypeSyntaxKind::Unit:
-        case ast::TypeSyntaxKind::Bool:
-        case ast::TypeSyntaxKind::Int:
-        case ast::TypeSyntaxKind::Float:
-        case ast::TypeSyntaxKind::String:
-        case ast::TypeSyntaxKind::BoundedString:
-        case ast::TypeSyntaxKind::UUID:
-        case ast::TypeSyntaxKind::Timestamp:
-        case ast::TypeSyntaxKind::Duration:
-        case ast::TypeSyntaxKind::Decimal:
-            break;
-        }
+            },
+            [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
+            [&](const ast::ListType &t) { resolve_type(*t.element); },
+            [&](const ast::SetType &t) { resolve_type(*t.element); },
+            [&](const ast::MapType &t) {
+                resolve_type(*t.key_type);
+                resolve_type(*t.value_type);
+            },
+            [](const auto &) { /* leaf types: nothing to resolve */ },
+        }, type.node);
     }
 
     void resolve_declaration_expr(const ast::ExprSyntax &expr) {
-        switch (expr.kind) {
-        case ast::ExprSyntaxKind::Some:
-        case ast::ExprSyntaxKind::Unary:
-        case ast::ExprSyntaxKind::Group:
-            resolve_declaration_expr(*expr.first);
-            break;
-        case ast::ExprSyntaxKind::Binary:
-        case ast::ExprSyntaxKind::IndexAccess:
-            resolve_declaration_expr(*expr.first);
-            resolve_declaration_expr(*expr.second);
-            break;
-        case ast::ExprSyntaxKind::Call:
-            (void)resolve_callable_reference(*expr.qualified_name);
-            for (const auto &item : expr.items) {
-                resolve_declaration_expr(*item);
-            }
-            break;
-        case ast::ExprSyntaxKind::StructLiteral: {
-            (void)resolve_reference(
-                SymbolNamespace::Types, *expr.qualified_name, ReferenceKind::TypeName, "type");
-            for (const auto &field : expr.struct_fields) {
-                resolve_declaration_expr(*field->value);
-            }
-            break;
-        }
-        case ast::ExprSyntaxKind::ListLiteral:
-        case ast::ExprSyntaxKind::SetLiteral:
-            for (const auto &item : expr.items) {
-                resolve_declaration_expr(*item);
-            }
-            break;
-        case ast::ExprSyntaxKind::MapLiteral:
-            for (const auto &entry : expr.map_entries) {
-                resolve_declaration_expr(*entry->key);
-                resolve_declaration_expr(*entry->value);
-            }
-            break;
-        case ast::ExprSyntaxKind::MemberAccess:
-            resolve_declaration_expr(*expr.first);
-            break;
-        case ast::ExprSyntaxKind::QualifiedValue: {
-            if (const auto resolved = lookup(SymbolNamespace::Consts, *expr.qualified_name);
-                resolved.has_value()) {
-                result_.add_reference(ResolvedReference{
-                    .kind = ReferenceKind::ConstValue,
-                    .text = expr.qualified_name->spelling(),
-                    .source_id = current_source_id_,
-                    .range = expr.qualified_name->range,
-                    .target = *resolved,
-                });
-                break;
-            }
-
-            if (expr.qualified_name->segments.size() > 1) {
-                const auto owner = owner_name_of(*expr.qualified_name);
+        std::visit(Overloaded{
+            [&](const ast::SomeExpr &e) { resolve_declaration_expr(*e.value); },
+            [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
+            [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
+            [&](const ast::BinaryExpr &e) {
+                resolve_declaration_expr(*e.lhs);
+                resolve_declaration_expr(*e.rhs);
+            },
+            [&](const ast::IndexAccessExpr &e) {
+                resolve_declaration_expr(*e.base);
+                resolve_declaration_expr(*e.index);
+            },
+            [&](const ast::CallExpr &e) {
+                (void)resolve_callable_reference(*e.callee);
+                for (const auto &arg : e.arguments) {
+                    resolve_declaration_expr(*arg);
+                }
+            },
+            [&](const ast::StructLiteralExpr &e) {
                 (void)resolve_reference(
-                    SymbolNamespace::Types, owner, ReferenceKind::QualifiedValueOwnerType, "type");
-            }
-            break;
-        }
-        case ast::ExprSyntaxKind::BoolLiteral:
-        case ast::ExprSyntaxKind::IntegerLiteral:
-        case ast::ExprSyntaxKind::FloatLiteral:
-        case ast::ExprSyntaxKind::DecimalLiteral:
-        case ast::ExprSyntaxKind::StringLiteral:
-        case ast::ExprSyntaxKind::DurationLiteral:
-        case ast::ExprSyntaxKind::NoneLiteral:
-        case ast::ExprSyntaxKind::Path:
-            break;
-        }
+                    SymbolNamespace::Types, *e.type_name, ReferenceKind::TypeName, "type");
+                for (const auto &field : e.fields) {
+                    resolve_declaration_expr(*field->value);
+                }
+            },
+            [&](const ast::ListLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    resolve_declaration_expr(*item);
+                }
+            },
+            [&](const ast::SetLiteralExpr &e) {
+                for (const auto &item : e.items) {
+                    resolve_declaration_expr(*item);
+                }
+            },
+            [&](const ast::MapLiteralExpr &e) {
+                for (const auto &entry : e.entries) {
+                    resolve_declaration_expr(*entry->key);
+                    resolve_declaration_expr(*entry->value);
+                }
+            },
+            [&](const ast::MemberAccessExpr &e) {
+                resolve_declaration_expr(*e.base);
+            },
+            [&](const ast::QualifiedValueExpr &e) {
+                if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
+                    resolved.has_value()) {
+                    result_.add_reference(ResolvedReference{
+                        .kind = ReferenceKind::ConstValue,
+                        .text = e.name->spelling(),
+                        .source_id = current_source_id_,
+                        .range = e.name->range,
+                        .target = *resolved,
+                    });
+                    return;
+                }
+
+                if (e.name->segments.size() > 1) {
+                    const auto owner = owner_name_of(*e.name);
+                    (void)resolve_reference(
+                        SymbolNamespace::Types, owner, ReferenceKind::QualifiedValueOwnerType, "type");
+                }
+            },
+            [](const auto &) { /* leaf expressions: nothing to resolve */ },
+        }, expr.node);
     }
 
     void resolve_block_types(const ast::BlockSyntax &block) {
