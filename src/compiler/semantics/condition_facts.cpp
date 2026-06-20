@@ -34,7 +34,7 @@ namespace {
 }
 
 [[nodiscard]] std::optional<TypeFact> extract_none_comparison(const ast::ExprSyntax &condition,
-                                                             bool truth_value) {
+                                                              bool truth_value) {
     if (condition.kind == ast::ExprSyntaxKind::Group && condition.first) {
         return extract_none_comparison(*condition.first, truth_value);
     }
@@ -57,7 +57,7 @@ namespace {
     }
 
     auto kind = condition.binary_op == ast::ExprBinaryOp::Equal ? TypeFactKind::IsNone
-                                                               : TypeFactKind::IsNotNone;
+                                                                : TypeFactKind::IsNotNone;
     if (!truth_value) {
         kind = opposite(kind);
     }

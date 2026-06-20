@@ -1,10 +1,10 @@
 #pragma once
 
-#include "tooling/cli/command_catalog.hpp"
-#include "tooling/cli/output_context.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
 #include "ahfl/compiler/handoff/package.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
+#include "tooling/cli/command_catalog.hpp"
+#include "tooling/cli/output_context.hpp"
 
 #include <iostream>
 #include <optional>

@@ -70,8 +70,7 @@ IncrementalVerifier::compute_diff(const std::vector<PropertyHash> &previous,
     return state;
 }
 
-[[nodiscard]] std::string
-IncrementalVerifier::hash_property(std::string_view property_text) {
+[[nodiscard]] std::string IncrementalVerifier::hash_property(std::string_view property_text) {
     return hash_to_hex(fnv1a_hash(property_text));
 }
 

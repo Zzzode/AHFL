@@ -1,9 +1,9 @@
 #pragma once
 
+#include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
-#include "ahfl/base/support/diagnostics.hpp"
 
 namespace ahfl {
 

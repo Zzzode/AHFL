@@ -1,14 +1,18 @@
 #pragma once
 
-#include <tooling/incremental/dependency_graph.hpp>
-#include <tooling/incremental/ir_cache.hpp>
 #include <cstddef>
 #include <string>
+#include <tooling/incremental/dependency_graph.hpp>
+#include <tooling/incremental/ir_cache.hpp>
 #include <vector>
 
 namespace ahfl::incremental {
 
-enum class CompileStatus { UpToDate, Recompiled, Failed };
+enum class CompileStatus {
+    UpToDate,
+    Recompiled,
+    Failed
+};
 
 struct CompileResult {
     CompileStatus status;
@@ -29,18 +33,18 @@ struct IncrementalStats {
 };
 
 class IncrementalCompiler {
-public:
-    explicit IncrementalCompiler(DependencyGraph& graph, IrCache& cache);
+  public:
+    explicit IncrementalCompiler(DependencyGraph &graph, IrCache &cache);
 
-    [[nodiscard]] std::vector<CompileResult> compile_changed(
-        const std::vector<std::string>& changed_paths);
+    [[nodiscard]] std::vector<CompileResult>
+    compile_changed(const std::vector<std::string> &changed_paths);
 
     [[nodiscard]] IncrementalStats stats() const;
     void reset_stats();
 
-private:
-    DependencyGraph& graph_;
-    IrCache& cache_;
+  private:
+    DependencyGraph &graph_;
+    IrCache &cache_;
     IncrementalStats stats_{};
 };
 

@@ -14,6 +14,6 @@ void write_counterexample_json(const CounterexampleTrace &trace,
 
 /// Serialize a counterexample trace and explanation to a JSON string.
 [[nodiscard]] std::string counterexample_to_json(const CounterexampleTrace &trace,
-                                                  const ViolationExplanation &explanation);
+                                                 const ViolationExplanation &explanation);
 
 } // namespace ahfl::formal

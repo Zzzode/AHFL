@@ -10,7 +10,9 @@ namespace ahfl::passes {
 /// - Identity elimination: p && true → p, p || false → p
 class ExprCanonicalizationPass final : public Pass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "expr-canonicalization"; }
+    [[nodiscard]] std::string_view name() const override {
+        return "expr-canonicalization";
+    }
     [[nodiscard]] bool run(ir::Program &program) override;
 };
 

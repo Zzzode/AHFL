@@ -20,8 +20,8 @@ struct WasmAgentConfig {
     std::vector<std::string> capabilities;
 };
 
-[[nodiscard]] WasmModule generate_wasm(const WasmAgentConfig& config);
-[[nodiscard]] std::string emit_wat_header(const std::string& module_name);
-[[nodiscard]] std::string emit_wat_state_table(const std::vector<std::string>& states);
+[[nodiscard]] WasmModule generate_wasm(const WasmAgentConfig &config);
+[[nodiscard]] std::string emit_wat_header(const std::string &module_name);
+[[nodiscard]] std::string emit_wat_state_table(const std::vector<std::string> &states);
 
 } // namespace ahfl::backends

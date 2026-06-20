@@ -4,17 +4,19 @@
 
 namespace ahfl {
 
-const TypedExpr *
-resolve_child(const TypedProgram &program, const TypedExprChild &child) noexcept {
-    if (child.expr_index == UINT32_MAX) return nullptr;
-    if (child.expr_index >= program.expressions.size()) return nullptr;
+const TypedExpr *resolve_child(const TypedProgram &program, const TypedExprChild &child) noexcept {
+    if (child.expr_index == UINT32_MAX)
+        return nullptr;
+    if (child.expr_index >= program.expressions.size())
+        return nullptr;
     return &program.expressions[child.expr_index];
 }
 
-TypedExpr *
-resolve_child_mut(TypedProgram &program, const TypedExprChild &child) noexcept {
-    if (child.expr_index == UINT32_MAX) return nullptr;
-    if (child.expr_index >= program.expressions.size()) return nullptr;
+TypedExpr *resolve_child_mut(TypedProgram &program, const TypedExprChild &child) noexcept {
+    if (child.expr_index == UINT32_MAX)
+        return nullptr;
+    if (child.expr_index >= program.expressions.size())
+        return nullptr;
     return &program.expressions[child.expr_index];
 }
 
@@ -38,8 +40,9 @@ TypedExpr *TypedProgram::find_expr(std::uint64_t node_id,
     return nullptr;
 }
 
-const TypedExpr *TypedProgram::find_expr_by_range(SourceRange range,
-                                                  std::optional<SourceId> source_id) const noexcept {
+const TypedExpr *
+TypedProgram::find_expr_by_range(SourceRange range,
+                                 std::optional<SourceId> source_id) const noexcept {
     for (const auto &expr : expressions) {
         if (expr.range.begin_offset == range.begin_offset &&
             expr.range.end_offset == range.end_offset && expr.source_id == source_id) {
@@ -61,7 +64,8 @@ TypedExpr *TypedProgram::find_expr_by_range(SourceRange range,
 }
 
 const TypedExpr *
-TypedProgram::find_expr_containing(std::size_t offset, std::optional<SourceId> source_id) const noexcept {
+TypedProgram::find_expr_containing(std::size_t offset,
+                                   std::optional<SourceId> source_id) const noexcept {
     const TypedExpr *best = nullptr;
     std::size_t best_size = 0;
     for (const auto &expr : expressions) {

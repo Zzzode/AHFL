@@ -30,18 +30,15 @@ struct VerificationSummary {
 };
 
 class ModelCheckerBackend {
-public:
+  public:
     virtual ~ModelCheckerBackend() = default;
     [[nodiscard]] virtual ModelCheckerKind kind() const = 0;
     [[nodiscard]] virtual std::string_view name() const = 0;
     [[nodiscard]] virtual std::string_view file_extension() const = 0;
-    [[nodiscard]] virtual ModelEmissionResult
-    emit_model(const BmcStateMachine &machine) = 0;
-    [[nodiscard]] virtual VerificationSummary
-    verify(const std::string &model_text) = 0;
+    [[nodiscard]] virtual ModelEmissionResult emit_model(const BmcStateMachine &machine) = 0;
+    [[nodiscard]] virtual VerificationSummary verify(const std::string &model_text) = 0;
 };
 
-[[nodiscard]] std::unique_ptr<ModelCheckerBackend>
-create_backend(ModelCheckerKind kind);
+[[nodiscard]] std::unique_ptr<ModelCheckerBackend> create_backend(ModelCheckerKind kind);
 
 } // namespace ahfl::formal

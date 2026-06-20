@@ -152,11 +152,14 @@ struct WorkspaceEdit {
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_range(const Range &range);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_location(const Location &loc);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_diagnostic(const LspDiagnostic &diag);
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_completion_item(const CompletionItem &item);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_completion_item(const CompletionItem &item);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_hover(const Hover &hover);
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_server_capabilities(const ServerCapabilities &caps);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_server_capabilities(const ServerCapabilities &caps);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_document_symbol(const DocumentSymbol &sym);
-[[nodiscard]] std::unique_ptr<json::JsonValue> serialize_symbol_information(const SymbolInformation &sym);
+[[nodiscard]] std::unique_ptr<json::JsonValue>
+serialize_symbol_information(const SymbolInformation &sym);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_text_edit(const TextEdit &edit);
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_workspace_edit(const WorkspaceEdit &edit);
 
@@ -166,6 +169,7 @@ struct WorkspaceEdit {
 [[nodiscard]] Range parse_range(const json::JsonValue &v);
 [[nodiscard]] TextDocumentItem parse_text_document_item(const json::JsonValue &v);
 [[nodiscard]] TextDocumentIdentifier parse_text_document_identifier(const json::JsonValue &v);
-[[nodiscard]] VersionedTextDocumentIdentifier parse_versioned_text_document_identifier(const json::JsonValue &v);
+[[nodiscard]] VersionedTextDocumentIdentifier
+parse_versioned_text_document_identifier(const json::JsonValue &v);
 
 } // namespace ahfl::lsp

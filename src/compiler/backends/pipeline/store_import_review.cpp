@@ -1,6 +1,6 @@
 #include "compiler/backends/pipeline/store_import_review.hpp"
-#include "printer_helpers.hpp"
 #include "compiler/backends/pipeline/review_helpers.hpp"
+#include "printer_helpers.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -124,10 +124,19 @@ void print_store_import_review(const store_import::StoreImportReviewSummary &sum
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
-    line(out, 0, "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
-    line(out, 0, "persistence_status " + pipeline_review::persistence_status_name(summary.persistence_status));
-    line(out, 0, "manifest_status " + pipeline_review::manifest_status_name(summary.manifest_status));
+    line(out,
+         0,
+         "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out,
+         0,
+         "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
+    line(out,
+         0,
+         "persistence_status " +
+             pipeline_review::persistence_status_name(summary.persistence_status));
+    line(out,
+         0,
+         "manifest_status " + pipeline_review::manifest_status_name(summary.manifest_status));
     line(out, 0, "descriptor_status " + descriptor_status_name(summary.descriptor_status));
     line(out, 0, "export_package_identity " + summary.export_package_identity);
     line(out, 0, "store_import_candidate_identity " + summary.store_import_candidate_identity);
@@ -148,9 +157,11 @@ void print_store_import_review(const store_import::StoreImportReviewSummary &sum
                   ? artifact_kind_name(*summary.next_required_staging_artifact_kind)
                   : "none"));
 
-    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_failure_summary(
+        out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_staging_blocker(out, 0, summary.staging_blocker);
-    pipeline_review::print_string_list(out, 0, "staging_artifact_preview", summary.staging_artifact_preview);
+    pipeline_review::print_string_list(
+        out, 0, "staging_artifact_preview", summary.staging_artifact_preview);
 }
 
 } // namespace ahfl

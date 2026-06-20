@@ -1,8 +1,8 @@
 #pragma once
 #include <cstdint>
+#include <random>
 #include <string>
 #include <vector>
-#include <random>
 
 namespace ahfl::testing {
 
@@ -33,7 +33,7 @@ struct GeneratorConfig {
 };
 
 class AstGenerator {
-public:
+  public:
     explicit AstGenerator(GeneratorConfig config = {});
 
     [[nodiscard]] GeneratedNode generate_agent();
@@ -45,17 +45,17 @@ public:
     void reseed(uint64_t seed);
     [[nodiscard]] std::size_t generation_count() const;
 
-private:
+  private:
     GeneratorConfig config_;
     std::mt19937_64 rng_;
     std::size_t count_ = 0;
 
     [[nodiscard]] GeneratedNode generate_state();
-    [[nodiscard]] GeneratedNode generate_transition(const std::vector<std::string>& states);
+    [[nodiscard]] GeneratedNode generate_transition(const std::vector<std::string> &states);
     [[nodiscard]] GeneratedNode generate_field();
 };
 
 // Utility: convert generated AST to AHFL source text (approximate)
-[[nodiscard]] std::string to_ahfl_source(const GeneratedNode& node);
+[[nodiscard]] std::string to_ahfl_source(const GeneratedNode &node);
 
 } // namespace ahfl::testing

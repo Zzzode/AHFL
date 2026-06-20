@@ -7,10 +7,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ahfl/compiler/frontend/ast.hpp"
 #include "ahfl/base/support/diagnostics.hpp"
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/frontend/ast.hpp"
 
 namespace ahfl {
 

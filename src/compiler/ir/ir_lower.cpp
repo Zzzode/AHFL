@@ -399,8 +399,8 @@ class IrLowerer final {
 
         // Fall back to source range for synthesized initializers that pre-date
         // NodeId assignment.
-        const auto *typed_expr = type_check_result_.typed_program.find_expr_by_range(
-            expr.range, current_source_id_);
+        const auto *typed_expr =
+            type_check_result_.typed_program.find_expr_by_range(expr.range, current_source_id_);
         if (typed_expr != nullptr && typed_expr->type != nullptr) {
             return typed_expr->type;
         }
@@ -562,7 +562,8 @@ class IrLowerer final {
                 return ir::TypeRef{.kind = ir::TypeRefKind::Float, .display_name = type.describe()};
             },
             [&](const types::StringT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::String, .display_name = type.describe()};
+                return ir::TypeRef{.kind = ir::TypeRefKind::String,
+                                   .display_name = type.describe()};
             },
             [&](const types::BoundedStringT &value) {
                 return ir::TypeRef{
@@ -826,7 +827,8 @@ class IrLowerer final {
     [[nodiscard]] std::string render_qualified_value(const ast::ExprSyntax &expr) const {
         if (const auto *typed_expr = typed_expr_for(expr);
             typed_expr != nullptr && typed_expr->resolved_symbol.has_value()) {
-            if (const auto symbol = symbols().get(*typed_expr->resolved_symbol); symbol.has_value()) {
+            if (const auto symbol = symbols().get(*typed_expr->resolved_symbol);
+                symbol.has_value()) {
                 if (symbol->get().kind == SymbolKind::Const) {
                     return symbol->get().canonical_name;
                 }
@@ -839,7 +841,8 @@ class IrLowerer final {
                 std::string variant_name = segments.back();
                 if (!typed_expr->semantic_name.empty()) {
                     if (const auto separator = typed_expr->semantic_name.rfind("::");
-                        separator != std::string::npos && separator + 2 < typed_expr->semantic_name.size()) {
+                        separator != std::string::npos &&
+                        separator + 2 < typed_expr->semantic_name.size()) {
                         variant_name = typed_expr->semantic_name.substr(separator + 2);
                     }
                 }
@@ -889,12 +892,11 @@ class IrLowerer final {
                 return self.make_expr(ir::BoolLiteralExpr{.value = e.bool_value}, range);
             }
             ir::ExprPtr visit_integer_literal(const ast::ExprSyntax &e) const {
-                return self.make_expr(ir::IntegerLiteralExpr{
-                                          .spelling = e.integer_literal
-                                                          ? e.integer_literal->spelling
-                                                          : "0",
-                                      },
-                                      range);
+                return self.make_expr(
+                    ir::IntegerLiteralExpr{
+                        .spelling = e.integer_literal ? e.integer_literal->spelling : "0",
+                    },
+                    range);
             }
             ir::ExprPtr visit_float_literal(const ast::ExprSyntax &e) const {
                 return self.make_expr(ir::FloatLiteralExpr{.spelling = e.text}, range);
@@ -978,33 +980,37 @@ class IrLowerer final {
                 return self.make_expr(std::move(literal), range);
             }
             ir::ExprPtr visit_unary(const ast::ExprSyntax &e) const {
-                return self.make_expr(ir::UnaryExpr{
-                                          .op = lower_expr_unary_op(e.unary_op),
-                                          .operand = self.lower_expr(*e.first),
-                                      },
-                                      range);
+                return self.make_expr(
+                    ir::UnaryExpr{
+                        .op = lower_expr_unary_op(e.unary_op),
+                        .operand = self.lower_expr(*e.first),
+                    },
+                    range);
             }
             ir::ExprPtr visit_binary(const ast::ExprSyntax &e) const {
-                return self.make_expr(ir::BinaryExpr{
-                                          .op = lower_expr_binary_op(e.binary_op),
-                                          .lhs = self.lower_expr(*e.first),
-                                          .rhs = self.lower_expr(*e.second),
-                                      },
-                                      range);
+                return self.make_expr(
+                    ir::BinaryExpr{
+                        .op = lower_expr_binary_op(e.binary_op),
+                        .lhs = self.lower_expr(*e.first),
+                        .rhs = self.lower_expr(*e.second),
+                    },
+                    range);
             }
             ir::ExprPtr visit_member_access(const ast::ExprSyntax &e) const {
-                return self.make_expr(ir::MemberAccessExpr{
-                                          .base = self.lower_expr(*e.first),
-                                          .member = e.name,
-                                      },
-                                      range);
+                return self.make_expr(
+                    ir::MemberAccessExpr{
+                        .base = self.lower_expr(*e.first),
+                        .member = e.name,
+                    },
+                    range);
             }
             ir::ExprPtr visit_index_access(const ast::ExprSyntax &e) const {
-                return self.make_expr(ir::IndexAccessExpr{
-                                          .base = self.lower_expr(*e.first),
-                                          .index = self.lower_expr(*e.second),
-                                      },
-                                      range);
+                return self.make_expr(
+                    ir::IndexAccessExpr{
+                        .base = self.lower_expr(*e.first),
+                        .index = self.lower_expr(*e.second),
+                    },
+                    range);
             }
             ir::ExprPtr visit_group(const ast::ExprSyntax &e) const {
                 return self.make_expr(ir::GroupExpr{.expr = self.lower_expr(*e.first)}, range);
@@ -1062,7 +1068,8 @@ class IrLowerer final {
         }
 
         if (statement.initializer) {
-            if (const auto *type = inferred_expression_type(*statement.initializer); type != nullptr) {
+            if (const auto *type = inferred_expression_type(*statement.initializer);
+                type != nullptr) {
                 return type_ref_from_type(*type);
             }
         }
@@ -1679,9 +1686,9 @@ class IrLowerer final {
                 .input_type_ref = info.has_value()
                                       ? type_ref_from_maybe(borrow(info->get().input_type))
                                       : type_ref_from_syntax(*node.input_type),
-                .context_type_ref =
-                    info.has_value() ? type_ref_from_maybe(borrow(info->get().context_type))
-                                     : type_ref_from_syntax(*node.context_type),
+                .context_type_ref = info.has_value()
+                                        ? type_ref_from_maybe(borrow(info->get().context_type))
+                                        : type_ref_from_syntax(*node.context_type),
                 .output_type_ref = info.has_value()
                                        ? type_ref_from_maybe(borrow(info->get().output_type))
                                        : type_ref_from_syntax(*node.output_type),

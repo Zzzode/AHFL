@@ -8,25 +8,27 @@ namespace ahfl::testing {
 
 namespace {
 
-constexpr std::array<const char*, 12> kIdentifiers = {
-    "agent_1", "node_a", "node_b", "handler_x",
-    "state_idle", "state_active", "state_done", "state_error",
-    "field_name", "field_value", "cap_read", "cap_write"
-};
+constexpr std::array<const char *, 12> kIdentifiers = {"agent_1",
+                                                       "node_a",
+                                                       "node_b",
+                                                       "handler_x",
+                                                       "state_idle",
+                                                       "state_active",
+                                                       "state_done",
+                                                       "state_error",
+                                                       "field_name",
+                                                       "field_value",
+                                                       "cap_read",
+                                                       "cap_write"};
 
-constexpr std::array<const char*, 6> kTypes = {
-    "String", "Int", "Bool", "Float", "List", "Map"
-};
+constexpr std::array<const char *, 6> kTypes = {"String", "Int", "Bool", "Float", "List", "Map"};
 
-constexpr std::array<const char*, 8> kStateNames = {
-    "idle", "running", "waiting", "completed",
-    "failed", "paused", "active", "terminated"
-};
+constexpr std::array<const char *, 8> kStateNames = {
+    "idle", "running", "waiting", "completed", "failed", "paused", "active", "terminated"};
 
 } // namespace
 
-AstGenerator::AstGenerator(GeneratorConfig config)
-    : config_(config), rng_(config.seed) {}
+AstGenerator::AstGenerator(GeneratorConfig config) : config_(config), rng_(config.seed) {}
 
 void AstGenerator::reseed(uint64_t seed) {
     rng_.seed(seed);
@@ -59,7 +61,7 @@ GeneratedNode AstGenerator::generate_state() {
     return node;
 }
 
-GeneratedNode AstGenerator::generate_transition(const std::vector<std::string>& states) {
+GeneratedNode AstGenerator::generate_transition(const std::vector<std::string> &states) {
     GeneratedNode node;
     node.kind = AstNodeKind::Transition;
     if (states.size() >= 2) {
@@ -155,61 +157,61 @@ GeneratedNode AstGenerator::generate_struct() {
     return s;
 }
 
-std::string to_ahfl_source(const GeneratedNode& node) {
+std::string to_ahfl_source(const GeneratedNode &node) {
     std::ostringstream out;
 
     switch (node.kind) {
-        case AstNodeKind::Agent:
-            out << "agent " << node.name << " {\n";
-            for (const auto& child : node.children) {
-                out << "  " << to_ahfl_source(child) << "\n";
-            }
-            out << "}\n";
-            break;
+    case AstNodeKind::Agent:
+        out << "agent " << node.name << " {\n";
+        for (const auto &child : node.children) {
+            out << "  " << to_ahfl_source(child) << "\n";
+        }
+        out << "}\n";
+        break;
 
-        case AstNodeKind::Workflow:
-            out << "workflow " << node.name << " {\n";
-            for (const auto& child : node.children) {
-                out << "  " << to_ahfl_source(child) << "\n";
-            }
-            out << "}\n";
-            break;
+    case AstNodeKind::Workflow:
+        out << "workflow " << node.name << " {\n";
+        for (const auto &child : node.children) {
+            out << "  " << to_ahfl_source(child) << "\n";
+        }
+        out << "}\n";
+        break;
 
-        case AstNodeKind::State:
-            out << "state " << node.name << ";";
-            break;
+    case AstNodeKind::State:
+        out << "state " << node.name << ";";
+        break;
 
-        case AstNodeKind::Transition:
-            out << "transition " << node.name << ";";
-            break;
+    case AstNodeKind::Transition:
+        out << "transition " << node.name << ";";
+        break;
 
-        case AstNodeKind::Struct:
-            out << "struct " << node.name << " {\n";
-            for (const auto& child : node.children) {
-                out << "  " << to_ahfl_source(child) << "\n";
-            }
-            out << "}\n";
-            break;
+    case AstNodeKind::Struct:
+        out << "struct " << node.name << " {\n";
+        for (const auto &child : node.children) {
+            out << "  " << to_ahfl_source(child) << "\n";
+        }
+        out << "}\n";
+        break;
 
-        case AstNodeKind::Field:
-            if (!node.attributes.empty()) {
-                out << node.name << ": " << node.attributes[0].second << ";";
-            } else {
-                out << node.name << ": Unknown;";
-            }
-            break;
+    case AstNodeKind::Field:
+        if (!node.attributes.empty()) {
+            out << node.name << ": " << node.attributes[0].second << ";";
+        } else {
+            out << node.name << ": Unknown;";
+        }
+        break;
 
-        case AstNodeKind::Expression:
-            if (!node.attributes.empty()) {
-                out << "let " << node.name << ": " << node.attributes[0].second << ";";
-            } else {
-                out << "let " << node.name << ";";
-            }
-            break;
+    case AstNodeKind::Expression:
+        if (!node.attributes.empty()) {
+            out << "let " << node.name << ": " << node.attributes[0].second << ";";
+        } else {
+            out << "let " << node.name << ";";
+        }
+        break;
 
-        case AstNodeKind::Capability:
-            out << "capability " << node.name << ";";
-            break;
+    case AstNodeKind::Capability:
+        out << "capability " << node.name << ";";
+        break;
     }
 
     return out.str();

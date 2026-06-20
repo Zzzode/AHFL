@@ -1,6 +1,6 @@
 #include "compiler/backends/pipeline/persistence_review.hpp"
-#include "printer_helpers.hpp"
 #include "compiler/backends/pipeline/review_helpers.hpp"
+#include "printer_helpers.hpp"
 
 #include <cstddef>
 #include <ostream>
@@ -88,9 +88,16 @@ void print_persistence_review(const persistence_descriptor::PersistenceReviewSum
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
-    line(out, 0, "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
-    line(out, 0, "persistence_status " + pipeline_review::persistence_status_name(summary.persistence_status));
+    line(out,
+         0,
+         "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out,
+         0,
+         "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
+    line(out,
+         0,
+         "persistence_status " +
+             pipeline_review::persistence_status_name(summary.persistence_status));
     line(out, 0, "planned_durable_identity " + summary.planned_durable_identity);
     line(out, 0, "export_basis_kind " + basis_kind_name(summary.export_basis_kind));
     line(out, 0, std::string("export_ready ") + (summary.export_ready ? "true" : "false"));
@@ -104,7 +111,8 @@ void print_persistence_review(const persistence_descriptor::PersistenceReviewSum
                                          ? *summary.next_export_candidate_node_name
                                          : "none"));
 
-    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_failure_summary(
+        out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_persistence_blocker(out, 0, summary.persistence_blocker);
     pipeline_review::print_string_list(out, 0, "exportable_prefix", summary.exportable_prefix);
 }

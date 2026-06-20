@@ -29,7 +29,9 @@ struct CurlResponse {
     std::string error;
     bool timed_out{false};
 
-    [[nodiscard]] bool is_success() const { return status_code >= 200 && status_code < 300; }
+    [[nodiscard]] bool is_success() const {
+        return status_code >= 200 && status_code < 300;
+    }
 };
 
 [[nodiscard]] CurlResponse execute_curl(const CurlRequest &request);

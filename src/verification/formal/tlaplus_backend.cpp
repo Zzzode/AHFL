@@ -16,8 +16,7 @@ namespace ahfl::formal {
     return ".tla";
 }
 
-[[nodiscard]] ModelEmissionResult
-TLAPlusBackend::emit_model(const BmcStateMachine &machine) {
+[[nodiscard]] ModelEmissionResult TLAPlusBackend::emit_model(const BmcStateMachine &machine) {
     ModelEmissionResult result;
 
     if (machine.states.empty()) {
@@ -79,8 +78,7 @@ TLAPlusBackend::emit_model(const BmcStateMachine &machine) {
     return result;
 }
 
-[[nodiscard]] VerificationSummary
-TLAPlusBackend::verify(const std::string & /*model_text*/) {
+[[nodiscard]] VerificationSummary TLAPlusBackend::verify(const std::string & /*model_text*/) {
     VerificationSummary summary;
     summary.all_passed = false;
     summary.properties_checked = 0;

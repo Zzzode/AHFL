@@ -304,8 +304,8 @@ std::string DapServer::handle_scopes(const std::string &body) {
     for (const auto &scope : scopes) {
         if (!first)
             oss << ",";
-        oss << R"({"name":)" << json_escape(scope.name)
-            << R"(,"variablesReference":)" << ref_base << R"(,"expensive":false})";
+        oss << R"({"name":)" << json_escape(scope.name) << R"(,"variablesReference":)" << ref_base
+            << R"(,"expensive":false})";
         first = false;
         ++ref_base;
     }
@@ -350,10 +350,9 @@ std::string DapServer::handle_variables(const std::string &body) {
     for (const auto &var : vars) {
         if (!first)
             oss << ",";
-        oss << R"({"name":)" << json_escape(var.name)
-            << R"(,"value":)" << json_escape(var.value)
-            << R"(,"type":)" << json_escape(var.type)
-            << R"(,"variablesReference":)" << var.variables_reference << "}";
+        oss << R"({"name":)" << json_escape(var.name) << R"(,"value":)" << json_escape(var.value)
+            << R"(,"type":)" << json_escape(var.type) << R"(,"variablesReference":)"
+            << var.variables_reference << "}";
         first = false;
     }
     oss << "]}";

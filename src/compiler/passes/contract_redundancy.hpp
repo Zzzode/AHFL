@@ -21,7 +21,9 @@ struct ContractRedundancyResult final : public AnalysisResult {
 /// Detects structurally identical clauses within the same contract.
 class ContractRedundancyPass final : public AnalysisPass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "contract-redundancy"; }
+    [[nodiscard]] std::string_view name() const override {
+        return "contract-redundancy";
+    }
     [[nodiscard]] std::unique_ptr<AnalysisResult> run(const ir::Program &program) override;
 };
 

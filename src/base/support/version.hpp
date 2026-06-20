@@ -17,8 +17,10 @@ struct SemanticVersion {
 
     bool operator==(const SemanticVersion &) const = default;
     auto operator<=>(const SemanticVersion &other) const {
-        if (auto c = major <=> other.major; c != 0) return c;
-        if (auto c = minor <=> other.minor; c != 0) return c;
+        if (auto c = major <=> other.major; c != 0)
+            return c;
+        if (auto c = minor <=> other.minor; c != 0)
+            return c;
         return patch <=> other.patch;
     }
 };

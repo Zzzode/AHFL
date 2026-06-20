@@ -10,7 +10,7 @@ namespace ahfl::lsp {
 
 /// In-memory store of open text documents.
 class DocumentStore {
-public:
+  public:
     void open(const TextDocumentItem &item);
     void change(const std::string &uri, int version, const std::string &new_text);
     void close(const std::string &uri);
@@ -19,7 +19,7 @@ public:
     [[nodiscard]] bool contains(const std::string &uri) const;
     [[nodiscard]] std::vector<std::string> all_uris() const;
 
-private:
+  private:
     std::unordered_map<std::string, TextDocumentItem> documents_;
 };
 

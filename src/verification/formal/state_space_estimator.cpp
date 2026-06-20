@@ -12,8 +12,7 @@ constexpr std::size_t tractability_threshold = 1'000'000; // 10^6
 
 } // namespace
 
-[[nodiscard]] StateSpaceEstimate
-estimate_state_space(const std::vector<AgentMetrics> &agents) {
+[[nodiscard]] StateSpaceEstimate estimate_state_space(const std::vector<AgentMetrics> &agents) {
     StateSpaceEstimate estimate;
     estimate.num_agents = agents.size();
     estimate.estimation_method = "multiplicative";
@@ -54,10 +53,12 @@ estimate_state_space(const std::vector<AgentMetrics> &agents) {
 
     if (overflow) {
         estimate.likely_tractable = false;
-        estimate.warning = "State space exceeds representable limit; verification likely intractable";
+        estimate.warning =
+            "State space exceeds representable limit; verification likely intractable";
     } else if (product > tractability_threshold) {
         estimate.likely_tractable = false;
-        estimate.warning = "State space exceeds tractability threshold (10^6); consider abstraction";
+        estimate.warning =
+            "State space exceeds tractability threshold (10^6); consider abstraction";
     } else {
         estimate.likely_tractable = true;
     }

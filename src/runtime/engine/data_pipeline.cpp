@@ -2,12 +2,12 @@
 
 namespace ahfl::runtime {
 
-void DataPipeline::publish(const std::string& node_id, const std::string& value) {
+void DataPipeline::publish(const std::string &node_id, const std::string &value) {
     std::lock_guard<std::mutex> lock(mutex_);
     values_[node_id] = value;
 }
 
-std::optional<std::string> DataPipeline::consume(const std::string& node_id) const {
+std::optional<std::string> DataPipeline::consume(const std::string &node_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     auto it = values_.find(node_id);
     if (it != values_.end()) {
@@ -16,7 +16,7 @@ std::optional<std::string> DataPipeline::consume(const std::string& node_id) con
     return std::nullopt;
 }
 
-bool DataPipeline::has_value(const std::string& node_id) const {
+bool DataPipeline::has_value(const std::string &node_id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     return values_.count(node_id) > 0;
 }

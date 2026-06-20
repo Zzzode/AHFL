@@ -87,9 +87,15 @@ void print_checkpoint_review(const checkpoint_record::CheckpointReviewSummary &s
     line(out, 0, "session " + summary.session_id);
     line(out, 0, "run_id " + (summary.run_id.has_value() ? *summary.run_id : "none"));
     line(out, 0, "input_fixture " + summary.input_fixture);
-    line(out, 0, "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
-    line(out, 0, "snapshot_status " + pipeline_review::snapshot_status_name(summary.snapshot_status));
-    line(out, 0, "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
+    line(out,
+         0,
+         "workflow_status " + pipeline_review::workflow_status_name(summary.workflow_status));
+    line(out,
+         0,
+         "snapshot_status " + pipeline_review::snapshot_status_name(summary.snapshot_status));
+    line(out,
+         0,
+         "checkpoint_status " + pipeline_review::checkpoint_status_name(summary.checkpoint_status));
     line(out, 0, "basis_kind " + basis_kind_name(summary.basis_kind));
     line(out,
          0,
@@ -110,7 +116,8 @@ void print_checkpoint_review(const checkpoint_record::CheckpointReviewSummary &s
          "terminal_reason " +
              (summary.terminal_reason.has_value() ? *summary.terminal_reason : "none"));
 
-    pipeline_review::print_failure_summary(out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
+    pipeline_review::print_failure_summary(
+        out, 0, "workflow_failure_summary", summary.workflow_failure_summary);
     print_resume_blocker(out, 0, summary.resume_blocker);
     pipeline_review::print_string_list(out, 0, "persistable_prefix", summary.persistable_prefix);
 }

@@ -46,11 +46,10 @@ void FlowFacts::merge_from(const FlowFacts &other) {
 }
 
 void FlowFacts::invalidate(const Place &place) {
-    facts.erase(std::remove_if(facts.begin(),
-                               facts.end(),
-                               [&](const TypeFact &fact) {
-                                   return is_same_or_descendant(fact.place, place);
-                               }),
+    facts.erase(std::remove_if(
+                    facts.begin(),
+                    facts.end(),
+                    [&](const TypeFact &fact) { return is_same_or_descendant(fact.place, place); }),
                 facts.end());
 }
 

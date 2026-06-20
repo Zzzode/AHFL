@@ -18,11 +18,13 @@ class ResponseCache {
                            std::chrono::seconds ttl = std::chrono::seconds{300});
 
     /// Get a cached response. Returns nullopt on miss or expiry.
-    [[nodiscard]] std::optional<std::string> get(std::string_view model, std::string_view system,
-                                                 std::string_view user);
+    [[nodiscard]] std::optional<std::string>
+    get(std::string_view model, std::string_view system, std::string_view user);
 
     /// Store a response in cache.
-    void put(std::string_view model, std::string_view system, std::string_view user,
+    void put(std::string_view model,
+             std::string_view system,
+             std::string_view user,
              std::string response);
 
     /// Current number of entries.
@@ -37,8 +39,8 @@ class ResponseCache {
         std::chrono::steady_clock::time_point inserted_at;
     };
 
-    [[nodiscard]] std::string make_key(std::string_view model, std::string_view system,
-                                       std::string_view user) const;
+    [[nodiscard]] std::string
+    make_key(std::string_view model, std::string_view system, std::string_view user) const;
 
     std::size_t max_entries_;
     std::chrono::seconds ttl_;

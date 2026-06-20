@@ -15,7 +15,9 @@ class PromptTemplate {
     [[nodiscard]] std::string
     render(const std::unordered_map<std::string, std::string> &vars) const;
 
-    [[nodiscard]] const std::string &text() const { return text_; }
+    [[nodiscard]] const std::string &text() const {
+        return text_;
+    }
 
   private:
     std::string text_;

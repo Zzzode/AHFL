@@ -25,20 +25,28 @@ constexpr std::string_view kNodeTerminalFailed = "AHFL_NODE_TERMINAL_FAILED";
 
 [[nodiscard]] inline std::string smv_unary_op(ir::TemporalUnaryOp op) {
     switch (op) {
-    case ir::TemporalUnaryOp::Always: return "G";
-    case ir::TemporalUnaryOp::Eventually: return "F";
-    case ir::TemporalUnaryOp::Next: return "X";
-    case ir::TemporalUnaryOp::Not: return "!";
+    case ir::TemporalUnaryOp::Always:
+        return "G";
+    case ir::TemporalUnaryOp::Eventually:
+        return "F";
+    case ir::TemporalUnaryOp::Next:
+        return "X";
+    case ir::TemporalUnaryOp::Not:
+        return "!";
     }
     return "!";
 }
 
 [[nodiscard]] inline std::string smv_binary_op(ir::TemporalBinaryOp op) {
     switch (op) {
-    case ir::TemporalBinaryOp::Implies: return "->";
-    case ir::TemporalBinaryOp::Or: return "|";
-    case ir::TemporalBinaryOp::And: return "&";
-    case ir::TemporalBinaryOp::Until: return "U";
+    case ir::TemporalBinaryOp::Implies:
+        return "->";
+    case ir::TemporalBinaryOp::Or:
+        return "|";
+    case ir::TemporalBinaryOp::And:
+        return "&";
+    case ir::TemporalBinaryOp::Until:
+        return "U";
     }
     return "&";
 }
@@ -79,8 +87,8 @@ constexpr std::string_view kNodeTerminalFailed = "AHFL_NODE_TERMINAL_FAILED";
            sanitize_identifier(node_name) + "__running";
 }
 
-[[nodiscard]] inline std::string workflow_node_failure_requested_var(const ir::WorkflowDecl &workflow,
-                                                                     std::string_view node_name) {
+[[nodiscard]] inline std::string
+workflow_node_failure_requested_var(const ir::WorkflowDecl &workflow, std::string_view node_name) {
     return "workflow__" + sanitize_identifier(workflow.name) + "__node__" +
            sanitize_identifier(node_name) + "__failure_requested";
 }
@@ -117,13 +125,17 @@ constexpr std::string_view kNodeTerminalFailed = "AHFL_NODE_TERMINAL_FAILED";
            sanitize_identifier(node_name) + "__effect__" + sanitize_identifier(effect_kind);
 }
 
-[[nodiscard]] inline std::string workflow_node_call_committed_event_var(
-    const ir::WorkflowDecl &workflow, std::string_view node_name, std::string_view capability_name) {
+[[nodiscard]] inline std::string
+workflow_node_call_committed_event_var(const ir::WorkflowDecl &workflow,
+                                       std::string_view node_name,
+                                       std::string_view capability_name) {
     return workflow_node_call_event_var(workflow, node_name, capability_name) + "__committed";
 }
 
-[[nodiscard]] inline std::string workflow_node_call_failed_event_var(
-    const ir::WorkflowDecl &workflow, std::string_view node_name, std::string_view capability_name) {
+[[nodiscard]] inline std::string
+workflow_node_call_failed_event_var(const ir::WorkflowDecl &workflow,
+                                    std::string_view node_name,
+                                    std::string_view capability_name) {
     return workflow_node_call_event_var(workflow, node_name, capability_name) + "__failed";
 }
 
@@ -143,20 +155,28 @@ constexpr std::string_view kNodeTerminalFailed = "AHFL_NODE_TERMINAL_FAILED";
 
 [[nodiscard]] inline std::string observation_scope_kind_key(ir::FormalObservationScopeKind kind) {
     switch (kind) {
-    case ir::FormalObservationScopeKind::ContractClause: return "contract";
-    case ir::FormalObservationScopeKind::WorkflowSafetyClause: return "workflow_safety";
-    case ir::FormalObservationScopeKind::WorkflowLivenessClause: return "workflow_liveness";
+    case ir::FormalObservationScopeKind::ContractClause:
+        return "contract";
+    case ir::FormalObservationScopeKind::WorkflowSafetyClause:
+        return "workflow_safety";
+    case ir::FormalObservationScopeKind::WorkflowLivenessClause:
+        return "workflow_liveness";
     }
     return "invalid";
 }
 
 [[nodiscard]] inline std::string capability_effect_kind_name(ir::CapabilityEffectKind kind) {
     switch (kind) {
-    case ir::CapabilityEffectKind::Read: return "read";
-    case ir::CapabilityEffectKind::ExternalSideEffect: return "external_side_effect";
-    case ir::CapabilityEffectKind::DurableWrite: return "durable_write";
-    case ir::CapabilityEffectKind::FinancialWrite: return "financial_write";
-    case ir::CapabilityEffectKind::Unknown: return "unknown";
+    case ir::CapabilityEffectKind::Read:
+        return "read";
+    case ir::CapabilityEffectKind::ExternalSideEffect:
+        return "external_side_effect";
+    case ir::CapabilityEffectKind::DurableWrite:
+        return "durable_write";
+    case ir::CapabilityEffectKind::FinancialWrite:
+        return "financial_write";
+    case ir::CapabilityEffectKind::Unknown:
+        return "unknown";
     }
     return "unknown";
 }

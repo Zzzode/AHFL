@@ -6,7 +6,8 @@ void IrCache::store(CacheEntry entry) {
     cache_[entry.module_path] = std::move(entry);
 }
 
-[[nodiscard]] CacheLookupResult IrCache::lookup(const std::string& module_path, std::uint64_t current_hash) const {
+[[nodiscard]] CacheLookupResult IrCache::lookup(const std::string &module_path,
+                                                std::uint64_t current_hash) const {
     auto it = cache_.find(module_path);
     if (it == cache_.end()) {
         return CacheLookupResult{CacheHitKind::Miss, std::nullopt};
@@ -17,7 +18,7 @@ void IrCache::store(CacheEntry entry) {
     return CacheLookupResult{CacheHitKind::Hit, it->second};
 }
 
-void IrCache::invalidate(const std::string& module_path) {
+void IrCache::invalidate(const std::string &module_path) {
     cache_.erase(module_path);
 }
 
@@ -31,7 +32,7 @@ void IrCache::clear() {
 
 [[nodiscard]] std::size_t IrCache::total_size_bytes() const {
     std::size_t total = 0;
-    for (const auto& [path, entry] : cache_) {
+    for (const auto &[path, entry] : cache_) {
         (void)path;
         total += entry.serialized_ir.size();
     }

@@ -23,11 +23,9 @@ struct ProcessConfig {
 };
 
 /// Launch external process (replaces popen)
-[[nodiscard]] ProcessResult
-launch_process(const ProcessConfig &config);
+[[nodiscard]] ProcessResult launch_process(const ProcessConfig &config);
 
 /// Find executable in PATH
-[[nodiscard]] std::optional<std::string>
-find_executable(std::string_view name);
+[[nodiscard]] std::optional<std::string> find_executable(std::string_view name);
 
 } // namespace ahfl::formal

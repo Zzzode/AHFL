@@ -5,7 +5,7 @@
 namespace ahfl::formal {
 
 class SpinBackend final : public ModelCheckerBackend {
-public:
+  public:
     [[nodiscard]] ModelCheckerKind kind() const override;
     [[nodiscard]] std::string_view name() const override;
     [[nodiscard]] std::string_view file_extension() const override;

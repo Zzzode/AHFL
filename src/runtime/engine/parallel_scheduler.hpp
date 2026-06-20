@@ -1,10 +1,10 @@
 #pragma once
-#include <string>
-#include <vector>
-#include <functional>
-#include <variant>
-#include <unordered_map>
 #include <chrono>
+#include <functional>
+#include <string>
+#include <unordered_map>
+#include <variant>
+#include <vector>
 
 namespace ahfl::runtime {
 
@@ -23,7 +23,7 @@ struct RetryPolicy {
 struct DagNode {
     std::string id;
     std::vector<std::string> dependencies;
-    std::function<std::string()> execute;  // returns output value
+    std::function<std::string()> execute; // returns output value
     RetryPolicy retry{};
 };
 
@@ -51,19 +51,19 @@ struct SchedulerResult {
 };
 
 class ParallelScheduler {
-public:
+  public:
     explicit ParallelScheduler(size_t thread_count = 4,
                                FailurePropagationMode mode = FailurePropagationMode::FailFast);
 
     void add_node(DagNode node);
 
-    [[nodiscard]] bool validate_dag() const;  // check for cycles
+    [[nodiscard]] bool validate_dag() const; // check for cycles
 
     [[nodiscard]] SchedulerResult execute();
 
     [[nodiscard]] size_t node_count() const;
 
-private:
+  private:
     std::vector<DagNode> nodes_;
     size_t thread_count_;
     FailurePropagationMode mode_;

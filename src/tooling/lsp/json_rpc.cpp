@@ -6,8 +6,7 @@
 
 namespace ahfl::lsp {
 
-JsonRpcTransport::JsonRpcTransport(std::istream &in, std::ostream &out)
-    : in_(in), out_(out) {}
+JsonRpcTransport::JsonRpcTransport(std::istream &in, std::ostream &out) : in_(in), out_(out) {}
 
 std::optional<IncomingMessage> JsonRpcTransport::read_message() {
     // Read headers until empty line

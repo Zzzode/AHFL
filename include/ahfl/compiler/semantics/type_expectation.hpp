@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ahfl/compiler/semantics/types.hpp"
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/semantics/types.hpp"
 
 #include <string>
 

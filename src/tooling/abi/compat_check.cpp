@@ -2,10 +2,8 @@
 
 namespace ahfl::abi {
 
-[[nodiscard]] CompatibilityResult check_compatibility(
-    AbiDomain domain,
-    const AbiVersion& source,
-    const AbiVersion& target) {
+[[nodiscard]] CompatibilityResult
+check_compatibility(AbiDomain domain, const AbiVersion &source, const AbiVersion &target) {
 
     CompatibilityResult result;
     result.source = source;
@@ -14,8 +12,7 @@ namespace ahfl::abi {
     if (source.major != target.major) {
         result.level = CompatibilityLevel::BreakingChange;
         result.description = "Breaking change in " + domain_name(domain) +
-                             ": major version mismatch (" +
-                             format_version(source) + " -> " +
+                             ": major version mismatch (" + format_version(source) + " -> " +
                              format_version(target) + ")";
         return result;
     }
@@ -28,29 +25,25 @@ namespace ahfl::abi {
             return result;
         }
         result.level = CompatibilityLevel::FullyCompatible;
-        result.description = "Fully compatible in " + domain_name(domain) +
-                             ": identical version " + format_version(source);
+        result.description = "Fully compatible in " + domain_name(domain) + ": identical version " +
+                             format_version(source);
         return result;
     }
 
     if (target.minor > source.minor ||
         (target.minor == source.minor && target.patch > source.patch)) {
         result.level = CompatibilityLevel::BackwardCompatible;
-        result.description = "Backward compatible in " + domain_name(domain) +
-                             ": " + format_version(source) + " -> " +
-                             format_version(target);
+        result.description = "Backward compatible in " + domain_name(domain) + ": " +
+                             format_version(source) + " -> " + format_version(target);
         return result;
     }
 
     result.level = CompatibilityLevel::BackwardCompatible;
-    result.description = "Backward compatible in " + domain_name(domain) +
-                         ": same major version";
+    result.description = "Backward compatible in " + domain_name(domain) + ": same major version";
     return result;
 }
 
-[[nodiscard]] bool is_compatible(
-    const AbiVersion& source,
-    const AbiVersion& target) {
+[[nodiscard]] bool is_compatible(const AbiVersion &source, const AbiVersion &target) {
     return source.major == target.major;
 }
 

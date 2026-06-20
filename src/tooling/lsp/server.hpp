@@ -10,13 +10,13 @@ namespace ahfl::lsp {
 
 /// AHFL Language Server — handles LSP protocol over stdin/stdout.
 class LspServer {
-public:
+  public:
     LspServer(std::istream &in, std::ostream &out);
 
     /// Blocking event loop. Returns when the transport reaches EOF or receives exit.
     void run();
 
-private:
+  private:
     JsonRpcTransport transport_;
     DocumentStore store_;
     bool initialized_{false};

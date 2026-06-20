@@ -27,7 +27,7 @@ struct WasmRuntimeConfig {
     WasiConfig wasi;
 };
 
-[[nodiscard]] std::string generate_wasi_imports(const WasiConfig& config);
-[[nodiscard]] bool validate_runtime_config(const WasmRuntimeConfig& config);
+[[nodiscard]] std::string generate_wasi_imports(const WasiConfig &config);
+[[nodiscard]] bool validate_runtime_config(const WasmRuntimeConfig &config);
 
 } // namespace ahfl::backends

@@ -13,18 +13,17 @@ namespace ahfl::scheduler_snapshot {
 
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"SCHEDULER_SNAPSHOT"};
-inline constexpr ErrorCode<DiagnosticCategory::Backend> kBootstrapDiagnosticCode{"SCHEDULER_SNAPSHOT_BOOTSTRAP"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{
+    "SCHEDULER_SNAPSHOT"};
+inline constexpr ErrorCode<DiagnosticCategory::Backend> kBootstrapDiagnosticCode{
+    "SCHEDULER_SNAPSHOT_BOOTSTRAP"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);
 }
 
 void emit_bootstrap_error(DiagnosticBag &diagnostics, std::string message) {
-    diagnostics.error()
-        .code(kBootstrapDiagnosticCode)
-        .message(std::move(message))
-        .emit();
+    diagnostics.error().code(kBootstrapDiagnosticCode).message(std::move(message)).emit();
 }
 
 [[nodiscard]] bool insert_unique_node_name(const std::string &name,

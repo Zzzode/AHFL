@@ -120,8 +120,8 @@ struct MessageTemplate {
         std::size_t pos = 0;
         ((pos = result.find(placeholder, pos),
           pos != std::string::npos
-              ? (result.replace(pos, placeholder.length(),
-                                std::string_view(std::forward<Args>(args))),
+              ? (result.replace(
+                     pos, placeholder.length(), std::string_view(std::forward<Args>(args))),
                  pos += std::string_view(std::forward<Args>(args)).length())
               : pos),
          ...);
@@ -162,8 +162,7 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ExactSchemaMismatch{
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownType{"UNKNOWN_TYPE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidOperation{"INVALID_OPERATION"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NonPureExpression{"NON_PURE_EXPRESSION"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ConstExprRequired{
-    "CONST_EXPR_REQUIRED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ConstExprRequired{"CONST_EXPR_REQUIRED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InvalidMemberAccess{
     "INVALID_MEMBER_ACCESS"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> UnknownField{"UNKNOWN_FIELD"};
@@ -185,8 +184,7 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADO
 } // namespace typecheck
 
 namespace validation {
-inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{
-    "SEMANTIC_INVARIANT"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{"SEMANTIC_INVARIANT"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> VersionMismatch{"VERSION_MISMATCH"};
 inline constexpr ErrorCode<DiagnosticCategory::Validation> RequiredFieldEmpty{
     "REQUIRED_FIELD_EMPTY"};
@@ -255,8 +253,7 @@ inline constexpr MessageTemplate WrongArity{"{} '{}' expects {} argument(s), got
 inline constexpr MessageTemplate PredicateArgsNotPure{
     "predicate arguments must be pure expressions"};
 inline constexpr MessageTemplate NonPureContext{"{} must be a pure expression"};
-inline constexpr MessageTemplate ConstExprRequired{
-    "const expression required in {}: {}"};
+inline constexpr MessageTemplate ConstExprRequired{"const expression required in {}: {}"};
 } // namespace typecheck
 
 namespace validation {
@@ -423,10 +420,18 @@ class DiagnosticBag {
 
     // === Core Operations ===
 
-    [[nodiscard]] bool has_error() const noexcept { return error_count_ > 0; }
-    [[nodiscard]] bool has_warning() const noexcept { return warning_count_ > 0; }
-    [[nodiscard]] std::size_t error_count() const noexcept { return error_count_; }
-    [[nodiscard]] std::size_t warning_count() const noexcept { return warning_count_; }
+    [[nodiscard]] bool has_error() const noexcept {
+        return error_count_ > 0;
+    }
+    [[nodiscard]] bool has_warning() const noexcept {
+        return warning_count_ > 0;
+    }
+    [[nodiscard]] std::size_t error_count() const noexcept {
+        return error_count_;
+    }
+    [[nodiscard]] std::size_t warning_count() const noexcept {
+        return warning_count_;
+    }
 
     [[nodiscard]] const std::vector<Diagnostic> &entries() const noexcept {
         return diagnostics_;
@@ -480,8 +485,7 @@ class DiagnosticBag {
             out << '\n';
 
             // Source snippet + caret rendering
-            if (source.has_value() && diagnostic.range.has_value() &&
-                !diagnostic.range->empty()) {
+            if (source.has_value() && diagnostic.range.has_value() && !diagnostic.range->empty()) {
                 auto &src = source->get();
                 src.refresh_line_starts_cache();
                 const auto &starts = src.line_starts_cache;
@@ -489,9 +493,8 @@ class DiagnosticBag {
 
                 std::size_t line_idx = begin_pos.line - 1;
                 std::size_t line_start = starts[line_idx];
-                std::size_t line_end = (line_idx + 1 < starts.size())
-                                           ? starts[line_idx + 1] - 1
-                                           : src.content.size();
+                std::size_t line_end =
+                    (line_idx + 1 < starts.size()) ? starts[line_idx + 1] - 1 : src.content.size();
                 if (line_end > line_start && line_end <= src.content.size() &&
                     src.content[line_end - 1] == '\r') {
                     --line_end;
@@ -532,8 +535,8 @@ class DiagnosticBag {
                     } else if (source.has_value()) {
                         const auto &src_file = source->get();
                         const auto pos = src_file.locate(related.range->begin_offset);
-                        out << " (" << src_file.display_name << ":" << pos.line << ":"
-                            << pos.column << ")";
+                        out << " (" << src_file.display_name << ":" << pos.line << ":" << pos.column
+                            << ")";
                     }
                 }
                 out << '\n';

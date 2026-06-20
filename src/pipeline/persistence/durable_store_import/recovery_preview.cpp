@@ -7,7 +7,8 @@
 namespace ahfl::durable_store_import {
 namespace {
 
-inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{"DSI_RECOVERY_PREVIEW"};
+inline constexpr ErrorCode<DiagnosticCategory::Validation> kValidationDiagnosticCode{
+    "DSI_RECOVERY_PREVIEW"};
 
 void emit_validation_error(DiagnosticBag &diagnostics, std::string message) {
     validation::emit_validation_error(diagnostics, kValidationDiagnosticCode, message);

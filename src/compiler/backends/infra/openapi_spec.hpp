@@ -24,6 +24,6 @@ struct OpenApiOutput {
     std::string json;
 };
 
-[[nodiscard]] OpenApiOutput generate_openapi(const OpenApiConfig& config);
+[[nodiscard]] OpenApiOutput generate_openapi(const OpenApiConfig &config);
 
 } // namespace ahfl::backends

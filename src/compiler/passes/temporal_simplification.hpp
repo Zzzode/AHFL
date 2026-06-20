@@ -10,7 +10,9 @@ namespace ahfl::passes {
 /// - next(next(p)) is left as-is (semantically different)
 class TemporalSimplificationPass final : public Pass {
   public:
-    [[nodiscard]] std::string_view name() const override { return "temporal-simplification"; }
+    [[nodiscard]] std::string_view name() const override {
+        return "temporal-simplification";
+    }
     [[nodiscard]] bool run(ir::Program &program) override;
 };
 

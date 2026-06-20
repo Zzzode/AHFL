@@ -16,7 +16,9 @@ void KeyRotationManager::add_policy(RotationPolicy policy) {
     policies_[key] = std::move(policy);
 }
 
-void KeyRotationManager::remove_policy(const std::string &key) { policies_.erase(key); }
+void KeyRotationManager::remove_policy(const std::string &key) {
+    policies_.erase(key);
+}
 
 std::optional<RotationPolicy> KeyRotationManager::get_policy(const std::string &key) const {
     auto it = policies_.find(key);
@@ -100,15 +102,21 @@ void KeyRotationManager::on_rotation(RotationCallback callback) {
     callbacks_.push_back(std::move(callback));
 }
 
-std::vector<RotationEvent> KeyRotationManager::history() const { return history_; }
+std::vector<RotationEvent> KeyRotationManager::history() const {
+    return history_;
+}
 
 std::vector<RotationEvent> KeyRotationManager::history_for(const std::string &key) const {
     std::vector<RotationEvent> result;
-    std::copy_if(history_.begin(), history_.end(), std::back_inserter(result),
+    std::copy_if(history_.begin(),
+                 history_.end(),
+                 std::back_inserter(result),
                  [&key](const RotationEvent &e) { return e.key == key; });
     return result;
 }
 
-std::size_t KeyRotationManager::policy_count() const { return policies_.size(); }
+std::size_t KeyRotationManager::policy_count() const {
+    return policies_.size();
+}
 
 } // namespace ahfl::secret

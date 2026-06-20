@@ -1,11 +1,11 @@
 #pragma once
 
+#include "ahfl/compiler/frontend/frontend.hpp"
+#include "ahfl/compiler/handoff/package.hpp"
+#include "pipeline/execution/dry_run/runner.hpp"
 #include "tooling/cli/command_catalog.hpp"
 #include "tooling/cli/diagnostic_consumer.hpp"
 #include "tooling/cli/exit_code.hpp"
-#include "pipeline/execution/dry_run/runner.hpp"
-#include "ahfl/compiler/frontend/frontend.hpp"
-#include "ahfl/compiler/handoff/package.hpp"
 
 #include <functional>
 #include <memory>

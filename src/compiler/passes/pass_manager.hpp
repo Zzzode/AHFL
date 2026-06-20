@@ -28,9 +28,13 @@ class Pass {
     [[nodiscard]] virtual bool run(ir::Program &program) = 0;
 
     /// Declare which analyses this pass requires (run before if missing).
-    [[nodiscard]] virtual std::vector<std::string_view> required_analyses() const { return {}; }
+    [[nodiscard]] virtual std::vector<std::string_view> required_analyses() const {
+        return {};
+    }
     /// Declare which analyses this pass invalidates (cleared after run).
-    [[nodiscard]] virtual std::vector<std::string_view> invalidated_analyses() const { return {}; }
+    [[nodiscard]] virtual std::vector<std::string_view> invalidated_analyses() const {
+        return {};
+    }
 };
 
 /// An analysis pass that inspects but does not modify the IR.

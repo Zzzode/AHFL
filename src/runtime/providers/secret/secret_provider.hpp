@@ -37,8 +37,12 @@ struct SecretAccessEvent {
 class SecretAuditLog {
   public:
     void record(SecretAccessEvent event);
-    [[nodiscard]] const std::vector<SecretAccessEvent> &events() const { return events_; }
-    [[nodiscard]] std::size_t size() const { return events_.size(); }
+    [[nodiscard]] const std::vector<SecretAccessEvent> &events() const {
+        return events_;
+    }
+    [[nodiscard]] std::size_t size() const {
+        return events_.size();
+    }
 
   private:
     std::vector<SecretAccessEvent> events_;
@@ -58,7 +62,9 @@ class SecretManager {
     void refresh(std::string_view key);
 
     /// Access the audit log for inspection.
-    [[nodiscard]] const SecretAuditLog &audit_log() const { return audit_log_; }
+    [[nodiscard]] const SecretAuditLog &audit_log() const {
+        return audit_log_;
+    }
 
   private:
     std::unique_ptr<SecretProvider> provider_;
