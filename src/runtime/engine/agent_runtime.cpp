@@ -35,7 +35,7 @@ bool AgentResult::is_terminal() const {
 
 AgentRuntime::AgentRuntime(const ir::AgentDecl &agent, const ir::FlowDecl &flow, QuotaConfig quota)
     : agent_(agent), flow_(flow), quota_(std::move(quota)) {
-    // 合并 IR 中声明的 quota 到运行时配置（IR 声明优先级低于显式传入）
+    // Merge quota declared in IR into runtime configuration (IR declaration has lower priority than explicit input)
     auto parsed = parse_quota(agent_.quota);
     if (!quota_.max_state_transitions.has_value()) {
         quota_.max_state_transitions = parsed.max_state_transitions;
@@ -75,10 +75,10 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
     result.visited_states.insert(result.current_state);
     result.stats.start_time = std::chrono::steady_clock::now();
 
-    // 初始化执行上下文
+    // Initialize execution context
     evaluator::ExecContext exec_ctx;
 
-    // 设置带 capability 调用支持的表达式求值器
+    // Set up expression evaluator with capability call support
     if (contextual_capability_invoker_) {
         auto invoker = contextual_capability_invoker_;
         exec_ctx.expr_eval = [this, invoker, &result](
@@ -98,7 +98,7 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         };
     }
 
-    // 注入 input：假设 input 是 StructValue，将其字段逐个设置到 input_scope
+    // Inject input: assume input is a StructValue, set its fields one by one into input_scope
     if (auto *sv = std::get_if<evaluator::StructValue>(&input.node)) {
         for (auto &[field_name, field_value] : sv->fields) {
             if (field_value) {
@@ -107,13 +107,13 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         }
     }
 
-    // 状态访问计数，用于无限循环检测
+    // State visit count, used for infinite loop detection
     std::unordered_map<std::string, std::size_t> visit_counts;
     visit_counts[result.current_state] = 1;
 
-    // 状态转换主循环
+    // Main state transition loop
     while (true) {
-        // Quota 检查：max_state_transitions
+        // Quota check: max_state_transitions
         if (quota_.max_state_transitions.has_value() &&
             result.stats.state_transitions >= *quota_.max_state_transitions) {
             result.status = AgentStatus::QuotaExceeded;
@@ -123,7 +123,7 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
             break;
         }
 
-        // Quota 检查：max_execution_time
+        // Quota check: max_execution_time
         if (quota_.max_execution_time.has_value()) {
             auto elapsed = std::chrono::steady_clock::now() - result.stats.start_time;
             if (elapsed > *quota_.max_execution_time) {
@@ -135,7 +135,7 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
             }
         }
 
-        // 查找当前状态的 handler
+        // Find the handler for the current state
         const auto *handler = find_handler(result.current_state);
         if (handler == nullptr) {
             result.status = AgentStatus::Failed;
@@ -145,26 +145,26 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
             break;
         }
 
-        // 执行 handler body
+        // Execute handler body
         auto exec_result = evaluator::exec_block(handler->body, exec_ctx);
 
-        // 合并诊断信息
+        // Merge diagnostics
         result.diagnostics.append(exec_result.diagnostics);
 
-        // 如果执行本身产生了错误诊断，标记为失败
+        // If execution itself produced error diagnostics, mark as failed
         if (exec_result.has_errors()) {
             result.status = AgentStatus::Failed;
             break;
         }
 
-        // 处理执行结果
+        // Handle execution result
         if (std::holds_alternative<evaluator::ExecContinue>(exec_result.outcome)) {
-            // Continue: handler 执行完毕但没有 goto/return
+            // Continue: handler finished but no goto/return
             if (is_final_state(result.current_state)) {
-                // 在终态 fallthrough -> 完成（无输出）
+                // Fallthrough in a final state -> completed (no output)
                 result.status = AgentStatus::Completed;
             } else {
-                // 非终态 fallthrough -> 错误
+                // Fallthrough in a non-final state -> error
                 result.status = AgentStatus::Failed;
                 result.diagnostics.error()
                     .message("state '" + result.current_state +
@@ -175,7 +175,7 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         }
 
         if (auto *goto_out = std::get_if<evaluator::ExecGoto>(&exec_result.outcome)) {
-            // 验证 transition 合法性
+            // Validate transition legality
             if (!is_valid_transition(result.current_state, goto_out->target_state)) {
                 result.status = AgentStatus::InvalidTransition;
                 result.diagnostics.error()
@@ -185,12 +185,12 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
                 break;
             }
 
-            // 更新状态
+            // Update state
             result.stats.state_transitions++;
             result.current_state = goto_out->target_state;
             result.visited_states.insert(result.current_state);
 
-            // 无限循环检测
+            // Infinite loop detection
             visit_counts[result.current_state]++;
             if (visit_counts[result.current_state] > 100) {
                 result.status = AgentStatus::InfiniteLoop;
@@ -205,7 +205,7 @@ AgentResult AgentRuntime::run_from_state(Value input, std::string start_state) {
         }
 
         if (auto *ret_out = std::get_if<evaluator::ExecReturn>(&exec_result.outcome)) {
-            // Return: 验证当前状态是终态
+            // Return: validate that the current state is a final state
             if (!is_final_state(result.current_state)) {
                 result.status = AgentStatus::Failed;
                 result.diagnostics.error()
@@ -282,7 +282,7 @@ QuotaConfig AgentRuntime::parse_quota(const std::vector<ir::QuotaItem> &items) {
                 config.max_tool_calls = val;
             }
         } else if (item.name == "max_execution_time") {
-            // 解析 duration 字符串如 "30s", "5000ms"
+            // Parse duration string such as "30s", "5000ms"
             std::string_view sv(item.value);
             if (sv.ends_with("ms")) {
                 std::size_t val{0};

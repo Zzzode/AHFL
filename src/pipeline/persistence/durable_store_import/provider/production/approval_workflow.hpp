@@ -10,45 +10,45 @@
 
 namespace ahfl::durable_store_import {
 
-// Approval Request 格式版本常量
+// Format version constant for the Approval Request
 inline constexpr std::string_view kProviderApprovalRequestFormatVersion =
     "ahfl.durable-store-import-provider-approval-request.v1";
 
-// Approval Decision 格式版本常量
+// Format version constant for the Approval Decision
 inline constexpr std::string_view kProviderApprovalDecisionFormatVersion =
     "ahfl.durable-store-import-provider-approval-decision.v1";
 
-// Approval Receipt 格式版本常量
+// Format version constant for the Approval Receipt
 inline constexpr std::string_view kProviderApprovalReceiptFormatVersion =
     "ahfl.durable-store-import-provider-approval-receipt.v1";
 
-// 审批决定枚举
+// Approval decision enumeration
 enum class ApprovalDecision {
-    Approved, // 已批准
-    Rejected, // 已拒绝
-    Deferred, // 延迟决定
+    Approved, // Approved
+    Rejected, // Rejected
+    Deferred, // Deferred decision
 };
 
-// 审批请求 - v0.47
-// 用于表达生产集成的人工审批输入
+// Approval request - v0.47
+// Represents the human-approval input for production integration
 struct ApprovalRequest {
     std::string format_version{std::string(kProviderApprovalRequestFormatVersion)};
     std::string workflow_canonical_name;
     std::string session_id;
     std::optional<std::string> run_id;
 
-    // 上游 evidence 引用
+    // Upstream evidence references
     std::string release_evidence_archive_manifest_identity;
     std::string production_readiness_evidence_identity;
 
-    // 请求者身份与审批范围
+    // Requestor identity and approval scope
     std::string requestor_identity;
     std::string approval_scope;
     std::string request_justification;
 };
 
-// 审批决定记录 - v0.47
-// 用于表达审批决定、拒绝原因与证据链
+// Approval decision record - v0.47
+// Represents the approval decision, rejection reason, and evidence chain
 struct ApprovalDecisionRecord {
     std::string format_version{std::string(kProviderApprovalDecisionFormatVersion)};
     std::string approval_request_identity;
@@ -59,34 +59,34 @@ struct ApprovalDecisionRecord {
     std::optional<std::string> conditions;
 };
 
-// 审批回执 - v0.47
-// 输出给 operator-facing 的审批结果
+// Approval receipt - v0.47
+// Approval result surfaced to operator-facing consumers
 struct ApprovalReceipt {
     std::string format_version{std::string(kProviderApprovalReceiptFormatVersion)};
     std::string workflow_canonical_name;
     std::string session_id;
     std::optional<std::string> run_id;
 
-    // 上游 artifact 引用
+    // Upstream artifact references
     std::string approval_request_identity;
     std::string approval_decision_identity;
 
-    // 最终决定
+    // Final decision
     ApprovalDecision final_decision{ApprovalDecision::Rejected};
 
     // Evidence binding
     std::string release_evidence_archive_manifest_identity;
     std::string production_readiness_evidence_identity;
 
-    // 汇总摘要
+    // Aggregated summary
     std::string receipt_summary;
     std::string blocking_reason_summary;
 
-    // 状态标志（安全默认：false）
+    // Status flag (safe default: false)
     bool is_approved{false};
 };
 
-// 验证结果
+// Validation result
 struct ApprovalRequestValidationResult {
     DiagnosticBag diagnostics;
     [[nodiscard]] bool has_errors() const noexcept {
@@ -108,7 +108,7 @@ struct ApprovalReceiptValidationResult {
     }
 };
 
-// 构建结果
+// Build result
 struct ApprovalRequestResult {
     std::optional<ApprovalRequest> request;
     DiagnosticBag diagnostics;
@@ -133,7 +133,7 @@ struct ApprovalReceiptResult {
     }
 };
 
-// 验证函数
+// Validation functions
 [[nodiscard]] ApprovalRequestValidationResult
 validate_approval_request(const ApprovalRequest &request);
 
@@ -143,17 +143,17 @@ validate_approval_decision_record(const ApprovalDecisionRecord &decision);
 [[nodiscard]] ApprovalReceiptValidationResult
 validate_approval_receipt(const ApprovalReceipt &receipt);
 
-// 构建函数
-// 从 ReleaseEvidenceArchiveManifest 和 ProviderProductionReadinessEvidence 构建 ApprovalRequest
+// Build functions
+// Build an ApprovalRequest from a ReleaseEvidenceArchiveManifest and a ProviderProductionReadinessEvidence
 [[nodiscard]] ApprovalRequestResult
 build_approval_request(const ReleaseEvidenceArchiveManifest &archive,
                        const ProviderProductionReadinessEvidence &readiness);
 
-// 从 ApprovalRequest 和 ApprovalDecisionRecord 构建 ApprovalReceipt
+// Build an ApprovalReceipt from an ApprovalRequest and an ApprovalDecisionRecord
 [[nodiscard]] ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
                                                            const ApprovalDecisionRecord &decision);
 
-// 辅助函数：将 ApprovalDecision 转换为字符串
+// Helper: convert an ApprovalDecision to a string
 [[nodiscard]] std::string_view to_string_view(ApprovalDecision decision);
 
 } // namespace ahfl::durable_store_import

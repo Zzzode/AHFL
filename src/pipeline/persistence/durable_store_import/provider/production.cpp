@@ -298,7 +298,7 @@ void provider_release_evidence_archive_detail_emit_validation_error(DiagnosticBa
         diagnostics, provider_release_evidence_archive_detail_kValidationDiagnosticCode, message);
 }
 
-// 构建单个 evidence item（从 conformance report）
+// Build a single evidence item (from the conformance report)
 [[nodiscard]] EvidenceItem provider_release_evidence_archive_detail_make_conformance_evidence_item(
     const ProviderConformanceReport &report) {
     EvidenceItem item;
@@ -312,7 +312,7 @@ void provider_release_evidence_archive_detail_emit_validation_error(DiagnosticBa
     return item;
 }
 
-// 构建单个 evidence item（从 schema compatibility report）
+// Build a single evidence item (from the schema compatibility report)
 [[nodiscard]] EvidenceItem
 provider_release_evidence_archive_detail_make_schema_compatibility_evidence_item(
     const ProviderSchemaCompatibilityReport &report) {
@@ -327,7 +327,7 @@ provider_release_evidence_archive_detail_make_schema_compatibility_evidence_item
     return item;
 }
 
-// 构建单个 evidence item（从 config bundle validation report）
+// Build a single evidence item (from the config bundle validation report)
 [[nodiscard]] EvidenceItem
 provider_release_evidence_archive_detail_make_config_validation_evidence_item(
     const ProviderConfigBundleValidationReport &report) {
@@ -343,7 +343,7 @@ provider_release_evidence_archive_detail_make_config_validation_evidence_item(
     return item;
 }
 
-// 构建单个 evidence item（从 production readiness evidence）
+// Build a single evidence item (from the production readiness evidence)
 [[nodiscard]] EvidenceItem provider_release_evidence_archive_detail_make_readiness_evidence_item(
     const ProviderProductionReadinessEvidence &evidence) {
     EvidenceItem item;
@@ -367,7 +367,7 @@ validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest 
     ReleaseEvidenceArchiveManifestValidationResult result;
     auto &diagnostics = result.diagnostics;
 
-    // 检查 format_version
+    // Check format_version
     if (manifest.format_version != kProviderReleaseEvidenceArchiveManifestFormatVersion) {
         provider_release_evidence_archive_detail_emit_validation_error(
             diagnostics,
@@ -375,7 +375,7 @@ validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest 
                 std::string(kProviderReleaseEvidenceArchiveManifestFormatVersion) + "'");
     }
 
-    // 检查必需字段非空
+    // Check that required fields are non-empty
     if (manifest.workflow_canonical_name.empty() || manifest.session_id.empty()) {
         provider_release_evidence_archive_detail_emit_validation_error(
             diagnostics,
@@ -383,7 +383,7 @@ validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest 
             "session_id must not be empty");
     }
 
-    // 检查上游 identity 引用非空
+    // Check that upstream identity references are non-empty
     if (manifest.durable_store_import_provider_conformance_report_identity.empty() ||
         manifest.durable_store_import_provider_schema_compatibility_report_identity.empty() ||
         manifest.durable_store_import_provider_config_bundle_validation_report_identity.empty() ||
@@ -393,13 +393,13 @@ validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest 
             "release evidence archive manifest upstream evidence identities must not be empty");
     }
 
-    // 检查 archive_summary 非空
+    // Check that archive_summary is non-empty
     if (manifest.archive_summary.empty()) {
         provider_release_evidence_archive_detail_emit_validation_error(
             diagnostics, "release evidence archive manifest archive_summary must not be empty");
     }
 
-    // 检查计数非负
+    // Check that counts are non-negative
     if (manifest.total_evidence_count < 0 || manifest.present_evidence_count < 0 ||
         manifest.valid_evidence_count < 0 || manifest.missing_evidence_count < 0 ||
         manifest.invalid_evidence_count < 0) {
@@ -407,7 +407,7 @@ validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest 
             diagnostics, "release evidence archive manifest counts cannot be negative");
     }
 
-    // 检查计数一致性
+    // Check count consistency
     if (manifest.total_evidence_count !=
         manifest.present_evidence_count + manifest.missing_evidence_count) {
         provider_release_evidence_archive_detail_emit_validation_error(
@@ -425,7 +425,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     const ProviderProductionReadinessEvidence &readiness_evidence) {
     ReleaseEvidenceArchiveManifestResult result;
 
-    // 验证上游 artifact 基础可用性
+    // Validate basic availability of upstream artifacts
     result.diagnostics.append(validate_provider_conformance_report(conformance_report).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -436,7 +436,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     manifest.session_id = conformance_report.session_id;
     manifest.run_id = conformance_report.run_id;
 
-    // 设置上游 artifact identity 引用
+    // Set upstream artifact identity references
     manifest.durable_store_import_provider_conformance_report_identity =
         conformance_report.durable_store_import_provider_conformance_report_identity;
     manifest.durable_store_import_provider_schema_compatibility_report_identity =
@@ -446,7 +446,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     manifest.durable_store_import_provider_production_readiness_evidence_identity =
         readiness_evidence.durable_store_import_provider_production_readiness_evidence_identity;
 
-    // 构建 evidence items
+    // Build evidence items
     std::vector<EvidenceItem> items;
     items.push_back(provider_release_evidence_archive_detail_make_conformance_evidence_item(
         conformance_report));
@@ -458,7 +458,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     items.push_back(
         provider_release_evidence_archive_detail_make_readiness_evidence_item(readiness_evidence));
 
-    // 计算统计
+    // Compute statistics
     int present_count = 0;
     int valid_count = 0;
     int missing_count = 0;
@@ -483,7 +483,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     manifest.invalid_evidence_count = invalid_count;
     manifest.evidence_items = std::move(items);
 
-    // 生成汇总摘要
+    // Generate aggregate summary
     manifest.is_release_ready =
         (missing_count == 0 && invalid_count == 0 && valid_count == manifest.total_evidence_count);
 
@@ -531,7 +531,7 @@ ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
         manifest.incompatible_evidence_summary = "none";
     }
 
-    // 验证生成的 manifest
+    // Validate the generated manifest
     result.diagnostics.append(validate_release_evidence_archive_manifest(manifest).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -646,7 +646,7 @@ validate_approval_decision_record(const ApprovalDecisionRecord &decision) {
             diagnostics, "approval decision decision_reason must not be empty");
     }
 
-    // 拒绝时必须有拒绝详情
+    // Rejection details are required when the decision is Rejected
     if (decision.decision == ApprovalDecision::Rejected &&
         !decision.rejection_details.has_value()) {
         provider_approval_workflow_detail_emit_validation_error(
@@ -688,14 +688,14 @@ ApprovalReceiptValidationResult validate_approval_receipt(const ApprovalReceipt 
             diagnostics, "approval receipt receipt_summary must not be empty");
     }
 
-    // is_approved 只能在 Approved 决定时为 true
+    // is_approved can only be true when the decision is Approved
     if (receipt.is_approved && receipt.final_decision != ApprovalDecision::Approved) {
         provider_approval_workflow_detail_emit_validation_error(
             diagnostics,
             "approval receipt is_approved must be false when final_decision is not Approved");
     }
 
-    // 非 Approved 时必须有 blocking_reason_summary
+    // blocking_reason_summary is required when the decision is not Approved
     if (receipt.final_decision != ApprovalDecision::Approved &&
         receipt.blocking_reason_summary.empty()) {
         provider_approval_workflow_detail_emit_validation_error(
@@ -709,7 +709,7 @@ ApprovalRequestResult build_approval_request(const ReleaseEvidenceArchiveManifes
                                              const ProviderProductionReadinessEvidence &readiness) {
     ApprovalRequestResult result;
 
-    // 验证上游 artifact 基础可用性
+    // Validate basic availability of upstream artifacts
     result.diagnostics.append(validate_release_evidence_archive_manifest(archive).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -726,19 +726,19 @@ ApprovalRequestResult build_approval_request(const ReleaseEvidenceArchiveManifes
     request.session_id = archive.session_id;
     request.run_id = archive.run_id;
 
-    // 绑定上游 evidence identity
+    // Bind upstream evidence identities
     request.release_evidence_archive_manifest_identity =
         "release-evidence-archive::" + archive.session_id;
     request.production_readiness_evidence_identity =
         readiness.durable_store_import_provider_production_readiness_evidence_identity;
 
-    // 设置审批请求默认值（由组织流程决定真实值）
+    // Set default approval request values (real values are determined by the organization process)
     request.requestor_identity = "ahfl-compiler-toolchain";
     request.approval_scope = "provider-production-integration";
     request.request_justification =
         "release evidence archive and production readiness evidence available for review";
 
-    // 验证生成的 request
+    // Validate the generated request
     result.diagnostics.append(validate_approval_request(request).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -752,7 +752,7 @@ ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
                                              const ApprovalDecisionRecord &decision) {
     ApprovalReceiptResult result;
 
-    // 验证上游 artifact
+    // Validate upstream artifacts
     result.diagnostics.append(validate_approval_request(request).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -768,13 +768,13 @@ ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
     receipt.session_id = request.session_id;
     receipt.run_id = request.run_id;
 
-    // 绑定上游 artifact identity
+    // Bind upstream artifact identities
     receipt.approval_request_identity = "approval-request::" + request.session_id;
     receipt.approval_decision_identity = "approval-decision::" + decision.approval_request_identity;
 
-    // 传递最终决定
+    // Propagate the final decision
     receipt.final_decision = decision.decision;
-    // 安全默认：只在 Approved 决定时设置 is_approved = true
+    // Safe default: set is_approved = true only when the decision is Approved
     receipt.is_approved = (decision.decision == ApprovalDecision::Approved);
 
     // Evidence binding
@@ -782,7 +782,7 @@ ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
         request.release_evidence_archive_manifest_identity;
     receipt.production_readiness_evidence_identity = request.production_readiness_evidence_identity;
 
-    // 生成汇总摘要
+    // Generate aggregate summary
     switch (decision.decision) {
     case ApprovalDecision::Approved:
         receipt.receipt_summary = "production integration approved; " + decision.decision_reason;
@@ -799,7 +799,7 @@ ApprovalReceiptResult build_approval_receipt(const ApprovalRequest &request,
         break;
     }
 
-    // 验证生成的 receipt
+    // Validate the generated receipt
     result.diagnostics.append(validate_approval_receipt(receipt).diagnostics);
     if (result.has_errors()) {
         return result;
@@ -853,12 +853,12 @@ namespace ahfl::durable_store_import {
 validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &report) {
     DiagnosticBag diagnostics;
 
-    // 校验 format_version
+    // Validate format_version
     if (report.format_version != kProviderOptInDecisionReportFormatVersion) {
         diagnostics.error().message("unsupported format_version: " + report.format_version).emit();
     }
 
-    // 校验必填字段
+    // Validate required fields
     if (report.workflow_canonical_name.empty()) {
         diagnostics.error().message("workflow_canonical_name is required").emit();
     }
@@ -866,7 +866,7 @@ validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &repo
         diagnostics.error().message("session_id is required").emit();
     }
 
-    // 校验 decision 与 is_real_provider_traffic_allowed 一致性
+    // Validate consistency between decision and is_real_provider_traffic_allowed
     if (report.decision != OptInDecision::Allow && report.is_real_provider_traffic_allowed) {
         diagnostics.error()
             .message("is_real_provider_traffic_allowed=true is inconsistent with decision=" +
@@ -879,7 +879,7 @@ validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &repo
             .emit();
     }
 
-    // 校验 gates 计数一致性
+    // Validate gates count consistency
     int actual_passed = 0;
     int actual_failed = 0;
     for (const auto &gate : report.gate_checks) {
@@ -896,7 +896,7 @@ validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &repo
         diagnostics.error().message("gates_failed count mismatch").emit();
     }
 
-    // 校验 denial_reasons 非空 when decision != Allow
+    // Validate that denial_reasons is non-empty when decision != Allow
     if (report.decision != OptInDecision::Allow && report.denial_reasons.empty()) {
         diagnostics.error()
             .message("denial_reasons must not be empty when decision is not Allow")
@@ -914,18 +914,18 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
     DiagnosticBag diagnostics;
     ProviderOptInDecisionReport report;
 
-    // 填充基础信息
+    // Fill in base information
     report.workflow_canonical_name = approval_receipt.workflow_canonical_name;
     report.session_id = approval_receipt.session_id;
     report.run_id = approval_receipt.run_id;
 
-    // 填充上游 identity 引用
+    // Fill in upstream identity references
     report.approval_receipt_identity = approval_receipt.approval_request_identity;
     report.config_validation_report_identity = config_report.config_bundle_identity;
     report.registry_selection_plan_identity =
         selection_plan.durable_store_import_provider_selection_plan_identity;
 
-    // Gate 1: Approval gate - 检查审批是否通过
+    // Gate 1: Approval gate - check whether approval was granted
     OptInGateCheck approval_gate;
     approval_gate.gate_name = "approval-receipt";
     approval_gate.evidence_reference = approval_receipt.approval_decision_identity;
@@ -938,7 +938,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
     }
     report.gate_checks.push_back(std::move(approval_gate));
 
-    // Gate 2: Config validation gate - 检查配置是否有效
+    // Gate 2: Config validation gate - check whether the configuration is valid
     OptInGateCheck config_gate;
     config_gate.gate_name = "config-bundle-validation";
     config_gate.evidence_reference = config_report.config_bundle_identity;
@@ -950,7 +950,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
     }
     report.gate_checks.push_back(std::move(config_gate));
 
-    // Gate 3: Registry selection gate - 检查 provider 注册和选择是否匹配
+    // Gate 3: Registry selection gate - check provider registry and selection match
     OptInGateCheck registry_gate;
     registry_gate.gate_name = "registry-selection-plan";
     registry_gate.evidence_reference =
@@ -964,7 +964,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
     }
     report.gate_checks.push_back(std::move(registry_gate));
 
-    // Gate 4: Security constraints gate - 确保 config 不涉及敏感操作
+    // Gate 4: Security constraints gate - ensure config performs no sensitive operations
     OptInGateCheck security_gate;
     security_gate.gate_name = "security-constraints";
     security_gate.evidence_reference = config_report.config_bundle_identity;
@@ -976,7 +976,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
     }
     report.gate_checks.push_back(std::move(security_gate));
 
-    // 汇总 gates 结果
+    // Aggregate gate results
     for (const auto &gate : report.gate_checks) {
         if (gate.passed) {
             ++report.gates_passed;
@@ -988,7 +988,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
         }
     }
 
-    // 决定逻辑：所有 gate 通过时 Allow，否则 Deny
+    // Decision logic: Allow when all gates pass, otherwise Deny
     if (report.gates_failed == 0) {
         report.decision = OptInDecision::Allow;
         report.is_real_provider_traffic_allowed = true;
@@ -999,7 +999,7 @@ build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
         report.is_real_provider_traffic_allowed = false;
         report.decision_summary = "one or more gates failed; real provider traffic denied";
 
-        // 构建 denial reason summary
+        // Build the denial reason summary
         std::string reasons;
         for (const auto &reason : report.denial_reasons) {
             if (!reasons.empty()) {
@@ -1060,12 +1060,12 @@ namespace ahfl::durable_store_import {
 validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &report) {
     DiagnosticBag diagnostics;
 
-    // 校验 format_version
+    // Validate format_version
     if (report.format_version != kProviderRuntimePolicyReportFormatVersion) {
         diagnostics.error().message("unsupported format_version: " + report.format_version).emit();
     }
 
-    // 校验必填字段
+    // Validate required fields
     if (report.workflow_canonical_name.empty()) {
         diagnostics.error().message("workflow_canonical_name is required").emit();
     }
@@ -1073,7 +1073,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
         diagnostics.error().message("session_id is required").emit();
     }
 
-    // 校验 decision 与 is_execution_permitted 一致性
+    // Validate consistency between decision and is_execution_permitted
     if (report.decision != PolicyDecision::Permit && report.is_execution_permitted) {
         diagnostics.error()
             .message("is_execution_permitted=true is inconsistent with decision=" +
@@ -1086,7 +1086,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
             .emit();
     }
 
-    // 校验 gates 计数一致性
+    // Validate gates count consistency
     int actual_passed = 0;
     int actual_failed = 0;
     for (const auto &gate : report.policy_gates) {
@@ -1103,7 +1103,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
         diagnostics.error().message("gates_failed count mismatch").emit();
     }
 
-    // 校验 violation 计数一致性
+    // Validate violation count consistency
     int actual_blocking = 0;
     for (const auto &gate : report.policy_gates) {
         if (!gate.passed) {
@@ -1127,12 +1127,12 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     DiagnosticBag diagnostics;
     ProviderRuntimePolicyReport report;
 
-    // 填充基础信息（从 opt-in report 继承 session 信息）
+    // Fill in base information (inherit session info from the opt-in report)
     report.workflow_canonical_name = opt_in_report.workflow_canonical_name;
     report.session_id = opt_in_report.session_id;
     report.run_id = opt_in_report.run_id;
 
-    // 填充上游 identity 引用
+    // Fill in upstream identity references
     report.opt_in_decision_report_identity = "opt-in-decision-report::" + opt_in_report.session_id;
     report.approval_receipt_identity = approval_receipt.approval_request_identity;
     report.config_validation_report_identity = config_report.config_bundle_identity;
@@ -1141,7 +1141,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     report.production_readiness_evidence_identity =
         readiness_evidence.durable_store_import_provider_production_readiness_evidence_identity;
 
-    // Gate 1: Opt-In gate - 检查 opt-in decision 是否为 Allow
+    // Gate 1: Opt-In gate - check whether the opt-in decision is Allow
     PolicyGateResult opt_in_gate;
     opt_in_gate.gate_name = "opt_in";
     opt_in_gate.evidence_reference = report.opt_in_decision_report_identity;
@@ -1154,7 +1154,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     }
     report.policy_gates.push_back(std::move(opt_in_gate));
 
-    // Gate 2: Approval gate - 检查审批是否通过
+    // Gate 2: Approval gate - check whether approval was granted
     PolicyGateResult approval_gate;
     approval_gate.gate_name = "approval";
     approval_gate.evidence_reference = approval_receipt.approval_decision_identity;
@@ -1167,7 +1167,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     }
     report.policy_gates.push_back(std::move(approval_gate));
 
-    // Gate 3: Config validation gate - 检查配置是否有效
+    // Gate 3: Config validation gate - check whether the configuration is valid
     PolicyGateResult config_gate;
     config_gate.gate_name = "config";
     config_gate.evidence_reference = config_report.config_bundle_identity;
@@ -1179,7 +1179,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     }
     report.policy_gates.push_back(std::move(config_gate));
 
-    // Gate 4: Registry selection gate - 检查 provider 注册和选择是否匹配
+    // Gate 4: Registry selection gate - check provider registry and selection match
     PolicyGateResult registry_gate;
     registry_gate.gate_name = "registry";
     registry_gate.evidence_reference =
@@ -1193,7 +1193,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     }
     report.policy_gates.push_back(std::move(registry_gate));
 
-    // Gate 5: Production readiness gate - 检查就绪证据
+    // Gate 5: Production readiness gate - check readiness evidence
     PolicyGateResult readiness_gate;
     readiness_gate.gate_name = "readiness";
     readiness_gate.evidence_reference =
@@ -1209,7 +1209,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
     }
     report.policy_gates.push_back(std::move(readiness_gate));
 
-    // 汇总 gates 结果
+    // Aggregate gate results
     for (const auto &gate : report.policy_gates) {
         if (gate.passed) {
             ++report.gates_passed;
@@ -1219,7 +1219,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
         }
     }
 
-    // 决定逻辑：所有 gate 通过时 Permit，否则 Deny
+    // Decision logic: Permit when all gates pass, otherwise Deny
     if (report.gates_failed == 0) {
         report.decision = PolicyDecision::Permit;
         report.is_execution_permitted = true;
@@ -1231,7 +1231,7 @@ validate_provider_runtime_policy_report(const ProviderRuntimePolicyReport &repor
         report.is_execution_permitted = false;
         report.policy_summary = "one or more policy gates failed; execution denied";
 
-        // 构建 violation summary
+        // Build the violation summary
         std::string violations;
         for (const auto &gate : report.policy_gates) {
             if (!gate.passed) {
@@ -1364,12 +1364,12 @@ validate_provider_production_integration_dry_run_report(
     const ProviderProductionIntegrationDryRunReport &report) {
     DiagnosticBag diagnostics;
 
-    // 校验 format_version
+    // Validate format_version
     if (report.format_version != kProviderProductionIntegrationDryRunReportFormatVersion) {
         diagnostics.error().message("unsupported format_version: " + report.format_version).emit();
     }
 
-    // 校验必填字段
+    // Validate required fields
     if (report.workflow_canonical_name.empty()) {
         diagnostics.error().message("workflow_canonical_name is required").emit();
     }
@@ -1377,7 +1377,7 @@ validate_provider_production_integration_dry_run_report(
         diagnostics.error().message("session_id is required").emit();
     }
 
-    // 校验 readiness_state 与 is_ready_for_controlled_rollout 一致性
+    // Validate consistency between readiness_state and is_ready_for_controlled_rollout
     if (report.readiness_state != ProductionReadinessState::ReadyForControlledRollout &&
         report.is_ready_for_controlled_rollout) {
         diagnostics.error()
@@ -1393,12 +1393,12 @@ validate_provider_production_integration_dry_run_report(
             .emit();
     }
 
-    // 校验 is_non_mutating_mode 必须为 true（当前版本约束）
+    // Validate that is_non_mutating_mode must be true (current version constraint)
     if (!report.is_non_mutating_mode) {
         diagnostics.error().message("is_non_mutating_mode must be true in current version").emit();
     }
 
-    // 校验 evidence chain 计数一致性
+    // Validate evidence chain count consistency
     int actual_valid = 0;
     int actual_invalid = 0;
     int actual_missing = 0;
@@ -1421,7 +1421,7 @@ validate_provider_production_integration_dry_run_report(
         diagnostics.error().message("missing_evidence_count mismatch").emit();
     }
 
-    // 校验 blocking_item_count 一致性
+    // Validate blocking_item_count consistency
     if (static_cast<int>(report.blocking_items.size()) != report.blocking_item_count) {
         diagnostics.error().message("blocking_item_count mismatch").emit();
     }
@@ -1442,12 +1442,12 @@ build_provider_production_integration_dry_run_report(
     DiagnosticBag diagnostics;
     ProviderProductionIntegrationDryRunReport report;
 
-    // 填充基础信息（从 conformance report 继承 session 信息）
+    // Fill in base information (inherit session info from the conformance report)
     report.workflow_canonical_name = conformance_report.workflow_canonical_name;
     report.session_id = conformance_report.session_id;
     report.run_id = conformance_report.run_id;
 
-    // 填充 evidence chain identity 引用
+    // Fill in evidence chain identity references
     report.conformance_report_identity =
         conformance_report.durable_store_import_provider_conformance_report_identity;
     report.schema_compatibility_report_identity =
@@ -1493,7 +1493,7 @@ build_provider_production_integration_dry_run_report(
              runtime_policy_report.is_execution_permitted},
         });
 
-    // ===== 确定 readiness state =====
+    // ===== Determine readiness state =====
     if (report.missing_evidence_count > 0) {
         report.readiness_state = ProductionReadinessState::InsufficientEvidence;
     } else if (report.invalid_evidence_count > 0) {
@@ -1502,11 +1502,11 @@ build_provider_production_integration_dry_run_report(
         report.readiness_state = ProductionReadinessState::ReadyForControlledRollout;
     }
 
-    // ===== 设定 is_ready_for_controlled_rollout =====
+    // ===== Set is_ready_for_controlled_rollout =====
     report.is_ready_for_controlled_rollout =
         (report.readiness_state == ProductionReadinessState::ReadyForControlledRollout);
 
-    // ===== 构建 next operator actions =====
+    // ===== Build next operator actions =====
     if (report.is_ready_for_controlled_rollout) {
         NextOperatorAction action;
         action.action_type = "proceed";
@@ -1526,7 +1526,7 @@ build_provider_production_integration_dry_run_report(
         }
     }
 
-    // ===== 构建 summary =====
+    // ===== Build summary =====
     if (report.is_ready_for_controlled_rollout) {
         report.blocking_summary = "none";
         report.dry_run_summary =
@@ -1544,7 +1544,7 @@ build_provider_production_integration_dry_run_report(
         report.dry_run_summary = "production integration dry run blocked: " + blocking_desc;
     }
 
-    // non-mutating 模式始终为 true
+    // non-mutating mode is always true
     report.is_non_mutating_mode = true;
 
     return ProviderProductionIntegrationDryRunReportResult{std::move(report),

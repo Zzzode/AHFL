@@ -13,7 +13,7 @@
 namespace ahfl::ir {
 
 // ----------------------------------------------------------------------------
-// 派生分析 (Derived Analyses)
+// Derived Analyses
 // ----------------------------------------------------------------------------
 
 struct StateHandlerSummaryAnalysis {
@@ -44,10 +44,10 @@ struct AnalysisBundle {
 };
 
 // ----------------------------------------------------------------------------
-// 顶层 IR 结构 (Top-Level IR Structures)
+// Top-Level IR Structures
 // ----------------------------------------------------------------------------
 
-/// 声明（variant，包含所有顶层声明类型）
+/// Declaration (variant, including all top-level declaration types)
 using Decl = std::variant<ModuleDecl,
                           ImportDecl,
                           ConstDecl,
@@ -67,13 +67,13 @@ enum class ProgramPhase {
     Optimized,
 };
 
-/// IR 程序 — 编译单元的完整 IR 表示
+/// IR program — complete IR representation of a compilation unit
 struct Program {
     std::string format_version{std::string(kFormatVersion)};
     ProgramPhase phase{ProgramPhase::Lowered};
     std::uint64_t analysis_revision{0};
-    std::vector<Decl> declarations; // 所有顶层声明
-    AnalysisBundle analyses;        // 可重算派生分析
+    std::vector<Decl> declarations; // All top-level declarations
+    AnalysisBundle analyses;        // Recomputable derived analyses
     ExprArena expr_arena;           // Flat expression store (E-1)
 
     /// Return a span over all arena-registered expressions for O(1) traversal.

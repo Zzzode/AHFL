@@ -9,15 +9,15 @@
 
 namespace ahfl::llm_provider {
 
-// 从 IR 类型信息构建 LLM prompt
+// Build the LLM prompt from IR type information
 class PromptBuilder {
   public:
     explicit PromptBuilder(const ir::Program &program);
 
-    // 为指定 capability 构建 system prompt（含返回类型 JSON schema）
+    // Build the system prompt for the given capability (includes return type JSON schema)
     [[nodiscard]] std::string build_system_prompt(const std::string &capability_name) const;
 
-    // 为指定参数值构建 user prompt
+    // Build the user prompt for the given argument values
     [[nodiscard]] std::string build_user_prompt(const std::string &capability_name,
                                                 const std::vector<evaluator::Value> &args) const;
 
@@ -29,9 +29,9 @@ class PromptBuilder {
     [[nodiscard]] const ir::StructDecl *find_struct(const std::string &name) const;
     [[nodiscard]] const ir::EnumDecl *find_enum(const std::string &name) const;
 
-    // 生成类型的 JSON schema 描述
+    // Generate a JSON schema description for a type
     [[nodiscard]] std::string describe_type_schema(const std::string &type_name) const;
-    // 将 Value 转为可读字符串
+    // Convert a Value into a human-readable string
     [[nodiscard]] std::string value_to_string(const evaluator::Value &val) const;
 };
 

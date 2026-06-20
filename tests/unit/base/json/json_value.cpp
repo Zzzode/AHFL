@@ -264,7 +264,7 @@ bool test_unicode_escape() {
     if ((*result)->string_val != "A")
         return false;
 
-    // \u4e16 is '世'
+    // The escape \u4e16 yields the CJK character 'world'
     auto cn = parse_json("\"\\u4e16\"");
     if (!cn)
         return false;

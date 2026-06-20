@@ -18,7 +18,7 @@ namespace ahfl::runtime {
 
 using Value = evaluator::Value;
 
-// Agent 运行状态
+// Agent runtime status
 enum class AgentStatus {
     Running,
     Completed,
@@ -28,7 +28,7 @@ enum class AgentStatus {
     InfiniteLoop,
 };
 
-// Agent 执行统计
+// Agent execution statistics
 struct AgentStats {
     std::size_t state_transitions{0};
     std::size_t tool_calls{0};
@@ -37,7 +37,7 @@ struct AgentStats {
     [[nodiscard]] std::chrono::milliseconds elapsed_ms() const;
 };
 
-// Agent 执行结果
+// Agent execution result
 struct AgentResult {
     AgentStatus status;
     std::optional<Value> output;
@@ -48,27 +48,27 @@ struct AgentResult {
     [[nodiscard]] bool is_terminal() const;
 };
 
-// Quota 配置
+// Quota configuration
 struct QuotaConfig {
     std::optional<std::size_t> max_state_transitions;
     std::optional<std::size_t> max_tool_calls;
     std::optional<std::chrono::milliseconds> max_execution_time;
 };
 
-// Agent Runtime
+// Agent Runtime engine
 class AgentRuntime {
   public:
     AgentRuntime(const ir::AgentDecl &agent, const ir::FlowDecl &flow, QuotaConfig quota = {});
 
-    // 设置 capability invoker（用于执行 flow 中的 capability 调用）
+    // Set the capability invoker (used to execute capability calls within the flow)
     void set_capability_invoker(CapabilityInvoker invoker);
     void set_contextual_capability_invoker(ContextualCapabilityInvoker invoker);
     void set_invocation_context(CapabilityInvocationContext context);
 
-    // 执行 agent，从初始状态开始
+    // Execute the agent, starting from the initial state
     [[nodiscard]] AgentResult run(Value input);
 
-    // 从指定状态恢复执行
+    // Resume execution from the specified state
     [[nodiscard]] AgentResult run_from_state(Value input, std::string start_state);
 
   private:
@@ -79,20 +79,20 @@ class AgentRuntime {
     ContextualCapabilityInvoker contextual_capability_invoker_;
     CapabilityInvocationContext invocation_context_;
 
-    // 查找 state handler
+    // Find the state handler
     [[nodiscard]] const ir::StateHandler *find_handler(const std::string &state_name) const;
 
-    // 验证 transition 合法性
+    // Validate the legality of the transition
     [[nodiscard]] bool is_valid_transition(const std::string &from, const std::string &to) const;
 
-    // 检查是否是终态
+    // Check whether the state is a final state
     [[nodiscard]] bool is_final_state(const std::string &state_name) const;
 
-    // 解析 quota 字符串
+    // Parse quota string
     [[nodiscard]] static QuotaConfig parse_quota(const std::vector<ir::QuotaItem> &items);
 };
 
-// 从 IR Program 构建 AgentRuntime
+// Build an AgentRuntime from an IR Program
 [[nodiscard]] std::optional<AgentRuntime> build_agent_runtime(const ir::Program &program,
                                                               const std::string &agent_name,
                                                               QuotaConfig quota = {});

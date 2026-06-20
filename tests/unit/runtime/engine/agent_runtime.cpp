@@ -30,7 +30,7 @@ void check(bool condition, const std::string &test_name) {
 }
 
 // ============================================================================
-// IR 构造辅助函数
+// IR construction helpers
 // ============================================================================
 
 ExprArena &test_expr_arena() {
@@ -67,7 +67,7 @@ SymbolRef make_agent_ref(const std::string &name) {
     };
 }
 
-// 构造一个简单的 goto handler
+// Build a simple goto handler
 StateHandler make_goto_handler(const std::string &state, const std::string &target) {
     StateHandler handler;
     handler.state_name = state;
@@ -75,7 +75,7 @@ StateHandler make_goto_handler(const std::string &state, const std::string &targ
     return handler;
 }
 
-// 构造一个 return handler
+// Build a return handler
 StateHandler make_return_handler(const std::string &state, ExprNode return_expr) {
     StateHandler handler;
     handler.state_name = state;
@@ -84,14 +84,14 @@ StateHandler make_return_handler(const std::string &state, ExprNode return_expr)
     return handler;
 }
 
-// 构造一个空 handler（fallthrough）
+// Build an empty handler (fallthrough)
 StateHandler make_empty_handler(const std::string &state) {
     StateHandler handler;
     handler.state_name = state;
     return handler;
 }
 
-// 构造一个 assert(false) handler
+// Build an assert(false) handler
 StateHandler make_assert_fail_handler(const std::string &state) {
     StateHandler handler;
     handler.state_name = state;
@@ -100,7 +100,7 @@ StateHandler make_assert_fail_handler(const std::string &state) {
     return handler;
 }
 
-// 构造带条件分支的 handler
+// Build a handler with a conditional branch
 StateHandler make_conditional_handler(const std::string &state,
                                       const std::string &goto_true,
                                       const std::string &goto_false) {
@@ -113,7 +113,7 @@ StateHandler make_conditional_handler(const std::string &state,
     Block else_block;
     else_block.statements.push_back(make_stmt_ptr(GotoStatement{goto_false}));
 
-    // 使用 input.approved 作为条件
+    // Use input.approved as the condition
     PathExpr path_expr;
     path_expr.path.root_kind = PathRootKind::Input;
     path_expr.path.root_name = "input";
@@ -126,7 +126,7 @@ StateHandler make_conditional_handler(const std::string &state,
     return handler;
 }
 
-// 构造 StructValue 作为 input
+// Build a StructValue as input
 Value make_input_struct(const std::string &type_name,
                         const std::string &field_name,
                         Value field_value) {
@@ -136,11 +136,11 @@ Value make_input_struct(const std::string &type_name,
 }
 
 // ============================================================================
-// Test: 简单线性 agent (Init -> Process -> Final, 返回输出)
+// Test: simple linear agent (Init -> Process -> Final, returns output)
 // ============================================================================
 
 void test_simple_linear_agent() {
-    // Agent 定义
+    // Agent declaration
     AgentDecl agent;
     agent.name = "SimpleAgent";
     agent.symbol_ref = make_agent_ref("SimpleAgent");
@@ -152,7 +152,7 @@ void test_simple_linear_agent() {
     agent.final_states = {"Final"};
     agent.transitions = {{"Init", "Process"}, {"Process", "Final"}};
 
-    // Flow 定义
+    // Flow declaration
     FlowDecl flow;
     flow.target_ref = make_agent_ref("SimpleAgent");
     flow.state_handlers.push_back(make_goto_handler("Init", "Process"));
@@ -177,7 +177,7 @@ void test_simple_linear_agent() {
 }
 
 // ============================================================================
-// Test: 带条件分支的 agent
+// Test: agent with conditional branches
 // ============================================================================
 
 void test_conditional_goto_agent() {
@@ -205,7 +205,7 @@ void test_conditional_goto_agent() {
     flow.state_handlers.push_back(make_goto_handler("Rejected", "Done"));
     flow.state_handlers.push_back(make_return_handler("Done", StringLiteralExpr{"completed"}));
 
-    // 测试 approved=true 路径
+    // Test approved=true path
     {
         auto input = make_input_struct("AuditInput", "approved", make_bool(true));
         AgentRuntime runtime(agent, flow);
@@ -216,7 +216,7 @@ void test_conditional_goto_agent() {
         check(result.visited_states.count("Rejected") == 0, "conditional.approved.not_rejected");
     }
 
-    // 测试 approved=false 路径
+    // Test approved=false path
     {
         auto input = make_input_struct("AuditInput", "approved", make_bool(false));
         AgentRuntime runtime(agent, flow);
@@ -229,7 +229,7 @@ void test_conditional_goto_agent() {
 }
 
 // ============================================================================
-// Test: 多 transition 验证
+// Test: multiple transitions validation
 // ============================================================================
 
 void test_multiple_transitions() {
@@ -238,7 +238,7 @@ void test_multiple_transitions() {
     agent.states = {"A", "B", "C", "D"};
     agent.initial_state = "A";
     agent.final_states = {"D"};
-    // 定义允许的 transitions
+    // Define allowed transitions
     agent.transitions = {{"A", "B"}, {"B", "C"}, {"C", "D"}};
 
     FlowDecl flow;
@@ -257,7 +257,7 @@ void test_multiple_transitions() {
 }
 
 // ============================================================================
-// Test: 非终态 fallthrough（error）
+// Test: non-final state fallthrough (error)
 // ============================================================================
 
 void test_non_final_state_fallthrough() {
@@ -270,7 +270,7 @@ void test_non_final_state_fallthrough() {
 
     FlowDecl flow;
     flow.target_ref = make_agent_ref("FallthroughAgent");
-    // Init handler 没有 goto 也没有 return -> fallthrough error
+    // Init handler has neither goto nor return -> fallthrough error
     flow.state_handlers.push_back(make_empty_handler("Init"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
 
@@ -282,7 +282,7 @@ void test_non_final_state_fallthrough() {
 }
 
 // ============================================================================
-// Test: 终态 fallthrough（成功，无输出）
+// Test: final-state fallthrough (success, no output)
 // ============================================================================
 
 void test_final_state_fallthrough() {
@@ -296,7 +296,7 @@ void test_final_state_fallthrough() {
     FlowDecl flow;
     flow.target_ref = make_agent_ref("FinalFallAgent");
     flow.state_handlers.push_back(make_goto_handler("Init", "Final"));
-    // Final handler 没有 return -> fallthrough 但它是终态，所以 Completed
+    // Final handler has no return -> fallthrough, but it is a final state, so Completed
     flow.state_handlers.push_back(make_empty_handler("Final"));
 
     AgentRuntime runtime(agent, flow);
@@ -307,7 +307,7 @@ void test_final_state_fallthrough() {
 }
 
 // ============================================================================
-// Test: 非法 transition
+// Test: invalid transition
 // ============================================================================
 
 void test_invalid_transition() {
@@ -316,12 +316,12 @@ void test_invalid_transition() {
     agent.states = {"A", "B", "C"};
     agent.initial_state = "A";
     agent.final_states = {"C"};
-    // 只允许 A->B，不允许 A->C
+    // Only A->B is allowed; A->C is not allowed
     agent.transitions = {{"A", "B"}, {"B", "C"}};
 
     FlowDecl flow;
     flow.target_ref = make_agent_ref("InvalidTransAgent");
-    // A 直接 goto C（违反 transition 规则）
+    // A directly goto C (violates the transition rules)
     flow.state_handlers.push_back(make_goto_handler("A", "C"));
     flow.state_handlers.push_back(make_goto_handler("B", "C"));
     flow.state_handlers.push_back(make_return_handler("C", BoolLiteralExpr{true}));
@@ -347,7 +347,7 @@ void test_quota_exceeded() {
 
     FlowDecl flow;
     flow.target_ref = make_agent_ref("QuotaAgent");
-    // A -> B -> A -> B -> ... (循环) 但 quota=3 transition 就会超
+    // A -> B -> A -> B -> ... (cycle), but quota=3 transitions is exceeded
     flow.state_handlers.push_back(make_goto_handler("A", "B"));
     flow.state_handlers.push_back(make_goto_handler("B", "A"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
@@ -363,7 +363,7 @@ void test_quota_exceeded() {
 }
 
 // ============================================================================
-// Test: 无限循环检测
+// Test: infinite loop detection
 // ============================================================================
 
 void test_infinite_loop_detection() {
@@ -376,7 +376,7 @@ void test_infinite_loop_detection() {
 
     FlowDecl flow;
     flow.target_ref = make_agent_ref("LoopAgent");
-    // Loop -> Loop -> Loop -> ... 永不到达 Final
+    // Loop -> Loop -> Loop -> ... never reaches Final
     flow.state_handlers.push_back(make_goto_handler("Loop", "Loop"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
 
@@ -388,7 +388,7 @@ void test_infinite_loop_detection() {
 }
 
 // ============================================================================
-// Test: Assert 失败
+// Test: assert failure
 // ============================================================================
 
 void test_assert_failure() {
@@ -411,7 +411,7 @@ void test_assert_failure() {
 }
 
 // ============================================================================
-// Test: 无 transitions 定义（strict 模式）
+// Test: no transitions defined (strict mode)
 // ============================================================================
 
 void test_strict_no_transitions() {
@@ -420,11 +420,11 @@ void test_strict_no_transitions() {
     agent.states = {"A", "B", "C"};
     agent.initial_state = "A";
     agent.final_states = {"C"};
-    // 不定义 transitions -> 拒绝所有 goto
+    // No transitions defined -> reject all goto statements
 
     FlowDecl flow;
     flow.target_ref = make_agent_ref("StrictAgent");
-    flow.state_handlers.push_back(make_goto_handler("A", "C")); // 直接跳到 C
+    flow.state_handlers.push_back(make_goto_handler("A", "C")); // jump directly to C
     flow.state_handlers.push_back(make_goto_handler("B", "C"));
     flow.state_handlers.push_back(make_return_handler("C", StringLiteralExpr{"done"}));
 
@@ -436,7 +436,7 @@ void test_strict_no_transitions() {
 }
 
 // ============================================================================
-// Test: build_agent_runtime 工厂函数
+// Test: build_agent_runtime factory function
 // ============================================================================
 
 void test_build_agent_runtime() {
@@ -456,7 +456,7 @@ void test_build_agent_runtime() {
     flow.state_handlers.push_back(make_return_handler("Done", IntegerLiteralExpr{"1"}));
     program.declarations.push_back(std::move(flow));
 
-    // 存在的 agent
+    // Existing agent
     auto rt = build_agent_runtime(program, "TestAgent");
     check(rt.has_value(), "build.found_agent");
 
@@ -465,13 +465,13 @@ void test_build_agent_runtime() {
         check(result.status == AgentStatus::Completed, "build.run_completed");
     }
 
-    // 不存在的 agent
+    // Non-existent agent
     auto rt2 = build_agent_runtime(program, "NonExistent");
     check(!rt2.has_value(), "build.not_found");
 }
 
 // ============================================================================
-// Test: Handler 缺失
+// Test: missing handler
 // ============================================================================
 
 void test_missing_handler() {
@@ -484,7 +484,7 @@ void test_missing_handler() {
 
     FlowDecl flow;
     flow.target_ref = make_agent_ref("MissingHandler");
-    // 只有 Init handler，Process 缺失
+    // Only the Init handler exists; Process is missing
     flow.state_handlers.push_back(make_goto_handler("Init", "Process"));
     flow.state_handlers.push_back(make_return_handler("Final", BoolLiteralExpr{true}));
 

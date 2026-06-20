@@ -10,7 +10,7 @@
 namespace ahfl::llm_provider {
 
 struct SecretProviderConfig {
-    std::string kind{"env"};   // env、vault 或 cloud
+    std::string kind{"env"};   // env, vault, or cloud
     std::string prefix{"env"}; // secret handle prefix, e.g. env:NAME / vault:path
     bool default_for_unqualified{true};
 
@@ -35,12 +35,12 @@ struct LLMCapabilityTokenBudget {
     std::optional<std::string> policy;
 };
 
-// LLM 服务配置
+// LLM service configuration
 struct LLMProviderConfig {
-    std::string endpoint;              // API 端点, e.g. "https://open.bigmodel.cn/api/paas/v4"
-    std::string model;                 // 模型名称, e.g. "glm-4"
-    std::string api_key;               // API 密钥，仅允许作为兼容路径
-    std::string api_key_secret;        // 环境变量 secret handle，优先于 api_key
+    std::string endpoint;              // API endpoint, e.g. "https://open.bigmodel.cn/api/paas/v4"
+    std::string model;                 // Model name, e.g. "glm-4"
+    std::string api_key;               // API key, only allowed as a compatibility path
+    std::string api_key_secret;        // Environment variable secret handle, takes precedence over api_key
     std::string oauth2_token_secret;   // OAuth2 access token secret handle
     std::string mtls_client_cert_path; // mTLS client certificate path reference
     std::string mtls_client_key_path;  // mTLS client private key path reference
@@ -49,9 +49,9 @@ struct LLMProviderConfig {
     std::string mtls_client_key_secret;
     std::string mtls_ca_cert_secret;
     bool mtls_verify_tls{true};
-    std::string auth_scheme{"bearer"}; // bearer、api_key_header、OAuth2 bearer 或 mTLS
+    std::string auth_scheme{"bearer"}; // bearer, api_key_header, OAuth2 bearer, or mTLS
     std::string auth_header{"Authorization"};
-    double temperature = 0.1; // 低温度确保确定性输出
+    double temperature = 0.1; // Low temperature ensures deterministic output
     int max_tokens = 1024;
     int max_prompt_tokens = 3072;
     int max_total_tokens = 4096;
@@ -62,10 +62,10 @@ struct LLMProviderConfig {
     int max_node_total_tokens = 0;
     double max_workflow_total_cost_usd = 0.0;
     double max_node_total_cost_usd = 0.0;
-    std::string token_budget_policy{"fail"}; // fail 或 warn
+    std::string token_budget_policy{"fail"}; // fail or warn
     std::vector<LLMCapabilityTokenBudget> capability_token_budgets;
-    bool json_mode = true; // 强制 JSON 输出
-    bool stream = false;   // 使用 OpenAI-compatible streaming 响应
+    bool json_mode = true; // Force JSON output
+    bool stream = false;   // Use OpenAI-compatible streaming responses
     int timeout_seconds = 30;
     int max_retries = 2;
     bool response_cache_enabled = false;
@@ -82,13 +82,13 @@ struct LLMProviderConfig {
     std::vector<ProviderEntry> fallback_providers;
 };
 
-// 从 JSON 内容字符串加载配置，支持 ${ENV_VAR} 环境变量展开
+// Load configuration from a JSON content string, with ${ENV_VAR} environment variable expansion support
 [[nodiscard]] LLMProviderConfig load_config(const std::string &json_content);
 
-// 校验运行期必需字段和预算边界；返回空表示配置可用。
+// Validate required runtime fields and budget bounds; returns empty if the configuration is usable.
 [[nodiscard]] std::optional<std::string> validate_config(const LLMProviderConfig &config);
 
-// 展开字符串中的 ${ENV_VAR} 引用
+// Expand ${ENV_VAR} references inside a string
 [[nodiscard]] std::string expand_env_vars(const std::string &input);
 
 } // namespace ahfl::llm_provider
