@@ -61,7 +61,7 @@ VSIX_NAME="ahfl-language-${EXTENSION_VERSION}-${TARGET}.vsix"
 (
   cd tools/vscode
   if [[ ! -x node_modules/.bin/vsce ]]; then
-    npm ci --omit=optional
+    npm ci
   fi
   mkdir -p dist
   npm run package:target -- --target "$TARGET" --out "dist/$VSIX_NAME"
