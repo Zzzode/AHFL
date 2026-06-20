@@ -11,10 +11,10 @@ namespace ahfl::llm_provider {
 
 struct HttpAuthConfig {
     std::string scheme{"bearer"};
-    std::string header;
-    std::string mtls_client_cert_path;
-    std::string mtls_client_key_path;
-    std::string mtls_ca_cert_path;
+    std::string header{};
+    std::string mtls_client_cert_path{};
+    std::string mtls_client_key_path{};
+    std::string mtls_ca_cert_path{};
     bool mtls_verify_tls{true};
 };
 

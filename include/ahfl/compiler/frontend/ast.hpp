@@ -306,23 +306,21 @@ struct MapType {
 };
 
 /// Variant alias for the type syntax node
-using TypeSyntaxNode = std::variant<
-    UnitType,
-    BoolType,
-    IntType,
-    FloatType,
-    StringType,
-    BoundedStringType,
-    UuidType,
-    TimestampType,
-    DurationType,
-    DecimalType,
-    NamedType,
-    OptionalType,
-    ListType,
-    SetType,
-    MapType
->;
+using TypeSyntaxNode = std::variant<UnitType,
+                                    BoolType,
+                                    IntType,
+                                    FloatType,
+                                    StringType,
+                                    BoundedStringType,
+                                    UuidType,
+                                    TimestampType,
+                                    DurationType,
+                                    DecimalType,
+                                    NamedType,
+                                    OptionalType,
+                                    ListType,
+                                    SetType,
+                                    MapType>;
 
 /// Type syntax node
 struct TypeSyntax {
@@ -330,20 +328,17 @@ struct TypeSyntax {
     TypeSyntaxNode node;
 
     /// Test whether the current node is of the given type
-    template <typename T>
-    [[nodiscard]] bool is() const {
+    template <typename T> [[nodiscard]] bool is() const {
         return std::holds_alternative<T>(node);
     }
 
     /// Read the node as the given type (const overload)
-    template <typename T>
-    [[nodiscard]] const T& as() const {
+    template <typename T> [[nodiscard]] const T &as() const {
         return std::get<T>(node);
     }
 
     /// Read the node as the given type (non-const overload)
-    template <typename T>
-    [[nodiscard]] T& as() {
+    template <typename T> [[nodiscard]] T &as() {
         return std::get<T>(node);
     }
 
@@ -494,28 +489,26 @@ struct GroupExpr {
 };
 
 /// Variant alias for the expression syntax node
-using ExprSyntaxNode = std::variant<
-    NoneLiteralExpr,
-    BoolLiteralExpr,
-    IntegerLiteralExpr,
-    FloatLiteralExpr,
-    DecimalLiteralExpr,
-    StringLiteralExpr,
-    DurationLiteralExpr,
-    SomeExpr,
-    PathExpr,
-    QualifiedValueExpr,
-    CallExpr,
-    StructLiteralExpr,
-    ListLiteralExpr,
-    SetLiteralExpr,
-    MapLiteralExpr,
-    UnaryExpr,
-    BinaryExpr,
-    MemberAccessExpr,
-    IndexAccessExpr,
-    GroupExpr
->;
+using ExprSyntaxNode = std::variant<NoneLiteralExpr,
+                                    BoolLiteralExpr,
+                                    IntegerLiteralExpr,
+                                    FloatLiteralExpr,
+                                    DecimalLiteralExpr,
+                                    StringLiteralExpr,
+                                    DurationLiteralExpr,
+                                    SomeExpr,
+                                    PathExpr,
+                                    QualifiedValueExpr,
+                                    CallExpr,
+                                    StructLiteralExpr,
+                                    ListLiteralExpr,
+                                    SetLiteralExpr,
+                                    MapLiteralExpr,
+                                    UnaryExpr,
+                                    BinaryExpr,
+                                    MemberAccessExpr,
+                                    IndexAccessExpr,
+                                    GroupExpr>;
 
 /// Expression syntax node
 ///
@@ -540,20 +533,17 @@ struct ExprSyntax {
     ExprSyntaxNode node;
 
     /// Test whether the current node is of the given expression type
-    template <typename T>
-    [[nodiscard]] bool is() const {
+    template <typename T> [[nodiscard]] bool is() const {
         return std::holds_alternative<T>(node);
     }
 
     /// Read the node as the given type (const overload)
-    template <typename T>
-    [[nodiscard]] const T& as() const {
+    template <typename T> [[nodiscard]] const T &as() const {
         return std::get<T>(node);
     }
 
     /// Read the node as the given type (non-const overload)
-    template <typename T>
-    [[nodiscard]] T& as() {
+    template <typename T> [[nodiscard]] T &as() {
         return std::get<T>(node);
     }
 };
@@ -679,15 +669,13 @@ struct BinaryTemporalExpr {
 };
 
 /// Variant alias for the temporal syntax node
-using TemporalExprSyntaxNode = std::variant<
-    EmbeddedTemporalExpr,
-    CalledTemporalExpr,
-    InStateTemporalExpr,
-    RunningTemporalExpr,
-    CompletedTemporalExpr,
-    UnaryTemporalExpr,
-    BinaryTemporalExpr
->;
+using TemporalExprSyntaxNode = std::variant<EmbeddedTemporalExpr,
+                                            CalledTemporalExpr,
+                                            InStateTemporalExpr,
+                                            RunningTemporalExpr,
+                                            CompletedTemporalExpr,
+                                            UnaryTemporalExpr,
+                                            BinaryTemporalExpr>;
 
 /// Temporal logic expression
 ///
@@ -700,20 +688,17 @@ struct TemporalExprSyntax {
     TemporalExprSyntaxNode node;
 
     /// Test whether the current node is of the given temporal expression type
-    template <typename T>
-    [[nodiscard]] bool is() const {
+    template <typename T> [[nodiscard]] bool is() const {
         return std::holds_alternative<T>(node);
     }
 
     /// Read the node as the given type (const overload)
-    template <typename T>
-    [[nodiscard]] const T& as() const {
+    template <typename T> [[nodiscard]] const T &as() const {
         return std::get<T>(node);
     }
 
     /// Read the node as the given type (non-const overload)
-    template <typename T>
-    [[nodiscard]] T& as() {
+    template <typename T> [[nodiscard]] T &as() {
         return std::get<T>(node);
     }
 };
@@ -1109,69 +1094,103 @@ class RecursiveVisitor : public Visitor {
 
 template <typename Visitor>
 decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
-    return std::visit(Overloaded{
-        [&](const NoneLiteralExpr &) { return std::forward<Visitor>(visitor).visit_none_literal(expr); },
-        [&](const BoolLiteralExpr &) { return std::forward<Visitor>(visitor).visit_bool_literal(expr); },
-        [&](const IntegerLiteralExpr &) { return std::forward<Visitor>(visitor).visit_integer_literal(expr); },
-        [&](const FloatLiteralExpr &) { return std::forward<Visitor>(visitor).visit_float_literal(expr); },
-        [&](const DecimalLiteralExpr &) { return std::forward<Visitor>(visitor).visit_decimal_literal(expr); },
-        [&](const StringLiteralExpr &) { return std::forward<Visitor>(visitor).visit_string_literal(expr); },
-        [&](const DurationLiteralExpr &) { return std::forward<Visitor>(visitor).visit_duration_literal(expr); },
-        [&](const SomeExpr &) { return std::forward<Visitor>(visitor).visit_some(expr); },
-        [&](const PathExpr &) { return std::forward<Visitor>(visitor).visit_path(expr); },
-        [&](const QualifiedValueExpr &) { return std::forward<Visitor>(visitor).visit_qualified_value(expr); },
-        [&](const CallExpr &) { return std::forward<Visitor>(visitor).visit_call(expr); },
-        [&](const StructLiteralExpr &) { return std::forward<Visitor>(visitor).visit_struct_literal(expr); },
-        [&](const ListLiteralExpr &) { return std::forward<Visitor>(visitor).visit_list_literal(expr); },
-        [&](const SetLiteralExpr &) { return std::forward<Visitor>(visitor).visit_set_literal(expr); },
-        [&](const MapLiteralExpr &) { return std::forward<Visitor>(visitor).visit_map_literal(expr); },
-        [&](const UnaryExpr &) { return std::forward<Visitor>(visitor).visit_unary(expr); },
-        [&](const BinaryExpr &) { return std::forward<Visitor>(visitor).visit_binary(expr); },
-        [&](const MemberAccessExpr &) { return std::forward<Visitor>(visitor).visit_member_access(expr); },
-        [&](const IndexAccessExpr &) { return std::forward<Visitor>(visitor).visit_index_access(expr); },
-        [&](const GroupExpr &) { return std::forward<Visitor>(visitor).visit_group(expr); },
-    }, expr.node);
+    return std::visit(
+        Overloaded{
+            [&](const NoneLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_none_literal(expr);
+            },
+            [&](const BoolLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_bool_literal(expr);
+            },
+            [&](const IntegerLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_integer_literal(expr);
+            },
+            [&](const FloatLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_float_literal(expr);
+            },
+            [&](const DecimalLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_decimal_literal(expr);
+            },
+            [&](const StringLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_string_literal(expr);
+            },
+            [&](const DurationLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_duration_literal(expr);
+            },
+            [&](const SomeExpr &) { return std::forward<Visitor>(visitor).visit_some(expr); },
+            [&](const PathExpr &) { return std::forward<Visitor>(visitor).visit_path(expr); },
+            [&](const QualifiedValueExpr &) {
+                return std::forward<Visitor>(visitor).visit_qualified_value(expr);
+            },
+            [&](const CallExpr &) { return std::forward<Visitor>(visitor).visit_call(expr); },
+            [&](const StructLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_struct_literal(expr);
+            },
+            [&](const ListLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_list_literal(expr);
+            },
+            [&](const SetLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_set_literal(expr);
+            },
+            [&](const MapLiteralExpr &) {
+                return std::forward<Visitor>(visitor).visit_map_literal(expr);
+            },
+            [&](const UnaryExpr &) { return std::forward<Visitor>(visitor).visit_unary(expr); },
+            [&](const BinaryExpr &) { return std::forward<Visitor>(visitor).visit_binary(expr); },
+            [&](const MemberAccessExpr &) {
+                return std::forward<Visitor>(visitor).visit_member_access(expr);
+            },
+            [&](const IndexAccessExpr &) {
+                return std::forward<Visitor>(visitor).visit_index_access(expr);
+            },
+            [&](const GroupExpr &) { return std::forward<Visitor>(visitor).visit_group(expr); },
+        },
+        expr.node);
 }
 
 /// Derive ExprSyntaxKind from the variant (used by downstream consumers such
 /// as TypedExpr that need a kind)
 [[nodiscard]] inline ExprSyntaxKind expr_syntax_kind(const ExprSyntax &expr) {
-    return std::visit(Overloaded{
-        [](const NoneLiteralExpr &) { return ExprSyntaxKind::NoneLiteral; },
-        [](const BoolLiteralExpr &) { return ExprSyntaxKind::BoolLiteral; },
-        [](const IntegerLiteralExpr &) { return ExprSyntaxKind::IntegerLiteral; },
-        [](const FloatLiteralExpr &) { return ExprSyntaxKind::FloatLiteral; },
-        [](const DecimalLiteralExpr &) { return ExprSyntaxKind::DecimalLiteral; },
-        [](const StringLiteralExpr &) { return ExprSyntaxKind::StringLiteral; },
-        [](const DurationLiteralExpr &) { return ExprSyntaxKind::DurationLiteral; },
-        [](const SomeExpr &) { return ExprSyntaxKind::Some; },
-        [](const PathExpr &) { return ExprSyntaxKind::Path; },
-        [](const QualifiedValueExpr &) { return ExprSyntaxKind::QualifiedValue; },
-        [](const CallExpr &) { return ExprSyntaxKind::Call; },
-        [](const StructLiteralExpr &) { return ExprSyntaxKind::StructLiteral; },
-        [](const ListLiteralExpr &) { return ExprSyntaxKind::ListLiteral; },
-        [](const SetLiteralExpr &) { return ExprSyntaxKind::SetLiteral; },
-        [](const MapLiteralExpr &) { return ExprSyntaxKind::MapLiteral; },
-        [](const UnaryExpr &) { return ExprSyntaxKind::Unary; },
-        [](const BinaryExpr &) { return ExprSyntaxKind::Binary; },
-        [](const MemberAccessExpr &) { return ExprSyntaxKind::MemberAccess; },
-        [](const IndexAccessExpr &) { return ExprSyntaxKind::IndexAccess; },
-        [](const GroupExpr &) { return ExprSyntaxKind::Group; },
-    }, expr.node);
+    return std::visit(
+        Overloaded{
+            [](const NoneLiteralExpr &) { return ExprSyntaxKind::NoneLiteral; },
+            [](const BoolLiteralExpr &) { return ExprSyntaxKind::BoolLiteral; },
+            [](const IntegerLiteralExpr &) { return ExprSyntaxKind::IntegerLiteral; },
+            [](const FloatLiteralExpr &) { return ExprSyntaxKind::FloatLiteral; },
+            [](const DecimalLiteralExpr &) { return ExprSyntaxKind::DecimalLiteral; },
+            [](const StringLiteralExpr &) { return ExprSyntaxKind::StringLiteral; },
+            [](const DurationLiteralExpr &) { return ExprSyntaxKind::DurationLiteral; },
+            [](const SomeExpr &) { return ExprSyntaxKind::Some; },
+            [](const PathExpr &) { return ExprSyntaxKind::Path; },
+            [](const QualifiedValueExpr &) { return ExprSyntaxKind::QualifiedValue; },
+            [](const CallExpr &) { return ExprSyntaxKind::Call; },
+            [](const StructLiteralExpr &) { return ExprSyntaxKind::StructLiteral; },
+            [](const ListLiteralExpr &) { return ExprSyntaxKind::ListLiteral; },
+            [](const SetLiteralExpr &) { return ExprSyntaxKind::SetLiteral; },
+            [](const MapLiteralExpr &) { return ExprSyntaxKind::MapLiteral; },
+            [](const UnaryExpr &) { return ExprSyntaxKind::Unary; },
+            [](const BinaryExpr &) { return ExprSyntaxKind::Binary; },
+            [](const MemberAccessExpr &) { return ExprSyntaxKind::MemberAccess; },
+            [](const IndexAccessExpr &) { return ExprSyntaxKind::IndexAccess; },
+            [](const GroupExpr &) { return ExprSyntaxKind::Group; },
+        },
+        expr.node);
 }
 
 /// Derive TemporalExprSyntaxKind from the variant
-[[nodiscard]] inline TemporalExprSyntaxKind temporal_expr_syntax_kind(
-    const TemporalExprSyntax &expr) {
-    return std::visit(Overloaded{
-        [](const EmbeddedTemporalExpr &) { return TemporalExprSyntaxKind::EmbeddedExpr; },
-        [](const CalledTemporalExpr &) { return TemporalExprSyntaxKind::Called; },
-        [](const InStateTemporalExpr &) { return TemporalExprSyntaxKind::InState; },
-        [](const RunningTemporalExpr &) { return TemporalExprSyntaxKind::Running; },
-        [](const CompletedTemporalExpr &) { return TemporalExprSyntaxKind::Completed; },
-        [](const UnaryTemporalExpr &) { return TemporalExprSyntaxKind::Unary; },
-        [](const BinaryTemporalExpr &) { return TemporalExprSyntaxKind::Binary; },
-    }, expr.node);
+[[nodiscard]] inline TemporalExprSyntaxKind
+temporal_expr_syntax_kind(const TemporalExprSyntax &expr) {
+    return std::visit(
+        Overloaded{
+            [](const EmbeddedTemporalExpr &) { return TemporalExprSyntaxKind::EmbeddedExpr; },
+            [](const CalledTemporalExpr &) { return TemporalExprSyntaxKind::Called; },
+            [](const InStateTemporalExpr &) { return TemporalExprSyntaxKind::InState; },
+            [](const RunningTemporalExpr &) { return TemporalExprSyntaxKind::Running; },
+            [](const CompletedTemporalExpr &) { return TemporalExprSyntaxKind::Completed; },
+            [](const UnaryTemporalExpr &) { return TemporalExprSyntaxKind::Unary; },
+            [](const BinaryTemporalExpr &) { return TemporalExprSyntaxKind::Binary; },
+        },
+        expr.node);
 }
 
 } // namespace ahfl::ast

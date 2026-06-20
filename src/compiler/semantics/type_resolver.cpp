@@ -20,37 +20,32 @@ TypeResolver::TypeResolver(const ResolveResult &resolve_result,
       resolve_alias_body_(std::move(resolve_alias_body)) {}
 
 TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
-    return std::visit(Overloaded{
-        [&](const ast::UnitType &) { return types_.make(TypeKind::Unit); },
-        [&](const ast::BoolType &) { return types_.make(TypeKind::Bool); },
-        [&](const ast::IntType &) { return types_.make(TypeKind::Int); },
-        [&](const ast::FloatType &) { return types_.make(TypeKind::Float); },
-        [&](const ast::StringType &) { return types_.string(); },
-        [&](const ast::BoundedStringType &t) {
-            return types_.bounded_string(
-                static_cast<std::int64_t>(t.min_length),
-                static_cast<std::int64_t>(t.max_length));
+    return std::visit(
+        Overloaded{
+            [&](const ast::UnitType &) { return types_.make(TypeKind::Unit); },
+            [&](const ast::BoolType &) { return types_.make(TypeKind::Bool); },
+            [&](const ast::IntType &) { return types_.make(TypeKind::Int); },
+            [&](const ast::FloatType &) { return types_.make(TypeKind::Float); },
+            [&](const ast::StringType &) { return types_.string(); },
+            [&](const ast::BoundedStringType &t) {
+                return types_.bounded_string(static_cast<std::int64_t>(t.min_length),
+                                             static_cast<std::int64_t>(t.max_length));
+            },
+            [&](const ast::UuidType &) { return types_.make(TypeKind::UUID); },
+            [&](const ast::TimestampType &) { return types_.make(TypeKind::Timestamp); },
+            [&](const ast::DurationType &) { return types_.make(TypeKind::Duration); },
+            [&](const ast::DecimalType &t) {
+                return types_.decimal(static_cast<std::int64_t>(t.scale));
+            },
+            [&](const ast::NamedType &t) { return resolve_named_type(*t.name); },
+            [&](const ast::OptionalType &t) { return types_.optional(resolve_type(*t.inner)); },
+            [&](const ast::ListType &t) { return types_.list(resolve_type(*t.element)); },
+            [&](const ast::SetType &t) { return types_.set(resolve_type(*t.element)); },
+            [&](const ast::MapType &t) {
+                return types_.map(resolve_type(*t.key_type), resolve_type(*t.value_type));
+            },
         },
-        [&](const ast::UuidType &) { return types_.make(TypeKind::UUID); },
-        [&](const ast::TimestampType &) { return types_.make(TypeKind::Timestamp); },
-        [&](const ast::DurationType &) { return types_.make(TypeKind::Duration); },
-        [&](const ast::DecimalType &t) {
-            return types_.decimal(static_cast<std::int64_t>(t.scale));
-        },
-        [&](const ast::NamedType &t) { return resolve_named_type(*t.name); },
-        [&](const ast::OptionalType &t) {
-            return types_.optional(resolve_type(*t.inner));
-        },
-        [&](const ast::ListType &t) {
-            return types_.list(resolve_type(*t.element));
-        },
-        [&](const ast::SetType &t) {
-            return types_.set(resolve_type(*t.element));
-        },
-        [&](const ast::MapType &t) {
-            return types_.map(resolve_type(*t.key_type), resolve_type(*t.value_type));
-        },
-    }, type.node);
+        type.node);
 
     return make_error_type();
 }

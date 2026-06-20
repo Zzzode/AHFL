@@ -36,8 +36,7 @@ void FlowFacts::add(TypeFact fact) {
         if (existing.kind != fact.kind) {
             return false;
         }
-        if (fact.kind == TypeFactKind::IsVariant ||
-            fact.kind == TypeFactKind::IsNotVariant) {
+        if (fact.kind == TypeFactKind::IsVariant || fact.kind == TypeFactKind::IsNotVariant) {
             return existing.enum_name == fact.enum_name &&
                    existing.variant_name == fact.variant_name;
         }
@@ -53,9 +52,8 @@ void FlowFacts::merge_from(const FlowFacts &other) {
 }
 
 void FlowFacts::invalidate(const Place &place) {
-    std::erase_if(facts_by_place_, [&](const auto &entry) {
-        return is_same_or_descendant(entry.first, place);
-    });
+    std::erase_if(facts_by_place_,
+                  [&](const auto &entry) { return is_same_or_descendant(entry.first, place); });
 }
 
 bool FlowFacts::has_fact(const Place &place, TypeFactKind kind) const noexcept {
@@ -68,7 +66,8 @@ bool FlowFacts::has_fact(const Place &place, TypeFactKind kind) const noexcept {
     });
 }
 
-bool FlowFacts::has_variant_fact(const Place &place, const std::string &enum_name,
+bool FlowFacts::has_variant_fact(const Place &place,
+                                 const std::string &enum_name,
                                  const std::string &variant_name) const noexcept {
     auto it = facts_by_place_.find(place);
     if (it == facts_by_place_.end()) {
@@ -80,7 +79,8 @@ bool FlowFacts::has_variant_fact(const Place &place, const std::string &enum_nam
     });
 }
 
-bool FlowFacts::has_not_variant_fact(const Place &place, const std::string &enum_name,
+bool FlowFacts::has_not_variant_fact(const Place &place,
+                                     const std::string &enum_name,
                                      const std::string &variant_name) const noexcept {
     auto it = facts_by_place_.find(place);
     if (it == facts_by_place_.end()) {

@@ -13,33 +13,33 @@ namespace {
 
 [[nodiscard]] std::optional<Place> extract_place(const ast::ExprSyntax &expr) {
     return std::visit(Overloaded{
-        [](const ast::GroupExpr &group) -> std::optional<Place> {
-            if (!group.inner) {
-                return std::nullopt;
-            }
-            return extract_place(*group.inner);
-        },
-        [](const ast::MemberAccessExpr &member) -> std::optional<Place> {
-            if (!member.base) {
-                return std::nullopt;
-            }
-            auto place = extract_place(*member.base);
-            if (!place.has_value()) {
-                return std::nullopt;
-            }
-            place->members.push_back(member.member);
-            return place;
-        },
-        [](const ast::PathExpr &path_expr) -> std::optional<Place> {
-            if (!path_expr.path) {
-                return std::nullopt;
-            }
-            return Place{.root = path_expr.path->root_name, .members = path_expr.path->members};
-        },
-        [](const auto &) -> std::optional<Place> {
-            return std::nullopt;
-        },
-    }, expr.node);
+                          [](const ast::GroupExpr &group) -> std::optional<Place> {
+                              if (!group.inner) {
+                                  return std::nullopt;
+                              }
+                              return extract_place(*group.inner);
+                          },
+                          [](const ast::MemberAccessExpr &member) -> std::optional<Place> {
+                              if (!member.base) {
+                                  return std::nullopt;
+                              }
+                              auto place = extract_place(*member.base);
+                              if (!place.has_value()) {
+                                  return std::nullopt;
+                              }
+                              place->members.push_back(member.member);
+                              return place;
+                          },
+                          [](const ast::PathExpr &path_expr) -> std::optional<Place> {
+                              if (!path_expr.path) {
+                                  return std::nullopt;
+                              }
+                              return Place{.root = path_expr.path->root_name,
+                                           .members = path_expr.path->members};
+                          },
+                          [](const auto &) -> std::optional<Place> { return std::nullopt; },
+                      },
+                      expr.node);
 }
 
 [[nodiscard]] bool is_none_literal(const ast::ExprSyntax &expr) noexcept {
@@ -59,130 +59,130 @@ namespace {
 }
 
 [[nodiscard]] std::optional<TypeFact> extract_none_comparison(const ast::ExprSyntax &condition,
-                                                             bool truth_value) {
-    return std::visit(Overloaded{
-        [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
-            if (!group.inner) {
-                return std::nullopt;
-            }
-            return extract_none_comparison(*group.inner, truth_value);
-        },
-        [truth_value, &condition](const ast::BinaryExpr &binary) -> std::optional<TypeFact> {
-            if (!binary.lhs || !binary.rhs) {
-                return std::nullopt;
-            }
-            if (binary.op != ast::ExprBinaryOp::Equal &&
-                binary.op != ast::ExprBinaryOp::NotEqual) {
-                return std::nullopt;
-            }
+                                                              bool truth_value) {
+    return std::visit(
+        Overloaded{
+            [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
+                if (!group.inner) {
+                    return std::nullopt;
+                }
+                return extract_none_comparison(*group.inner, truth_value);
+            },
+            [truth_value, &condition](const ast::BinaryExpr &binary) -> std::optional<TypeFact> {
+                if (!binary.lhs || !binary.rhs) {
+                    return std::nullopt;
+                }
+                if (binary.op != ast::ExprBinaryOp::Equal &&
+                    binary.op != ast::ExprBinaryOp::NotEqual) {
+                    return std::nullopt;
+                }
 
-            std::optional<Place> place;
-            if (is_none_literal(*binary.lhs)) {
-                place = extract_place(*binary.rhs);
-            } else if (is_none_literal(*binary.rhs)) {
-                place = extract_place(*binary.lhs);
-            }
-            if (!place.has_value()) {
-                return std::nullopt;
-            }
+                std::optional<Place> place;
+                if (is_none_literal(*binary.lhs)) {
+                    place = extract_place(*binary.rhs);
+                } else if (is_none_literal(*binary.rhs)) {
+                    place = extract_place(*binary.lhs);
+                }
+                if (!place.has_value()) {
+                    return std::nullopt;
+                }
 
-            auto kind = binary.op == ast::ExprBinaryOp::Equal ? TypeFactKind::IsNone
-                                                              : TypeFactKind::IsNotNone;
-            if (!truth_value) {
-                kind = opposite(kind);
-            }
+                auto kind = binary.op == ast::ExprBinaryOp::Equal ? TypeFactKind::IsNone
+                                                                  : TypeFactKind::IsNotNone;
+                if (!truth_value) {
+                    kind = opposite(kind);
+                }
 
-            return TypeFact{
-                .place = std::move(*place),
-                .kind = kind,
-                .origin = condition.range,
-                .enum_name = {},
-                .variant_name = {},
-            };
+                return TypeFact{
+                    .place = std::move(*place),
+                    .kind = kind,
+                    .origin = condition.range,
+                    .enum_name = {},
+                    .variant_name = {},
+                };
+            },
+            [](const auto &) -> std::optional<TypeFact> { return std::nullopt; },
         },
-        [](const auto &) -> std::optional<TypeFact> {
-            return std::nullopt;
-        },
-    }, condition.node);
+        condition.node);
 }
 
 [[nodiscard]] std::optional<TypeFact> extract_variant_comparison(const ast::ExprSyntax &condition,
-                                                                bool truth_value) {
-    return std::visit(Overloaded{
-        [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
-            if (!group.inner) {
-                return std::nullopt;
-            }
-            return extract_variant_comparison(*group.inner, truth_value);
+                                                                 bool truth_value) {
+    return std::visit(
+        Overloaded{
+            [truth_value](const ast::GroupExpr &group) -> std::optional<TypeFact> {
+                if (!group.inner) {
+                    return std::nullopt;
+                }
+                return extract_variant_comparison(*group.inner, truth_value);
+            },
+            [truth_value, &condition](const ast::BinaryExpr &binary) -> std::optional<TypeFact> {
+                if (!binary.lhs || !binary.rhs) {
+                    return std::nullopt;
+                }
+                if (binary.op != ast::ExprBinaryOp::Equal &&
+                    binary.op != ast::ExprBinaryOp::NotEqual) {
+                    return std::nullopt;
+                }
+
+                // Detect: path == QualifiedValue  or  QualifiedValue == path
+                std::optional<Place> place;
+                const ast::QualifiedName *qualified = nullptr;
+
+                if (is_qualified_value(*binary.rhs)) {
+                    place = extract_place(*binary.lhs);
+                    qualified = binary.rhs->as<ast::QualifiedValueExpr>().name.get();
+                } else if (is_qualified_value(*binary.lhs)) {
+                    place = extract_place(*binary.rhs);
+                    qualified = binary.lhs->as<ast::QualifiedValueExpr>().name.get();
+                }
+
+                if (!place.has_value() || qualified == nullptr) {
+                    return std::nullopt;
+                }
+
+                // segments: ["EnumName", "VariantName"] (possibly more for module-qualified).
+                // The last segment is the variant, second-to-last is the enum type.
+                const auto &segs = qualified->segments;
+                const std::string &variant = segs.back();
+                const std::string &enum_type = segs[segs.size() - 2];
+
+                const bool positive = (binary.op == ast::ExprBinaryOp::Equal) == truth_value;
+
+                return TypeFact{
+                    .place = std::move(*place),
+                    .kind = positive ? TypeFactKind::IsVariant : TypeFactKind::IsNotVariant,
+                    .origin = condition.range,
+                    .enum_name = enum_type,
+                    .variant_name = variant,
+                };
+            },
+            [](const auto &) -> std::optional<TypeFact> { return std::nullopt; },
         },
-        [truth_value, &condition](const ast::BinaryExpr &binary) -> std::optional<TypeFact> {
-            if (!binary.lhs || !binary.rhs) {
-                return std::nullopt;
-            }
-            if (binary.op != ast::ExprBinaryOp::Equal &&
-                binary.op != ast::ExprBinaryOp::NotEqual) {
-                return std::nullopt;
-            }
-
-            // Detect: path == QualifiedValue  or  QualifiedValue == path
-            std::optional<Place> place;
-            const ast::QualifiedName *qualified = nullptr;
-
-            if (is_qualified_value(*binary.rhs)) {
-                place = extract_place(*binary.lhs);
-                qualified = binary.rhs->as<ast::QualifiedValueExpr>().name.get();
-            } else if (is_qualified_value(*binary.lhs)) {
-                place = extract_place(*binary.rhs);
-                qualified = binary.lhs->as<ast::QualifiedValueExpr>().name.get();
-            }
-
-            if (!place.has_value() || qualified == nullptr) {
-                return std::nullopt;
-            }
-
-            // segments: ["EnumName", "VariantName"] (possibly more for module-qualified).
-            // The last segment is the variant, second-to-last is the enum type.
-            const auto &segs = qualified->segments;
-            const std::string &variant = segs.back();
-            const std::string &enum_type = segs[segs.size() - 2];
-
-            const bool positive = (binary.op == ast::ExprBinaryOp::Equal) == truth_value;
-
-            return TypeFact{
-                .place = std::move(*place),
-                .kind = positive ? TypeFactKind::IsVariant : TypeFactKind::IsNotVariant,
-                .origin = condition.range,
-                .enum_name = enum_type,
-                .variant_name = variant,
-            };
-        },
-        [](const auto &) -> std::optional<TypeFact> {
-            return std::nullopt;
-        },
-    }, condition.node);
+        condition.node);
 }
 
 void collect_true_facts(const ast::ExprSyntax &condition, FlowFacts &facts) {
-    const bool handled = std::visit(Overloaded{
-        [&facts](const ast::GroupExpr &group) -> bool {
-            if (!group.inner) {
-                return false;
-            }
-            collect_true_facts(*group.inner, facts);
-            return true;
-        },
-        [&facts](const ast::BinaryExpr &binary) -> bool {
-            if (binary.op != ast::ExprBinaryOp::And || !binary.lhs || !binary.rhs) {
-                return false;
-            }
-            collect_true_facts(*binary.lhs, facts);
-            collect_true_facts(*binary.rhs, facts);
-            return true;
-        },
-        [](const auto &) -> bool {
-            return false;
-        },
-    }, condition.node);
+    const bool handled =
+        std::visit(Overloaded{
+                       [&facts](const ast::GroupExpr &group) -> bool {
+                           if (!group.inner) {
+                               return false;
+                           }
+                           collect_true_facts(*group.inner, facts);
+                           return true;
+                       },
+                       [&facts](const ast::BinaryExpr &binary) -> bool {
+                           if (binary.op != ast::ExprBinaryOp::And || !binary.lhs || !binary.rhs) {
+                               return false;
+                           }
+                           collect_true_facts(*binary.lhs, facts);
+                           collect_true_facts(*binary.rhs, facts);
+                           return true;
+                       },
+                       [](const auto &) -> bool { return false; },
+                   },
+                   condition.node);
 
     if (handled) {
         return;

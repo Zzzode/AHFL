@@ -1,8 +1,8 @@
 #include "ahfl/compiler/ir/analysis.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
-#include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <array>

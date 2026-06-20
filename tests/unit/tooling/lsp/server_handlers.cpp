@@ -67,8 +67,8 @@ std::string run_lsp_messages(const std::vector<std::string> &bodies) {
 }
 
 struct LspMessageStep {
-    std::string body;
-    std::function<void()> before;
+    std::string body{};
+    std::function<void()> before{};
 };
 
 class HookedMessageBuffer : public std::streambuf {

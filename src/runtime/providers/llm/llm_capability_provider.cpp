@@ -34,10 +34,10 @@ using ahfl::json::JsonValue;
 
 /// Internal chat message representation for multi-turn conversations.
 struct ChatMessage {
-    std::string role;
-    std::string content;
-    std::vector<ToolCall> tool_calls; // only for assistant messages
-    std::string tool_call_id;         // only for tool role messages
+    std::string role{};
+    std::string content{};
+    std::vector<ToolCall> tool_calls{}; // only for assistant messages
+    std::string tool_call_id{};         // only for tool role messages
 };
 
 /// Build a JSON message object from a ChatMessage.
@@ -286,7 +286,7 @@ struct StreamExtraction {
 
 struct ParsedResponseCacheSnapshot {
     bool valid{false};
-    std::vector<ResponseCacheSnapshotEntry> entries;
+    std::vector<ResponseCacheSnapshotEntry> entries{};
 };
 
 [[nodiscard]] ParsedResponseCacheSnapshot parse_response_cache_snapshot(std::string_view content) {

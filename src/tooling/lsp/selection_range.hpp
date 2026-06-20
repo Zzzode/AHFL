@@ -22,8 +22,7 @@ namespace ahfl::lsp {
  *
  * Levels that cannot be determined are skipped.
  */
-[[nodiscard]] std::vector<SelectionRange> compute_selection_ranges(
-    const std::string &source,
-    const std::vector<Position> &positions);
+[[nodiscard]] std::vector<SelectionRange>
+compute_selection_ranges(const std::string &source, const std::vector<Position> &positions);
 
 } // namespace ahfl::lsp

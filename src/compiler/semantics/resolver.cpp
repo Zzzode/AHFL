@@ -712,133 +712,140 @@ class ResolverPass final {
 
     void resolve_temporal_expr(const ast::TemporalExprSyntax &expr) {
         std::visit(Overloaded{
-            [&](const ast::EmbeddedTemporalExpr &e) {
-                if (e.expr) {
-                    resolve_declaration_expr(*e.expr);
-                }
-            },
-            [&](const ast::CalledTemporalExpr &e) {
-                const auto name = make_single_segment_name(e.name, expr.range);
-                (void)resolve_reference(SymbolNamespace::Capabilities,
-                                        name,
-                                        ReferenceKind::TemporalCapability,
-                                        "capability");
-            },
-            [&](const ast::InStateTemporalExpr &) {
-                // No resolution needed for InState (state names resolved at typecheck
-            },
-            [&](const ast::RunningTemporalExpr &) {
-                // No resolution needed for Running (node names resolved at typecheck)
-            },
-            [&](const ast::CompletedTemporalExpr &) {
-                // No resolution needed for Completed (node names resolved at typecheck)
-            },
-            [&](const ast::UnaryTemporalExpr &e) {
-                if (e.operand) {
-                    resolve_temporal_expr(*e.operand);
-                }
-            },
-            [&](const ast::BinaryTemporalExpr &e) {
-                if (e.lhs) {
-                    resolve_temporal_expr(*e.lhs);
-                }
-                if (e.rhs) {
-                    resolve_temporal_expr(*e.rhs);
-                }
-            },
-        }, expr.node);
+                       [&](const ast::EmbeddedTemporalExpr &e) {
+                           if (e.expr) {
+                               resolve_declaration_expr(*e.expr);
+                           }
+                       },
+                       [&](const ast::CalledTemporalExpr &e) {
+                           const auto name = make_single_segment_name(e.name, expr.range);
+                           (void)resolve_reference(SymbolNamespace::Capabilities,
+                                                   name,
+                                                   ReferenceKind::TemporalCapability,
+                                                   "capability");
+                       },
+                       [&](const ast::InStateTemporalExpr &) {
+                           // No resolution needed for InState (state names resolved at typecheck
+                       },
+                       [&](const ast::RunningTemporalExpr &) {
+                           // No resolution needed for Running (node names resolved at typecheck)
+                       },
+                       [&](const ast::CompletedTemporalExpr &) {
+                           // No resolution needed for Completed (node names resolved at typecheck)
+                       },
+                       [&](const ast::UnaryTemporalExpr &e) {
+                           if (e.operand) {
+                               resolve_temporal_expr(*e.operand);
+                           }
+                       },
+                       [&](const ast::BinaryTemporalExpr &e) {
+                           if (e.lhs) {
+                               resolve_temporal_expr(*e.lhs);
+                           }
+                           if (e.rhs) {
+                               resolve_temporal_expr(*e.rhs);
+                           }
+                       },
+                   },
+                   expr.node);
     }
 
     void resolve_type(const ast::TypeSyntax &type) {
         std::visit(Overloaded{
-            [&](const ast::NamedType &t) {
-                const auto resolved = resolve_reference(
-                    SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+                       [&](const ast::NamedType &t) {
+                           const auto resolved = resolve_reference(
+                               SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
 
-                if (resolved.has_value() && current_type_alias_.has_value()) {
-                    const auto symbol = result_.symbol_table.get(*resolved);
-                    if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
-                        type_alias_dependencies_[current_type_alias_->value].push_back(*resolved);
-                    }
-                }
-            },
-            [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
-            [&](const ast::ListType &t) { resolve_type(*t.element); },
-            [&](const ast::SetType &t) { resolve_type(*t.element); },
-            [&](const ast::MapType &t) {
-                resolve_type(*t.key_type);
-                resolve_type(*t.value_type);
-            },
-            [](const auto &) { /* leaf types: nothing to resolve */ },
-        }, type.node);
+                           if (resolved.has_value() && current_type_alias_.has_value()) {
+                               const auto symbol = result_.symbol_table.get(*resolved);
+                               if (symbol.has_value() &&
+                                   symbol->get().kind == SymbolKind::TypeAlias) {
+                                   type_alias_dependencies_[current_type_alias_->value].push_back(
+                                       *resolved);
+                               }
+                           }
+                       },
+                       [&](const ast::OptionalType &t) { resolve_type(*t.inner); },
+                       [&](const ast::ListType &t) { resolve_type(*t.element); },
+                       [&](const ast::SetType &t) { resolve_type(*t.element); },
+                       [&](const ast::MapType &t) {
+                           resolve_type(*t.key_type);
+                           resolve_type(*t.value_type);
+                       },
+                       [](const auto &) { /* leaf types: nothing to resolve */ },
+                   },
+                   type.node);
     }
 
     void resolve_declaration_expr(const ast::ExprSyntax &expr) {
         std::visit(Overloaded{
-            [&](const ast::SomeExpr &e) { resolve_declaration_expr(*e.value); },
-            [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
-            [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
-            [&](const ast::BinaryExpr &e) {
-                resolve_declaration_expr(*e.lhs);
-                resolve_declaration_expr(*e.rhs);
-            },
-            [&](const ast::IndexAccessExpr &e) {
-                resolve_declaration_expr(*e.base);
-                resolve_declaration_expr(*e.index);
-            },
-            [&](const ast::CallExpr &e) {
-                (void)resolve_callable_reference(*e.callee);
-                for (const auto &arg : e.arguments) {
-                    resolve_declaration_expr(*arg);
-                }
-            },
-            [&](const ast::StructLiteralExpr &e) {
-                (void)resolve_reference(
-                    SymbolNamespace::Types, *e.type_name, ReferenceKind::TypeName, "type");
-                for (const auto &field : e.fields) {
-                    resolve_declaration_expr(*field->value);
-                }
-            },
-            [&](const ast::ListLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    resolve_declaration_expr(*item);
-                }
-            },
-            [&](const ast::SetLiteralExpr &e) {
-                for (const auto &item : e.items) {
-                    resolve_declaration_expr(*item);
-                }
-            },
-            [&](const ast::MapLiteralExpr &e) {
-                for (const auto &entry : e.entries) {
-                    resolve_declaration_expr(*entry->key);
-                    resolve_declaration_expr(*entry->value);
-                }
-            },
-            [&](const ast::MemberAccessExpr &e) {
-                resolve_declaration_expr(*e.base);
-            },
-            [&](const ast::QualifiedValueExpr &e) {
-                if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
-                    resolved.has_value()) {
-                    result_.add_reference(ResolvedReference{
-                        .kind = ReferenceKind::ConstValue,
-                        .text = e.name->spelling(),
-                        .source_id = current_source_id_,
-                        .range = e.name->range,
-                        .target = *resolved,
-                    });
-                    return;
-                }
+                       [&](const ast::SomeExpr &e) { resolve_declaration_expr(*e.value); },
+                       [&](const ast::UnaryExpr &e) { resolve_declaration_expr(*e.operand); },
+                       [&](const ast::GroupExpr &e) { resolve_declaration_expr(*e.inner); },
+                       [&](const ast::BinaryExpr &e) {
+                           resolve_declaration_expr(*e.lhs);
+                           resolve_declaration_expr(*e.rhs);
+                       },
+                       [&](const ast::IndexAccessExpr &e) {
+                           resolve_declaration_expr(*e.base);
+                           resolve_declaration_expr(*e.index);
+                       },
+                       [&](const ast::CallExpr &e) {
+                           (void)resolve_callable_reference(*e.callee);
+                           for (const auto &arg : e.arguments) {
+                               resolve_declaration_expr(*arg);
+                           }
+                       },
+                       [&](const ast::StructLiteralExpr &e) {
+                           (void)resolve_reference(SymbolNamespace::Types,
+                                                   *e.type_name,
+                                                   ReferenceKind::TypeName,
+                                                   "type");
+                           for (const auto &field : e.fields) {
+                               resolve_declaration_expr(*field->value);
+                           }
+                       },
+                       [&](const ast::ListLiteralExpr &e) {
+                           for (const auto &item : e.items) {
+                               resolve_declaration_expr(*item);
+                           }
+                       },
+                       [&](const ast::SetLiteralExpr &e) {
+                           for (const auto &item : e.items) {
+                               resolve_declaration_expr(*item);
+                           }
+                       },
+                       [&](const ast::MapLiteralExpr &e) {
+                           for (const auto &entry : e.entries) {
+                               resolve_declaration_expr(*entry->key);
+                               resolve_declaration_expr(*entry->value);
+                           }
+                       },
+                       [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },
+                       [&](const ast::QualifiedValueExpr &e) {
+                           if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
+                               resolved.has_value()) {
+                               result_.add_reference(ResolvedReference{
+                                   .kind = ReferenceKind::ConstValue,
+                                   .text = e.name->spelling(),
+                                   .source_id = current_source_id_,
+                                   .range = e.name->range,
+                                   .target = *resolved,
+                               });
+                               return;
+                           }
 
-                if (e.name->segments.size() > 1) {
-                    const auto owner = owner_name_of(*e.name);
-                    (void)resolve_reference(
-                        SymbolNamespace::Types, owner, ReferenceKind::QualifiedValueOwnerType, "type");
-                }
-            },
-            [](const auto &) { /* leaf expressions: nothing to resolve */ },
-        }, expr.node);
+                           if (e.name->segments.size() > 1) {
+                               const auto owner = owner_name_of(*e.name);
+                               (void)resolve_reference(SymbolNamespace::Types,
+                                                       owner,
+                                                       ReferenceKind::QualifiedValueOwnerType,
+                                                       "type");
+                           }
+                       },
+                       [](const auto &) { /* leaf expressions: nothing to resolve */ },
+                   },
+                   expr.node);
     }
 
     void resolve_block_types(const ast::BlockSyntax &block) {
@@ -990,10 +997,8 @@ class ResolverPass final {
 } // namespace detail
 
 ResolveResult::ResolveResult(const ResolveResult &other)
-    : symbol_table(other.symbol_table),
-      diagnostics(other.diagnostics),
-      references_(other.references_),
-      imports_(other.imports_) {
+    : symbol_table(other.symbol_table), diagnostics(other.diagnostics),
+      references_(other.references_), imports_(other.imports_) {
     invalidate_reference_lookup_cache();
 }
 
@@ -1011,10 +1016,8 @@ ResolveResult &ResolveResult::operator=(const ResolveResult &other) {
 }
 
 ResolveResult::ResolveResult(ResolveResult &&other) noexcept
-    : symbol_table(std::move(other.symbol_table)),
-      diagnostics(std::move(other.diagnostics)),
-      references_(std::move(other.references_)),
-      imports_(std::move(other.imports_)) {
+    : symbol_table(std::move(other.symbol_table)), diagnostics(std::move(other.diagnostics)),
+      references_(std::move(other.references_)), imports_(std::move(other.imports_)) {
     invalidate_reference_lookup_cache();
     other.invalidate_reference_lookup_cache();
 }

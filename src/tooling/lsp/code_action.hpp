@@ -15,8 +15,6 @@ namespace ahfl::lsp {
 /// @return A list of code actions. The WorkspaceEdit entries use an empty string
 ///         as the URI key; the caller must replace it with the actual document URI.
 [[nodiscard]] std::vector<CodeAction> compute_code_actions(
-    const std::string &source,
-    const Range &range,
-    const std::vector<LspDiagnostic> &diagnostics);
+    const std::string &source, const Range &range, const std::vector<LspDiagnostic> &diagnostics);
 
 } // namespace ahfl::lsp

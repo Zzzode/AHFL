@@ -13,13 +13,11 @@
 namespace ahfl {
 namespace {
 
-template <typename... Ts>
-struct overloaded : Ts... {
+template <typename... Ts> struct overloaded : Ts... {
     using Ts::operator()...;
 };
 
-template <typename... Ts>
-overloaded(Ts...) -> overloaded<Ts...>;
+template <typename... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 
 [[nodiscard]] std::string_view local_nominal_name(std::string_view canonical_name) noexcept {
     const auto pos = canonical_name.rfind("::");
@@ -83,6 +81,7 @@ ExpressionValue ExpressionValueFactory::typed_effect(TypePtr type, ExprEffect ef
         .type = type,
         .effect = effect,
         .is_pure = is_effect_pure(effect),
+        .path_root_kind = std::nullopt,
     };
 }
 
@@ -95,38 +94,38 @@ ExpressionValue ExpressionValueFactory::error_typed_effect(ExprEffect effect) co
         .type = make_error_type(),
         .effect = effect,
         .is_pure = is_effect_pure(effect),
+        .path_root_kind = std::nullopt,
     };
 }
 
 std::optional<Place> place_of_expression(const ast::ExprSyntax &expr) {
     return std::visit(overloaded{
-        [&](const ast::GroupExpr &e) -> std::optional<Place> {
-            if (!e.inner) {
-                return std::nullopt;
-            }
-            return place_of_expression(*e.inner);
-        },
-        [&](const ast::MemberAccessExpr &e) -> std::optional<Place> {
-            if (!e.base) {
-                return std::nullopt;
-            }
-            auto place = place_of_expression(*e.base);
-            if (!place.has_value()) {
-                return std::nullopt;
-            }
-            place->members.push_back(e.member);
-            return place;
-        },
-        [&](const ast::PathExpr &e) -> std::optional<Place> {
-            if (!e.path) {
-                return std::nullopt;
-            }
-            return Place{.root = e.path->root_name, .members = e.path->members};
-        },
-        [](const auto &) -> std::optional<Place> {
-            return std::nullopt;
-        },
-    }, expr.node);
+                          [&](const ast::GroupExpr &e) -> std::optional<Place> {
+                              if (!e.inner) {
+                                  return std::nullopt;
+                              }
+                              return place_of_expression(*e.inner);
+                          },
+                          [&](const ast::MemberAccessExpr &e) -> std::optional<Place> {
+                              if (!e.base) {
+                                  return std::nullopt;
+                              }
+                              auto place = place_of_expression(*e.base);
+                              if (!place.has_value()) {
+                                  return std::nullopt;
+                              }
+                              place->members.push_back(e.member);
+                              return place;
+                          },
+                          [&](const ast::PathExpr &e) -> std::optional<Place> {
+                              if (!e.path) {
+                                  return std::nullopt;
+                              }
+                              return Place{.root = e.path->root_name, .members = e.path->members};
+                          },
+                          [](const auto &) -> std::optional<Place> { return std::nullopt; },
+                      },
+                      expr.node);
 }
 
 AssignTargetRootKind classify_expression_path_root(const ast::PathSyntax &path,
@@ -287,6 +286,7 @@ ExpressionValue resolve_expression_path(const ast::PathSyntax &path,
             .type = types.error_type(),
             .effect = ExprEffect::Pure,
             .is_pure = true,
+            .path_root_kind = std::nullopt,
         };
     }
 

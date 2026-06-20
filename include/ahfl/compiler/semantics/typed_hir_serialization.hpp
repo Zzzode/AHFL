@@ -9,8 +9,7 @@
 namespace ahfl {
 
 inline constexpr std::string_view kTypedProgramCacheSchemaVersion = "AHFL_TYPED_HIR_CACHE_V1";
-inline constexpr std::string_view kConstValueArtifactSchemaVersion =
-    "AHFL_CONST_VALUE_ARTIFACT_V1";
+inline constexpr std::string_view kConstValueArtifactSchemaVersion = "AHFL_CONST_VALUE_ARTIFACT_V1";
 
 struct TypedProgramCacheMetadata {
     std::string schema_version{std::string(kTypedProgramCacheSchemaVersion)};
