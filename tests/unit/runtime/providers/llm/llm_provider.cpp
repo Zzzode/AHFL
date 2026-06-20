@@ -57,6 +57,10 @@ ir::TypeRef make_type_ref(const std::string &name) {
         .kind = kind,
         .display_name = name,
         .canonical_name = name,
+        .string_bounds = {},
+        .decimal_scale = {},
+        .first = nullptr,
+        .second = nullptr,
     };
 }
 

@@ -58,6 +58,18 @@ namespace ahfl {
 
 namespace {
 
+[[nodiscard]] ir::TypeRef empty_type_ref(ir::TypeRefKind kind, std::string display_name) {
+    return ir::TypeRef{
+        .kind = kind,
+        .display_name = std::move(display_name),
+        .canonical_name = {},
+        .string_bounds = {},
+        .decimal_scale = {},
+        .first = nullptr,
+        .second = nullptr,
+    };
+}
+
 [[nodiscard]] bool paths_equal(const ir::Path &lhs, const ir::Path &rhs) {
     return lhs.root_kind == rhs.root_kind && lhs.root_name == rhs.root_name &&
            lhs.members == rhs.members;
@@ -526,86 +538,75 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::TypeRef type_ref_from_type(const Type &type) const {
         return type.visit(types::Overloads{
             [&](const types::AnyT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Any, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Any, type.describe());
             },
             [&](const types::NeverT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Never, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Never, type.describe());
             },
             [&](const types::UnitT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Unit, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Unit, type.describe());
             },
             [&](const types::BoolT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Bool, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Bool, type.describe());
             },
             [&](const types::IntT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Int, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Int, type.describe());
             },
             [&](const types::FloatT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Float, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Float, type.describe());
             },
             [&](const types::StringT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::String,
-                                   .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::String, type.describe());
             },
             [&](const types::BoundedStringT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::BoundedString,
-                    .display_name = type.describe(),
-                    .string_bounds = std::make_pair(value.minimum, value.maximum),
-                };
+                auto ref = empty_type_ref(ir::TypeRefKind::BoundedString, type.describe());
+                ref.string_bounds = std::make_pair(value.minimum, value.maximum);
+                return ref;
             },
             [&](const types::UUIDT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::UUID, .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::UUID, type.describe());
             },
             [&](const types::TimestampT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Timestamp,
-                                   .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Timestamp, type.describe());
             },
             [&](const types::DurationT &) {
-                return ir::TypeRef{.kind = ir::TypeRefKind::Duration,
-                                   .display_name = type.describe()};
+                return empty_type_ref(ir::TypeRefKind::Duration, type.describe());
             },
             [&](const types::DecimalT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Decimal,
-                    .display_name = type.describe(),
-                    .decimal_scale = value.scale,
-                };
+                auto ref = empty_type_ref(ir::TypeRefKind::Decimal, type.describe());
+                ref.decimal_scale = value.scale;
+                return ref;
             },
             [&](const types::StructT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Struct,
-                    .display_name = type.describe(),
-                    .canonical_name = value.canonical_name,
-                };
+                auto ref = empty_type_ref(ir::TypeRefKind::Struct, type.describe());
+                ref.canonical_name = value.canonical_name;
+                return ref;
             },
             [&](const types::EnumT &value) {
-                return ir::TypeRef{
-                    .kind = ir::TypeRefKind::Enum,
-                    .display_name = type.describe(),
-                    .canonical_name = value.canonical_name,
-                };
+                auto ref = empty_type_ref(ir::TypeRefKind::Enum, type.describe());
+                ref.canonical_name = value.canonical_name;
+                return ref;
             },
             [&](const types::OptionalT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::Optional, .display_name = type.describe()};
+                auto ref = empty_type_ref(ir::TypeRefKind::Optional, type.describe());
                 if (value.inner != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.inner));
                 return ref;
             },
             [&](const types::ListT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::List, .display_name = type.describe()};
+                auto ref = empty_type_ref(ir::TypeRefKind::List, type.describe());
                 if (value.element != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.element));
                 return ref;
             },
             [&](const types::SetT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::Set, .display_name = type.describe()};
+                auto ref = empty_type_ref(ir::TypeRefKind::Set, type.describe());
                 if (value.element != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.element));
                 return ref;
             },
             [&](const types::MapT &value) {
-                ir::TypeRef ref{.kind = ir::TypeRefKind::Map, .display_name = type.describe()};
+                auto ref = empty_type_ref(ir::TypeRefKind::Map, type.describe());
                 if (value.key != nullptr)
                     ref.first = make_type_ref(type_ref_from_type(*value.key));
                 if (value.value != nullptr)
@@ -618,10 +619,7 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::TypeRef type_ref_from_maybe(MaybeCRef<Type> type,
                                                   std::string_view fallback = "Any") const {
         if (!type.has_value()) {
-            return ir::TypeRef{
-                .kind = ir::TypeRefKind::Unresolved,
-                .display_name = std::string(fallback),
-            };
+            return empty_type_ref(ir::TypeRefKind::Unresolved, std::string(fallback));
         }
         return type_ref_from_type(type->get());
     }
@@ -632,11 +630,7 @@ class TypedIrLowerer final {
         if (type.name) {
             symbol = symbol_from_reference_here(ReferenceKind::TypeName, type.name->range);
         }
-        auto ref = ir::TypeRef{
-            .kind = ir::TypeRefKind::Unresolved,
-            .display_name = std::string(fallback),
-            .canonical_name = {},
-        };
+        auto ref = empty_type_ref(ir::TypeRefKind::Unresolved, std::string(fallback));
         if (!symbol.has_value())
             return ref;
         const auto &value = symbol->get();
@@ -652,59 +646,56 @@ class TypedIrLowerer final {
     [[nodiscard]] ir::TypeRef type_ref_from_syntax(const ast::TypeSyntax &type) const {
         switch (type.kind) {
         case ast::TypeSyntaxKind::Unit:
-            return ir::TypeRef{.kind = ir::TypeRefKind::Unit, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::Unit, type.spelling());
         case ast::TypeSyntaxKind::Bool:
-            return ir::TypeRef{.kind = ir::TypeRefKind::Bool, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::Bool, type.spelling());
         case ast::TypeSyntaxKind::Int:
-            return ir::TypeRef{.kind = ir::TypeRefKind::Int, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::Int, type.spelling());
         case ast::TypeSyntaxKind::Float:
-            return ir::TypeRef{.kind = ir::TypeRefKind::Float, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::Float, type.spelling());
         case ast::TypeSyntaxKind::String:
-            return ir::TypeRef{.kind = ir::TypeRefKind::String, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::String, type.spelling());
         case ast::TypeSyntaxKind::UUID:
-            return ir::TypeRef{.kind = ir::TypeRefKind::UUID, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::UUID, type.spelling());
         case ast::TypeSyntaxKind::Timestamp:
-            return ir::TypeRef{.kind = ir::TypeRefKind::Timestamp, .display_name = type.spelling()};
+            return empty_type_ref(ir::TypeRefKind::Timestamp, type.spelling());
         case ast::TypeSyntaxKind::Duration:
-            return ir::TypeRef{.kind = ir::TypeRefKind::Duration, .display_name = type.spelling()};
-        case ast::TypeSyntaxKind::BoundedString:
-            return ir::TypeRef{
-                .kind = ir::TypeRefKind::BoundedString,
-                .display_name = type.spelling(),
-                .string_bounds = type.string_bounds,
-            };
-        case ast::TypeSyntaxKind::Decimal:
-            return ir::TypeRef{
-                .kind = ir::TypeRefKind::Decimal,
-                .display_name = type.spelling(),
-                .decimal_scale = type.decimal_scale,
-            };
+            return empty_type_ref(ir::TypeRefKind::Duration, type.spelling());
+        case ast::TypeSyntaxKind::BoundedString: {
+            auto ref = empty_type_ref(ir::TypeRefKind::BoundedString, type.spelling());
+            ref.string_bounds = type.string_bounds;
+            return ref;
+        }
+        case ast::TypeSyntaxKind::Decimal: {
+            auto ref = empty_type_ref(ir::TypeRefKind::Decimal, type.spelling());
+            ref.decimal_scale = type.decimal_scale;
+            return ref;
+        }
         case ast::TypeSyntaxKind::Named:
             return named_type_ref_from_syntax(type);
         case ast::TypeSyntaxKind::Optional: {
-            auto ref =
-                ir::TypeRef{.kind = ir::TypeRefKind::Optional, .display_name = type.spelling()};
+            auto ref = empty_type_ref(ir::TypeRefKind::Optional, type.spelling());
             ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
             return ref;
         }
         case ast::TypeSyntaxKind::List: {
-            auto ref = ir::TypeRef{.kind = ir::TypeRefKind::List, .display_name = type.spelling()};
+            auto ref = empty_type_ref(ir::TypeRefKind::List, type.spelling());
             ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
             return ref;
         }
         case ast::TypeSyntaxKind::Set: {
-            auto ref = ir::TypeRef{.kind = ir::TypeRefKind::Set, .display_name = type.spelling()};
+            auto ref = empty_type_ref(ir::TypeRefKind::Set, type.spelling());
             ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
             return ref;
         }
         case ast::TypeSyntaxKind::Map: {
-            auto ref = ir::TypeRef{.kind = ir::TypeRefKind::Map, .display_name = type.spelling()};
+            auto ref = empty_type_ref(ir::TypeRefKind::Map, type.spelling());
             ref.first = type.first ? make_type_ref(type_ref_from_syntax(*type.first)) : nullptr;
             ref.second = type.second ? make_type_ref(type_ref_from_syntax(*type.second)) : nullptr;
             return ref;
         }
         }
-        return ir::TypeRef{.kind = ir::TypeRefKind::Unresolved, .display_name = "<invalid-type>"};
+        return empty_type_ref(ir::TypeRefKind::Unresolved, "<invalid-type>");
     }
 
     [[nodiscard]] std::vector<std::string>
