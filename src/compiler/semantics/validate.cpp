@@ -257,27 +257,27 @@ class ValidationPass final {
                     if (!states.insert(state).second) {
                         invalid_state_here(
                             messages::validation::DuplicateAgentState.format_with(state),
-                            decl.get().range);
+                            decl.get().states_range);
                     }
                 }
 
                 if (!states.contains(decl.get().initial_state)) {
                     invalid_state_here(messages::validation::InitialStateNotDeclared.format_with(
                                            decl.get().initial_state),
-                                       decl.get().range);
+                                       decl.get().initial_state_range);
                 }
 
                 for (const auto &final_state : decl.get().final_states) {
                     if (!final_states.insert(final_state).second) {
                         invalid_state_here(
                             messages::validation::DuplicateFinalState.format_with(final_state),
-                            decl.get().range);
+                            decl.get().final_states_range);
                     }
 
                     if (!states.contains(final_state)) {
                         invalid_state_here(
                             messages::validation::FinalStateNotDeclared.format_with(final_state),
-                            decl.get().range);
+                            decl.get().final_states_range);
                     }
                 }
 
@@ -286,7 +286,7 @@ class ValidationPass final {
                         validation_error_here(
                             error_codes::validation::DuplicateCapability,
                             messages::validation::DuplicateCapability.format_with(capability),
-                            decl.get().range);
+                            decl.get().capabilities_range);
                     }
                 }
 
@@ -340,7 +340,7 @@ class ValidationPass final {
                     if (!reachable.contains(state)) {
                         invalid_state_here(messages::validation::UnreachableAgentState.format_with(
                                                state, decl.get().initial_state),
-                                           decl.get().range);
+                                           decl.get().states_range);
                     }
                 }
             });

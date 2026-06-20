@@ -33,7 +33,10 @@
     "workspace"
   ],
   "activationEvents": [
-    "onLanguage:ahfl"
+    "onLanguage:ahfl",
+    "onCommand:ahfl.restartServer",
+    "onCommand:ahfl.formatDocument",
+    "onCommand:ahfl.showOutput"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -61,6 +64,20 @@
       {
         "language": "ahfl",
         "path": "./snippets/ahfl.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ahfl.restartServer",
+        "title": "AHFL: Restart Language Server"
+      },
+      {
+        "command": "ahfl.formatDocument",
+        "title": "AHFL: Format Document"
+      },
+      {
+        "command": "ahfl.showOutput",
+        "title": "AHFL: Show Language Server Output"
       }
     ],
     "configuration": {

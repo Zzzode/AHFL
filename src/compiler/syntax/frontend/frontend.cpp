@@ -451,16 +451,24 @@ class ProgramBuilder {
             declaration->states = build_ident_list(require(
                 require(agent_decl->get().statesDecl(), "agent states are missing").identList(),
                 "agent states list is missing"));
+            declaration->states_range = context_range(
+                *agent_decl->get().statesDecl(), source_);
             declaration->initial_state = text_of(require(
                 require(agent_decl->get().initialDecl(), "agent initial state is missing").IDENT(),
                 "agent initial state name is missing"));
+            declaration->initial_state_range =
+                context_range(*agent_decl->get().initialDecl(), source_);
             declaration->final_states = build_ident_list(
                 require(require(agent_decl->get().finalDecl(), "agent final states are missing")
                             .identList(),
                         "agent final states list is missing"));
+            declaration->final_states_range =
+                context_range(*agent_decl->get().finalDecl(), source_);
             declaration->capabilities = build_ident_list_opt(borrow(
                 require(agent_decl->get().capabilitiesDecl(), "agent capabilities are missing")
                     .identListOpt()));
+            declaration->capabilities_range =
+                context_range(*agent_decl->get().capabilitiesDecl(), source_);
 
             if (const auto quota_decl = borrow(agent_decl->get().quotaDecl())) {
                 declaration->quota = build_agent_quota(quota_decl->get());

@@ -2,7 +2,13 @@
 
 #include "ahfl/compiler/semantics/declaration_info.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
+#include "tooling/formatter/formatter.hpp"
+#include "tooling/lsp/code_action.hpp"
+#include "tooling/lsp/code_lens.hpp"
+#include "tooling/lsp/document_highlight.hpp"
 #include "tooling/lsp/hover_service.hpp"
+#include "tooling/lsp/selection_range.hpp"
+#include "tooling/lsp/semantic_tokens.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -330,7 +336,8 @@ void send_empty_array(JsonRpcTransport &transport, const std::string &id) {
 }
 
 [[nodiscard]] std::unique_ptr<json::JsonValue>
-serialize_full_diagnostic_report(const std::vector<LspDiagnostic> &diagnostics) {
+serialize_full_diagnostic_report(const std::vector<LspDiagnostic> &diagnostics,
+                                 std::optional<std::string_view> result_id = std::nullopt) {
     auto report = json::JsonValue::make_object();
     report->set("kind", json::JsonValue::make_string("full"));
 
@@ -339,14 +346,19 @@ serialize_full_diagnostic_report(const std::vector<LspDiagnostic> &diagnostics) 
         items->push(serialize_diagnostic(diagnostic));
     }
     report->set("items", std::move(items));
+
+    if (result_id.has_value()) {
+        report->set("resultId", json::JsonValue::make_string(std::string(*result_id)));
+    }
     return report;
 }
 
 [[nodiscard]] std::unique_ptr<json::JsonValue> serialize_workspace_diagnostic_item(
     std::string_view uri,
     std::optional<int> version,
-    const std::vector<LspDiagnostic> &diagnostics) {
-    auto item = serialize_full_diagnostic_report(diagnostics);
+    const std::vector<LspDiagnostic> &diagnostics,
+    std::optional<std::string_view> result_id = std::nullopt) {
+    auto item = serialize_full_diagnostic_report(diagnostics, result_id);
     item->set("uri", json::JsonValue::make_string(std::string(uri)));
     if (version.has_value()) {
         item->set("version", json::JsonValue::make_int(*version));
@@ -361,6 +373,22 @@ void send_invalid_params(JsonRpcTransport &transport, const std::string &id, std
     resp.id = id;
     resp.error = JsonRpcError{kInvalidParams, std::move(message)};
     transport.send_response(resp);
+}
+
+[[nodiscard]] std::string compute_document_result_id(const LspAnalysisSnapshot *snapshot,
+                                                     std::string_view uri) {
+    if (snapshot == nullptr) {
+        return std::string(uri) + "#v0";
+    }
+    const auto *source = snapshot->source_for_uri(uri);
+    const std::uint64_t content_hash =
+        source != nullptr && source->source != nullptr
+            ? std::hash<std::string>{}(source->source->content)
+            : snapshot->content_hash;
+    return std::string(uri) + "#v" + std::to_string(snapshot->document_version) + "-" +
+           std::to_string(snapshot->document_revision) + "-" +
+           std::to_string(snapshot->workspace_revision) + "-" +
+           std::to_string(content_hash);
 }
 
 [[nodiscard]] bool text_document_id(const json::JsonValue &params, std::string &uri) {
@@ -951,6 +979,77 @@ void append_symbol_children(DocumentSymbol &symbol,
     }
 }
 
+/// Simple folding range computation based on braces and top-level declarations.
+[[nodiscard]] std::vector<FoldingRange> compute_folding_ranges(const std::string &source) {
+    std::vector<FoldingRange> ranges;
+    std::vector<std::uint32_t> brace_stack;
+    std::uint32_t line_number = 0;
+    std::uint32_t last_top_level_start = 0;
+    bool in_top_level = false;
+
+    std::size_t pos = 0;
+    while (pos < source.size()) {
+        auto newline_pos = source.find('\n', pos);
+        if (newline_pos == std::string::npos) {
+            newline_pos = source.size();
+        }
+        std::string_view line{source.data() + pos, newline_pos - pos};
+
+        // Track braces for region-based folding
+        for (char ch : line) {
+            if (ch == '{') {
+                brace_stack.push_back(line_number);
+            } else if (ch == '}' && !brace_stack.empty()) {
+                std::uint32_t start = brace_stack.back();
+                brace_stack.pop_back();
+                if (line_number > start) {
+                    ranges.push_back(FoldingRange{
+                        .start_line = start,
+                        .end_line = line_number,
+                        .kind = FoldingRangeKind::Region,
+                    });
+                }
+            }
+        }
+
+        // Detect top-level declaration starts for region folding
+        for (auto kw : kTopLevelKeywords) {
+            if (line.starts_with(kw) ||
+                (line.size() > kw.size() &&
+                 line.substr(0, kw.size()) == kw &&
+                 (line[kw.size()] == ' ' || line[kw.size()] == '\t'))) {
+                if (in_top_level && line_number > last_top_level_start) {
+                    ranges.push_back(FoldingRange{
+                        .start_line = last_top_level_start,
+                        .end_line = line_number - 1,
+                        .kind = FoldingRangeKind::Region,
+                    });
+                }
+                last_top_level_start = line_number;
+                in_top_level = true;
+                break;
+            }
+        }
+
+        if (newline_pos == source.size()) {
+            break;
+        }
+        pos = newline_pos + 1;
+        ++line_number;
+    }
+
+    // Final top-level range
+    if (in_top_level && line_number > last_top_level_start) {
+        ranges.push_back(FoldingRange{
+            .start_line = last_top_level_start,
+            .end_line = line_number,
+            .kind = FoldingRangeKind::Region,
+        });
+    }
+
+    return ranges;
+}
+
 } // anonymous namespace
 
 LspServer::LspServer(std::istream &in, std::ostream &out)
@@ -1009,6 +1108,20 @@ void LspServer::handle_request(const JsonRpcRequest &req) {
         handle_workspace_symbol(req);
     } else if (req.method == "textDocument/signatureHelp") {
         handle_signature_help(req);
+    } else if (req.method == "textDocument/formatting") {
+        handle_document_formatting(req);
+    } else if (req.method == "textDocument/semanticTokens/full") {
+        handle_semantic_tokens_full(req);
+    } else if (req.method == "textDocument/codeAction") {
+        handle_code_action(req);
+    } else if (req.method == "textDocument/foldingRange") {
+        handle_folding_range(req);
+    } else if (req.method == "textDocument/documentHighlight") {
+        handle_document_highlight(req);
+    } else if (req.method == "textDocument/selectionRange") {
+        handle_selection_range(req);
+    } else if (req.method == "textDocument/codeLens") {
+        handle_code_lens(req);
     } else {
         JsonRpcResponse resp;
         resp.id = req.id;
@@ -1053,6 +1166,13 @@ void LspServer::handle_initialize(const JsonRpcRequest &req) {
     hover_options_ = hover_render_options_from_initialize(req.params.get());
 
     ServerCapabilities caps;
+    caps.document_formatting_provider = true;
+    caps.semantic_tokens_provider = true;
+    caps.code_action_provider = true;
+    caps.folding_range_provider = true;
+    caps.document_highlight_provider = true;
+    caps.selection_range_provider = true;
+    caps.code_lens_provider = true;
     auto result = json::JsonValue::make_object();
     result->set("capabilities", serialize_server_capabilities(caps));
 
@@ -1087,7 +1207,7 @@ void LspServer::handle_did_open(const json::JsonValue &params) {
     auto item = parse_text_document_item(*td);
     store_.open(item);
     analysis_.invalidate_all();
-    publish_open_document_diagnostics();
+    send_diagnostic_refresh();
 }
 
 void LspServer::handle_did_change(const json::JsonValue &params) {
@@ -1114,7 +1234,7 @@ void LspServer::handle_did_change(const json::JsonValue &params) {
 
     store_.change(versioned.uri, versioned.version, std::string(*text));
     analysis_.invalidate_all();
-    publish_open_document_diagnostics();
+    send_diagnostic_refresh();
 }
 
 void LspServer::handle_did_close(const json::JsonValue &params) {
@@ -1126,12 +1246,7 @@ void LspServer::handle_did_close(const json::JsonValue &params) {
     const auto id = parse_text_document_identifier(*td);
     store_.close(id.uri);
     analysis_.invalidate_all();
-
-    auto diag_params = json::JsonValue::make_object();
-    diag_params->set("uri", json::JsonValue::make_string(id.uri));
-    diag_params->set("diagnostics", json::JsonValue::make_array());
-    transport_.send_notification("textDocument/publishDiagnostics", std::move(diag_params));
-    publish_open_document_diagnostics();
+    send_diagnostic_refresh();
 }
 
 void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) {
@@ -1143,45 +1258,23 @@ void LspServer::handle_workspace_folders_changed(const json::JsonValue &params) 
     remove_workspace_folder_roots(workspace_roots_, event->get("removed"));
     append_workspace_folder_roots(workspace_roots_, event->get("added"));
     analysis_.set_workspace_roots(workspace_roots_);
-    publish_open_document_diagnostics();
+    send_diagnostic_refresh();
 }
 
 void LspServer::handle_watched_files_changed(const json::JsonValue &params) {
     (void)params;
     analysis_.invalidate_all();
-    publish_open_document_diagnostics();
+    send_diagnostic_refresh();
 }
 
 void LspServer::handle_exit() {
     shutdown_requested_ = true;
 }
 
-void LspServer::publish_diagnostics(const std::string &uri) {
-    const auto *snapshot = analysis_.snapshot_for_uri(uri);
-    const auto *document = store_.get(uri);
-    if (snapshot == nullptr || document == nullptr) {
-        return;
-    }
-
+void LspServer::send_diagnostic_refresh() {
+    trace("diagnostic/refresh");
     auto params = json::JsonValue::make_object();
-    params->set("uri", json::JsonValue::make_string(uri));
-    params->set("version", json::JsonValue::make_int(document->version));
-
-    auto diagnostics = json::JsonValue::make_array();
-    const auto lsp_diagnostics = snapshot->diagnostics_for_uri(uri);
-    for (const auto &diagnostic : lsp_diagnostics) {
-        diagnostics->push(serialize_diagnostic(diagnostic));
-    }
-    params->set("diagnostics", std::move(diagnostics));
-
-    trace("publishDiagnostics " + uri + " count=" + std::to_string(lsp_diagnostics.size()));
-    transport_.send_notification("textDocument/publishDiagnostics", std::move(params));
-}
-
-void LspServer::publish_open_document_diagnostics() {
-    for (const auto &uri : store_.all_uris()) {
-        publish_diagnostics(uri);
-    }
+    transport_.send_notification("$/diagnostic/refresh", std::move(params));
 }
 
 void LspServer::trace(std::string_view message) const {
@@ -1506,14 +1599,48 @@ void LspServer::handle_text_document_diagnostic(const JsonRpcRequest &req) {
     }
 
     const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto diagnostics =
+        snapshot != nullptr ? snapshot->diagnostics_for_uri(uri) : std::vector<LspDiagnostic>{};
+
+    const std::string result_id = compute_document_result_id(snapshot, uri);
+
+    // Check if client sent a previousResultId; if unchanged, we still send full for now
+    // (incremental updates can be added later)
+    if (req.params) {
+        if (const auto *prev_id = req.params->get("previousResultId"); prev_id != nullptr) {
+            if (auto prev = prev_id->as_string(); prev.has_value() && *prev == result_id) {
+                // Result unchanged - send empty items with same resultId
+                JsonRpcResponse resp;
+                resp.id = req.id;
+                resp.result = serialize_full_diagnostic_report({}, result_id);
+                transport_.send_response(resp);
+                return;
+            }
+        }
+    }
+
     JsonRpcResponse resp;
     resp.id = req.id;
-    resp.result = serialize_full_diagnostic_report(
-        snapshot != nullptr ? snapshot->diagnostics_for_uri(uri) : std::vector<LspDiagnostic>{});
+    resp.result = serialize_full_diagnostic_report(diagnostics, result_id);
     transport_.send_response(resp);
 }
 
 void LspServer::handle_workspace_diagnostic(const JsonRpcRequest &req) {
+    // Build map of previous result IDs if provided
+    std::unordered_map<std::string, std::string> previous_ids;
+    if (req.params) {
+        if (const auto *prev_ids = req.params->get("previousResultIds");
+            prev_ids != nullptr && prev_ids->is_object()) {
+            for (const auto &[key, value] : prev_ids->object_fields) {
+                if (value != nullptr) {
+                    if (auto s = value->as_string(); s.has_value()) {
+                        previous_ids[key] = *s;
+                    }
+                }
+            }
+        }
+    }
+
     auto result = json::JsonValue::make_object();
     auto items = json::JsonValue::make_array();
     std::unordered_set<std::string> emitted;
@@ -1530,8 +1657,18 @@ void LspServer::handle_workspace_diagnostic(const JsonRpcRequest &req) {
             const auto *document = store_.get(source.uri);
             const std::optional<int> version =
                 document != nullptr ? std::optional<int>(document->version) : std::nullopt;
+
+            const auto diagnostics = snapshot->diagnostics_for_uri(source.uri);
+            const std::string result_id = compute_document_result_id(snapshot, source.uri);
+
+            // If previous result ID matches, skip this document (no changes)
+            auto it = previous_ids.find(source.uri);
+            if (it != previous_ids.end() && it->second == result_id) {
+                continue;
+            }
+
             items->push(serialize_workspace_diagnostic_item(
-                source.uri, version, snapshot->diagnostics_for_uri(source.uri)));
+                source.uri, version, diagnostics, result_id));
         }
     }
 
@@ -1701,6 +1838,288 @@ void LspServer::handle_signature_help(const JsonRpcRequest &req) {
     JsonRpcResponse resp;
     resp.id = req.id;
     resp.result = serialize_signature_help(help);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_document_formatting(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    formatter::FormatOptions options;
+    // Read options from params if provided
+    if (const auto *options_val = req.params->get("options"); options_val != nullptr) {
+        if (const auto *tab_size = options_val->get("tabSize"); tab_size != nullptr) {
+            if (auto size = tab_size->as_int(); size.has_value() && *size > 0) {
+                options.indent_width = static_cast<int>(*size);
+            }
+        }
+        if (const auto *insert_spaces = options_val->get("insertSpaces");
+            insert_spaces != nullptr) {
+            if (auto spaces = insert_spaces->as_bool(); spaces.has_value()) {
+                options.use_tabs = !*spaces;
+            }
+        }
+    }
+
+    auto result = formatter::format_source(document->text, options);
+    if (!result.success || result.formatted == document->text) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    // Compute full document range
+    const auto &text = document->text;
+    std::size_t line_count = 0;
+    for (char c : text) {
+        if (c == '\n') {
+            ++line_count;
+        }
+    }
+
+    // Find last line length
+    std::size_t last_line_length = 0;
+    auto last_newline = text.rfind('\n');
+    if (last_newline != std::string::npos) {
+        last_line_length = text.size() - last_newline - 1;
+    } else {
+        last_line_length = text.size();
+    }
+
+    TextEdit edit;
+    edit.range.start = Position{0, 0};
+    edit.range.end = Position{static_cast<uint32_t>(line_count),
+                              static_cast<uint32_t>(last_line_length)};
+    edit.new_text = result.formatted;
+
+    auto edits_array = json::JsonValue::make_array();
+    edits_array->push(serialize_text_edit(edit));
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(edits_array);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_semantic_tokens_full(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    const auto *source = snapshot != nullptr ? snapshot->source_for_uri(uri) : nullptr;
+    if (snapshot == nullptr || source == nullptr || source->source == nullptr) {
+        send_null(transport_, req.id);
+        return;
+    }
+
+    auto tokens = compute_semantic_tokens(source->source->content, analysis_);
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = serialize_semantic_tokens(tokens);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_code_action(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *range_val = req.params->get("range");
+    if (range_val == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+    auto range = parse_range(*range_val);
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::vector<LspDiagnostic> diagnostics;
+    const auto *snapshot = analysis_.snapshot_for_uri(uri);
+    if (snapshot != nullptr) {
+        diagnostics = snapshot->diagnostics_for_uri(uri);
+    }
+
+    auto actions = compute_code_actions(document->text, range, diagnostics);
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &action : actions) {
+        result->push(serialize_code_action(action));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_folding_range(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    auto ranges = compute_folding_ranges(document->text);
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &r : ranges) {
+        result->push(serialize_folding_range(r));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_document_highlight(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    Position position;
+    if (!text_document_position(*req.params, uri, position)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    auto highlights = compute_document_highlights(document->text, position);
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &hl : highlights) {
+        result->push(serialize_document_highlight(hl));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_selection_range(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *positions_val = req.params->get("positions");
+    if (positions_val == nullptr || !positions_val->is_array()) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::vector<Position> positions;
+    for (const auto &pos_val : positions_val->array_items) {
+        if (pos_val == nullptr) {
+            continue;
+        }
+        positions.push_back(parse_position(*pos_val));
+    }
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    auto ranges = compute_selection_ranges(document->text, positions);
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &r : ranges) {
+        result->push(serialize_selection_range(r));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
+    transport_.send_response(resp);
+}
+
+void LspServer::handle_code_lens(const JsonRpcRequest &req) {
+    if (!req.params) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    std::string uri;
+    if (!text_document_id(*req.params, uri)) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    const auto *document = store_.get(uri);
+    if (document == nullptr) {
+        send_empty_array(transport_, req.id);
+        return;
+    }
+
+    auto lenses = compute_code_lens(document->text);
+
+    auto result = json::JsonValue::make_array();
+    for (const auto &lens : lenses) {
+        result->push(serialize_code_lens(lens));
+    }
+
+    JsonRpcResponse resp;
+    resp.id = req.id;
+    resp.result = std::move(result);
     transport_.send_response(resp);
 }
 

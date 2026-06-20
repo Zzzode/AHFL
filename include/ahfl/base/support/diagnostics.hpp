@@ -698,6 +698,90 @@ class DiagnosticBag {
     std::size_t warning_count_{0};
 };
 
+// ============================================================================
+// Diagnostic Report
+// ============================================================================
+
+/// A structured diagnostic report that wraps a collection of diagnostics
+/// with metadata for identification and categorization.
+///
+/// Use cases:
+/// - Pipeline stage diagnostic outputs with a stable result_id for correlation
+/// - Tooling / IDE integration where report identity matters
+/// - Serialized diagnostic bundles for caching or remote transport
+struct DiagnosticReport {
+    /// Unique identifier for this report.
+    /// Used to correlate diagnostic results across invocations or stages.
+    std::string result_id;
+
+    /// Report kind — e.g. "full", "incremental", "snapshot".
+    /// Lets consumers distinguish complete reports from partial updates.
+    std::string kind{"full"};
+
+    /// The diagnostic items contained in this report.
+    std::vector<Diagnostic> diagnostics;
+
+    // ---- Convenience accessors ----
+
+    [[nodiscard]] bool has_error() const noexcept {
+        for (const auto &d : diagnostics) {
+            if (d.severity == DiagnosticSeverity::Error) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] std::size_t error_count() const noexcept {
+        std::size_t count = 0;
+        for (const auto &d : diagnostics) {
+            if (d.severity == DiagnosticSeverity::Error) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] std::size_t warning_count() const noexcept {
+        std::size_t count = 0;
+        for (const auto &d : diagnostics) {
+            if (d.severity == DiagnosticSeverity::Warning) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    [[nodiscard]] std::size_t note_count() const noexcept {
+        std::size_t count = 0;
+        for (const auto &d : diagnostics) {
+            if (d.severity == DiagnosticSeverity::Note) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+    /// Build a DiagnosticReport from a DiagnosticBag, copying all entries.
+    [[nodiscard]] static DiagnosticReport from_bag(const DiagnosticBag &bag,
+                                                   std::string result_id = {},
+                                                   std::string kind = "full") {
+        DiagnosticReport report;
+        report.result_id = std::move(result_id);
+        report.kind = std::move(kind);
+        report.diagnostics = bag.entries();
+        return report;
+    }
+
+    /// Append another report's diagnostics into this one.
+    /// Does not change result_id or kind of the receiving report.
+    void append(const DiagnosticReport &other) {
+        diagnostics.insert(diagnostics.end(),
+                           other.diagnostics.begin(),
+                           other.diagnostics.end());
+    }
+};
+
 // Implementation of DiagnosticBuilder::emit()
 inline void DiagnosticBuilder::emit() && {
     bag_->add_diagnostic(Diagnostic{

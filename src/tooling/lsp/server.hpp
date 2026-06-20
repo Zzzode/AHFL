@@ -48,6 +48,13 @@ class LspServer {
     void handle_document_symbol(const JsonRpcRequest &req);
     void handle_workspace_symbol(const JsonRpcRequest &req);
     void handle_signature_help(const JsonRpcRequest &req);
+    void handle_document_formatting(const JsonRpcRequest &req);
+    void handle_semantic_tokens_full(const JsonRpcRequest &req);
+    void handle_code_action(const JsonRpcRequest &req);
+    void handle_folding_range(const JsonRpcRequest &req);
+    void handle_document_highlight(const JsonRpcRequest &req);
+    void handle_selection_range(const JsonRpcRequest &req);
+    void handle_code_lens(const JsonRpcRequest &req);
 
     void handle_initialized();
     void handle_did_open(const json::JsonValue &params);
@@ -58,8 +65,7 @@ class LspServer {
     void handle_exit();
 
     // Analysis
-    void publish_diagnostics(const std::string &uri);
-    void publish_open_document_diagnostics();
+    void send_diagnostic_refresh();
     void trace(std::string_view message) const;
 };
 
