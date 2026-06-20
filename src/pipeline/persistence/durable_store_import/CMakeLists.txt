@@ -58,7 +58,10 @@ ahfl_apply_project_warnings(ahfl_pipeline_durable_store_import_providers)
 add_library(ahfl_pipeline_durable_store_import_artifacts STATIC
     ${AHFL_DURABLE_STORE_IMPORT_ARTIFACT_SOURCES}
 )
-target_link_libraries(ahfl_pipeline_durable_store_import_artifacts PUBLIC ahfl_pipeline_durable_store_import_core)
+target_link_libraries(ahfl_pipeline_durable_store_import_artifacts
+    PUBLIC
+        ahfl_pipeline_durable_store_import_providers
+)
 target_include_directories(ahfl_pipeline_durable_store_import_artifacts PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_pipeline_durable_store_import_artifacts)
 
