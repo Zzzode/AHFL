@@ -1,5 +1,6 @@
 #include "ahfl/compiler/semantics/type_resolver.hpp"
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/compiler/semantics/type_context.hpp"
 
 #include <utility>
@@ -19,38 +20,37 @@ TypeResolver::TypeResolver(const ResolveResult &resolve_result,
       resolve_alias_body_(std::move(resolve_alias_body)) {}
 
 TypePtr TypeResolver::resolve_type(const ast::TypeSyntax &type) {
-    switch (type.kind) {
-    case ast::TypeSyntaxKind::Unit:
-        return types_.make(TypeKind::Unit);
-    case ast::TypeSyntaxKind::Bool:
-        return types_.make(TypeKind::Bool);
-    case ast::TypeSyntaxKind::Int:
-        return types_.make(TypeKind::Int);
-    case ast::TypeSyntaxKind::Float:
-        return types_.make(TypeKind::Float);
-    case ast::TypeSyntaxKind::String:
-        return types_.string();
-    case ast::TypeSyntaxKind::BoundedString:
-        return types_.bounded_string(type.string_bounds->first, type.string_bounds->second);
-    case ast::TypeSyntaxKind::UUID:
-        return types_.make(TypeKind::UUID);
-    case ast::TypeSyntaxKind::Timestamp:
-        return types_.make(TypeKind::Timestamp);
-    case ast::TypeSyntaxKind::Duration:
-        return types_.make(TypeKind::Duration);
-    case ast::TypeSyntaxKind::Decimal:
-        return types_.decimal(*type.decimal_scale);
-    case ast::TypeSyntaxKind::Named:
-        return resolve_named_type(*type.name);
-    case ast::TypeSyntaxKind::Optional:
-        return types_.optional(resolve_type(*type.first));
-    case ast::TypeSyntaxKind::List:
-        return types_.list(resolve_type(*type.first));
-    case ast::TypeSyntaxKind::Set:
-        return types_.set(resolve_type(*type.first));
-    case ast::TypeSyntaxKind::Map:
-        return types_.map(resolve_type(*type.first), resolve_type(*type.second));
-    }
+    return std::visit(Overloaded{
+        [&](const ast::UnitType &) { return types_.make(TypeKind::Unit); },
+        [&](const ast::BoolType &) { return types_.make(TypeKind::Bool); },
+        [&](const ast::IntType &) { return types_.make(TypeKind::Int); },
+        [&](const ast::FloatType &) { return types_.make(TypeKind::Float); },
+        [&](const ast::StringType &) { return types_.string(); },
+        [&](const ast::BoundedStringType &t) {
+            return types_.bounded_string(
+                static_cast<std::int64_t>(t.min_length),
+                static_cast<std::int64_t>(t.max_length));
+        },
+        [&](const ast::UuidType &) { return types_.make(TypeKind::UUID); },
+        [&](const ast::TimestampType &) { return types_.make(TypeKind::Timestamp); },
+        [&](const ast::DurationType &) { return types_.make(TypeKind::Duration); },
+        [&](const ast::DecimalType &t) {
+            return types_.decimal(static_cast<std::int64_t>(t.scale));
+        },
+        [&](const ast::NamedType &t) { return resolve_named_type(*t.name); },
+        [&](const ast::OptionalType &t) {
+            return types_.optional(resolve_type(*t.inner));
+        },
+        [&](const ast::ListType &t) {
+            return types_.list(resolve_type(*t.element));
+        },
+        [&](const ast::SetType &t) {
+            return types_.set(resolve_type(*t.element));
+        },
+        [&](const ast::MapType &t) {
+            return types_.map(resolve_type(*t.key_type), resolve_type(*t.value_type));
+        },
+    }, type.node);
 
     return make_error_type();
 }

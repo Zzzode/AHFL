@@ -7,10 +7,19 @@
 
 #include <algorithm>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace ahfl {
 namespace {
+
+template <typename... Ts>
+struct overloaded : Ts... {
+    using Ts::operator()...;
+};
+
+template <typename... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
 
 [[nodiscard]] std::string_view local_nominal_name(std::string_view canonical_name) noexcept {
     const auto pos = canonical_name.rfind("::");
@@ -90,21 +99,34 @@ ExpressionValue ExpressionValueFactory::error_typed_effect(ExprEffect effect) co
 }
 
 std::optional<Place> place_of_expression(const ast::ExprSyntax &expr) {
-    if (expr.kind == ast::ExprSyntaxKind::Group && expr.first) {
-        return place_of_expression(*expr.first);
-    }
-    if (expr.kind == ast::ExprSyntaxKind::MemberAccess && expr.first) {
-        auto place = place_of_expression(*expr.first);
-        if (!place.has_value()) {
+    return std::visit(overloaded{
+        [&](const ast::GroupExpr &e) -> std::optional<Place> {
+            if (!e.inner) {
+                return std::nullopt;
+            }
+            return place_of_expression(*e.inner);
+        },
+        [&](const ast::MemberAccessExpr &e) -> std::optional<Place> {
+            if (!e.base) {
+                return std::nullopt;
+            }
+            auto place = place_of_expression(*e.base);
+            if (!place.has_value()) {
+                return std::nullopt;
+            }
+            place->members.push_back(e.member);
+            return place;
+        },
+        [&](const ast::PathExpr &e) -> std::optional<Place> {
+            if (!e.path) {
+                return std::nullopt;
+            }
+            return Place{.root = e.path->root_name, .members = e.path->members};
+        },
+        [](const auto &) -> std::optional<Place> {
             return std::nullopt;
-        }
-        place->members.push_back(expr.name);
-        return place;
-    }
-    if (expr.kind == ast::ExprSyntaxKind::Path && expr.path) {
-        return Place{.root = expr.path->root_name, .members = expr.path->members};
-    }
-    return std::nullopt;
+        },
+    }, expr.node);
 }
 
 AssignTargetRootKind classify_expression_path_root(const ast::PathSyntax &path,

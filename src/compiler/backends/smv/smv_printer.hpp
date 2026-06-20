@@ -18,7 +18,7 @@
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/ir.hpp"
 #include "ahfl/compiler/ir/program_view.hpp"
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 #include "base/support/string_utils.hpp"
 #include "compiler/backends/smv/smv_helpers.hpp"
 #include "compiler/backends/smv/smv_naming.hpp"
