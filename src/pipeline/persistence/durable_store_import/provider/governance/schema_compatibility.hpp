@@ -15,38 +15,38 @@ inline constexpr std::string_view kProviderSchemaCompatibilityReportFormatVersio
 
 // Schema Compatibility Status
 enum class SchemaCompatibilityStatus {
-    Compatible,   // 版本完全匹配 golden schema
-    Incompatible, // 版本不兼容，需要修复
-    Unknown,      // 无法确定兼容性（缺少 golden reference）
+    Compatible,   // Version exactly matches the golden schema
+    Incompatible, // Version is incompatible and needs a fix
+    Unknown,      // Compatibility cannot be determined (missing golden reference)
 };
 
-// 单个 artifact 的版本检查结果
+// Version check result for a single artifact
 struct ArtifactVersionCheck {
-    std::string artifact_type;                          // artifact 类型标识
-    std::string artifact_identity;                      // artifact 实例标识
-    std::string format_version;                         // 实际 format_version
-    SchemaCompatibilityStatus status;                   // 兼容性状态
-    std::optional<std::string> expected_format_version; // 期望的 golden format_version
-    std::optional<std::string> incompatibility_reason;  // 不兼容原因说明
+    std::string artifact_type;                          // artifact type identifier
+    std::string artifact_identity;                      // artifact instance identifier
+    std::string format_version;                         // actual format_version
+    SchemaCompatibilityStatus status;                   // compatibility status
+    std::optional<std::string> expected_format_version; // expected golden format_version
+    std::optional<std::string> incompatibility_reason;  // incompatibility reason description
 };
 
-// Source Chain 检查结果
+// Source chain check result
 struct SourceChainCheck {
-    std::string source_artifact_type;                  // 源 artifact 类型
-    std::string source_artifact_identity;              // 源 artifact 实例标识
-    std::string source_format_version;                 // 源实际 format_version
-    std::string expected_source_format_version;        // 期望的源 format_version
-    bool is_compatible;                                // source chain 是否兼容
-    std::optional<std::string> incompatibility_reason; // 不兼容原因
+    std::string source_artifact_type;                  // source artifact type
+    std::string source_artifact_identity;              // source artifact instance identifier
+    std::string source_format_version;                 // actual source format_version
+    std::string expected_source_format_version;        // expected source format_version
+    bool is_compatible;                                // whether the source chain is compatible
+    std::optional<std::string> incompatibility_reason; // incompatibility reason
 };
 
 // Reference Version Check（compatibility ref, registry ref, readiness ref, audit ref）
 struct ReferenceVersionCheck {
-    std::string reference_type;     // 引用类型（compatibility/registry/readiness/audit）
-    std::string reference_identity; // 引用标识
-    std::string referenced_format_version; // 被引用 artifact 的 format_version
-    std::string expected_format_version;   // 期望的 format_version
-    bool is_compatible;                    // 引用版本是否兼容
+    std::string reference_type;     // reference type (compatibility/registry/readiness/audit)
+    std::string reference_identity; // reference identifier
+    std::string referenced_format_version; // format_version of the referenced artifact
+    std::string expected_format_version;   // expected format_version
+    bool is_compatible;                    // whether the reference version is compatible
     std::optional<std::string> incompatibility_reason;
 };
 
@@ -57,18 +57,18 @@ struct ProviderSchemaCompatibilityReport {
     std::string session_id;
     std::optional<std::string> run_id;
 
-    // 版本检查结果
+    // Version check results
     std::vector<ArtifactVersionCheck> version_checks;
     std::vector<SourceChainCheck> source_chain_checks;
     std::vector<ReferenceVersionCheck> reference_checks;
 
-    // 汇总统计
+    // Summary statistics
     int compatible_count{0};
     int incompatible_count{0};
     int unknown_count{0};
     std::string compatibility_summary;
 
-    // Schema drift 标识
+    // Schema drift flag
     bool has_schema_drift{false};
     std::optional<std::string> drift_details;
 };
@@ -89,8 +89,8 @@ struct ProviderSchemaCompatibilityReportResult {
     }
 };
 
-// 构建函数 - 从现有 artifact 构建 schema compatibility report
-// 检查所有 provider production artifact 的 format_version 和 source chain
+// Build function - build a schema compatibility report from existing artifacts
+// Checks the format_version and source chain of all provider production artifacts
 [[nodiscard]] ProviderSchemaCompatibilityReportResult build_provider_schema_compatibility_report(
     const std::vector<ArtifactVersionCheck> &version_checks,
     const std::vector<SourceChainCheck> &source_chain_checks,
@@ -99,7 +99,7 @@ struct ProviderSchemaCompatibilityReportResult {
     const std::string &session_id,
     const std::optional<std::string> &run_id = std::nullopt);
 
-// 验证函数
+// Validation function
 [[nodiscard]] ProviderSchemaCompatibilityReportValidationResult
 validate_provider_schema_compatibility_report(const ProviderSchemaCompatibilityReport &report);
 

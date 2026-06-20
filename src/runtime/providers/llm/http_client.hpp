@@ -18,7 +18,7 @@ struct HttpAuthConfig {
     bool mtls_verify_tls{true};
 };
 
-// HTTP 响应
+// HTTP response
 struct HttpResponse {
     int status_code = 0;
     std::string body;

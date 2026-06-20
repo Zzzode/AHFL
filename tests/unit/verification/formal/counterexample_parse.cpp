@@ -223,15 +223,15 @@ void test_explain_basic() {
 
     // First step should mention initial state
     if (!explanation.steps.empty()) {
-        check(explanation.steps[0].find("初始状态") != std::string::npos, "explain.step0_initial");
+        check(explanation.steps[0].find("initial state") != std::string::npos, "explain.step0_initial");
     }
     // Second step should mention the change from 0 to 1
     if (explanation.steps.size() >= 2) {
-        check(explanation.steps[1].find("变为") != std::string::npos, "explain.step1_change");
+        check(explanation.steps[1].find("changed") != std::string::npos, "explain.step1_change");
     }
     // Third step: no change
     if (explanation.steps.size() >= 3) {
-        check(explanation.steps[2].find("无变化") != std::string::npos, "explain.step2_no_change");
+        check(explanation.steps[2].find("no change") != std::string::npos, "explain.step2_no_change");
     }
 }
 
@@ -257,7 +257,7 @@ void test_explain_with_loop() {
     check(explanation.steps.size() >= 3, "explain_loop.has_loop_note");
     if (!explanation.steps.empty()) {
         auto &last = explanation.steps.back();
-        check(last.find("无限循环") != std::string::npos, "explain_loop.mentions_loop");
+        check(last.find("infinite loop") != std::string::npos, "explain_loop.mentions_loop");
     }
 }
 
@@ -331,7 +331,7 @@ Trace Type: Counterexample
     check(!explanation.steps.empty(), "integration.has_steps");
     // Should mention the loop
     if (!explanation.steps.empty()) {
-        check(explanation.steps.back().find("无限循环") != std::string::npos,
+        check(explanation.steps.back().find("infinite loop") != std::string::npos,
               "integration.loop_note");
     }
 

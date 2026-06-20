@@ -96,10 +96,10 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
         return make_error("unresolved path: " + path.root_name);
     }
 
-    // 优先检查 local scope 中是否存在此 root（如 let result = ...）
+    // Prefer checking the local scope first for this root (e.g. let result = ...)
     auto local_val = ctx.get_local(path.root_name);
     if (local_val.has_value()) {
-        // 从 local 变量中逐级访问成员
+        // Walk member access level by level from the local variable
         std::optional<Value> val = std::move(local_val);
         for (const auto &member : path.members) {
             auto *sv = std::get_if<StructValue>(&val->node);
@@ -152,7 +152,7 @@ EvalResult eval_path_expr(const ir::PathExpr &expr, const EvalContext &ctx) {
 EvalResult eval_qualified_value_expr(const ir::QualifiedValueExpr &expr,
                                      const EvalContext & /*ctx*/) {
     // Format: "EnumName::Variant" or "module::path::EnumName::Variant"
-    // 使用 rfind 找到最后一个 :: 分隔符
+    // Use rfind to locate the last :: separator
     auto pos = expr.value.rfind("::");
     if (pos == std::string::npos) {
         return EvalResult{make_enum("", expr.value), {}};

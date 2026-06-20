@@ -1,4 +1,4 @@
-// llm_provider_config.cpp - 配置加载与环境变量展开
+// llm_provider_config.cpp - configuration loading and environment variable expansion
 
 #include "runtime/providers/llm/llm_provider_config.hpp"
 
@@ -15,24 +15,24 @@
 
 namespace ahfl::llm_provider {
 
-// 展开 ${ENV_VAR} 环境变量引用
+// Expand ${ENV_VAR} environment variable references
 std::string expand_env_vars(const std::string &input) {
     std::string result;
     result.reserve(input.size());
 
     for (std::size_t i = 0; i < input.size(); ++i) {
-        // 检测 ${ 开头
+        // Detect the ${ prefix
         if (input[i] == '$' && i + 1 < input.size() && input[i + 1] == '{') {
             auto end = input.find('}', i + 2);
             if (end != std::string::npos) {
-                // 提取变量名
+                // Extract the variable name
                 std::string var_name = input.substr(i + 2, end - i - 2);
-                // 读取环境变量
+                // Read the environment variable
                 const char *env_val = std::getenv(var_name.c_str());
                 if (env_val != nullptr) {
                     result += env_val;
                 }
-                i = end; // 跳过 }
+                i = end; // Skip the closing }
                 continue;
             }
         }
@@ -328,7 +328,7 @@ struct MtlsValidationInput {
 LLMProviderConfig load_config(const std::string &json_content) {
     LLMProviderConfig config;
 
-    // 先展开环境变量
+    // Expand environment variables first
     std::string expanded = expand_env_vars(json_content);
     auto parsed = ahfl::json::parse_json(expanded);
     if (!parsed.has_value() || !*parsed || !(*parsed)->is_object()) {

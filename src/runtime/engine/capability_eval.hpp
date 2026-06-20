@@ -7,7 +7,7 @@
 
 namespace ahfl::runtime {
 
-// 带 Capability 支持的表达式求值
+// Expression evaluation with capability support
 [[nodiscard]] evaluator::EvalResult eval_expr_with_capabilities(
     const ir::Expr &expr, const evaluator::EvalContext &eval_ctx, CapabilityRegistry *registry);
 

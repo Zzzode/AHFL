@@ -12,61 +12,64 @@
 namespace ahfl::ir {
 
 // ============================================================================
-// AHFL 中间表示 (IR) 定义
+// AHFL Intermediate Representation (IR) definitions
 // ============================================================================
 //
-// 本文件定义了 AHFL 编译器的中间表示。IR 由 Resolver → TypeChecker → IR Lowering
-// 流水线产出，是后续 Emitter (SMV/Native/其他后端) 的输入。
+// This file defines the intermediate representation of the AHFL compiler. The IR
+// is produced by the Resolver -> TypeChecker -> IR Lowering pipeline and serves
+// as the input to subsequent Emitters (SMV/Native/other backends).
 //
-// IR 与 AST 的关键区别：
-//   1. 使用 std::variant 实现 tagged-union（而非 AST 的 tagged-struct）
-//   2. 类型/跨声明符号以 TypeRef/SymbolRef 作为唯一结构化事实源
-//   3. 声明和主要可执行节点携带结构化 source range（来源追踪）
-//   4. 推导出的分析信息集中保存在 Program::analyses
+// Key differences between IR and AST:
+//   1. Uses std::variant to implement a tagged union (unlike the AST's tagged struct)
+//   2. Types and cross-declaration symbols use TypeRef/SymbolRef as the sole
+//      structured source of truth
+//   3. Declarations and major executable nodes carry a structured source range
+//      (origin tracking)
+//   4. Inferred analysis information is centralized in Program::analyses
 //
-// IR 节点层次：
+// IR node hierarchy:
 //   Program
 //   ├── declarations: vector<Decl>
-//   │   ├── ModuleDecl      — 模块声明
-//   │   ├── ImportDecl      — 导入声明
-//   │   ├── ConstDecl       — 常量声明
-//   │   ├── TypeAliasDecl   — 类型别名
-//   │   ├── StructDecl      — 结构体定义
-//   │   ├── EnumDecl        — 枚举定义
-//   │   ├── CapabilityDecl  — 能力声明
-//   │   ├── PredicateDecl   — 谓词声明
-//   │   ├── AgentDecl       — Agent 定义
-//   │   ├── ContractDecl    — 契约声明
-//   │   ├── FlowDecl        — 流程定义
-//   │   └── WorkflowDecl    — 工作流定义
+//   │   ├── ModuleDecl      — module declaration
+//   │   ├── ImportDecl      — import declaration
+//   │   ├── ConstDecl       — constant declaration
+//   │   ├── TypeAliasDecl   — type alias
+//   │   ├── StructDecl      — struct definition
+//   │   ├── EnumDecl        — enum definition
+//   │   ├── CapabilityDecl  — capability declaration
+//   │   ├── PredicateDecl   — predicate declaration
+//   │   ├── AgentDecl       — agent definition
+//   │   ├── ContractDecl    — contract declaration
+//   │   ├── FlowDecl        — flow definition
+//   │   └── WorkflowDecl    — workflow definition
 //   └── analyses: AnalysisBundle
 
 inline constexpr std::string_view kFormatVersion = "ahfl.ir.v1";
 
 // ----------------------------------------------------------------------------
-// 枚举类型定义
+// Enum type definitions
 // ----------------------------------------------------------------------------
 
-/// 路径表达式的根节点类型
+/// Root node kind of a path expression
 enum class PathRootKind {
-    Identifier, // 普通标识符（变量名、node 输出引用等）
-    Input,      // 关键字 `input`
-    Context,    // 关键字/约定根 `ctx`
-    Output,     // 关键字 `output`
-    State,      // 约定根 `state`
+    Identifier, // Plain identifier (variable name, node output reference, etc.)
+    Input,      // Keyword `input`
+    Context,    // Keyword/convention root `ctx`
+    Output,     // Keyword `output`
+    State,      // Convention root `state`
     Local,      // Flow-local let binding
 };
 
-/// 表达式一元运算符
+/// Expression unary operators
 enum class ExprUnaryOp {
-    Not,      // 逻辑非 !
-    Negate,   // 取负 -
-    Positive, // 取正 +
+    Not,      // Logical NOT !
+    Negate,   // Negation -
+    Positive, // Unary plus +
 };
 
-/// 表达式二元运算符
+/// Expression binary operators
 enum class ExprBinaryOp {
-    Implies,      // => 蕴含
+    Implies,      // => implies
     Or,           // ||
     And,          // &&
     Equal,        // ==
@@ -82,7 +85,7 @@ enum class ExprBinaryOp {
     Modulo,       // %
 };
 
-/// 时序逻辑一元运算符
+/// Temporal logic unary operators
 enum class TemporalUnaryOp {
     Always,     // □ (always)
     Eventually, // ◇ (eventually)
@@ -90,7 +93,7 @@ enum class TemporalUnaryOp {
     Not,        // ¬ (not)
 };
 
-/// 时序逻辑二元运算符
+/// Temporal logic binary operators
 enum class TemporalBinaryOp {
     Implies, // =>
     Or,      // ||
@@ -98,21 +101,21 @@ enum class TemporalBinaryOp {
     Until,   // U (until)
 };
 
-/// 契约子句类型
+/// Contract clause kinds
 enum class ContractClauseKind {
-    Requires,  // 前置条件
-    Ensures,   // 后置条件
-    Invariant, // 不变量
-    Forbid,    // 禁止条件
+    Requires,  // Precondition
+    Ensures,   // Postcondition
+    Invariant, // Invariant
+    Forbid,    // Forbidden condition
 };
 
-/// Workflow 中值引用的来源类型
+/// Source kinds of value references inside a workflow
 enum class WorkflowValueSourceKind {
-    WorkflowInput,      // 引用 workflow 的 input
-    WorkflowNodeOutput, // 引用某个 node 的输出
+    WorkflowInput,      // Reference to the workflow's input
+    WorkflowNodeOutput, // Reference to a node's output
 };
 
-/// 符号引用种类
+/// Symbol reference kinds
 enum class SymbolRefKind {
     Unknown,
     Type,
@@ -123,7 +126,7 @@ enum class SymbolRefKind {
     Workflow,
 };
 
-/// 类型引用种类
+/// Type reference kinds
 enum class TypeRefKind {
     Unresolved,
     Any,
@@ -146,7 +149,8 @@ enum class TypeRefKind {
     Map,
 };
 
-/// 已解析符号引用。canonical_name 是后端稳定身份，local/module 用于诊断和展示。
+/// Resolved symbol reference. canonical_name is the stable backend identity;
+/// local/module are used for diagnostics and display.
 struct SymbolRef {
     SymbolRefKind kind{SymbolRefKind::Unknown};
     std::string canonical_name;
@@ -155,7 +159,7 @@ struct SymbolRef {
     std::optional<std::size_t> id; // Numeric symbol ID for O(1) cross-declaration lookup
 };
 
-/// 已解析或结构化的类型引用。
+/// Resolved or structured type reference.
 struct TypeRef;
 using TypeRefPtr = Owned<TypeRef>;
 

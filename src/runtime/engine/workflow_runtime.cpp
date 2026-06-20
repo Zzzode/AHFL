@@ -43,11 +43,11 @@ const ir::FlowDecl *WorkflowRuntime::find_flow(const std::string &agent_name) co
 
 // ============================================================================
 // DAG Topological Sort
-// 与 dry_run/runner.cpp 相同的策略：
-//   - 统计每个 node 的剩余依赖数
-//   - 先入队无依赖节点
-//   - 每次处理一个节点后，减少依赖该节点的所有后继节点的计数
-//   - 计数归零即可入队
+// Same strategy as dry_run/runner.cpp:
+//   - Count the remaining dependencies of each node
+//   - Enqueue dependency-free nodes first
+//   - After processing each node, decrement the dependency count of all successors that depend on it
+//   - Once a count reaches zero, the node can be enqueued
 // ============================================================================
 
 std::vector<const ir::WorkflowNode *>
@@ -57,10 +57,10 @@ WorkflowRuntime::topological_sort(const ir::WorkflowDecl &workflow) const {
 
 // ============================================================================
 // eval_workflow_expression
-// 构建 EvalContext：
-//   - workflow input（StructValue）的各字段注入 input scope
-//   - 已完成 node 的输出（StructValue）的各字段注入 node_output scope
-// 然后通过统一 runtime seam 求值；配置了 capability invoker 时支持 CallExpr
+// Build EvalContext:
+//   - Inject each field of the workflow input (StructValue) into the input scope
+//   - Inject each field of the completed node output (StructValue) into the node_output scope
+// Then evaluate through the unified runtime seam; CallExpr is supported when a capability invoker is configured
 // ============================================================================
 
 evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
@@ -70,10 +70,10 @@ evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
     const CapabilityInvocationContext &context) const {
     evaluator::EvalContext ctx;
 
-    // 将整体 workflow input 绑定为 local "input"，支持 `input` 作为简单路径解析
+    // Bind the whole workflow input as local "input" so `input` resolves as a simple path
     ctx.bind_local("input", evaluator::clone_value(workflow_input));
 
-    // 注入 workflow input：假设为 StructValue，将字段加入 input scope
+    // Inject the workflow input: assume a StructValue and add its fields to the input scope
     if (const auto *sv = std::get_if<evaluator::StructValue>(&workflow_input.node)) {
         for (const auto &[field_name, field_val] : sv->fields) {
             if (field_val) {
@@ -82,9 +82,9 @@ evaluator::EvalResult WorkflowRuntime::eval_workflow_expression(
         }
     }
 
-    // 注入各 node 的输出：
-    // 1. 将字段加入 node_output scope（支持 node_name.field 路径）
-    // 2. 将整体输出绑定为 local（支持 node_name 作为简单路径，如 return: summary）
+    // Inject each node's output:
+    // 1. Add fields to the node_output scope (supports node_name.field paths)
+    // 2. Bind the whole output as local (supports node_name as a simple path, e.g. return: summary)
     for (const auto &[node_name, node_val] : node_outputs) {
         ctx.bind_local(node_name, evaluator::clone_value(node_val));
         if (const auto *sv = std::get_if<evaluator::StructValue>(&node_val.node)) {
@@ -114,7 +114,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
     WorkflowResult result;
     result.status = WorkflowStatus::Completed;
 
-    // 步骤 1：查找 WorkflowDecl
+    // Step 1: Look up the WorkflowDecl
     const ir::WorkflowDecl *workflow = find_workflow(workflow_name);
     if (workflow == nullptr) {
         result.status = WorkflowStatus::NodeFailed;
@@ -124,7 +124,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         return result;
     }
 
-    // 步骤 2：空 workflow 直接求值 return_value（如果有）
+    // Step 2: For an empty workflow, evaluate return_value directly (if any)
     if (workflow->nodes.empty()) {
         if (workflow->return_value) {
             std::unordered_map<std::string, Value> empty_outputs;
@@ -142,10 +142,10 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         return result;
     }
 
-    // 步骤 3：拓扑排序
+    // Step 3: Topological sort
     auto sorted_nodes = topological_sort(*workflow);
 
-    // 拓扑排序不完整 -> 存在环
+    // Incomplete topological sort -> a cycle exists
     if (sorted_nodes.size() != workflow->nodes.size()) {
         result.status = WorkflowStatus::DependencyFailed;
         result.diagnostics.error()
@@ -154,7 +154,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         return result;
     }
 
-    // 步骤 4：按序执行每个 node
+    // Step 4: Execute each node in order
     std::unordered_map<std::string, Value> node_outputs;
     std::unordered_set<std::string> failed_nodes;
 
@@ -162,7 +162,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         const ir::WorkflowNode *node = sorted_nodes[idx];
         const auto target = std::string(ir::symbol_canonical_name(node->target_ref));
 
-        // 检查依赖是否有失败
+        // Check whether any dependency failed
         bool dep_failed = false;
         for (const auto &dep_name : node->after) {
             if (failed_nodes.contains(dep_name)) {
@@ -172,7 +172,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
 
         if (dep_failed) {
-            // 依赖失败，跳过该 node
+            // Dependency failed, skip this node
             failed_nodes.insert(node->name);
             result.node_results.push_back(NodeExecutionResult{
                 .node_name = node->name,
@@ -188,7 +188,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             continue;
         }
 
-        // 步骤 4a：求值 node 的 input 表达式
+        // Step 4a: Evaluate the node's input expression
         evaluator::Value node_input = evaluator::make_none();
         CapabilityInvocationContext node_context{
             .workflow_name = workflow_name,
@@ -218,7 +218,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             node_input = std::move(eval_result.value);
         }
 
-        // 步骤 4b：查找 AgentDecl 与 FlowDecl
+        // Step 4b: Look up the AgentDecl and FlowDecl
         const ir::AgentDecl *agent_decl = find_agent(target);
         const ir::FlowDecl *flow_decl = find_flow(target);
 
@@ -239,7 +239,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
             continue;
         }
 
-        // 步骤 4c：构建并运行 AgentRuntime
+        // Step 4c: Build and run the AgentRuntime
         AgentRuntime agent_rt(*agent_decl, *flow_decl, config_.default_agent_quota);
         agent_rt.set_invocation_context(node_context);
         if (config_.contextual_capability_invoker.has_value()) {
@@ -253,7 +253,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         result.diagnostics.append(agent_result.diagnostics);
 
         if (agent_result.status == AgentStatus::Completed) {
-            // 成功：保存输出
+            // Success: save the output
             if (agent_result.output.has_value()) {
                 node_outputs[node->name] = evaluator::clone_value(*agent_result.output);
             }
@@ -265,7 +265,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
                 .execution_index = idx,
             });
         } else {
-            // 失败：标记 workflow 状态
+            // Failure: mark the workflow status
             if (result.status == WorkflowStatus::Completed) {
                 result.status = WorkflowStatus::NodeFailed;
             }
@@ -280,7 +280,7 @@ WorkflowResult WorkflowRuntime::run(const std::string &workflow_name, Value inpu
         }
     }
 
-    // 步骤 5：求值 workflow 返回值（仅在无错误时）
+    // Step 5: Evaluate the workflow return value (only when there are no errors)
     if (result.status == WorkflowStatus::Completed && workflow->return_value) {
         CapabilityInvocationContext context;
         context.workflow_name = workflow_name;
