@@ -2204,6 +2204,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
     case ast::StatementSyntaxKind::If: {
         auto condition_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
+            .flow_facts = {},
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };
@@ -2314,6 +2315,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
     case ast::StatementSyntaxKind::Assert: {
         auto condition_context = ValueContext{
             .bindings = clone_bindings(context.bindings),
+            .flow_facts = {},
             .call_context = CallContext::PureOnly,
             .current_agent = context.current_agent,
         };
