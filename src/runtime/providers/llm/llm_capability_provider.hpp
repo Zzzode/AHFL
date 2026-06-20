@@ -163,7 +163,7 @@ struct LLMTokenBudgetEvent {
     bool secret_free{true};
 };
 
-// LLM Capability Provider: 将 AHFL capability 调用路由到 LLM API
+// LLM Capability Provider: routes AHFL capability calls to the LLM API
 class LLMCapabilityProvider {
   public:
     /// A tool executor that can run tools and return results.
@@ -174,7 +174,7 @@ class LLMCapabilityProvider {
                           LLMProviderConfig config,
                           HttpClient::ChatCompletionsTransport transport);
 
-    // 调用 capability，通过 LLM 获取结果
+    // Invoke a capability, obtaining results via the LLM
     [[nodiscard]] runtime::CapabilityCallResult invoke(const std::string &capability_name,
                                                        const std::vector<evaluator::Value> &args);
     [[nodiscard]] runtime::CapabilityCallResult
@@ -183,7 +183,7 @@ class LLMCapabilityProvider {
                         const std::vector<evaluator::Value> &args);
     [[nodiscard]] runtime::ContextualCapabilityInvoker as_contextual_invoker();
 
-    // 注册所有 capability 到 registry
+    // Register all capabilities with the registry
     void register_all(runtime::CapabilityRegistry &registry);
 
     /// Set available tools and their executor for function calling.
@@ -225,12 +225,12 @@ class LLMCapabilityProvider {
     std::vector<ToolDefinition> tools_;
     ToolExecutor tool_executor_;
 
-    // 构建发送给 LLM 的请求 JSON (simple two-message format)
+    // Build the request JSON sent to the LLM (simple two-message format)
     [[nodiscard]] std::string build_request_json(const LLMProviderConfig &config,
                                                  const std::string &system_prompt,
                                                  const std::string &user_prompt) const;
 
-    // 从 LLM 响应体中提取 content 文本 (backward compat wrapper)
+    // Extract content text from the LLM response body (backward compat wrapper)
     [[nodiscard]] std::string extract_content_from_response(const std::string &response_body) const;
 
     // Extract structured response including tool_calls from LLM response body

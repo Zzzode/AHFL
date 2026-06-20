@@ -180,7 +180,7 @@ namespace ahfl::durable_store_import_artifacts_detail::
     durable_store_import_provider_conformance_report {
 namespace {
 
-// 辅助函数：输出检查结果
+// Helper function: print the check result
 void print_result(durable_store_import::ConformanceCheckResult result, std::ostream &out) {
     AHFL_ARTIFACT_PRINT_ENUM(
         result,

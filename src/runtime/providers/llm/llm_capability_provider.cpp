@@ -1,4 +1,4 @@
-// llm_capability_provider.cpp - LLM Capability Provider 组合模块
+// llm_capability_provider.cpp - LLM Capability Provider composition module
 
 #include "runtime/providers/llm/llm_capability_provider.hpp"
 
@@ -1053,7 +1053,7 @@ runtime::CapabilityCallResult
 LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationContext &context,
                                            const std::string &capability_name,
                                            const std::vector<evaluator::Value> &args) {
-    // 查找 capability 的返回类型
+    // Look up the capability's return type
     std::string return_type;
     if (const auto *capability = index_.find_capability(capability_name); capability != nullptr) {
         return_type = std::string(ir::type_canonical_name(capability->return_type_ref, "Any"));
@@ -1068,7 +1068,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
         };
     }
 
-    // 构建 prompt
+    // Build the prompt
     std::string system_prompt = prompt_builder_.build_system_prompt(capability_name);
     std::string user_prompt = prompt_builder_.build_user_prompt(capability_name, args);
     const auto budget_config = effective_budget_config(config_, capability_name);
@@ -1341,7 +1341,7 @@ LLMCapabilityProvider::invoke_with_context(const runtime::CapabilityInvocationCo
 }
 
 void LLMCapabilityProvider::register_all(runtime::CapabilityRegistry &registry) {
-    // 遍历所有 CapabilityDecl，注册到 registry
+    // Iterate over all CapabilityDecls and register them into the registry
     for (const auto *capability : index_.capabilities()) {
         std::string cap_name = capability->name;
         runtime::CapabilityBinding binding;

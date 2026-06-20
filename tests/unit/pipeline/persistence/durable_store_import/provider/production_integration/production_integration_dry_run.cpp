@@ -8,7 +8,7 @@ namespace {
 
 using namespace ahfl::durable_store_import;
 
-// 辅助函数：创建通过的 ConformanceReport
+// Helper: build a passing ConformanceReport
 [[nodiscard]] ProviderConformanceReport make_passing_conformance() {
     ProviderConformanceReport report;
     report.format_version = std::string(kProviderConformanceReportFormatVersion);
@@ -24,7 +24,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建通过的 SchemaCompatibilityReport
+// Helper: build a passing SchemaCompatibilityReport
 [[nodiscard]] ProviderSchemaCompatibilityReport make_compatible_schema() {
     ProviderSchemaCompatibilityReport report;
     report.format_version = std::string(kProviderSchemaCompatibilityReportFormatVersion);
@@ -38,7 +38,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建通过的 ConfigBundleValidationReport
+// Helper: build a passing ConfigBundleValidationReport
 [[nodiscard]] ProviderConfigBundleValidationReport make_valid_config() {
     ProviderConfigBundleValidationReport report;
     report.format_version = std::string(kProviderConfigBundleValidationReportFormatVersion);
@@ -54,7 +54,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建通过的 ReleaseEvidenceArchiveManifest
+// Helper: build a passing ReleaseEvidenceArchiveManifest
 [[nodiscard]] ReleaseEvidenceArchiveManifest make_release_ready_archive() {
     ReleaseEvidenceArchiveManifest manifest;
     manifest.format_version = std::string(kProviderReleaseEvidenceArchiveManifestFormatVersion);
@@ -72,7 +72,7 @@ using namespace ahfl::durable_store_import;
     return manifest;
 }
 
-// 辅助函数：创建通过的 ApprovalReceipt
+// Helper: build a passing ApprovalReceipt
 [[nodiscard]] ApprovalReceipt make_approved_receipt() {
     ApprovalReceipt receipt;
     receipt.format_version = std::string(kProviderApprovalReceiptFormatVersion);
@@ -87,7 +87,7 @@ using namespace ahfl::durable_store_import;
     return receipt;
 }
 
-// 辅助函数：创建允许的 OptInDecisionReport
+// Helper: build an allow OptInDecisionReport
 [[nodiscard]] ProviderOptInDecisionReport make_allow_opt_in() {
     ProviderOptInDecisionReport report;
     report.format_version = std::string(kProviderOptInDecisionReportFormatVersion);
@@ -101,7 +101,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建允许执行的 RuntimePolicyReport
+// Helper: build a permitted RuntimePolicyReport
 [[nodiscard]] ProviderRuntimePolicyReport make_permitted_policy() {
     ProviderRuntimePolicyReport report;
     report.format_version = std::string(kProviderRuntimePolicyReportFormatVersion);
@@ -115,7 +115,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 测试：所有 evidence 通过时，ReadyForControlledRollout
+// Test: all evidence passes yields ReadyForControlledRollout
 int test_build_all_evidence_pass() {
     const auto result =
         build_provider_production_integration_dry_run_report(make_passing_conformance(),
@@ -145,7 +145,7 @@ int test_build_all_evidence_pass() {
     return 0;
 }
 
-// 测试：conformance 失败时 Blocked
+// Test: conformance failure yields Blocked
 int test_build_blocked_conformance_fails() {
     auto conformance = make_passing_conformance();
     conformance.fail_count = 2;
@@ -171,7 +171,7 @@ int test_build_blocked_conformance_fails() {
     return 0;
 }
 
-// 测试：schema 不兼容时 Blocked
+// Test: schema incompatible yields Blocked
 int test_build_blocked_schema_incompatible() {
     auto schema = make_compatible_schema();
     schema.incompatible_count = 1;
@@ -195,7 +195,7 @@ int test_build_blocked_schema_incompatible() {
     return 0;
 }
 
-// 测试：approval 被拒绝时 Blocked
+// Test: approval rejected yields Blocked
 int test_build_blocked_approval_rejected() {
     auto receipt = make_approved_receipt();
     receipt.is_approved = false;
@@ -220,7 +220,7 @@ int test_build_blocked_approval_rejected() {
     return 0;
 }
 
-// 测试：runtime policy deny 时 Blocked
+// Test: runtime policy deny yields Blocked
 int test_build_blocked_runtime_policy_deny() {
     auto policy = make_permitted_policy();
     policy.decision = PolicyDecision::Deny;
@@ -245,7 +245,7 @@ int test_build_blocked_runtime_policy_deny() {
     return 0;
 }
 
-// 测试：验证 format_version 校验
+// Test: validate format_version checks
 int test_validate_format_version() {
     ProviderProductionIntegrationDryRunReport report;
     report.format_version = "invalid-version";
@@ -263,14 +263,14 @@ int test_validate_format_version() {
     return 0;
 }
 
-// 测试：验证 readiness/is_ready 一致性
+// Test: validate readiness/is_ready consistency
 int test_validate_readiness_consistency() {
     ProviderProductionIntegrationDryRunReport report;
     report.format_version = std::string(kProviderProductionIntegrationDryRunReportFormatVersion);
     report.workflow_canonical_name = "test";
     report.session_id = "session-001";
     report.readiness_state = ProductionReadinessState::Blocked;
-    report.is_ready_for_controlled_rollout = true; // 不一致
+    report.is_ready_for_controlled_rollout = true; // inconsistent
 
     const auto result = validate_provider_production_integration_dry_run_report(report);
 
@@ -283,7 +283,7 @@ int test_validate_readiness_consistency() {
     return 0;
 }
 
-// 测试：默认值确保安全（is_ready=false, is_non_mutating=true, state=Blocked）
+// Test: default values are safe (is_ready=false, is_non_mutating=true, state=Blocked)
 int test_default_safe_values() {
     ProviderProductionIntegrationDryRunReport report;
 
@@ -295,13 +295,13 @@ int test_default_safe_values() {
     return 0;
 }
 
-// 测试：is_non_mutating_mode 校验
+// Test: validate is_non_mutating_mode
 int test_validate_non_mutating_mode() {
     ProviderProductionIntegrationDryRunReport report;
     report.format_version = std::string(kProviderProductionIntegrationDryRunReportFormatVersion);
     report.workflow_canonical_name = "test";
     report.session_id = "session-001";
-    report.is_non_mutating_mode = false; // 当前版本不允许
+    report.is_non_mutating_mode = false; // not allowed in current version
 
     const auto result = validate_provider_production_integration_dry_run_report(report);
 

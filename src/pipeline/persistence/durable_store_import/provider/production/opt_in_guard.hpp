@@ -12,28 +12,28 @@
 
 namespace ahfl::durable_store_import {
 
-// Opt-In Decision Report 格式版本常量
+// Opt-In Decision Report format version constant
 inline constexpr std::string_view kProviderOptInDecisionReportFormatVersion =
     "ahfl.durable-store-import-provider-opt-in-decision-report.v1";
 
-// Opt-In 决定枚举
+// Opt-In decision enum
 enum class OptInDecision {
-    Allow,           // 允许真实 provider traffic
-    Deny,            // 拒绝（默认）
-    DenyWithOverride // 拒绝但有 scoped override
+    Allow,           // Allow real provider traffic
+    Deny,            // Deny (default)
+    DenyWithOverride // Deny with a scoped override
 };
 
-// 拒绝原因枚举
+// Denial reason enum
 enum class OptInDenialReason {
-    NoApproval,       // 缺少有效的审批
-    ConfigInvalid,    // 配置校验失败
-    RegistryMismatch, // Provider 注册信息不匹配
-    ReadinessNotMet,  // 就绪检查未通过
-    ExplicitDeny,     // 显式拒绝
-    ScopeExceeded,    // 范围超限
+    NoApproval,       // Missing a valid approval
+    ConfigInvalid,    // Configuration validation failed
+    RegistryMismatch, // Provider registration info does not match
+    ReadinessNotMet,  // Readiness check not satisfied
+    ExplicitDeny,     // Explicit denial
+    ScopeExceeded,    // Scope exceeded
 };
 
-// Gate 检查项
+// Gate check item
 struct OptInGateCheck {
     std::string gate_name;
     bool passed{false};
@@ -41,7 +41,7 @@ struct OptInGateCheck {
     std::string evidence_reference;
 };
 
-// Scoped Override 结构
+// Scoped Override structure
 struct ScopedOverride {
     std::string override_scope;
     std::string override_justification;
@@ -50,37 +50,37 @@ struct ScopedOverride {
 };
 
 // Opt-In Decision Report - v0.48
-// 输出给 operator-facing 的 opt-in 决定报告
+// Operator-facing opt-in decision report
 struct ProviderOptInDecisionReport {
     std::string format_version{std::string(kProviderOptInDecisionReportFormatVersion)};
     std::string workflow_canonical_name;
     std::string session_id;
     std::optional<std::string> run_id;
 
-    // 上游 artifact 引用
+    // Upstream artifact references
     std::string approval_receipt_identity;
     std::string config_validation_report_identity;
     std::string registry_selection_plan_identity;
 
-    // Gate 检查结果
+    // Gate check results
     std::vector<OptInGateCheck> gate_checks;
     std::optional<ScopedOverride> scoped_override;
 
-    // 最终决定
+    // Final decision
     OptInDecision decision{OptInDecision::Deny};
     std::vector<OptInDenialReason> denial_reasons;
 
-    // 汇总
+    // Summary
     int gates_passed{0};
     int gates_failed{0};
     std::string decision_summary;
     std::string denial_reason_summary;
 
-    // 安全默认：false
+    // Safe default: false
     bool is_real_provider_traffic_allowed{false};
 };
 
-// 验证结果
+// Validation result
 struct ProviderOptInDecisionReportValidationResult {
     DiagnosticBag diagnostics;
     [[nodiscard]] bool has_errors() const noexcept {
@@ -88,7 +88,7 @@ struct ProviderOptInDecisionReportValidationResult {
     }
 };
 
-// 构建结果
+// Build result
 struct ProviderOptInDecisionReportResult {
     std::optional<ProviderOptInDecisionReport> report;
     DiagnosticBag diagnostics;
@@ -97,21 +97,21 @@ struct ProviderOptInDecisionReportResult {
     }
 };
 
-// 验证函数
+// Validation function
 [[nodiscard]] ProviderOptInDecisionReportValidationResult
 validate_provider_opt_in_decision_report(const ProviderOptInDecisionReport &report);
 
-// 构建函数
-// 从 ApprovalReceipt、ProviderConfigBundleValidationReport 和 ProviderSelectionPlan 构建 OptInDecisionReport
+// Build function
+// Build an OptInDecisionReport from ApprovalReceipt, ProviderConfigBundleValidationReport, and ProviderSelectionPlan
 [[nodiscard]] ProviderOptInDecisionReportResult
 build_provider_opt_in_decision_report(const ApprovalReceipt &approval_receipt,
                                       const ProviderConfigBundleValidationReport &config_report,
                                       const ProviderSelectionPlan &selection_plan);
 
-// 辅助函数：将 OptInDecision 转换为字符串
+// Helper function: convert OptInDecision to a string
 [[nodiscard]] std::string_view to_string_view(OptInDecision decision);
 
-// 辅助函数：将 OptInDenialReason 转换为字符串
+// Helper function: convert OptInDenialReason to a string
 [[nodiscard]] std::string_view to_string_view(OptInDenialReason reason);
 
 } // namespace ahfl::durable_store_import

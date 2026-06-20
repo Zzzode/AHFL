@@ -73,7 +73,7 @@ void test_let_statement_binds_variable() {
     auto result = exec_statement(stmt, ctx);
     check(!result.has_errors(), "let.no_error");
     check(std::holds_alternative<ExecContinue>(result.outcome), "let.continues");
-    // 验证 local scope 中有 x = 42
+    // Verify the local scope contains x = 42
     auto val = ctx.eval_ctx.get_local("x");
     check(val.has_value(), "let.x_bound");
     auto *iv = std::get_if<IntValue>(&val->node);
@@ -297,7 +297,7 @@ void test_nested_if_with_goto() {
     Block then_block;
     then_block.statements.push_back(make_stmt_ptr(GotoStatement{"Target"}));
 
-    // 构造路径表达式 "flag"
+    // Build the path expression "flag"
     PathExpr path_expr;
     path_expr.path.root_kind = PathRootKind::Local;
     path_expr.path.root_name = "flag";

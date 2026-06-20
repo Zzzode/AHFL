@@ -47,7 +47,7 @@ ExecResult make_exec_error(std::string message) {
 } // anonymous namespace
 
 // ============================================================================
-// exec_statement - 访问 StatementNode variant 并分发执行
+// exec_statement - visit the StatementNode variant and dispatch execution
 // ============================================================================
 
 ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
@@ -56,7 +56,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
             using T = std::decay_t<decltype(node)>;
 
             if constexpr (std::is_same_v<T, ir::LetStatement>) {
-                // 求值 initializer 并绑定到 local scope
+                // Evaluate the initializer and bind it to local scope
                 if (!node.initializer) {
                     return make_exec_error("LetStatement has null initializer");
                 }
@@ -71,7 +71,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 return make_continue();
 
             } else if constexpr (std::is_same_v<T, ir::AssignStatement>) {
-                // 仅允许赋值到 ctx.field 路径
+                // Only allow assignment to ctx.field paths
                 const auto &path = node.target;
                 if (path.root_kind != ir::PathRootKind::Context) {
                     return make_exec_error(
@@ -95,7 +95,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 return make_continue();
 
             } else if constexpr (std::is_same_v<T, ir::IfStatement>) {
-                // 求值条件表达式
+                // Evaluate the condition expression
                 if (!node.condition) {
                     return make_exec_error("IfStatement has null condition");
                 }
@@ -111,13 +111,13 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                     return make_exec_error("if condition must evaluate to Bool");
                 }
                 if (bv->value) {
-                    // then 分支
+                    // then branch
                     if (node.then_block) {
                         return exec_block(*node.then_block, ctx);
                     }
                     return make_continue();
                 }
-                // else 分支
+                // else branch
                 if (node.else_block) {
                     return exec_block(*node.else_block, ctx);
                 }
@@ -160,7 +160,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
                 return make_continue();
 
             } else if constexpr (std::is_same_v<T, ir::ExprStatement>) {
-                // 求值表达式并丢弃结果
+                // Evaluate the expression and discard the result
                 if (!node.expr) {
                     return make_exec_error("ExprStatement has null expression");
                 }
@@ -178,7 +178,7 @@ ExecResult exec_statement(const ir::Statement &stmt, ExecContext &ctx) {
 }
 
 // ============================================================================
-// exec_block - 顺序执行 Block 中的语句，遇到非 Continue 结果时停止
+// exec_block - execute statements in the Block sequentially, stopping on any non-Continue result
 // ============================================================================
 
 ExecResult exec_block(const ir::Block &block, ExecContext &ctx) {
@@ -186,7 +186,7 @@ ExecResult exec_block(const ir::Block &block, ExecContext &ctx) {
         if (!stmt_ptr)
             continue;
         auto result = exec_statement(*stmt_ptr, ctx);
-        // 如果有错误或控制流非 Continue，立即返回
+        // If there are errors or control flow is non-Continue, return immediately
         if (result.has_errors() || !std::holds_alternative<ExecContinue>(result.outcome)) {
             return result;
         }

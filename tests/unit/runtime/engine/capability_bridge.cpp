@@ -260,7 +260,7 @@ void test_as_invoker_preserves_structured_result() {
     auto *sv = result.value.has_value() ? std::get_if<StringValue>(&result.value->node) : nullptr;
     check(sv != nullptr && sv->value == "hello", "invoker.value_hello");
 
-    // 未注册的 capability 保留结构化失败，而不是被压成 NoneValue。
+    // Unregistered capabilities preserve structured failure rather than being collapsed into NoneValue.
     auto missing = invoker("unknown", {});
     check(missing.status == CapabilityCallStatus::Error, "invoker.missing_status_error");
     check(!missing.value.has_value(), "invoker.missing_no_value");
@@ -975,16 +975,16 @@ void test_multiple_capabilities() {
 // ============================================================================
 
 void test_eval_with_capability_call() {
-    // 构造 IR CallExpr
+    // Build an IR CallExpr
     Expr expr;
     CallExpr call;
     call.callee = "my_capability";
 
-    // 添加一个字符串参数
+    // Append a string argument
     call.arguments.push_back(make_expr_ptr(StringLiteralExpr{"hello"}));
     expr.node = std::move(call);
 
-    // 设置 registry
+    // Configure the registry
     CapabilityRegistry registry;
     registry.register_function("my_capability", [](const std::vector<Value> &args) -> Value {
         if (!args.empty()) {
@@ -1093,11 +1093,11 @@ void test_eval_with_capability_call() {
     }
     check(field_string != nullptr && field_string->value == "inner", "eval_cap.struct_call_value");
 
-    // 测试 null registry 报错
+    // Test that a null registry reports an error
     auto null_result = eval_expr_with_capabilities(expr, eval_ctx, nullptr);
     check(null_result.has_errors(), "eval_cap.null_registry_error");
 
-    // 测试未注册的 capability 报错
+    // Test that an unregistered capability reports an error
     Expr expr2;
     CallExpr call2;
     call2.callee = "unknown_cap";

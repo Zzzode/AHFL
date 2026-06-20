@@ -40,7 +40,7 @@ using namespace ahfl::durable_store_import;
     return snapshot;
 }
 
-// 测试：构建校验报告成功且安全约束满足
+// Test: building the validation report succeeds and safety constraints are satisfied
 int test_build_validation_report() {
     const auto plan = make_selection_plan();
     const auto snapshot = make_config_snapshot();
@@ -54,14 +54,14 @@ int test_build_validation_report() {
 
     const auto &report = *result.report;
 
-    // 验证身份字段
+    // Verify identity fields
     assert(report.workflow_canonical_name == "app::main::ValueFlowWorkflow");
     assert(report.session_id == "session-001");
 
-    // 验证 provider references
+    // Verify provider references
     assert(report.provider_references.size() == 2);
 
-    // 验证安全约束
+    // Verify safety constraints
     assert(!report.reads_secret_value);
     assert(!report.opens_network_connection);
     assert(!report.generates_production_config);
@@ -70,7 +70,7 @@ int test_build_validation_report() {
     return 0;
 }
 
-// 测试：无效 format_version 应被检测
+// Test: invalid format_version should be detected
 int test_validate_report_format_version() {
     ProviderConfigBundleValidationReport report;
     report.format_version = "invalid-version";
@@ -94,7 +94,7 @@ int test_validate_report_format_version() {
     return 0;
 }
 
-// 测试：reads_secret_value=true 应违反安全约束
+// Test: reads_secret_value=true should violate safety constraints
 int test_validate_report_security_constraints() {
     ProviderConfigBundleValidationReport report;
     report.format_version = std::string(kProviderConfigBundleValidationReportFormatVersion);
@@ -110,7 +110,7 @@ int test_validate_report_security_constraints() {
     report.durable_store_import_provider_config_snapshot_identity = "config-snapshot-001";
     report.validation_summary = "summary";
     report.blocking_summary = "blocking";
-    report.reads_secret_value = true;  // 违反安全约束
+    report.reads_secret_value = true;  // Violates safety constraints
 
     const auto result = validate_provider_config_bundle_validation_report(report);
 
@@ -123,7 +123,7 @@ int test_validate_report_security_constraints() {
     return 0;
 }
 
-// 测试：构建报告后汇总计数合理
+// Test: summary counts are reasonable after building the report
 int test_summary_counts() {
     const auto plan = make_selection_plan();
     const auto snapshot = make_config_snapshot();
@@ -137,11 +137,11 @@ int test_summary_counts() {
 
     const auto &report = *result.report;
 
-    // 检查汇总字段不为空
+    // Verify summary fields are non-empty
     assert(!report.validation_summary.empty());
     assert(!report.blocking_summary.empty());
 
-    // 检查计数一致性
+    // Verify count consistency
     const int total = report.valid_count + report.invalid_count + report.missing_count;
     assert(total > 0);
 
@@ -152,7 +152,7 @@ int test_summary_counts() {
 } // namespace
 
 int main(int argc, char *argv[]) {
-    // 支持通过命令行参数选择单个测试用例（CTest 集成）
+    // Allow selecting a single test case via a command-line argument (CTest integration)
     if (argc == 2) {
         std::string cmd = argv[1];
         if (cmd == "test-build-validation-report") return test_build_validation_report();
@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // 无参数时运行全部测试
+    // Run all tests when no argument is provided
     int failures = 0;
     failures += test_build_validation_report();
     failures += test_validate_report_format_version();

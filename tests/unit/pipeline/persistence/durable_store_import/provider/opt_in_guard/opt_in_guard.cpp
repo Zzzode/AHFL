@@ -8,7 +8,7 @@ namespace {
 
 using namespace ahfl::durable_store_import;
 
-// 辅助函数：创建通过审批的 ApprovalReceipt
+// Helper: create an approved ApprovalReceipt
 [[nodiscard]] ApprovalReceipt make_approved_receipt() {
     ApprovalReceipt receipt;
     receipt.format_version = std::string(kProviderApprovalReceiptFormatVersion);
@@ -24,7 +24,7 @@ using namespace ahfl::durable_store_import;
     return receipt;
 }
 
-// 辅助函数：创建拒绝审批的 ApprovalReceipt
+// Helper: create a rejected ApprovalReceipt
 [[nodiscard]] ApprovalReceipt make_rejected_receipt() {
     ApprovalReceipt receipt;
     receipt.format_version = std::string(kProviderApprovalReceiptFormatVersion);
@@ -40,7 +40,7 @@ using namespace ahfl::durable_store_import;
     return receipt;
 }
 
-// 辅助函数：创建有效的 ProviderConfigBundleValidationReport
+// Helper: create a valid ProviderConfigBundleValidationReport
 [[nodiscard]] ProviderConfigBundleValidationReport make_valid_config_report() {
     ProviderConfigBundleValidationReport report;
     report.format_version =
@@ -57,7 +57,7 @@ using namespace ahfl::durable_store_import;
     return report;
 }
 
-// 辅助函数：创建有效选中的 ProviderSelectionPlan
+// Helper: create a valid selected ProviderSelectionPlan
 [[nodiscard]] ProviderSelectionPlan make_selected_plan() {
     ProviderSelectionPlan plan;
     plan.format_version = std::string(kProviderSelectionPlanFormatVersion);
@@ -71,7 +71,7 @@ using namespace ahfl::durable_store_import;
     return plan;
 }
 
-// 测试：所有 gate 通过时允许 traffic
+// Test: allow traffic when all gates pass
 int test_build_all_gates_pass() {
     const auto receipt = make_approved_receipt();
     const auto config = make_valid_config_report();
@@ -97,7 +97,7 @@ int test_build_all_gates_pass() {
     return 0;
 }
 
-// 测试：未审批时默认拒绝 traffic
+// Test: deny traffic by default when not approved
 int test_build_deny_no_approval() {
     const auto receipt = make_rejected_receipt();
     const auto config = make_valid_config_report();
@@ -112,13 +112,13 @@ int test_build_deny_no_approval() {
 
     const auto &report = *result.report;
 
-    // 核心约束：默认拒绝
+    // Core constraint: deny by default
     assert(report.decision == OptInDecision::Deny);
     assert(report.is_real_provider_traffic_allowed == false);
     assert(report.gates_failed > 0);
     assert(!report.denial_reasons.empty());
 
-    // 检查包含 NoApproval 拒绝原因
+    // Check that NoApproval denial reason is present
     bool has_no_approval = false;
     for (const auto &reason : report.denial_reasons) {
         if (reason == OptInDenialReason::NoApproval) {
@@ -131,11 +131,11 @@ int test_build_deny_no_approval() {
     return 0;
 }
 
-// 测试：config 无效时拒绝
+// Test: deny when config is invalid
 int test_build_deny_config_invalid() {
     const auto receipt = make_approved_receipt();
     auto config = make_valid_config_report();
-    config.invalid_count = 2;  // 模拟配置无效
+    config.invalid_count = 2;  // simulate invalid config
     const auto plan = make_selected_plan();
 
     const auto result = build_provider_opt_in_decision_report(receipt, config, plan);
@@ -158,7 +158,7 @@ int test_build_deny_config_invalid() {
     return 0;
 }
 
-// 测试：registry 不匹配时拒绝
+// Test: deny on registry mismatch
 int test_build_deny_registry_mismatch() {
     const auto receipt = make_approved_receipt();
     const auto config = make_valid_config_report();
@@ -185,11 +185,11 @@ int test_build_deny_registry_mismatch() {
     return 0;
 }
 
-// 测试：安全约束（reads_secret_value）导致拒绝
+// Test: security constraint (reads_secret_value) causes denial
 int test_build_deny_security_constraints() {
     const auto receipt = make_approved_receipt();
     auto config = make_valid_config_report();
-    config.reads_secret_value = true;  // 违反安全约束
+    config.reads_secret_value = true;  // violates security constraint
     const auto plan = make_selected_plan();
 
     const auto result = build_provider_opt_in_decision_report(receipt, config, plan);
@@ -212,7 +212,7 @@ int test_build_deny_security_constraints() {
     return 0;
 }
 
-// 测试：验证 format_version 校验
+// Test: validate format_version checking
 int test_validate_format_version() {
     ProviderOptInDecisionReport report;
     report.format_version = "invalid-version";
@@ -233,14 +233,14 @@ int test_validate_format_version() {
     return 0;
 }
 
-// 测试：验证 decision/is_real_provider_traffic_allowed 一致性
+// Test: validate decision/is_real_provider_traffic_allowed conformance
 int test_validate_decision_consistency() {
     ProviderOptInDecisionReport report;
     report.format_version = std::string(kProviderOptInDecisionReportFormatVersion);
     report.workflow_canonical_name = "test";
     report.session_id = "session-001";
     report.decision = OptInDecision::Deny;
-    report.is_real_provider_traffic_allowed = true;  // 不一致
+    report.is_real_provider_traffic_allowed = true;  // inconsistent
     report.denial_reasons.push_back(OptInDenialReason::ExplicitDeny);
 
     const auto result = validate_provider_opt_in_decision_report(report);
@@ -254,11 +254,11 @@ int test_validate_decision_consistency() {
     return 0;
 }
 
-// 测试：默认值确保 is_real_provider_traffic_allowed 为 false
+// Test: default values ensure is_real_provider_traffic_allowed is false
 int test_default_deny() {
     ProviderOptInDecisionReport report;
 
-    // 核心安全约束：默认值必须为 false
+    // Core security constraint: default value must be false
     assert(report.is_real_provider_traffic_allowed == false);
     assert(report.decision == OptInDecision::Deny);
 

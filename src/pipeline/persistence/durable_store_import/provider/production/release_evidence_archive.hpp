@@ -12,20 +12,20 @@
 
 namespace ahfl::durable_store_import {
 
-// Release Evidence Archive Manifest 格式版本常量
+// Format version constant for the Release Evidence Archive Manifest
 inline constexpr std::string_view kProviderReleaseEvidenceArchiveManifestFormatVersion =
     "ahfl.durable-store-import-provider-release-evidence-archive-manifest.v1";
 
-// 单个 evidence item 的状态描述
+// Status description of a single evidence item
 struct EvidenceItem {
     std::string
         evidence_type; // "conformance", "schema_compatibility", "config_validation", "readiness"
-    std::string evidence_identity;    // 引用的 artifact identity
-    std::string format_version;       // 该 evidence 的 format_version
-    std::string digest;               // SHA-256 摘要或语义哈希
-    std::string generation_timestamp; // UTC ISO 8601 时间戳
-    bool is_present{false};           // evidence 是否存在
-    bool is_valid{false};             // evidence 是否通过校验
+    std::string evidence_identity;    // Referenced artifact identity
+    std::string format_version;       // format_version of this evidence
+    std::string digest;               // SHA-256 digest or semantic hash
+    std::string generation_timestamp; // UTC ISO 8601 timestamp
+    bool is_present{false};           // Whether the evidence is present
+    bool is_valid{false};             // Whether the evidence passed validation
 };
 
 // Release Evidence Archive Manifest - v0.46
@@ -35,33 +35,33 @@ struct ReleaseEvidenceArchiveManifest {
     std::string session_id;
     std::optional<std::string> run_id;
 
-    // 上游 evidence artifact 引用
+    // Upstream evidence artifact references
     std::string durable_store_import_provider_conformance_report_identity;
     std::string durable_store_import_provider_schema_compatibility_report_identity;
     std::string durable_store_import_provider_config_bundle_validation_report_identity;
     std::string durable_store_import_provider_production_readiness_evidence_identity;
 
-    // Evidence 条目列表
+    // Evidence item list
     std::vector<EvidenceItem> evidence_items;
 
-    // 统计计数
+    // Statistical counts
     int total_evidence_count{0};
     int present_evidence_count{0};
     int valid_evidence_count{0};
     int missing_evidence_count{0};
     int invalid_evidence_count{0};
 
-    // 汇总摘要
+    // Summary aggregation
     std::string archive_summary;
     std::string missing_evidence_summary;
     std::string stale_evidence_summary;
     std::string incompatible_evidence_summary;
 
-    // Release 就绪判定
+    // Release readiness verdict
     bool is_release_ready{false};
 };
 
-// 验证结果
+// Validation result
 struct ReleaseEvidenceArchiveManifestValidationResult {
     DiagnosticBag diagnostics;
     [[nodiscard]] bool has_errors() const noexcept {
@@ -69,7 +69,7 @@ struct ReleaseEvidenceArchiveManifestValidationResult {
     }
 };
 
-// 构建结果
+// Build result
 struct ReleaseEvidenceArchiveManifestResult {
     std::optional<ReleaseEvidenceArchiveManifest> manifest;
     DiagnosticBag diagnostics;
@@ -78,11 +78,11 @@ struct ReleaseEvidenceArchiveManifestResult {
     }
 };
 
-// 验证已构建的 manifest 结构是否合法
+// Validate that the built manifest structure is well-formed
 [[nodiscard]] ReleaseEvidenceArchiveManifestValidationResult
 validate_release_evidence_archive_manifest(const ReleaseEvidenceArchiveManifest &manifest);
 
-// 汇总所有上游 evidence 构建 release evidence archive manifest
+// Aggregate all upstream evidence to build the release evidence archive manifest
 [[nodiscard]] ReleaseEvidenceArchiveManifestResult build_release_evidence_archive_manifest(
     const ProviderConformanceReport &conformance_report,
     const ProviderSchemaCompatibilityReport &schema_report,
