@@ -3988,6 +3988,10 @@ add_test(NAME ahfl.support.version_all
     COMMAND $<TARGET_FILE:ahfl_version_tests>
 )
 
+add_test(NAME ahfl.support.diagnostic_serialization_all
+    COMMAND $<TARGET_FILE:ahfl_base_diagnostic_serialization_tests>
+)
+
 add_test(NAME ahfl.formal.bmc_all
     COMMAND $<TARGET_FILE:ahfl_bmc_tests>
 )

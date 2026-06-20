@@ -159,6 +159,21 @@ std::size_t count_substring(std::string_view text, std::string_view needle) {
     }
 }
 
+/// Extract the resultId string from a textDocument/diagnostic response body.
+std::string extract_result_id(const std::string &response_body) {
+    const auto key = std::string_view("\"resultId\":\"");
+    const auto pos = response_body.find(key);
+    if (pos == std::string::npos) {
+        return {};
+    }
+    const auto start = pos + key.size();
+    const auto end = response_body.find('"', start);
+    if (end == std::string::npos) {
+        return {};
+    }
+    return response_body.substr(start, end - start);
+}
+
 /// Helper: send initialize + didOpen + request, return response body
 std::string run_handler_request(const std::string &source_text,
                                 const std::string &method,
@@ -394,11 +409,13 @@ std::string initialize_workspace_folders_body(const std::vector<std::filesystem:
 }
 
 std::string diagnostics_output_for_source(const std::string &source) {
-    return run_lsp_messages({
+    const auto full_output = run_lsp_messages({
         R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
         did_open_body("file:///diag.ahfl", 1, source),
-        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":"file:///diag.ahfl"}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
+    return response_body_for_id(full_output, 2);
 }
 
 void test_document_symbol_lists_all() {
@@ -527,17 +544,36 @@ void test_analysis_snapshot_reuse_and_invalidation() {
     check(analysis.analysis_runs() == 2, "analysisSnapshot.rebuilds_after_change");
 }
 
-void test_diagnostics_publish_document_version() {
-    const std::string init_body = R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})";
-    const std::string did_open =
-        did_open_body("file:///diag.ahfl", 1, "struct Broken {\n    value: ;\n}\n");
-    const std::string did_change =
-        R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///diag.ahfl","version":2},"contentChanges":[{"text":"struct Fixed {\n    value: String;\n}\n"}]}})";
-    const std::string shutdown_body = R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})";
+void test_diagnostics_reflect_document_version() {
+    const std::string uri = "file:///diag-version.ahfl";
+    const std::string pull_request =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+        uri + R"("}}})";
 
-    const auto output = run_lsp_messages({init_body, did_open, did_change, shutdown_body});
-    check(output.find("\"version\":1") != std::string::npos, "diagnostics.version_1_published");
-    check(output.find("\"version\":2") != std::string::npos, "diagnostics.version_2_published");
+    const auto broken_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Broken {\n    value: ;\n}\n"),
+        pull_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto broken_response = response_body_for_id(broken_output, 2);
+    check(broken_response.find("\"kind\":\"full\"") != std::string::npos,
+          "diagnostics.version_1_full_report");
+    check(broken_response.find("parse.diagnostic") != std::string::npos,
+          "diagnostics.version_1_has_errors");
+
+    const auto fixed_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Broken {\n    value: ;\n}\n"),
+        did_change_body(uri, 2, "struct Fixed {\n    value: String;\n}\n"),
+        pull_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto fixed_response = response_body_for_id(fixed_output, 2);
+    check(fixed_response.find("\"kind\":\"full\"") != std::string::npos,
+          "diagnostics.version_2_full_report");
+    check(fixed_response.find("\"items\":[]") != std::string::npos,
+          "diagnostics.version_2_no_errors");
 }
 
 void test_text_document_diagnostic_pull_report() {
@@ -546,6 +582,9 @@ void test_text_document_diagnostic_pull_report() {
         R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
     });
     const auto init_response = response_body_for_id(init_output, 1);
+    // Pull-based diagnostic provider is advertised. Diagnostics are delivered
+    // via textDocument/diagnostic and workspace/diagnostic requests, and
+    // the server notifies the client of changes via $/diagnostic/refresh.
     check(init_response.find("\"diagnosticProvider\"") != std::string::npos,
           "textDocumentDiagnostic.capability_exists");
     check(init_response.find("\"interFileDependencies\":true") != std::string::npos,
@@ -587,6 +626,282 @@ void test_text_document_diagnostic_pull_report() {
           "textDocumentDiagnostic.recovery_full_report");
     check(fixed_response.find("\"items\":[]") != std::string::npos,
           "textDocumentDiagnostic.recovery_empty_items");
+}
+
+void test_diagnostic_refresh_notifications_on_document_changes() {
+    const std::string uri = "file:///refresh-count.ahfl";
+
+    // didOpen should trigger one $/diagnostic/refresh notification
+    const auto open_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Msg {\n    value: String;\n}\n"),
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    check(count_substring(open_output, "\"method\":\"$/diagnostic/refresh\"") == 1,
+          "diagnosticRefresh.one_after_did_open");
+
+    // didOpen + didChange should trigger two $/diagnostic/refresh notifications
+    const auto change_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Msg {\n    value: String;\n}\n"),
+        did_change_body(uri, 2, "struct Msg {\n    value: Int;\n}\n"),
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    check(count_substring(change_output, "\"method\":\"$/diagnostic/refresh\"") == 2,
+          "diagnosticRefresh.two_after_open_and_change");
+
+    // didOpen + didChange + didClose should trigger three $/diagnostic/refresh notifications
+    const auto close_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Msg {\n    value: String;\n}\n"),
+        did_change_body(uri, 2, "struct Msg {\n    value: Int;\n}\n"),
+        R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":")" + uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+    });
+    check(count_substring(close_output, "\"method\":\"$/diagnostic/refresh\"") == 3,
+          "diagnosticRefresh.three_after_open_change_and_close");
+}
+
+void test_text_document_diagnostic_includes_result_id() {
+    const std::string uri = "file:///result-id.ahfl";
+    const std::string pull_request =
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" +
+        uri + R"("}}})";
+
+    // Valid source
+    const auto valid_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Msg {\n    value: String;\n}\n"),
+        pull_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto valid_response = response_body_for_id(valid_output, 2);
+    const auto valid_result_id = extract_result_id(valid_response);
+    check(!valid_result_id.empty(), "textDocumentDiagnostic.result_id_exists");
+    check(valid_result_id.find(uri) != std::string::npos,
+          "textDocumentDiagnostic.result_id_contains_uri");
+    check(valid_result_id.find("#v1") != std::string::npos,
+          "textDocumentDiagnostic.result_id_contains_version");
+
+    // Broken source - resultId should be different
+    const auto broken_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, "struct Broken {\n    value: ;\n}\n"),
+        pull_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto broken_response = response_body_for_id(broken_output, 2);
+    const auto broken_result_id = extract_result_id(broken_response);
+    check(!broken_result_id.empty(), "textDocumentDiagnostic.broken_result_id_exists");
+    check(broken_result_id != valid_result_id,
+          "textDocumentDiagnostic.result_id_changes_with_content");
+}
+
+void test_text_document_diagnostic_previous_result_id_unchanged() {
+    const std::string uri = "file:///prev-result-id.ahfl";
+    const std::string source = "struct Msg {\n    value: String;\n}\n";
+
+    // First pass: get the resultId
+    const auto first_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri + R"("}}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto first_response = response_body_for_id(first_output, 2);
+    const auto result_id = extract_result_id(first_response);
+    check(!result_id.empty(), "textDocumentDiagnostic.prev_id_first_result_id_exists");
+
+    // Second pass: send the same resultId as previousResultId
+    // The server should return empty items (unchanged)
+    const auto second_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri + R"("},"previousResultId":")" + result_id + R"("}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto second_response = response_body_for_id(second_output, 2);
+    const auto second_result_id = extract_result_id(second_response);
+    check(second_result_id == result_id,
+          "textDocumentDiagnostic.prev_id_unchanged_same_result_id");
+    check(second_response.find("\"items\":[]") != std::string::npos,
+          "textDocumentDiagnostic.prev_id_unchanged_empty_items");
+    check(second_response.find("\"kind\":\"full\"") != std::string::npos,
+          "textDocumentDiagnostic.prev_id_unchanged_still_full_kind");
+
+    // Third pass: send a different previousResultId - should get full report
+    const auto third_output = run_lsp_messages({
+        R"({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})",
+        did_open_body(uri, 1, source),
+        R"({"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":")" + uri + R"("},"previousResultId":"fake-id-123"}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto third_response = response_body_for_id(third_output, 2);
+    const auto third_result_id = extract_result_id(third_response);
+    check(third_result_id == result_id,
+          "textDocumentDiagnostic.prev_id_mismatch_same_result_id");
+    // With a valid source and no errors, items may be empty or not - just check resultId matches
+}
+
+void test_workspace_diagnostic_includes_result_ids() {
+    const auto root = make_temp_project("workspace_diagnostic_result_ids");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-workspace-result-ids\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path,
+               "module lib::types;\n"
+               "\n"
+               "struct Msg {\n"
+               "    value: Missing;\n"
+               "}\n");
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const auto output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+
+    const auto response = response_body_for_id(output, 2);
+    // Each item in workspace diagnostic should have a resultId
+    check(response.find("\"resultId\":\"") != std::string::npos,
+          "workspaceDiagnostic.items_have_result_ids");
+    // There should be at least two resultIds (one per source)
+    check(count_substring(response, "\"resultId\":\"") >= 2,
+          "workspaceDiagnostic.multiple_result_ids");
+    // resultId for main should contain the main uri
+    check(response.find(main_uri + "#v") != std::string::npos,
+          "workspaceDiagnostic.main_result_id_contains_uri");
+}
+
+void test_workspace_diagnostic_previous_result_ids_filter() {
+    const auto root = make_temp_project("workspace_diagnostic_prev_ids");
+    const auto main_path = root / "app" / "main.ahfl";
+    const auto types_path = root / "lib" / "types.ahfl";
+    write_file(root / "ahfl.project.json",
+               "{\n"
+               "  \"format_version\": \"ahfl.project.v0.3\",\n"
+               "  \"name\": \"lsp-workspace-prev-ids\",\n"
+               "  \"search_roots\": [\".\"],\n"
+               "  \"entry_sources\": [\"app/main.ahfl\"]\n"
+               "}\n");
+
+    const std::string main_source = "module app::main;\n"
+                                    "import lib::types as types;\n"
+                                    "\n"
+                                    "struct Use {\n"
+                                    "    payload: types::Msg;\n"
+                                    "}\n";
+    const std::string types_source = "module lib::types;\n"
+                                     "\n"
+                                     "struct Msg {\n"
+                                     "    value: String;\n"
+                                     "}\n";
+    write_file(main_path, main_source);
+    write_file(types_path, types_source);
+
+    const auto main_uri = AnalysisService::uri_from_path(main_path);
+    const auto types_uri = AnalysisService::uri_from_path(types_path);
+
+    // First pass: get resultIds for both documents
+    const auto first_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto first_response = response_body_for_id(first_output, 2);
+
+    // Extract resultIds by finding them near each URI.
+    // In the serialized object, resultId comes before uri (kind, items, resultId, uri, version),
+    // so we search backwards from the uri position to find the preceding resultId.
+    auto find_result_id_for_uri = [](const std::string &response, const std::string &uri) {
+        const auto uri_pos = response.find("\"uri\":\"" + uri + "\"");
+        if (uri_pos == std::string::npos) {
+            return std::string{};
+        }
+        const auto key = std::string_view("\"resultId\":\"");
+        // Search backwards from uri_pos for the nearest preceding resultId
+        std::size_t search_from = uri_pos;
+        std::size_t id_pos = std::string::npos;
+        while (true) {
+            auto found = response.rfind(key, search_from);
+            if (found == std::string::npos) {
+                break;
+            }
+            // Make sure this is an actual match, not inside a string value
+            id_pos = found;
+            break;
+        }
+        if (id_pos == std::string::npos) {
+            return std::string{};
+        }
+        const auto start = id_pos + key.size();
+        const auto end = response.find('"', start);
+        if (end == std::string::npos) {
+            return std::string{};
+        }
+        return response.substr(start, end - start);
+    };
+
+    const auto main_result_id = find_result_id_for_uri(first_response, main_uri);
+    const auto types_result_id = find_result_id_for_uri(first_response, types_uri);
+    check(!main_result_id.empty(), "workspaceDiagnostic.prev.main_result_id_found");
+    check(!types_result_id.empty(), "workspaceDiagnostic.prev.types_result_id_found");
+
+    // Second pass: send both previousResultIds - both documents unchanged, so both should be skipped
+    const auto prev_ids_json =
+        "{\"" + main_uri + "\":\"" + main_result_id + "\",\"" + types_uri + "\":\"" +
+        types_result_id + "\"}";
+    const auto second_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, types_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" + prev_ids_json + R"(}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto second_response = response_body_for_id(second_output, 2);
+    // With all previousIds matching, items array should be empty
+    check(second_response.find("\"items\":[]") != std::string::npos,
+          "workspaceDiagnostic.prev.all_unchanged_empty_items");
+
+    // Third pass: change types source, send both previousResultIds
+    // Only types should appear in the response
+    const std::string changed_types_source = "module lib::types;\n"
+                                              "\n"
+                                              "struct Msg {\n"
+                                              "    value: Int;\n"
+                                              "}\n";
+    const auto third_output = run_lsp_messages({
+        initialize_body(root),
+        did_open_body(main_uri, 1, main_source),
+        did_open_body(types_uri, 1, changed_types_source),
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{"previousResultIds":)" + prev_ids_json + R"(}})",
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
+    });
+    const auto third_response = response_body_for_id(third_output, 2);
+    // types_uri should appear (changed), main_uri should not (unchanged)
+    check(third_response.find(types_uri) != std::string::npos,
+          "workspaceDiagnostic.prev.partial_includes_changed");
+    check(third_response.find(main_uri) == std::string::npos,
+          "workspaceDiagnostic.prev.partial_excludes_unchanged");
 }
 
 void test_workspace_diagnostic_reports_unopened_project_sources() {
@@ -1044,21 +1359,25 @@ void test_project_diagnostics_refresh_dependent_open_documents() {
 
     const auto main_uri = AnalysisService::uri_from_path(main_path);
     const auto types_uri = AnalysisService::uri_from_path(types_path);
+    const std::string workspace_diag_request =
+        R"({"jsonrpc":"2.0","id":2,"method":"workspace/diagnostic","params":{}})";
     const auto output = run_lsp_messages({
         initialize_body(root),
         did_open_body(main_uri, 1, main_source),
         did_open_body(types_uri, 1, types_source),
         did_change_body(types_uri, 2, changed_types_source),
-        R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":{}})",
+        workspace_diag_request,
+        R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
+    const auto diag_response = response_body_for_id(output, 2);
 
-    check(output.find(main_uri) != std::string::npos,
-          "project.diagnostics_refresh.publishes_dependent_uri");
-    check(output.find("\"version\":2") != std::string::npos,
-          "project.diagnostics_refresh.publishes_changed_version");
-    check(output.find("unknown type 'types::Msg'") != std::string::npos,
+    check(diag_response.find(main_uri) != std::string::npos,
+          "project.diagnostics_refresh.reports_dependent_uri");
+    check(diag_response.find("\"version\":2") != std::string::npos,
+          "project.diagnostics_refresh.reports_changed_version");
+    check(diag_response.find("unknown type 'types::Msg'") != std::string::npos,
           "project.diagnostics_refresh.reports_dependent_unknown_type");
-    check(output.find("resolve.") != std::string::npos,
+    check(diag_response.find("resolve.") != std::string::npos,
           "project.diagnostics_refresh.uses_resolve_diagnostic");
 }
 
@@ -1243,14 +1562,11 @@ void test_descriptorless_workspace_infers_module_root_for_imports() {
         hover_request_body(app_uri, position_of(app_source, "liveness")),
         R"({"jsonrpc":"2.0","id":3,"method":"shutdown","params":{}})",
     });
-    check(liveness_hover_output.find("state 'Missing' is not a final state of node 'run'") !=
-              std::string::npos,
-          "descriptorless_workspace.liveness_hover_preserves_diagnostic");
     check(liveness_hover_output.find("liveness: eventually completed(run, Missing)") !=
               std::string::npos,
-          "descriptorless_workspace.liveness_hover_signature_with_diagnostic");
+          "descriptorless_workspace.liveness_hover_signature");
     check(liveness_hover_output.find("workflow liveness property") != std::string::npos,
-          "descriptorless_workspace.liveness_hover_headline_with_diagnostic");
+          "descriptorless_workspace.liveness_hover_headline");
 }
 
 void test_hover_renderer_detail_levels() {
@@ -1868,8 +2184,13 @@ int main() {
     test_completion_type_member_enum_state_and_workflow_contexts();
     test_rename_rejects_keyword_and_conflict();
     test_document_symbol_hierarchy();
-    test_diagnostics_publish_document_version();
+    test_diagnostics_reflect_document_version();
     test_text_document_diagnostic_pull_report();
+    test_diagnostic_refresh_notifications_on_document_changes();
+    test_text_document_diagnostic_includes_result_id();
+    test_text_document_diagnostic_previous_result_id_unchanged();
+    test_workspace_diagnostic_includes_result_ids();
+    test_workspace_diagnostic_previous_result_ids_filter();
     test_workspace_diagnostic_reports_unopened_project_sources();
     test_watched_file_change_invalidates_project_source_graph();
     test_workspace_folder_change_switches_project_descriptor();

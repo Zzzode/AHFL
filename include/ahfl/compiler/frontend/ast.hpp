@@ -697,9 +697,13 @@ struct AgentDecl final : Decl {
     Owned<TypeSyntax> context_type;                   // 上下文类型（可变状态）
     Owned<TypeSyntax> output_type;                    // 输出类型
     std::vector<std::string> states;                  // 状态集合
+    ahfl::SourceRange states_range;                   // states 子句范围
     std::string initial_state;                        // 初始状态
+    ahfl::SourceRange initial_state_range;            // initial 子句范围
     std::vector<std::string> final_states;            // 终止状态集合
+    ahfl::SourceRange final_states_range;             // final 子句范围
     std::vector<std::string> capabilities;            // 可用 capability 列表
+    ahfl::SourceRange capabilities_range;             // capabilities 子句范围
     Owned<AgentQuotaSyntax> quota;                    // 资源配额
     std::vector<Owned<TransitionSyntax>> transitions; // 合法状态转换
 

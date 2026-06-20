@@ -71,6 +71,39 @@ int main() {
         check(result.success, "format already-formatted succeeds");
     }
 
+    // Test 8: Predicate declaration
+    {
+        std::string source = "predicate IsReady() -> Bool;\n";
+        auto result = ahfl::formatter::format_source(source);
+        check(result.success, "format predicate succeeds");
+        check(result.formatted.find("predicate IsReady()") != std::string::npos,
+              "predicate name and params preserved");
+        check(result.formatted.find("-> Bool") != std::string::npos,
+              "predicate return type preserved");
+    }
+
+    // Test 9: Const declaration
+    {
+        std::string source = "const BAD: Bool = IsReady();\n";
+        auto result = ahfl::formatter::format_source(source);
+        check(result.success, "format const succeeds");
+        check(result.formatted.find("const BAD: Bool = ") != std::string::npos,
+              "const name, type, and value preserved");
+        check(result.formatted.find("IsReady()") != std::string::npos,
+              "const call expression preserved");
+    }
+
+    // Test 10: Predicate + const together
+    {
+        std::string source = "predicate IsReady() -> Bool;\n\nconst BAD: Bool = IsReady();\n";
+        auto result = ahfl::formatter::format_source(source);
+        check(result.success, "format predicate+const succeeds");
+        check(result.formatted.find("predicate IsReady()") != std::string::npos,
+              "predicate preserved in combined file");
+        check(result.formatted.find("const BAD") != std::string::npos,
+              "const preserved in combined file");
+    }
+
     std::printf("%d/%d tests passed\n", pass_count, test_count);
     return (pass_count == test_count) ? 0 : 1;
 }
