@@ -9,4 +9,3 @@ add_library(ahfl_pipeline_observation STATIC
 target_link_libraries(ahfl_pipeline_observation PUBLIC ahfl_pipeline_execution)
 target_include_directories(ahfl_pipeline_observation PRIVATE ${PROJECT_SOURCE_DIR}/src)
 ahfl_apply_project_warnings(ahfl_pipeline_observation)
-

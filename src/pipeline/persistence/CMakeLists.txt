@@ -12,4 +12,3 @@ target_include_directories(ahfl_pipeline_persistence PRIVATE ${PROJECT_SOURCE_DI
 ahfl_apply_project_warnings(ahfl_pipeline_persistence)
 
 add_subdirectory(durable_store_import)
-
