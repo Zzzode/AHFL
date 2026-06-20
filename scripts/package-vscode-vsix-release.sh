@@ -61,7 +61,11 @@ VSIX_NAME="ahfl-language-${EXTENSION_VERSION}-${TARGET}.vsix"
 (
   cd tools/vscode
   if [[ ! -x node_modules/.bin/vsce ]]; then
-    npm ci
+    npm ci --ignore-scripts
+    if [[ ! -x node_modules/.bin/vsce ]]; then
+      echo "error: VS Code extension dependencies were not installed correctly" >&2
+      exit 1
+    fi
   fi
   mkdir -p dist
   npm run package:target -- --target "$TARGET" --out "dist/$VSIX_NAME"

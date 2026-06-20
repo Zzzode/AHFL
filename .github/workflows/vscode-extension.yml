@@ -71,7 +71,9 @@ jobs:
 
       - name: Install extension dependencies
         working-directory: tools/vscode
-        run: npm ci
+        run: |
+          npm ci --ignore-scripts
+          test -x node_modules/.bin/vsce
 
       - name: Package platform VSIX with release LSP
         run: scripts/package-vscode-vsix-release.sh
