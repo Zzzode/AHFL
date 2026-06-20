@@ -1,9 +1,12 @@
 #include "base/json/json_value.hpp"
 
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <locale>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -142,6 +145,26 @@ void JsonValue::set(std::string key, std::unique_ptr<JsonValue> value) {
 // ============================================================================
 
 namespace {
+
+[[nodiscard]] std::optional<double> parse_json_number_float(std::string_view text) {
+    // Xcode 15 libc++ does not provide floating std::from_chars.
+    std::string buffer{text};
+    std::istringstream stream(buffer);
+    stream.imbue(std::locale::classic());
+    stream.unsetf(std::ios_base::skipws);
+
+    double value{};
+    if (!(stream >> value) || !std::isfinite(value)) {
+        return std::nullopt;
+    }
+
+    char trailing{};
+    if (stream >> trailing) {
+        return std::nullopt;
+    }
+
+    return value;
+}
 
 class Parser {
   public:
@@ -308,30 +331,28 @@ class Parser {
         std::string_view num_str = input_.substr(start, pos_ - start);
 
         if (is_float) {
-            double val{};
-            auto [ptr, ec] = std::from_chars(num_str.data(), num_str.data() + num_str.size(), val);
-            if (ec != std::errc{}) {
+            auto val = parse_json_number_float(num_str);
+            if (!val) {
                 pos_ = start;
                 return std::nullopt;
             }
-            auto value = JsonValue::make_float(val);
+            auto value = JsonValue::make_float(*val);
             value->begin_offset = start;
             value->end_offset = pos_;
             return value;
         }
 
         int64_t val{};
-        auto [ptr, ec] = std::from_chars(num_str.data(), num_str.data() + num_str.size(), val);
-        if (ec != std::errc{}) {
+        const auto end = num_str.data() + num_str.size();
+        auto [ptr, ec] = std::from_chars(num_str.data(), end, val);
+        if (ec != std::errc{} || ptr != end) {
             // Overflow — try as float
-            double fval{};
-            auto [fptr, fec] =
-                std::from_chars(num_str.data(), num_str.data() + num_str.size(), fval);
-            if (fec != std::errc{}) {
+            auto fval = parse_json_number_float(num_str);
+            if (!fval) {
                 pos_ = start;
                 return std::nullopt;
             }
-            auto value = JsonValue::make_float(fval);
+            auto value = JsonValue::make_float(*fval);
             value->begin_offset = start;
             value->end_offset = pos_;
             return value;

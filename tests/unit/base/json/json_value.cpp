@@ -52,6 +52,23 @@ bool test_parse_float() {
         return false;
     if ((*result)->float_val < 3.13 || (*result)->float_val > 3.15)
         return false;
+
+    auto exponent = parse_json("1.5e2");
+    if (!exponent)
+        return false;
+    if ((*exponent)->kind != Kind::Float)
+        return false;
+    if ((*exponent)->float_val < 149.9 || (*exponent)->float_val > 150.1)
+        return false;
+
+    auto oversized_int = parse_json("9223372036854775808");
+    if (!oversized_int)
+        return false;
+    if ((*oversized_int)->kind != Kind::Float)
+        return false;
+    if ((*oversized_int)->float_val < 9.22e18 || (*oversized_int)->float_val > 9.23e18)
+        return false;
+
     return true;
 }
 
