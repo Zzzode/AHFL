@@ -5,7 +5,7 @@
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <cassert>

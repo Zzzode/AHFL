@@ -5,49 +5,53 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
+#include "ahfl/base/support/overloaded.hpp"
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
 
 namespace ahfl::ast {
 
 // ============================================================================
-// AHFL 抽象语法树 (AST) 定义
+// AHFL Abstract Syntax Tree (AST) definition
 // ============================================================================
 //
-// 本文件定义了 AHFL 编译器前端的 AST 节点结构。AST 是 parse-tree lowering 之后的
-// 稳定语法边界，后续由 Resolver → TypeChecker → IR Lowering 逐步消费。
+// This file defines the AST node structure for the AHFL compiler frontend. The
+// AST is the stable syntactic boundary after parse-tree lowering, consumed
+// incrementally by Resolver -> TypeChecker -> IR Lowering.
 //
-// 设计约束：
-//   1. AST 节点不保留 ANTLR parse-tree context 或 token 引用
-//   2. AST 节点不携带语义/类型信息（这些在后续 pass 中独立构建）
-//   3. 所有子节点使用 Owned<T> (unique_ptr) 管理生命周期
+// Design constraints:
+//   1. AST nodes do not retain ANTLR parse-tree context or token references
+//   2. AST nodes do not carry semantic/type information (built independently in
+//      later passes)
+//   3. All child nodes are lifetime-managed via Owned<T> (unique_ptr)
 //
-// 节点层次：
-//   Node (基类)
-//   ├── Program         — 顶层编译单元
-//   └── Decl (抽象)     — 所有声明的基类
-//       ├── ModuleDecl      — 模块声明
-//       ├── ImportDecl      — 导入声明
-//       ├── ConstDecl       — 常量声明
-//       ├── TypeAliasDecl   — 类型别名
-//       ├── StructDecl      — 结构体定义
-//       ├── EnumDecl        — 枚举定义
-//       ├── CapabilityDecl  — 能力声明（外部调用接口）
-//       ├── PredicateDecl   — 谓词声明（形式化验证用）
-//       ├── AgentDecl       — Agent 定义（状态机）
-//       ├── ContractDecl    — 契约声明（前置/后置条件）
-//       ├── FlowDecl        — 流程定义（Agent 的状态处理逻辑）
-//       └── WorkflowDecl    — 工作流定义（多 Agent DAG 编排）
+// Node hierarchy:
+//   Node (base)
+//   ├── Program         — top-level compilation unit
+//   └── Decl (abstract) — base of all declarations
+//       ├── ModuleDecl      — module declaration
+//       ├── ImportDecl      — import declaration
+//       ├── ConstDecl       — constant declaration
+//       ├── TypeAliasDecl   — type alias
+//       ├── StructDecl      — struct definition
+//       ├── EnumDecl        — enum definition
+//       ├── CapabilityDecl  — capability declaration (external call interface)
+//       ├── PredicateDecl   — predicate declaration (for formal verification)
+//       ├── AgentDecl       — Agent definition (state machine)
+//       ├── ContractDecl    — contract declaration (preconditions/postconditions)
+//       ├── FlowDecl        — flow definition (Agent state-handling logic)
+//       └── WorkflowDecl    — workflow definition (multi-Agent DAG orchestration)
 
 class Visitor;
 
 // ----------------------------------------------------------------------------
-// 枚举类型定义
+// Enum type definitions
 // ----------------------------------------------------------------------------
 
-/// AST 节点种类，用于快速类型判断
+/// AST node kind, used for fast type checks
 enum class NodeKind {
     Program,
     ModuleDecl,
@@ -66,11 +70,11 @@ enum class NodeKind {
 
 [[nodiscard]] std::string_view to_string(NodeKind kind) noexcept;
 
-/// 契约子句类型
-/// - Requires: 前置条件（调用前必须满足）
-/// - Ensures: 后置条件（执行后保证成立）
-/// - Invariant: 不变量（始终成立）
-/// - Forbid: 禁止条件（永远不得发生）
+/// Contract clause kinds
+/// - Requires: precondition (must hold before a call)
+/// - Ensures: postcondition (guaranteed after execution)
+/// - Invariant: invariant (always holds)
+/// - Forbid: forbidden condition (must never occur)
 enum class ContractClauseKind {
     Requires,
     Ensures,
@@ -80,41 +84,20 @@ enum class ContractClauseKind {
 
 [[nodiscard]] std::string_view to_string(ContractClauseKind kind) noexcept;
 
-/// AHFL 类型系统中的基础类型种类
-enum class TypeSyntaxKind {
-    Unit,          // 空类型 ()
-    Bool,          // 布尔
-    Int,           // 64位整数
-    Float,         // 64位浮点
-    String,        // 无界字符串
-    BoundedString, // 有长度约束的字符串 String(min..max)
-    UUID,          // UUID 标识符
-    Timestamp,     // 时间戳
-    Duration,      // 时间段
-    Decimal,       // 定点小数 Decimal(scale)
-    Named,         // 命名类型（引用 struct/enum）
-    Optional,      // 可选类型 T?
-    List,          // 列表 List<T>
-    Set,           // 集合 Set<T>
-    Map,           // 映射 Map<K, V>
-};
-
-[[nodiscard]] std::string_view to_string(TypeSyntaxKind kind) noexcept;
-
-/// Agent 配额项类型
+/// Agent quota item kind
 enum class AgentQuotaItemKind {
-    MaxToolCalls,     // 最大工具调用次数
-    MaxExecutionTime, // 最大执行时间
+    MaxToolCalls,     // maximum tool call count
+    MaxExecutionTime, // maximum execution time
 };
 
-/// 状态策略项类型（flow 中 state handler 的执行策略）
+/// State policy item kind (execution policy for state handlers in a flow)
 enum class StatePolicyItemKind {
-    Retry,   // 重试次数
-    RetryOn, // 指定错误类型时重试
-    Timeout, // 超时限制
+    Retry,   // retry count
+    RetryOn, // retry on a specific error type
+    Timeout, // timeout limit
 };
 
-/// Capability 副作用类别，用于 assurance analysis 推导控制、策略、恢复义务
+/// Capability effect category, used by assurance analysis to derive control, policy, and recovery obligations
 enum class CapabilityEffectKind {
     Unknown,
     Read,
@@ -125,7 +108,7 @@ enum class CapabilityEffectKind {
 
 [[nodiscard]] std::string_view to_string(CapabilityEffectKind kind) noexcept;
 
-/// Capability 执行回执要求
+/// Capability execution receipt requirement
 enum class CapabilityReceiptMode {
     None,
     Optional,
@@ -134,7 +117,7 @@ enum class CapabilityReceiptMode {
 
 [[nodiscard]] std::string_view to_string(CapabilityReceiptMode mode) noexcept;
 
-/// Capability 重试安全性声明
+/// Capability retry safety declaration
 enum class CapabilityRetryMode {
     Unsafe,
     SafeIfIdempotent,
@@ -143,17 +126,17 @@ enum class CapabilityRetryMode {
 
 [[nodiscard]] std::string_view to_string(CapabilityRetryMode mode) noexcept;
 
-/// 路径表达式的根节点类型
-/// - Identifier: 普通标识符（变量名、node 输出引用等）
-/// - Input: 关键字 `input`（agent/workflow 的输入）
-/// - Output: 关键字 `output`（agent 的输出上下文）
+/// Path expression root kind
+/// - Identifier: a plain identifier (variable name, node output reference, etc.)
+/// - Input: the `input` keyword (input of an agent/workflow)
+/// - Output: the `output` keyword (output context of an agent)
 enum class PathRootKind {
     Identifier,
     Input,
     Output,
 };
 
-/// 表达式语法种类（20种）
+/// Expression syntax kinds (20 kinds)
 enum class ExprSyntaxKind {
     BoolLiteral,     // true / false
     IntegerLiteral,  // 42, -1
@@ -164,7 +147,7 @@ enum class ExprSyntaxKind {
     NoneLiteral,     // none
     Some,            // some(expr)
     Path,            // input.field, ctx.field, node_name.field
-    QualifiedValue,  // Priority::High（全限定枚举值）
+    QualifiedValue,  // Priority::High (fully qualified enum value)
     Call,            // capability_name(args...)
     StructLiteral,   // TypeName { field: value, ... }
     ListLiteral,     // [a, b, c]
@@ -174,19 +157,19 @@ enum class ExprSyntaxKind {
     Binary,          // a + b, a == b, a && b
     MemberAccess,    // expr.member
     IndexAccess,     // expr[index]
-    Group,           // (expr) 括号分组
+    Group,           // (expr) parenthesized grouping
 };
 
-/// 一元运算符
+/// Unary operators
 enum class ExprUnaryOp {
-    Not,      // 逻辑非 !
-    Negate,   // 取负 -
-    Positive, // 取正 +
+    Not,      // logical not !
+    Negate,   // negation -
+    Positive, // unary plus +
 };
 
-/// 二元运算符（按优先级从低到高排列）
+/// Binary operators (ordered by precedence, low to high)
 enum class ExprBinaryOp {
-    Implies,      // =>  蕴含（用于契约/时序逻辑）
+    Implies,      // =>  implication (used for contract/temporal logic)
     Or,           // ||
     And,          // &&
     Equal,        // ==
@@ -202,7 +185,7 @@ enum class ExprBinaryOp {
     Modulo,       // %
 };
 
-/// 语句种类
+/// Statement kinds
 enum class StatementSyntaxKind {
     Let,    // let x: Type = expr;
     Assign, // ctx.field = expr;
@@ -210,41 +193,41 @@ enum class StatementSyntaxKind {
     Goto,   // goto StateName;
     Return, // return expr;
     Assert, // assert(cond);
-    Expr,   // expr; （表达式语句，通常是 capability 调用）
+    Expr,   // expr; (expression statement, typically a capability call)
 };
 
-/// 时序逻辑表达式种类（用于形式化验证 / SMV 生成）
+/// Temporal expression kinds (for formal verification / SMV generation)
 enum class TemporalExprSyntaxKind {
-    EmbeddedExpr, // 嵌入普通表达式
+    EmbeddedExpr, // embeds a plain expression
     Called,       // called(capability_name)
-    InState,      // in_state(agent, state)
-    Running,      // running(agent)
-    Completed,    // completed(agent)
-    Unary,        // always/eventually/next/not 前缀
-    Binary,       // implies/or/and/until 中缀
+    InState,      // in_state(state_name)
+    Running,      // running(node_name)
+    Completed,    // completed(node_name[, state_name])
+    Unary,        // always/eventually/next/not prefix
+    Binary,       // implies/or/and/until infix
 };
 
-/// 时序一元运算符
+/// Temporal unary operators
 enum class TemporalUnaryOp {
-    Always,     // □ (always) — 所有路径上始终成立
-    Eventually, // ◇ (eventually) — 最终会成立
-    Next,       // ○ (next) — 下一步成立
-    Not,        // ¬ (not) — 否定
+    Always,     // [] (always) — always holds on all paths
+    Eventually, // <> (eventually) — eventually holds
+    Next,       // O (next) — holds at the next step
+    Not,        // ! (not) — negation
 };
 
-/// 时序二元运算符
+/// Temporal binary operators
 enum class TemporalBinaryOp {
     Implies, // =>
     Or,      // ||
     And,     // &&
-    Until,   // U (until) — 直到某条件成立
+    Until,   // U (until) — holds until a condition holds
 };
 
 // ----------------------------------------------------------------------------
-// 语法片段结构 (Syntax Fragments)
+// Syntax fragment structures
 // ----------------------------------------------------------------------------
 
-/// 限定名（如 module::path::Name）
+/// A qualified name (e.g. module::path::Name)
 struct QualifiedName {
     ahfl::SourceRange range;
     std::vector<std::string> segments; // ["module", "path", "Name"]
@@ -252,73 +235,299 @@ struct QualifiedName {
     [[nodiscard]] std::string spelling() const;
 };
 
-/// 类型语法节点
-/// kind 决定使用哪些字段：
-///   - Named: name 字段有值
-///   - BoundedString: string_bounds 有值
-///   - Decimal: decimal_scale 有值
-///   - Optional/List/Set: first 指向内部类型
-///   - Map: first=key类型, second=value类型
+// Forward declaration (Owned<TypeSyntax> is used inside the Type variant)
+struct TypeSyntax;
+
+// ----------------------------------------------------------------------------
+// Type variant alternatives (std::variant-style type syntax nodes)
+// ----------------------------------------------------------------------------
+// Each type maps to a dedicated struct, carried uniformly by the
+// TypeSyntaxNode variant.
+
+/// Unit type: ()
+struct UnitType {};
+
+/// Bool type: bool
+struct BoolType {};
+
+/// Int type: int
+struct IntType {};
+
+/// Float type: float
+struct FloatType {};
+
+/// String type: string
+struct StringType {};
+
+/// Bounded string type: string(min..max)
+struct BoundedStringType {
+    std::uint64_t min_length;
+    std::uint64_t max_length;
+};
+
+/// UUID type: uuid
+struct UuidType {};
+
+/// Timestamp type: timestamp
+struct TimestampType {};
+
+/// Duration type: duration
+struct DurationType {};
+
+/// Decimal type: decimal(scale)
+struct DecimalType {
+    std::uint8_t scale;
+};
+
+/// Named type: references a struct/enum/type alias
+struct NamedType {
+    Owned<QualifiedName> name;
+};
+
+/// Optional type: T?
+struct OptionalType {
+    Owned<TypeSyntax> inner;
+};
+
+/// List type: list<T>
+struct ListType {
+    Owned<TypeSyntax> element;
+};
+
+/// Set type: set<T>
+struct SetType {
+    Owned<TypeSyntax> element;
+};
+
+/// Map type: map<K, V>
+struct MapType {
+    Owned<TypeSyntax> key_type;
+    Owned<TypeSyntax> value_type;
+};
+
+/// Variant alias for the type syntax node
+using TypeSyntaxNode = std::variant<
+    UnitType,
+    BoolType,
+    IntType,
+    FloatType,
+    StringType,
+    BoundedStringType,
+    UuidType,
+    TimestampType,
+    DurationType,
+    DecimalType,
+    NamedType,
+    OptionalType,
+    ListType,
+    SetType,
+    MapType
+>;
+
+/// Type syntax node
 struct TypeSyntax {
     ahfl::SourceRange range;
-    TypeSyntaxKind kind{TypeSyntaxKind::Named};
-    Owned<QualifiedName> name;                                          // Named 类型的限定名
-    std::optional<std::pair<std::int64_t, std::int64_t>> string_bounds; // BoundedString 的长度区间
-    std::optional<std::int64_t> decimal_scale;                          // Decimal 精度
-    Owned<TypeSyntax> first;  // 泛型第一参数 / Optional内部类型
-    Owned<TypeSyntax> second; // Map 的 value 类型
+    TypeSyntaxNode node;
+
+    /// Test whether the current node is of the given type
+    template <typename T>
+    [[nodiscard]] bool is() const {
+        return std::holds_alternative<T>(node);
+    }
+
+    /// Read the node as the given type (const overload)
+    template <typename T>
+    [[nodiscard]] const T& as() const {
+        return std::get<T>(node);
+    }
+
+    /// Read the node as the given type (non-const overload)
+    template <typename T>
+    [[nodiscard]] T& as() {
+        return std::get<T>(node);
+    }
 
     [[nodiscard]] std::string spelling() const;
 };
 
-// 前向声明
+// Forward declarations
 struct ExprSyntax;
 struct StatementSyntax;
 struct IntegerSyntax;
 struct DurationSyntax;
 
-/// 路径表达式语法 (如 input.category, ctx.resolved, classify.confidence)
+/// Path expression syntax (e.g. input.category, ctx.resolved, classify.confidence)
 struct PathSyntax {
     ahfl::SourceRange range;
-    PathRootKind root_kind{PathRootKind::Identifier}; // 根节点类型
-    std::string root_name;            // 根名称（"input", "ctx", 或标识符名）
-    std::vector<std::string> members; // 成员访问链
+    PathRootKind root_kind{PathRootKind::Identifier}; // root kind
+    std::string root_name;            // root name ("input", "ctx", or an identifier)
+    std::vector<std::string> members; // member access chain
 
     [[nodiscard]] std::string spelling() const;
 };
 
-/// Map 字面量中的一个键值对
+/// A single key-value pair within a map literal
 struct MapEntrySyntax {
     ahfl::SourceRange range;
     Owned<ExprSyntax> key;
     Owned<ExprSyntax> value;
 };
 
-/// 结构体字面量中的一个字段初始化
+/// A single field initializer within a struct literal
 struct StructInitSyntax {
     ahfl::SourceRange range;
-    std::string field_name;  // 字段名
-    Owned<ExprSyntax> value; // 初始化表达式
+    std::string field_name;  // field name
+    Owned<ExprSyntax> value; // initializer expression
 };
 
-/// 表达式语法节点（tagged-union 风格，kind 决定有效字段）
+// ----------------------------------------------------------------------------
+// Expr variant alternatives (std::variant-style expression syntax nodes)
+// ----------------------------------------------------------------------------
+// Each expression maps to a dedicated struct, carried uniformly by the
+// ExprSyntaxNode variant.
+// Field names are semantic; they correspond to the generic fields of the legacy
+// ExprSyntax (first/second/name/text, etc.).
+
+/// none literal
+struct NoneLiteralExpr {};
+
+/// bool literal: true / false
+struct BoolLiteralExpr {
+    bool value;
+};
+
+/// Integer literal: 42, -1
+struct IntegerLiteralExpr {
+    Owned<IntegerSyntax> literal;
+};
+
+/// Float literal: 3.14
+struct FloatLiteralExpr {
+    std::string spelling;
+};
+
+/// Decimal literal: 3.14d
+struct DecimalLiteralExpr {
+    std::string spelling;
+};
+
+/// String literal: "hello"
+struct StringLiteralExpr {
+    std::string spelling;
+};
+
+/// Duration literal: 30s, 5m
+struct DurationLiteralExpr {
+    Owned<DurationSyntax> literal;
+};
+
+/// some expression: some(expr)
+struct SomeExpr {
+    Owned<ExprSyntax> value;
+};
+
+/// Path expression: input.field, ctx.field
+struct PathExpr {
+    Owned<PathSyntax> path;
+};
+
+/// Qualified value expression: Priority::High
+struct QualifiedValueExpr {
+    Owned<QualifiedName> name;
+};
+
+/// Function call expression: callee(args...)
+struct CallExpr {
+    Owned<QualifiedName> callee;
+    std::vector<Owned<ExprSyntax>> arguments;
+};
+
+/// Struct literal: TypeName { field: value, ... }
+struct StructLiteralExpr {
+    Owned<QualifiedName> type_name;
+    std::vector<Owned<StructInitSyntax>> fields;
+};
+
+/// List literal: [a, b, c]
+struct ListLiteralExpr {
+    std::vector<Owned<ExprSyntax>> items;
+};
+
+/// Set literal: {a, b, c}
+struct SetLiteralExpr {
+    std::vector<Owned<ExprSyntax>> items;
+};
+
+/// Map literal: {k1: v1, k2: v2}
+struct MapLiteralExpr {
+    std::vector<Owned<MapEntrySyntax>> entries;
+};
+
+/// Unary expression: !expr, -expr
+struct UnaryExpr {
+    ExprUnaryOp op;
+    Owned<ExprSyntax> operand;
+};
+
+/// Binary expression: a + b, a == b
+struct BinaryExpr {
+    ExprBinaryOp op;
+    Owned<ExprSyntax> lhs;
+    Owned<ExprSyntax> rhs;
+};
+
+/// Member access expression: expr.member
+struct MemberAccessExpr {
+    Owned<ExprSyntax> base;
+    std::string member;
+};
+
+/// Index access expression: expr[index]
+struct IndexAccessExpr {
+    Owned<ExprSyntax> base;
+    Owned<ExprSyntax> index;
+};
+
+/// Grouping expression: (expr)
+struct GroupExpr {
+    Owned<ExprSyntax> inner;
+};
+
+/// Variant alias for the expression syntax node
+using ExprSyntaxNode = std::variant<
+    NoneLiteralExpr,
+    BoolLiteralExpr,
+    IntegerLiteralExpr,
+    FloatLiteralExpr,
+    DecimalLiteralExpr,
+    StringLiteralExpr,
+    DurationLiteralExpr,
+    SomeExpr,
+    PathExpr,
+    QualifiedValueExpr,
+    CallExpr,
+    StructLiteralExpr,
+    ListLiteralExpr,
+    SetLiteralExpr,
+    MapLiteralExpr,
+    UnaryExpr,
+    BinaryExpr,
+    MemberAccessExpr,
+    IndexAccessExpr,
+    GroupExpr
+>;
+
+/// Expression syntax node
 ///
-/// 各 kind 使用的字段：
-///   - BoolLiteral: bool_value
-///   - IntegerLiteral: integer_literal
-///   - FloatLiteral/DecimalLiteral/StringLiteral: text
-///   - DurationLiteral: duration_literal
-///   - Path: path
-///   - QualifiedValue: qualified_name
-///   - Call: name (函数名) + items (参数列表)
-///   - StructLiteral: name (类型名) + struct_fields
-///   - ListLiteral/SetLiteral: items
-///   - MapLiteral: map_entries
-///   - Unary: unary_op + first
-///   - Binary: binary_op + first + second
-///   - MemberAccess: first (对象) + name (成员名)
-///   - IndexAccess: first (对象) + second (索引)
-///   - Group: first (内部表达式)
+/// Implements a tagged-union pattern via std::variant. Each variant alternative
+/// carries semantically named fields, and the compiler enforces at compile time
+/// that only the fields of the active variant alternative are accessed. This
+/// eliminates the field-misuse bugs inherent to the "fat struct" pattern.
+///
+/// Access patterns (ordered by recommendation):
+///   1. std::visit(Overloaded{...}, expr.node) — dispatch across all kinds
+///   2. expr.is<T>() + expr.as<T>() — direct access when the kind is known
+///   3. visit_expr_syntax(expr, visitor) — visitor dispatch by method name
 struct ExprSyntax {
     ahfl::SourceRange range;
     // Stable identity assigned at AST construction time. Distinct from
@@ -326,81 +535,87 @@ struct ExprSyntax {
     // generated synthetic expressions and their parents) can be unambiguously
     // referenced by downstream side tables. 0 means "unassigned".
     std::uint64_t node_id{0};
-    std::string text; // 字面量原文
-    ExprSyntaxKind kind{ExprSyntaxKind::NoneLiteral};
-    bool bool_value{false};                             // BoolLiteral
-    ExprUnaryOp unary_op{ExprUnaryOp::Not};             // Unary
-    ExprBinaryOp binary_op{ExprBinaryOp::Implies};      // Binary
-    Owned<IntegerSyntax> integer_literal;               // IntegerLiteral
-    Owned<DurationSyntax> duration_literal;             // DurationLiteral
-    std::string name;                                   // Call/MemberAccess/StructLiteral
-    Owned<QualifiedName> qualified_name;                // QualifiedValue
-    Owned<PathSyntax> path;                             // Path
-    std::vector<Owned<ExprSyntax>> items;               // 列表/集合/调用参数
-    std::vector<Owned<MapEntrySyntax>> map_entries;     // MapLiteral
-    std::vector<Owned<StructInitSyntax>> struct_fields; // StructLiteral
-    Owned<ExprSyntax> first;                            // 一元/二元操作数
-    Owned<ExprSyntax> second;                           // 二元右操作数
+    std::string text; // original source text (used for literal spellings, etc.)
+
+    ExprSyntaxNode node;
+
+    /// Test whether the current node is of the given expression type
+    template <typename T>
+    [[nodiscard]] bool is() const {
+        return std::holds_alternative<T>(node);
+    }
+
+    /// Read the node as the given type (const overload)
+    template <typename T>
+    [[nodiscard]] const T& as() const {
+        return std::get<T>(node);
+    }
+
+    /// Read the node as the given type (non-const overload)
+    template <typename T>
+    [[nodiscard]] T& as() {
+        return std::get<T>(node);
+    }
 };
 
 // ----------------------------------------------------------------------------
-// 语句语法结构
+// Statement syntax structures
 // ----------------------------------------------------------------------------
 
-/// let 绑定语句: let name: Type = initializer;
+/// let binding statement: let name: Type = initializer;
 struct LetStmtSyntax {
     ahfl::SourceRange range;
-    std::string name;              // 变量名
-    Owned<TypeSyntax> type;        // 类型注解（可选）
-    Owned<ExprSyntax> initializer; // 初始化表达式
+    std::string name;              // variable name
+    Owned<TypeSyntax> type;        // type annotation (optional)
+    Owned<ExprSyntax> initializer; // initializer expression
 };
 
-/// 赋值语句: target = value;（仅允许赋值到 ctx.field）
+/// Assignment statement: target = value; (only ctx.field may be assigned)
 struct AssignStmtSyntax {
     ahfl::SourceRange range;
-    Owned<PathSyntax> target; // 赋值目标路径
-    Owned<ExprSyntax> value;  // 赋值表达式
+    Owned<PathSyntax> target; // assignment target path
+    Owned<ExprSyntax> value;  // assigned expression
 };
 
-/// 语句块: { stmt1; stmt2; ... }
+/// Statement block: { stmt1; stmt2; ... }
 struct BlockSyntax {
     ahfl::SourceRange range;
     std::vector<Owned<StatementSyntax>> statements;
 };
 
-/// 条件语句: if (condition) { then } else { else }
+/// Conditional statement: if (condition) { then } else { else }
 struct IfStmtSyntax {
     ahfl::SourceRange range;
-    Owned<ExprSyntax> condition;   // 条件表达式
-    Owned<BlockSyntax> then_block; // then 分支
-    Owned<BlockSyntax> else_block; // else 分支（可选）
+    Owned<ExprSyntax> condition;   // condition expression
+    Owned<BlockSyntax> then_block; // then branch
+    Owned<BlockSyntax> else_block; // else branch (optional)
 };
 
-/// 状态跳转语句: goto StateName;
+/// State jump statement: goto StateName;
 struct GotoStmtSyntax {
     ahfl::SourceRange range;
-    std::string target_state; // 目标状态名
+    std::string target_state; // target state name
 };
 
-/// 返回语句: return expr;
+/// Return statement: return expr;
 struct ReturnStmtSyntax {
     ahfl::SourceRange range;
-    Owned<ExprSyntax> value; // 返回值表达式
+    Owned<ExprSyntax> value; // return value expression
 };
 
-/// 断言语句: assert(condition);
+/// Assertion statement: assert(condition);
 struct AssertStmtSyntax {
     ahfl::SourceRange range;
-    Owned<ExprSyntax> condition; // 断言条件
+    Owned<ExprSyntax> condition; // assertion condition
 };
 
-/// 表达式语句 (如 capability 调用): expr;
+/// Expression statement (e.g. a capability call): expr;
 struct ExprStmtSyntax {
     ahfl::SourceRange range;
     Owned<ExprSyntax> expr;
 };
 
-/// 语句节点（tagged-union，kind 决定哪个 stmt 字段有效）
+/// Statement node (tagged-union; kind determines which stmt field is active)
 struct StatementSyntax {
     ahfl::SourceRange range;
     StatementSyntaxKind kind{StatementSyntaxKind::Expr};
@@ -413,104 +628,179 @@ struct StatementSyntax {
     Owned<ExprStmtSyntax> expr_stmt;
 };
 
-/// 时序逻辑表达式（用于 safety/liveness 属性验证）
-/// 编译到 SMV 模型检测器可消费的 CTL/LTL 公式
+// Forward declaration (Owned<TemporalExprSyntax> is used inside the Temporal variant)
+struct TemporalExprSyntax;
+
+// ----------------------------------------------------------------------------
+// Temporal variant alternatives (std::variant-style temporal expression nodes)
+// ----------------------------------------------------------------------------
+// Each temporal expression maps to a dedicated struct, carried uniformly by the
+// TemporalExprSyntaxNode variant.
+// Field names are semantic; they correspond to the generic fields of the legacy
+// TemporalExprSyntax (first/second/name, etc.).
+
+/// Embeds a plain expression
+struct EmbeddedTemporalExpr {
+    Owned<ExprSyntax> expr;
+};
+
+/// called(capability_name) — the capability has been called
+struct CalledTemporalExpr {
+    std::string name;
+};
+
+/// in_state(state_name) — currently in some state
+struct InStateTemporalExpr {
+    std::string name;
+};
+
+/// running(node_name) — a node is currently running
+struct RunningTemporalExpr {
+    std::string name;
+};
+
+/// completed(node_name, state_name?) — a node has completed
+struct CompletedTemporalExpr {
+    std::string name;
+    std::optional<std::string> state_name;
+};
+
+/// Unary temporal expression: always / eventually / next / not prefix
+struct UnaryTemporalExpr {
+    TemporalUnaryOp op;
+    Owned<TemporalExprSyntax> operand;
+};
+
+/// Binary temporal expression: implies / or / and / until infix
+struct BinaryTemporalExpr {
+    TemporalBinaryOp op;
+    Owned<TemporalExprSyntax> lhs;
+    Owned<TemporalExprSyntax> rhs;
+};
+
+/// Variant alias for the temporal syntax node
+using TemporalExprSyntaxNode = std::variant<
+    EmbeddedTemporalExpr,
+    CalledTemporalExpr,
+    InStateTemporalExpr,
+    RunningTemporalExpr,
+    CompletedTemporalExpr,
+    UnaryTemporalExpr,
+    BinaryTemporalExpr
+>;
+
+/// Temporal logic expression
+///
+/// Implements a tagged-union pattern via std::variant.
+/// Used for safety/liveness property verification, compiled into CTL/LTL
+/// formulas consumable by an SMV model checker.
 struct TemporalExprSyntax {
     ahfl::SourceRange range;
-    std::string text;
-    TemporalExprSyntaxKind kind{TemporalExprSyntaxKind::EmbeddedExpr};
-    TemporalUnaryOp unary_op{TemporalUnaryOp::Always};
-    TemporalBinaryOp binary_op{TemporalBinaryOp::Implies};
-    std::string name;                      // Called/InState/Running/Completed 的目标名
-    std::optional<std::string> state_name; // InState 的状态名
-    Owned<ExprSyntax> expr;                // EmbeddedExpr 的嵌入表达式
-    Owned<TemporalExprSyntax> first;       // 一元/二元第一操作数
-    Owned<TemporalExprSyntax> second;      // 二元第二操作数
+
+    TemporalExprSyntaxNode node;
+
+    /// Test whether the current node is of the given temporal expression type
+    template <typename T>
+    [[nodiscard]] bool is() const {
+        return std::holds_alternative<T>(node);
+    }
+
+    /// Read the node as the given type (const overload)
+    template <typename T>
+    [[nodiscard]] const T& as() const {
+        return std::get<T>(node);
+    }
+
+    /// Read the node as the given type (non-const overload)
+    template <typename T>
+    [[nodiscard]] T& as() {
+        return std::get<T>(node);
+    }
 };
 
 // ----------------------------------------------------------------------------
-// 辅助语法片段
+// Auxiliary syntax fragments
 // ----------------------------------------------------------------------------
 
-/// 整数字面量
+/// Integer literal
 struct IntegerSyntax {
     ahfl::SourceRange range;
-    std::string spelling; // 原始文本
+    std::string spelling; // original text
     std::int64_t value{0};
 };
 
-/// 时间段字面量 (如 "30s", "5m", "1h")
+/// Duration literal (e.g. "30s", "5m", "1h")
 struct DurationSyntax {
     ahfl::SourceRange range;
     std::string spelling;
 };
 
-/// 参数声明 (用于 capability 参数)
+/// Parameter declaration (for capability parameters)
 struct ParamDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
     Owned<TypeSyntax> type;
 };
 
-/// 结构体字段声明
+/// Struct field declaration
 struct StructFieldDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
     Owned<TypeSyntax> type;
-    Owned<ExprSyntax> default_value; // 可选的默认值
+    Owned<ExprSyntax> default_value; // optional default value
 };
 
-/// 枚举变体声明
+/// Enum variant alternative declaration
 struct EnumVariantDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
 };
 
-/// 状态转换声明: from_state -> to_state
+/// State transition declaration: from_state -> to_state
 struct TransitionSyntax {
     ahfl::SourceRange range;
     std::string from_state;
     std::string to_state;
 };
 
-/// Agent 配额项（资源限制）
+/// Agent quota item (resource limit)
 struct AgentQuotaItemSyntax {
     ahfl::SourceRange range;
     AgentQuotaItemKind kind{AgentQuotaItemKind::MaxToolCalls};
-    Owned<IntegerSyntax> integer_value;   // MaxToolCalls 的值
-    Owned<DurationSyntax> duration_value; // MaxExecutionTime 的值
+    Owned<IntegerSyntax> integer_value;   // value for MaxToolCalls
+    Owned<DurationSyntax> duration_value; // value for MaxExecutionTime
 };
 
-/// Agent 配额声明: quota { max_tool_calls: 10; max_execution_time: 30s; }
+/// Agent quota declaration: quota { max_tool_calls: 10; max_execution_time: 30s; }
 struct AgentQuotaSyntax {
     ahfl::SourceRange range;
     std::vector<Owned<AgentQuotaItemSyntax>> items;
 };
 
-/// 契约子句: requires/ensures/invariant/forbid expr
+/// Contract clause: requires/ensures/invariant/forbid expr
 struct ContractClauseSyntax {
     ahfl::SourceRange range;
     ContractClauseKind kind{ContractClauseKind::Requires};
-    Owned<ExprSyntax> expr;                  // 普通表达式条件
-    Owned<TemporalExprSyntax> temporal_expr; // 时序逻辑条件
+    Owned<ExprSyntax> expr;                  // plain expression condition
+    Owned<TemporalExprSyntax> temporal_expr; // temporal logic condition
 };
 
-/// 状态策略项（flow handler 中的执行策略）
+/// State policy item (execution policy within a flow handler)
 struct StatePolicyItemSyntax {
     ahfl::SourceRange range;
     StatePolicyItemKind kind{StatePolicyItemKind::Retry};
-    Owned<IntegerSyntax> retry_limit;           // Retry 的次数
-    std::vector<Owned<QualifiedName>> retry_on; // RetryOn 的错误类型列表
-    Owned<DurationSyntax> timeout;              // Timeout 的时间限制
+    Owned<IntegerSyntax> retry_limit;           // retry count for Retry
+    std::vector<Owned<QualifiedName>> retry_on; // error type list for RetryOn
+    Owned<DurationSyntax> timeout;              // time limit for Timeout
 };
 
-/// 状态策略声明: policy { retry: 3; timeout: 30s; }
+/// State policy declaration: policy { retry: 3; timeout: 30s; }
 struct StatePolicySyntax {
     ahfl::SourceRange range;
     std::vector<Owned<StatePolicyItemSyntax>> items;
 };
 
-/// Capability 副作用声明块:
+/// Capability side-effect declaration block:
 /// capability ChargeCard(request: Payment) -> Receipt {
 ///     effect: financial_write;
 ///     domain: payments;
@@ -533,28 +823,28 @@ struct CapabilityEffectSyntax {
     std::vector<Owned<QualifiedName>> policies;
 };
 
-/// 状态处理器: state StateName [policy {...}] { statements... }
+/// State handler: state StateName [policy {...}] { statements... }
 struct StateHandlerSyntax {
     ahfl::SourceRange range;
-    std::string state_name;          // 处理哪个状态
-    Owned<StatePolicySyntax> policy; // 可选的执行策略
-    Owned<BlockSyntax> body;         // 处理逻辑（语句块）
+    std::string state_name;          // which state is handled
+    Owned<StatePolicySyntax> policy; // optional execution policy
+    Owned<BlockSyntax> body;         // handling logic (statement block)
 };
 
-/// Workflow 节点声明: node name: AgentType(input_expr) [after [dep1, dep2]];
+/// Workflow node declaration: node name: AgentType(input_expr) [after [dep1, dep2]];
 struct WorkflowNodeDeclSyntax {
     ahfl::SourceRange range;
-    std::string name;               // 节点名称
-    Owned<QualifiedName> target;    // 绑定的 Agent 类型
-    Owned<ExprSyntax> input;        // 传递给 agent 的输入表达式
-    std::vector<std::string> after; // DAG 依赖（前置节点名列表）
+    std::string name;               // node name
+    Owned<QualifiedName> target;    // the bound Agent type
+    Owned<ExprSyntax> input;        // input expression passed to the agent
+    std::vector<std::string> after; // DAG dependencies (predecessor node names)
 };
 
 // ----------------------------------------------------------------------------
-// 核心 AST 节点类层次
+// Core AST node class hierarchy
 // ----------------------------------------------------------------------------
 
-/// AST 节点基类（所有节点的公共接口）
+/// AST node base class (common interface for all nodes)
 struct Node {
     NodeKind kind;
     ahfl::SourceRange range;
@@ -565,26 +855,27 @@ struct Node {
     virtual void accept(Visitor &visitor) = 0;
 };
 
-/// 声明基类（所有顶层声明的公共基类）
+/// Declaration base class (common base for all top-level declarations)
 struct Decl : Node {
     Decl(NodeKind kind, ahfl::SourceRange range = {});
     ~Decl() override = default;
 
-    /// 返回声明的单行摘要（用于诊断输出）
+    /// Return a one-line summary of the declaration (for diagnostic output)
     [[nodiscard]] virtual std::string headline() const = 0;
 };
 
-/// 编译单元（一个 .ahfl 文件对应一个 Program）
+/// Compilation unit (one .ahfl file maps to one Program)
 struct Program final : Node {
-    std::string source_name;               // 源文件名
-    std::vector<Owned<Decl>> declarations; // 所有顶层声明
+    std::string source_name;               // source file name
+    std::vector<Owned<Decl>> declarations; // all top-level declarations
 
     explicit Program(std::string source_name, ahfl::SourceRange range = {});
 
     void accept(Visitor &visitor) override;
 };
 
-/// AST 结构不变量错误。用于捕获 tagged-struct 的 kind 与载荷字段不匹配问题。
+/// AST structural invariant violation. Captures mismatches between a tagged
+/// struct's kind and its payload fields.
 struct AstInvariantViolation {
     ahfl::SourceRange range;
     std::string message;
@@ -593,7 +884,7 @@ struct AstInvariantViolation {
 [[nodiscard]] std::vector<AstInvariantViolation>
 validate_program_invariants(const Program &program);
 
-/// 模块声明: module a::b::c;
+/// Module declaration: module a::b::c;
 struct ModuleDecl final : Decl {
     Owned<QualifiedName> name;
 
@@ -602,17 +893,17 @@ struct ModuleDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 导入声明: import a::b::c [as alias];
+/// Import declaration: import a::b::c [as alias];
 struct ImportDecl final : Decl {
-    Owned<QualifiedName> path; // 导入路径
-    std::string alias;         // 可选别名
+    Owned<QualifiedName> path; // import path
+    std::string alias;         // optional alias
 
     ImportDecl(Owned<QualifiedName> path, std::string alias, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 常量声明: const NAME: Type = value;
+/// Constant declaration: const NAME: Type = value;
 struct ConstDecl final : Decl {
     std::string name;
     Owned<TypeSyntax> type;
@@ -623,7 +914,7 @@ struct ConstDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 类型别名: type NewName = ExistingType;
+/// Type alias: type NewName = ExistingType;
 struct TypeAliasDecl final : Decl {
     std::string name;
     Owned<TypeSyntax> aliased_type;
@@ -633,7 +924,7 @@ struct TypeAliasDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 结构体声明: struct Name { field1: Type1; field2: Type2 = default; }
+/// Struct declaration: struct Name { field1: Type1; field2: Type2 = default; }
 struct StructDecl final : Decl {
     std::string name;
     std::vector<Owned<StructFieldDeclSyntax>> fields;
@@ -643,7 +934,7 @@ struct StructDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 枚举声明: enum Name { Variant1; Variant2; Variant3; }
+/// Enum declaration: enum Name { Variant1; Variant2; Variant3; }
 struct EnumDecl final : Decl {
     std::string name;
     std::vector<Owned<EnumVariantDeclSyntax>> variants;
@@ -653,8 +944,8 @@ struct EnumDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 能力声明: capability Name(param1: Type1, ...) -> ReturnType;
-/// 代表 Agent 可调用的外部接口（如 LLM API、数据库查询等）
+/// Capability declaration: capability Name(param1: Type1, ...) -> ReturnType;
+/// Represents an external interface callable by an Agent (e.g. LLM API, database query, etc.)
 struct CapabilityDecl final : Decl {
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
@@ -666,8 +957,8 @@ struct CapabilityDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 谓词声明: predicate Name(param1: Type1, ...);
-/// 用于形式化验证中的逻辑断言
+/// Predicate declaration: predicate Name(param1: Type1, ...);
+/// Used for logical assertions in formal verification
 struct PredicateDecl final : Decl {
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
@@ -677,9 +968,9 @@ struct PredicateDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// Agent 声明 — AHFL 的核心实体
+/// Agent declaration — the core entity of AHFL
 ///
-/// 定义一个有限状态机 Agent：
+/// Defines a finite-state-machine Agent:
 ///   agent Name {
 ///       input: InputType;
 ///       context: CtxType;
@@ -693,48 +984,48 @@ struct PredicateDecl final : Decl {
 ///   }
 struct AgentDecl final : Decl {
     std::string name;
-    Owned<TypeSyntax> input_type;                     // 输入类型
-    Owned<TypeSyntax> context_type;                   // 上下文类型（可变状态）
-    Owned<TypeSyntax> output_type;                    // 输出类型
-    std::vector<std::string> states;                  // 状态集合
-    ahfl::SourceRange states_range;                   // states 子句范围
-    std::string initial_state;                        // 初始状态
-    ahfl::SourceRange initial_state_range;            // initial 子句范围
-    std::vector<std::string> final_states;            // 终止状态集合
-    ahfl::SourceRange final_states_range;             // final 子句范围
-    std::vector<std::string> capabilities;            // 可用 capability 列表
-    ahfl::SourceRange capabilities_range;             // capabilities 子句范围
-    Owned<AgentQuotaSyntax> quota;                    // 资源配额
-    std::vector<Owned<TransitionSyntax>> transitions; // 合法状态转换
+    Owned<TypeSyntax> input_type;                     // input type
+    Owned<TypeSyntax> context_type;                   // context type (mutable state)
+    Owned<TypeSyntax> output_type;                    // output type
+    std::vector<std::string> states;                  // set of states
+    ahfl::SourceRange states_range;                   // range of the states clause
+    std::string initial_state;                        // initial state
+    ahfl::SourceRange initial_state_range;            // range of the initial clause
+    std::vector<std::string> final_states;            // set of final states
+    ahfl::SourceRange final_states_range;             // range of the final clause
+    std::vector<std::string> capabilities;            // available capability list
+    ahfl::SourceRange capabilities_range;             // range of the capabilities clause
+    Owned<AgentQuotaSyntax> quota;                    // resource quota
+    std::vector<Owned<TransitionSyntax>> transitions; // legal state transitions
 
     AgentDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 契约声明: contract for AgentName { requires ...; ensures ...; }
-/// 为 Agent 附加形式化约束，编译到 SMV 模型进行验证
+/// Contract declaration: contract for AgentName { requires ...; ensures ...; }
+/// Attaches formal constraints to an Agent, compiled into an SMV model for verification
 struct ContractDecl final : Decl {
-    Owned<QualifiedName> target;                      // 目标 Agent
-    std::vector<Owned<ContractClauseSyntax>> clauses; // 契约子句列表
+    Owned<QualifiedName> target;                      // target Agent
+    std::vector<Owned<ContractClauseSyntax>> clauses; // contract clause list
 
     ContractDecl(Owned<QualifiedName> target, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 流程声明: flow for AgentName { state Init { ... } state Done { ... } }
-/// 定义 Agent 每个状态下的具体执行逻辑
+/// Flow declaration: flow for AgentName { state Init { ... } state Done { ... } }
+/// Defines the concrete execution logic for each state of an Agent
 struct FlowDecl final : Decl {
-    Owned<QualifiedName> target;                           // 目标 Agent
-    std::vector<Owned<StateHandlerSyntax>> state_handlers; // 各状态的处理器
+    Owned<QualifiedName> target;                           // target Agent
+    std::vector<Owned<StateHandlerSyntax>> state_handlers; // handlers for each state
 
     FlowDecl(Owned<QualifiedName> target, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
     [[nodiscard]] std::string headline() const override;
 };
 
-/// 工作流声明 — 多 Agent DAG 编排
+/// Workflow declaration — multi-Agent DAG orchestration
 ///
 ///   workflow Name {
 ///       input: InputType;
@@ -747,12 +1038,12 @@ struct FlowDecl final : Decl {
 ///   }
 struct WorkflowDecl final : Decl {
     std::string name;
-    Owned<TypeSyntax> input_type;                     // Workflow 输入类型
-    Owned<TypeSyntax> output_type;                    // Workflow 输出类型
-    std::vector<Owned<WorkflowNodeDeclSyntax>> nodes; // DAG 节点列表
-    std::vector<Owned<TemporalExprSyntax>> safety;    // 安全性属性（□ always）
-    std::vector<Owned<TemporalExprSyntax>> liveness;  // 活性属性（◇ eventually）
-    Owned<ExprSyntax> return_value;                   // 最终返回值表达式
+    Owned<TypeSyntax> input_type;                     // Workflow input type
+    Owned<TypeSyntax> output_type;                    // Workflow output type
+    std::vector<Owned<WorkflowNodeDeclSyntax>> nodes; // DAG node list
+    std::vector<Owned<TemporalExprSyntax>> safety;    // safety properties ([] always)
+    std::vector<Owned<TemporalExprSyntax>> liveness;  // liveness properties (<> eventually)
+    Owned<ExprSyntax> return_value;                   // final return value expression
 
     WorkflowDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -760,11 +1051,11 @@ struct WorkflowDecl final : Decl {
 };
 
 // ----------------------------------------------------------------------------
-// Visitor 模式
+// Visitor pattern
 // ----------------------------------------------------------------------------
 
-/// AST 访问者接口（双分派）
-/// 所有需要遍历 AST 的 pass（Resolver、TypeChecker、Emitter）实现此接口
+/// AST visitor interface (double dispatch)
+/// Every pass that traverses the AST (Resolver, TypeChecker, Emitter) implements this interface
 class Visitor {
   public:
     virtual ~Visitor() = default;
@@ -784,7 +1075,8 @@ class Visitor {
     virtual void visit(WorkflowDecl &node) = 0;
 };
 
-/// 递归访问者（提供默认空实现，子类只需覆盖感兴趣的节点）
+/// Recursive visitor (provides default empty implementations; subclasses only
+/// override the nodes they care about)
 class RecursiveVisitor : public Visitor {
   public:
     void visit(Program &node) override;
@@ -803,62 +1095,83 @@ class RecursiveVisitor : public Visitor {
 };
 
 // ============================================================================
-// ExprSyntax visitor (Task #4)
+// ExprSyntax visitor
 // ============================================================================
 //
 // `visit_expr_syntax(expr, visitor)` dispatches an ExprSyntax to the matching
-// `Visitor::visit_*(expr)` overload. Centralises ExprSyntaxKind dispatch so
-// passes (typecheck, IR lowering, future analyses) share one switch and the
-// project's -Wswitch -Werror guard catches missing cases when ExprSyntaxKind
-// grows. Lives in ahfl::ast (public header) so any pass can opt in without
+// `Visitor::visit_*(expr)` overload. Dispatch is done via std::visit on the
+// variant node so the compiler catches missing alternatives when new variants
+// are added. Lives in ahfl::ast (public header) so any pass can opt in without
 // pulling in semantics-private internals.
+//
+// Each visitor method receives the full `const ExprSyntax &` wrapper. Use
+// `expr.as<T>()` to access the variant alternative's semantic fields.
 
 template <typename Visitor>
 decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
-    switch (expr.kind) {
-    case ExprSyntaxKind::BoolLiteral:
-        return std::forward<Visitor>(visitor).visit_bool_literal(expr);
-    case ExprSyntaxKind::IntegerLiteral:
-        return std::forward<Visitor>(visitor).visit_integer_literal(expr);
-    case ExprSyntaxKind::FloatLiteral:
-        return std::forward<Visitor>(visitor).visit_float_literal(expr);
-    case ExprSyntaxKind::DecimalLiteral:
-        return std::forward<Visitor>(visitor).visit_decimal_literal(expr);
-    case ExprSyntaxKind::StringLiteral:
-        return std::forward<Visitor>(visitor).visit_string_literal(expr);
-    case ExprSyntaxKind::DurationLiteral:
-        return std::forward<Visitor>(visitor).visit_duration_literal(expr);
-    case ExprSyntaxKind::NoneLiteral:
-        return std::forward<Visitor>(visitor).visit_none_literal(expr);
-    case ExprSyntaxKind::Some:
-        return std::forward<Visitor>(visitor).visit_some(expr);
-    case ExprSyntaxKind::Path:
-        return std::forward<Visitor>(visitor).visit_path(expr);
-    case ExprSyntaxKind::QualifiedValue:
-        return std::forward<Visitor>(visitor).visit_qualified_value(expr);
-    case ExprSyntaxKind::Call:
-        return std::forward<Visitor>(visitor).visit_call(expr);
-    case ExprSyntaxKind::StructLiteral:
-        return std::forward<Visitor>(visitor).visit_struct_literal(expr);
-    case ExprSyntaxKind::ListLiteral:
-        return std::forward<Visitor>(visitor).visit_list_literal(expr);
-    case ExprSyntaxKind::SetLiteral:
-        return std::forward<Visitor>(visitor).visit_set_literal(expr);
-    case ExprSyntaxKind::MapLiteral:
-        return std::forward<Visitor>(visitor).visit_map_literal(expr);
-    case ExprSyntaxKind::Unary:
-        return std::forward<Visitor>(visitor).visit_unary(expr);
-    case ExprSyntaxKind::Binary:
-        return std::forward<Visitor>(visitor).visit_binary(expr);
-    case ExprSyntaxKind::MemberAccess:
-        return std::forward<Visitor>(visitor).visit_member_access(expr);
-    case ExprSyntaxKind::IndexAccess:
-        return std::forward<Visitor>(visitor).visit_index_access(expr);
-    case ExprSyntaxKind::Group:
-        return std::forward<Visitor>(visitor).visit_group(expr);
-    }
+    return std::visit(Overloaded{
+        [&](const NoneLiteralExpr &) { return std::forward<Visitor>(visitor).visit_none_literal(expr); },
+        [&](const BoolLiteralExpr &) { return std::forward<Visitor>(visitor).visit_bool_literal(expr); },
+        [&](const IntegerLiteralExpr &) { return std::forward<Visitor>(visitor).visit_integer_literal(expr); },
+        [&](const FloatLiteralExpr &) { return std::forward<Visitor>(visitor).visit_float_literal(expr); },
+        [&](const DecimalLiteralExpr &) { return std::forward<Visitor>(visitor).visit_decimal_literal(expr); },
+        [&](const StringLiteralExpr &) { return std::forward<Visitor>(visitor).visit_string_literal(expr); },
+        [&](const DurationLiteralExpr &) { return std::forward<Visitor>(visitor).visit_duration_literal(expr); },
+        [&](const SomeExpr &) { return std::forward<Visitor>(visitor).visit_some(expr); },
+        [&](const PathExpr &) { return std::forward<Visitor>(visitor).visit_path(expr); },
+        [&](const QualifiedValueExpr &) { return std::forward<Visitor>(visitor).visit_qualified_value(expr); },
+        [&](const CallExpr &) { return std::forward<Visitor>(visitor).visit_call(expr); },
+        [&](const StructLiteralExpr &) { return std::forward<Visitor>(visitor).visit_struct_literal(expr); },
+        [&](const ListLiteralExpr &) { return std::forward<Visitor>(visitor).visit_list_literal(expr); },
+        [&](const SetLiteralExpr &) { return std::forward<Visitor>(visitor).visit_set_literal(expr); },
+        [&](const MapLiteralExpr &) { return std::forward<Visitor>(visitor).visit_map_literal(expr); },
+        [&](const UnaryExpr &) { return std::forward<Visitor>(visitor).visit_unary(expr); },
+        [&](const BinaryExpr &) { return std::forward<Visitor>(visitor).visit_binary(expr); },
+        [&](const MemberAccessExpr &) { return std::forward<Visitor>(visitor).visit_member_access(expr); },
+        [&](const IndexAccessExpr &) { return std::forward<Visitor>(visitor).visit_index_access(expr); },
+        [&](const GroupExpr &) { return std::forward<Visitor>(visitor).visit_group(expr); },
+    }, expr.node);
+}
 
-    return std::forward<Visitor>(visitor).visit_unknown(expr);
+/// Derive ExprSyntaxKind from the variant (used by downstream consumers such
+/// as TypedExpr that need a kind)
+[[nodiscard]] inline ExprSyntaxKind expr_syntax_kind(const ExprSyntax &expr) {
+    return std::visit(Overloaded{
+        [](const NoneLiteralExpr &) { return ExprSyntaxKind::NoneLiteral; },
+        [](const BoolLiteralExpr &) { return ExprSyntaxKind::BoolLiteral; },
+        [](const IntegerLiteralExpr &) { return ExprSyntaxKind::IntegerLiteral; },
+        [](const FloatLiteralExpr &) { return ExprSyntaxKind::FloatLiteral; },
+        [](const DecimalLiteralExpr &) { return ExprSyntaxKind::DecimalLiteral; },
+        [](const StringLiteralExpr &) { return ExprSyntaxKind::StringLiteral; },
+        [](const DurationLiteralExpr &) { return ExprSyntaxKind::DurationLiteral; },
+        [](const SomeExpr &) { return ExprSyntaxKind::Some; },
+        [](const PathExpr &) { return ExprSyntaxKind::Path; },
+        [](const QualifiedValueExpr &) { return ExprSyntaxKind::QualifiedValue; },
+        [](const CallExpr &) { return ExprSyntaxKind::Call; },
+        [](const StructLiteralExpr &) { return ExprSyntaxKind::StructLiteral; },
+        [](const ListLiteralExpr &) { return ExprSyntaxKind::ListLiteral; },
+        [](const SetLiteralExpr &) { return ExprSyntaxKind::SetLiteral; },
+        [](const MapLiteralExpr &) { return ExprSyntaxKind::MapLiteral; },
+        [](const UnaryExpr &) { return ExprSyntaxKind::Unary; },
+        [](const BinaryExpr &) { return ExprSyntaxKind::Binary; },
+        [](const MemberAccessExpr &) { return ExprSyntaxKind::MemberAccess; },
+        [](const IndexAccessExpr &) { return ExprSyntaxKind::IndexAccess; },
+        [](const GroupExpr &) { return ExprSyntaxKind::Group; },
+    }, expr.node);
+}
+
+/// Derive TemporalExprSyntaxKind from the variant
+[[nodiscard]] inline TemporalExprSyntaxKind temporal_expr_syntax_kind(
+    const TemporalExprSyntax &expr) {
+    return std::visit(Overloaded{
+        [](const EmbeddedTemporalExpr &) { return TemporalExprSyntaxKind::EmbeddedExpr; },
+        [](const CalledTemporalExpr &) { return TemporalExprSyntaxKind::Called; },
+        [](const InStateTemporalExpr &) { return TemporalExprSyntaxKind::InState; },
+        [](const RunningTemporalExpr &) { return TemporalExprSyntaxKind::Running; },
+        [](const CompletedTemporalExpr &) { return TemporalExprSyntaxKind::Completed; },
+        [](const UnaryTemporalExpr &) { return TemporalExprSyntaxKind::Unary; },
+        [](const BinaryTemporalExpr &) { return TemporalExprSyntaxKind::Binary; },
+    }, expr.node);
 }
 
 } // namespace ahfl::ast

@@ -2,7 +2,7 @@
 
 #include "ahfl/compiler/ir/identity.hpp"
 #include "ahfl/compiler/ir/lowering.hpp"
-#include "base/support/overloaded.hpp"
+#include "ahfl/base/support/overloaded.hpp"
 
 #include <algorithm>
 #include <array>

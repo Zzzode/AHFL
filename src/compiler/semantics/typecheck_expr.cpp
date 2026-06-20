@@ -10,6 +10,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace ahfl {
@@ -22,6 +23,14 @@ using internal::TypedValue;
 using internal::ValueContext;
 
 namespace {
+
+template <typename... Ts>
+struct overloaded : Ts... {
+    using Ts::operator()...;
+};
+
+template <typename... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
 
 [[nodiscard]] std::int64_t parse_decimal_scale(std::string_view text) {
     const auto dot_index = text.find('.');
@@ -236,7 +245,28 @@ class ExpressionChecker final {
           expectation_(expectation), values_(services.values()) {}
 
     [[nodiscard]] TypedValue check(const ast::ExprSyntax &expr) const {
-        return internal::visit_expr_syntax(expr, *this);
+        return std::visit(overloaded{
+            [&](const ast::NoneLiteralExpr &) { return visit_none_literal(expr); },
+            [&](const ast::BoolLiteralExpr &) { return visit_bool_literal(expr); },
+            [&](const ast::IntegerLiteralExpr &) { return visit_integer_literal(expr); },
+            [&](const ast::FloatLiteralExpr &) { return visit_float_literal(expr); },
+            [&](const ast::DecimalLiteralExpr &) { return visit_decimal_literal(expr); },
+            [&](const ast::StringLiteralExpr &) { return visit_string_literal(expr); },
+            [&](const ast::DurationLiteralExpr &) { return visit_duration_literal(expr); },
+            [&](const ast::SomeExpr &) { return visit_some(expr); },
+            [&](const ast::PathExpr &) { return visit_path(expr); },
+            [&](const ast::QualifiedValueExpr &) { return visit_qualified_value(expr); },
+            [&](const ast::CallExpr &) { return visit_call(expr); },
+            [&](const ast::StructLiteralExpr &) { return visit_struct_literal(expr); },
+            [&](const ast::ListLiteralExpr &) { return visit_list_literal(expr); },
+            [&](const ast::SetLiteralExpr &) { return visit_set_literal(expr); },
+            [&](const ast::MapLiteralExpr &) { return visit_map_literal(expr); },
+            [&](const ast::UnaryExpr &) { return visit_unary(expr); },
+            [&](const ast::BinaryExpr &) { return visit_binary(expr); },
+            [&](const ast::MemberAccessExpr &) { return visit_member_access(expr); },
+            [&](const ast::IndexAccessExpr &) { return visit_index_access(expr); },
+            [&](const ast::GroupExpr &) { return visit_group(expr); },
+        }, expr.node);
     }
 
     [[nodiscard]] TypedValue visit_bool_literal(const ast::ExprSyntax &) const {
@@ -252,7 +282,8 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue visit_decimal_literal(const ast::ExprSyntax &expr) const {
-        return values_.typed(values_.decimal_type(parse_decimal_scale(expr.text)));
+        return values_.typed(values_.decimal_type(
+            parse_decimal_scale(expr.as<ast::DecimalLiteralExpr>().spelling)));
     }
 
     [[nodiscard]] TypedValue visit_string_literal(const ast::ExprSyntax &) const {
@@ -274,6 +305,7 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue visit_some(const ast::ExprSyntax &expr) const {
+        const auto &some = expr.as<ast::SomeExpr>();
         MaybeCRef<Type> inner_expected = std::nullopt;
         std::optional<TypeExpectation> inner_expectation;
         if (expected_type_.has_value()) {
@@ -284,19 +316,19 @@ class ExpressionChecker final {
             }
         }
         const auto inner = inner_expectation.has_value()
-                               ? services_.check_expr(*expr.first, context_, *inner_expectation)
-                               : services_.check_expr(*expr.first, context_, inner_expected);
+                               ? services_.check_expr(*some.value, context_, *inner_expectation)
+                               : services_.check_expr(*some.value, context_, inner_expected);
         if (inner_expectation.has_value() && inner_expectation->expected != nullptr) {
             (void)services_.check_assignable(*inner.type,
                                              *inner_expectation->expected,
-                                             expr.first->range,
+                                             some.value->range,
                                              "optional payload",
                                              *inner_expectation);
             return values_.typed_effect(expected_type_->get().clone(), inner.effect);
         }
         if (inner_expected.has_value()) {
             (void)services_.check_assignable(
-                *inner.type, inner_expected->get(), expr.first->range, "optional payload");
+                *inner.type, inner_expected->get(), some.value->range, "optional payload");
             return values_.typed_effect(expected_type_->get().clone(), inner.effect);
         }
         return values_.typed_effect(
@@ -305,7 +337,7 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue visit_path(const ast::ExprSyntax &expr) const {
-        return check_path(*expr.path);
+        return check_path(*expr.as<ast::PathExpr>().path);
     }
 
     [[nodiscard]] TypedValue visit_qualified_value(const ast::ExprSyntax &expr) const {
@@ -349,14 +381,11 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue visit_group(const ast::ExprSyntax &expr) const {
+        const auto &group = expr.as<ast::GroupExpr>();
         if (expectation_ != nullptr) {
-            return services_.check_expr(*expr.first, context_, *expectation_);
+            return services_.check_expr(*group.inner, context_, *expectation_);
         }
-        return services_.check_expr(*expr.first, context_, expected_type_);
-    }
-
-    [[nodiscard]] TypedValue visit_unknown(const ast::ExprSyntax &) const {
-        return values_.error_typed();
+        return services_.check_expr(*group.inner, context_, expected_type_);
     }
 
   private:
@@ -365,15 +394,16 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_qualified_value(const ast::ExprSyntax &expr) const {
+        const auto &qualified = expr.as<ast::QualifiedValueExpr>();
         if (const auto const_reference =
-                services_.find_reference(ReferenceKind::ConstValue, expr.qualified_name->range);
+                services_.find_reference(ReferenceKind::ConstValue, qualified.name->range);
             const_reference.has_value()) {
             const auto const_type = services_.get_const_type(const_reference->get().target);
             if (!const_type.has_value()) {
                 services_.typecheck_error_here(
                     error_codes::typecheck::MissingConstMetadata,
                     messages::typecheck::ConstTypeInfoMissing.format_with(
-                        expr.qualified_name->spelling()),
+                        qualified.name->spelling()),
                     expr.range);
                 return values_.error_typed();
             }
@@ -382,11 +412,11 @@ class ExpressionChecker final {
         }
 
         const auto owner_reference = services_.find_reference(
-            ReferenceKind::QualifiedValueOwnerType, expr.qualified_name->range);
+            ReferenceKind::QualifiedValueOwnerType, qualified.name->range);
         if (!owner_reference.has_value()) {
             services_.typecheck_error_here(error_codes::typecheck::UnknownQualifiedValue,
                                            messages::typecheck::UnknownQualifiedValue.format_with(
-                                               expr.qualified_name->spelling()),
+                                               qualified.name->spelling()),
                                            expr.range);
             return values_.error_typed();
         }
@@ -396,7 +426,7 @@ class ExpressionChecker final {
             services_.typecheck_error_here(
                 error_codes::typecheck::InvalidQualifiedValue,
                 messages::typecheck::QualifiedValueRequiresConstOrEnumVariant.format_with(
-                    expr.qualified_name->spelling()),
+                    qualified.name->spelling()),
                 expr.range);
             return values_.error_typed();
         }
@@ -410,10 +440,10 @@ class ExpressionChecker final {
             return values_.error_typed();
         }
 
-        const auto &segments = expr.qualified_name->segments;
+        const auto &segments = qualified.name->segments;
         if (segments.empty() || !enum_info->get().has_variant(segments.back())) {
             std::string message = messages::typecheck::UnknownEnumVariant.format_with(
-                expr.qualified_name->spelling());
+                qualified.name->spelling());
             if (!segments.empty()) {
                 std::vector<std::string> candidates;
                 candidates.reserve(enum_info->get().variants.size());
@@ -434,12 +464,13 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_struct_literal(const ast::ExprSyntax &expr) const {
+        const auto &struct_lit = expr.as<ast::StructLiteralExpr>();
         const auto reference =
-            services_.find_reference(ReferenceKind::TypeName, expr.qualified_name->range);
+            services_.find_reference(ReferenceKind::TypeName, struct_lit.type_name->range);
         if (!reference.has_value()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::UnknownType,
-                messages::typecheck::UnknownType.format_with(expr.qualified_name->spelling()),
+                messages::typecheck::UnknownType.format_with(struct_lit.type_name->spelling()),
                 expr.range);
             return values_.error_typed();
         }
@@ -449,7 +480,7 @@ class ExpressionChecker final {
             services_.typecheck_error_here(
                 error_codes::typecheck::InvalidStructLiteralTarget,
                 messages::typecheck::StructLiteralTargetRequiresStruct.format_with(
-                    expr.qualified_name->spelling()),
+                    struct_lit.type_name->spelling()),
                 expr.range);
             return values_.error_typed();
         }
@@ -466,7 +497,7 @@ class ExpressionChecker final {
         std::unordered_set<std::string> seen_fields;
         ExprEffect effect = ExprEffect::Pure;
 
-        for (const auto &field_init : expr.struct_fields) {
+        for (const auto &field_init : struct_lit.fields) {
             if (!seen_fields.insert(field_init->field_name).second) {
                 services_.typecheck_error_here(
                     error_codes::typecheck::DuplicateField,
@@ -521,17 +552,18 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_list_literal(const ast::ExprSyntax &expr) const {
+        const auto &list = expr.as<ast::ListLiteralExpr>();
         MaybeCRef<Type> element_expected = std::nullopt;
         std::optional<TypeExpectation> element_expectation;
         if (expected_type_.has_value()) {
-            if (const auto *list = expected_type_->get().get_if<types::ListT>();
-                list != nullptr && list->element != nullptr) {
-                element_expected = std::cref(*list->element);
-                element_expectation = derive_expectation(expectation_, list->element);
+            if (const auto *list_type = expected_type_->get().get_if<types::ListT>();
+                list_type != nullptr && list_type->element != nullptr) {
+                element_expected = std::cref(*list_type->element);
+                element_expectation = derive_expectation(expectation_, list_type->element);
             }
         }
 
-        if (expr.items.empty()) {
+        if (list.items.empty()) {
             if (expected_type_.has_value() && expected_type_->get().holds<types::ListT>()) {
                 return values_.typed(expected_type_->get().clone());
             }
@@ -548,7 +580,7 @@ class ExpressionChecker final {
         std::optional<SourceRange> inferred_element_origin;
         ExprEffect effect = ExprEffect::Pure;
 
-        for (const auto &item : expr.items) {
+        for (const auto &item : list.items) {
             const auto value = element_expectation.has_value()
                                    ? services_.check_expr(*item, context_, *element_expectation)
                                    : services_.check_expr(*item, context_, element_expected);
@@ -581,17 +613,18 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_set_literal(const ast::ExprSyntax &expr) const {
+        const auto &set = expr.as<ast::SetLiteralExpr>();
         MaybeCRef<Type> element_expected = std::nullopt;
         std::optional<TypeExpectation> element_expectation;
         if (expected_type_.has_value()) {
-            if (const auto *set = expected_type_->get().get_if<types::SetT>();
-                set != nullptr && set->element != nullptr) {
-                element_expected = std::cref(*set->element);
-                element_expectation = derive_expectation(expectation_, set->element);
+            if (const auto *set_type = expected_type_->get().get_if<types::SetT>();
+                set_type != nullptr && set_type->element != nullptr) {
+                element_expected = std::cref(*set_type->element);
+                element_expectation = derive_expectation(expectation_, set_type->element);
             }
         }
 
-        if (expr.items.empty()) {
+        if (set.items.empty()) {
             if (expected_type_.has_value() && expected_type_->get().holds<types::SetT>()) {
                 return values_.typed(expected_type_->get().clone());
             }
@@ -608,7 +641,7 @@ class ExpressionChecker final {
         std::optional<SourceRange> inferred_element_origin;
         ExprEffect effect = ExprEffect::Pure;
 
-        for (const auto &item : expr.items) {
+        for (const auto &item : set.items) {
             const auto value = element_expectation.has_value()
                                    ? services_.check_expr(*item, context_, *element_expectation)
                                    : services_.check_expr(*item, context_, element_expected);
@@ -641,21 +674,22 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_map_literal(const ast::ExprSyntax &expr) const {
+        const auto &map = expr.as<ast::MapLiteralExpr>();
         MaybeCRef<Type> key_expected = std::nullopt;
         MaybeCRef<Type> value_expected = std::nullopt;
         std::optional<TypeExpectation> key_expectation;
         std::optional<TypeExpectation> value_expectation;
         if (expected_type_.has_value()) {
-            if (const auto *map = expected_type_->get().get_if<types::MapT>();
-                map != nullptr && map->key != nullptr && map->value != nullptr) {
-                key_expected = std::cref(*map->key);
-                value_expected = std::cref(*map->value);
-                key_expectation = derive_expectation(expectation_, map->key);
-                value_expectation = derive_expectation(expectation_, map->value);
+            if (const auto *map_type = expected_type_->get().get_if<types::MapT>();
+                map_type != nullptr && map_type->key != nullptr && map_type->value != nullptr) {
+                key_expected = std::cref(*map_type->key);
+                value_expected = std::cref(*map_type->value);
+                key_expectation = derive_expectation(expectation_, map_type->key);
+                value_expectation = derive_expectation(expectation_, map_type->value);
             }
         }
 
-        if (expr.map_entries.empty()) {
+        if (map.entries.empty()) {
             if (expected_type_.has_value() && expected_type_->get().holds<types::MapT>()) {
                 return values_.typed(expected_type_->get().clone());
             }
@@ -676,7 +710,7 @@ class ExpressionChecker final {
         std::optional<SourceRange> inferred_value_origin;
         ExprEffect effect = ExprEffect::Pure;
 
-        for (const auto &entry : expr.map_entries) {
+        for (const auto &entry : map.entries) {
             const auto key = key_expectation.has_value()
                                  ? services_.check_expr(*entry->key, context_, *key_expectation)
                                  : services_.check_expr(*entry->key, context_, key_expected);
@@ -740,12 +774,13 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
+        const auto &call = expr.as<ast::CallExpr>();
         const auto reference =
-            services_.find_reference(ReferenceKind::CallTarget, expr.qualified_name->range);
+            services_.find_reference(ReferenceKind::CallTarget, call.callee->range);
         if (!reference.has_value()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::UnknownCallable,
-                messages::typecheck::UnknownCallable.format_with(expr.qualified_name->spelling()),
+                messages::typecheck::UnknownCallable.format_with(call.callee->spelling()),
                 expr.range);
             return values_.error_typed(false);
         }
@@ -777,12 +812,13 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue check_capability_call(const ast::ExprSyntax &expr,
                                                    SymbolId target) const {
+        const auto &call = expr.as<ast::CallExpr>();
         const auto capability = services_.get_capability(target);
         if (!capability.has_value()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::MissingCallableMetadata,
                 messages::typecheck::CapabilityTypeInfoMissing.format_with(
-                    expr.qualified_name->spelling()),
+                    call.callee->spelling()),
                 expr.range);
             return values_.error_typed(false);
         }
@@ -790,7 +826,7 @@ class ExpressionChecker final {
         if (context_.call_context != CallContext::Flow) {
             services_.typecheck_error_here(error_codes::typecheck::CapabilityNotAllowed,
                                            messages::typecheck::CapabilityNotAllowed.format_with(
-                                               expr.qualified_name->spelling()),
+                                               call.callee->spelling()),
                                            expr.range);
         }
 
@@ -804,23 +840,23 @@ class ExpressionChecker final {
                     services_.typecheck_error_here(
                         error_codes::typecheck::CapabilityNotAllowed,
                         messages::typecheck::CapabilityNotDeclared.format_with(
-                            expr.qualified_name->spelling()),
+                            call.callee->spelling()),
                         expr.range);
                 }
             }
         }
 
-        if (expr.items.size() != capability->get().params.size()) {
+        if (call.arguments.size() != capability->get().params.size()) {
             services_.typecheck_error_here(error_codes::typecheck::WrongArity,
                                            messages::typecheck::WrongArity.format_with(
                                                "capability",
-                                               expr.qualified_name->spelling(),
+                                               call.callee->spelling(),
                                                std::to_string(capability->get().params.size()),
-                                               std::to_string(expr.items.size())),
+                                               std::to_string(call.arguments.size())),
                                            expr.range);
         }
 
-        const auto limit = std::min(expr.items.size(), capability->get().params.size());
+        const auto limit = std::min(call.arguments.size(), capability->get().params.size());
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = capability->get().params[index];
             const auto expectation = TypeExpectation{
@@ -829,10 +865,10 @@ class ExpressionChecker final {
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
             };
-            const auto argument = services_.check_expr(*expr.items[index], context_, expectation);
+            const auto argument = services_.check_expr(*call.arguments[index], context_, expectation);
             (void)services_.check_assignable(*argument.type,
                                              *param.type,
-                                             expr.items[index]->range,
+                                             call.arguments[index]->range,
                                              "capability argument",
                                              expectation);
         }
@@ -845,28 +881,29 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue check_predicate_call(const ast::ExprSyntax &expr,
                                                   SymbolId target) const {
+        const auto &call = expr.as<ast::CallExpr>();
         const auto predicate = services_.get_predicate(target);
         if (!predicate.has_value()) {
             services_.typecheck_error_here(
                 error_codes::typecheck::MissingCallableMetadata,
                 messages::typecheck::PredicateTypeInfoMissing.format_with(
-                    expr.qualified_name->spelling()),
+                    call.callee->spelling()),
                 expr.range);
             return values_.error_typed();
         }
 
-        if (expr.items.size() != predicate->get().params.size()) {
+        if (call.arguments.size() != predicate->get().params.size()) {
             services_.typecheck_error_here(error_codes::typecheck::WrongArity,
                                            messages::typecheck::WrongArity.format_with(
                                                "predicate",
-                                               expr.qualified_name->spelling(),
+                                               call.callee->spelling(),
                                                std::to_string(predicate->get().params.size()),
-                                               std::to_string(expr.items.size())),
+                                               std::to_string(call.arguments.size())),
                                            expr.range);
         }
 
         ExprEffect effect = ExprEffect::PredicateCall;
-        const auto limit = std::min(expr.items.size(), predicate->get().params.size());
+        const auto limit = std::min(call.arguments.size(), predicate->get().params.size());
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = predicate->get().params[index];
             const auto expectation = TypeExpectation{
@@ -875,19 +912,19 @@ class ExpressionChecker final {
                 .origin_range = param.declaration_range,
                 .description = "parameter '" + param.name + "'",
             };
-            const auto argument = services_.check_expr(*expr.items[index], context_, expectation);
+            const auto argument = services_.check_expr(*call.arguments[index], context_, expectation);
             effect = join_effects(effect, argument.effect);
             if (!argument.is_pure) {
                 services_.typecheck_error_here(
                     error_codes::typecheck::NonPureExpression,
                     messages::typecheck::PredicateArgsNotPure.format_with() +
                         "; expression effect: " + std::string(to_string(argument.effect)),
-                    expr.items[index]->range);
+                    call.arguments[index]->range);
             }
 
             (void)services_.check_assignable(*argument.type,
                                              *param.type,
-                                             expr.items[index]->range,
+                                             call.arguments[index]->range,
                                              "predicate argument",
                                              expectation);
         }
@@ -896,8 +933,9 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_unary_expr(const ast::ExprSyntax &expr) const {
-        const auto operand = services_.check_expr(*expr.first, context_, std::nullopt);
-        switch (expr.unary_op) {
+        const auto &unary = expr.as<ast::UnaryExpr>();
+        const auto operand = services_.check_expr(*unary.operand, context_, std::nullopt);
+        switch (unary.op) {
         case ast::ExprUnaryOp::Not:
             if (!is_bool_type(*operand.type) && !is_error_type(*operand.type)) {
                 services_.typecheck_error_here(
@@ -924,15 +962,16 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_binary_expr(const ast::ExprSyntax &expr) const {
-        if ((expr.binary_op == ast::ExprBinaryOp::Equal ||
-             expr.binary_op == ast::ExprBinaryOp::NotEqual) &&
-            expr.first && expr.second &&
-            (expr.first->kind == ast::ExprSyntaxKind::NoneLiteral ||
-             expr.second->kind == ast::ExprSyntaxKind::NoneLiteral)) {
+        const auto &binary = expr.as<ast::BinaryExpr>();
+        if ((binary.op == ast::ExprBinaryOp::Equal ||
+             binary.op == ast::ExprBinaryOp::NotEqual) &&
+            binary.lhs && binary.rhs &&
+            (binary.lhs->is<ast::NoneLiteralExpr>() ||
+             binary.rhs->is<ast::NoneLiteralExpr>())) {
             const auto &none_operand =
-                expr.first->kind == ast::ExprSyntaxKind::NoneLiteral ? *expr.first : *expr.second;
+                binary.lhs->is<ast::NoneLiteralExpr>() ? *binary.lhs : *binary.rhs;
             const auto &value_operand =
-                expr.first->kind == ast::ExprSyntaxKind::NoneLiteral ? *expr.second : *expr.first;
+                binary.lhs->is<ast::NoneLiteralExpr>() ? *binary.rhs : *binary.lhs;
             const auto value = services_.check_expr(value_operand, context_, std::nullopt);
             const auto none = services_.check_expr(none_operand, context_, std::cref(*value.type));
             const auto effect = join_effects(value.effect, none.effect);
@@ -946,8 +985,8 @@ class ExpressionChecker final {
             return values_.typed_effect(values_.make_type(TypeKind::Bool), effect);
         }
 
-        const auto lhs = services_.check_expr(*expr.first, context_, std::nullopt);
-        const auto rhs = services_.check_expr(*expr.second, context_, std::nullopt);
+        const auto lhs = services_.check_expr(*binary.lhs, context_, std::nullopt);
+        const auto rhs = services_.check_expr(*binary.rhs, context_, std::nullopt);
         const auto effect = join_effects(lhs.effect, rhs.effect);
 
         const auto comparable = [&]() {
@@ -980,7 +1019,7 @@ class ExpressionChecker final {
             return nullptr;
         };
 
-        switch (expr.binary_op) {
+        switch (binary.op) {
         case ast::ExprBinaryOp::Implies:
         case ast::ExprBinaryOp::Or:
         case ast::ExprBinaryOp::And:
@@ -1011,7 +1050,7 @@ class ExpressionChecker final {
                 return values_.typed_effect(values_.string_type(), effect);
             }
 
-            if (const auto result = strict_arithmetic(expr.binary_op); result != nullptr) {
+            if (const auto result = strict_arithmetic(binary.op); result != nullptr) {
                 return values_.typed_effect(result, effect);
             }
 
@@ -1023,7 +1062,7 @@ class ExpressionChecker final {
             }
             return values_.error_typed_effect(effect);
         case ast::ExprBinaryOp::Subtract:
-            if (const auto result = strict_arithmetic(expr.binary_op); result != nullptr) {
+            if (const auto result = strict_arithmetic(binary.op); result != nullptr) {
                 return values_.typed_effect(result, effect);
             }
 
@@ -1036,7 +1075,7 @@ class ExpressionChecker final {
             return values_.error_typed_effect(effect);
         case ast::ExprBinaryOp::Multiply:
         case ast::ExprBinaryOp::Divide:
-            if (const auto result = strict_arithmetic(expr.binary_op); result != nullptr) {
+            if (const auto result = strict_arithmetic(binary.op); result != nullptr) {
                 return values_.typed_effect(result, effect);
             }
 
@@ -1065,8 +1104,9 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_member_access(const ast::ExprSyntax &expr) const {
-        const auto base = services_.check_expr(*expr.first, context_, std::nullopt);
-        auto member_type = services_.field_access(*base.type, expr.name, expr.range);
+        const auto &member_access = expr.as<ast::MemberAccessExpr>();
+        const auto base = services_.check_expr(*member_access.base, context_, std::nullopt);
+        auto member_type = services_.field_access(*base.type, member_access.member, expr.range);
         if (const auto place = place_of_expression(expr); place.has_value()) {
             member_type = services_.apply_flow_narrowing(member_type, *place, context_.flow_facts);
         }
@@ -1074,8 +1114,9 @@ class ExpressionChecker final {
     }
 
     [[nodiscard]] TypedValue check_index_access(const ast::ExprSyntax &expr) const {
-        const auto collection = services_.check_expr(*expr.first, context_, std::nullopt);
-        const auto index = services_.check_expr(*expr.second, context_, std::nullopt);
+        const auto &index_access = expr.as<ast::IndexAccessExpr>();
+        const auto collection = services_.check_expr(*index_access.base, context_, std::nullopt);
+        const auto index = services_.check_expr(*index_access.index, context_, std::nullopt);
         const auto effect = join_effects(collection.effect, index.effect);
 
         if (const auto *list = collection.type->get_if<types::ListT>(); list != nullptr) {
@@ -1083,7 +1124,7 @@ class ExpressionChecker final {
                 services_.typecheck_error_here(
                     error_codes::typecheck::InvalidIndexAccess,
                     messages::typecheck::ListIndexRequiresInt.format_with(),
-                    expr.second->range);
+                    index_access.index->range);
             }
 
             if (list->element != nullptr) {
@@ -1096,7 +1137,7 @@ class ExpressionChecker final {
         if (const auto *map = collection.type->get_if<types::MapT>(); map != nullptr) {
             if (map->key != nullptr) {
                 (void)services_.check_assignable(
-                    *index.type, *map->key, expr.second->range, "map index");
+                    *index.type, *map->key, index_access.index->range, "map index");
             }
 
             if (map->value != nullptr) {
