@@ -1,0 +1,110 @@
+name: VS Code Extension Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/vscode-extension.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "include/**"
+      - "scripts/package-vscode-vsix-release.sh"
+      - "src/**"
+      - "tools/vscode/**"
+      - "docs/reference/lsp-vscode-extension.zh.md"
+  pull_request:
+    paths:
+      - ".github/workflows/vscode-extension.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "include/**"
+      - "scripts/package-vscode-vsix-release.sh"
+      - "src/**"
+      - "tools/vscode/**"
+      - "docs/reference/lsp-vscode-extension.zh.md"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish platform VSIX artifacts to Marketplace"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: read
+
+jobs:
+  package-platform-vsix:
+    name: Package Platform VSIX (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.10.0 --activate
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes ninja-build
+
+      - name: Install macOS build tools
+        if: runner.os == 'macOS'
+        run: command -v ninja >/dev/null || brew install ninja
+
+      - name: Install extension dependencies
+        working-directory: tools/vscode
+        run: |
+          pnpm install --frozen-lockfile --ignore-scripts
+          test -x node_modules/.bin/vsce
+
+      - name: Package platform VSIX with release LSP
+        run: scripts/package-vscode-vsix-release.sh
+
+      - name: Verify Marketplace package inventory
+        working-directory: tools/vscode
+        run: pnpm run test:package-inventory
+
+      - name: Smoke install platform VSIX
+        working-directory: tools/vscode
+        run: pnpm run test:vsix-install
+
+      - name: Upload platform VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ahfl-language-${{ runner.os }}-${{ runner.arch }}-vsix
+          path: tools/vscode/dist/*.vsix
+          if-no-files-found: error
+
+      - name: Publish Marketplace platform VSIX
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == 'true' }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT secret is required when publish=true" >&2
+            exit 1
+          fi
+          vsix_path="$(ls tools/vscode/dist/ahfl-language-*.vsix | head -n 1)"
+          cd tools/vscode
+          pnpm run publish:vsix -- "${vsix_path#tools/vscode/}" --pat "$VSCE_PAT"

@@ -1,5 +1,10 @@
 .vscode/**
 .vscode-test/**
-src/**
 node_modules/**
+src/**
+test/**
+dist/**
+*.vsix
 tsconfig.json
+package-lock.json
+pnpm-lock.yaml

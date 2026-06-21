@@ -8,3 +8,9 @@ grammar/.antlr/
 log/
 .codex
 llm_config.json
+tools/vscode/node_modules/
+tools/vscode/.vscode-test/
+tools/vscode/out/
+tools/vscode/server/
+tools/vscode/dist/
+tools/vscode/*.vsix

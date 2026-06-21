@@ -3,36 +3,156 @@
   "displayName": "AHFL Language Support",
   "description": "Language support for AHFL (Agent Handoff Flow Language)",
   "version": "0.1.0",
+  "packageManager": "pnpm@10.10.0",
   "publisher": "ahfl",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zzzode/AHFL.git",
+    "directory": "tools/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/Zzzode/AHFL/issues"
+  },
+  "homepage": "https://github.com/Zzzode/AHFL#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages", "Snippets", "Linters"],
-  "activationEvents": ["onLanguage:ahfl"],
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Linters"
+  ],
+  "keywords": [
+    "ahfl",
+    "agent",
+    "dsl",
+    "lsp",
+    "language-server"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:ahfl",
+    "onCommand:ahfl.restartServer",
+    "onCommand:ahfl.formatDocument",
+    "onCommand:ahfl.showOutput"
+  ],
   "main": "./out/extension.js",
   "contributes": {
-    "languages": [{
-      "id": "ahfl",
-      "aliases": ["AHFL", "ahfl"],
-      "extensions": [".ahfl"],
-      "configuration": "./language-configuration.json"
-    }],
-    "grammars": [{
-      "language": "ahfl",
-      "scopeName": "source.ahfl",
-      "path": "./syntaxes/ahfl.tmLanguage.json"
-    }],
-    "snippets": [{
-      "language": "ahfl",
-      "path": "./snippets/ahfl.json"
-    }]
+    "languages": [
+      {
+        "id": "ahfl",
+        "aliases": [
+          "AHFL",
+          "ahfl"
+        ],
+        "extensions": [
+          ".ahfl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "ahfl",
+        "scopeName": "source.ahfl",
+        "path": "./syntaxes/ahfl.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "ahfl",
+        "path": "./snippets/ahfl.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "ahfl.restartServer",
+        "title": "AHFL: Restart Language Server"
+      },
+      {
+        "command": "ahfl.formatDocument",
+        "title": "AHFL: Format Document"
+      },
+      {
+        "command": "ahfl.showOutput",
+        "title": "AHFL: Show Language Server Output"
+      }
+    ],
+    "configuration": {
+      "title": "AHFL",
+      "properties": {
+        "ahfl.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the AHFL language server executable. Leave empty to use the bundled release server when available, falling back to ahfl-lsp on PATH."
+        },
+        "ahfl.serverArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional arguments passed to the AHFL language server."
+        },
+        "ahfl.hover.detailLevel": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "standard",
+            "debug"
+          ],
+          "default": "standard",
+          "description": "Controls how much information AHFL hover tooltips include."
+        },
+        "ahfl.hover.showSource": {
+          "type": "boolean",
+          "default": false,
+          "description": "Shows source file paths in debug hover details."
+        },
+        "ahfl.hover.maxFacts": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "description": "Maximum number of primary facts shown in standard AHFL hover tooltips."
+        },
+        "ahfl.hover.markupKind": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "markdown",
+            "plaintext"
+          ],
+          "default": "auto",
+          "description": "Controls the MarkupContent kind requested from the AHFL language server."
+        }
+      }
+    }
   },
   "scripts": {
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "check": "tsc --noEmit -p ./",
+    "bundle": "esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --outfile=out/extension.js --sourcemap",
+    "compile": "pnpm run check && pnpm run bundle",
+    "watch": "esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --outfile=out/extension.js --sourcemap --watch",
+    "test:extension": "pnpm run compile && node ./test/runTest.js",
+    "test:problems-transcript": "pnpm run compile && node ./test/problemsTranscript.js",
+    "test:package-inventory": "pnpm run compile && node ./test/packageInventory.js",
+    "test:vsix-install": "node ./test/installSmoke.js",
+    "test:hover": "pnpm run test:extension",
+    "prepackage": "node -e \"const fs = require('fs'); fs.rmSync('server', { recursive: true, force: true }); fs.mkdirSync('dist', { recursive: true });\"",
+    "package": "pnpm run compile && vsce package --no-dependencies --out dist/ahfl-language.vsix",
+    "package:target": "pnpm run compile && vsce package --no-dependencies",
+    "publish": "node -e \"throw new Error('Use scripts/package-vscode-vsix-release.sh from the repository root, then pnpm run publish:vsix -- <vsix> --pat <token>.')\"",
+    "publish:vsix": "vsce publish --packagePath"
   },
   "devDependencies": {
+    "@types/node": "^22.19.21",
     "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
     "typescript": "^5.3.0",
     "vscode-languageclient": "^9.0.1"
   }
