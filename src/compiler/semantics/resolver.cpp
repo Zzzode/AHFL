@@ -387,12 +387,12 @@ class ResolverPass final {
         }
 
         if (current_pass_ == Pass::ResolveReferences) {
-            // P2: generic type params (T in fn id<T>) are scoped type variables.
-            // Full generic scoping + instantiation is a deeper typechecker change;
-            // for now, fn declarations without generics resolve cleanly, and
-            // generic fns produce resolver "unknown type T" diagnostics that the
-            // test suite tolerates (those test cases are SKIP'd until P2 full
-            // semantic lands).
+            // P2: push generic type params into scope so T in fn id<T>(x: T)
+            // resolves as an opaque type variable, not "unknown type".
+            for (const auto &type_param : node.type_params) {
+                generic_type_params_.insert(type_param->name);
+            }
+
             for (const auto &type_param : node.type_params) {
                 for (const auto &bound : type_param->bounds) {
                     resolve_type(*bound);
@@ -429,6 +429,9 @@ class ResolverPass final {
                 resolve_block_types(*node.body);
                 resolve_block_exprs(*node.body);
             }
+
+            // P2: clear generic type param scope after fn signature + body.
+            generic_type_params_.clear();
         }
     }
 
@@ -452,6 +455,10 @@ class ResolverPass final {
     std::unordered_map<std::size_t, std::vector<SymbolId>> type_alias_dependencies_;
     std::optional<SymbolId> current_type_alias_;
     std::unordered_set<std::size_t> reported_alias_cycle_nodes_;
+    // P2: generic type param names currently in scope (fn signature). When
+    // resolving types inside a generic fn signature, these are opaque type
+    // variables — not references to resolve. Cleared after fn signature.
+    std::unordered_set<std::string> generic_type_params_;
 
     [[nodiscard]] std::string canonical_name_for(std::string_view local_name) const {
         if (!module_name_.has_value() || module_name_->empty()) {
@@ -858,6 +865,11 @@ class ResolverPass final {
     void resolve_type(const ast::TypeSyntax &type) {
         std::visit(Overloaded{
                        [&](const ast::NamedType &t) {
+                           // P2: if this name is a generic type param in scope,
+                           // skip resolution — it's an opaque type variable.
+                           if (generic_type_params_.count(t.name->spelling()) > 0) {
+                               return;
+                           }
                            const auto resolved = resolve_reference(
                                SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
 
