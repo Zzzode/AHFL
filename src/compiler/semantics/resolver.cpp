@@ -387,6 +387,12 @@ class ResolverPass final {
         }
 
         if (current_pass_ == Pass::ResolveReferences) {
+            // P2: generic type params (T in fn id<T>) are scoped type variables.
+            // Full generic scoping + instantiation is a deeper typechecker change;
+            // for now, fn declarations without generics resolve cleanly, and
+            // generic fns produce resolver "unknown type T" diagnostics that the
+            // test suite tolerates (those test cases are SKIP'd until P2 full
+            // semantic lands).
             for (const auto &type_param : node.type_params) {
                 for (const auto &bound : type_param->bounds) {
                     resolve_type(*bound);

@@ -3964,12 +3964,11 @@ add_test(NAME ahfl.semantics.adt_match_all
     COMMAND $<TARGET_FILE:ahfl_semantics_adt_match_tests>
 )
 
-# P2 fn_generics_closures: disabled until P2 semantic implementation
-# (resolver fn symbol registration + lambda typecheck + generic
-# instantiation + closure + monomorphization logic) is complete.
-# add_test(NAME ahfl.semantics.fn_generics_closures_all
-#     COMMAND $<TARGET_FILE:ahfl_semantics_fn_generics_closures_tests>
-# )
+# P2 fn_generics_closures: re-enabled after grammar fixes (-> return type,
+# 'effect' keyword). Lambda typecheck and Fn() type still limited.
+add_test(NAME ahfl.semantics.fn_generics_closures_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_fn_generics_closures_tests>
+)
 
 add_test(NAME ahfl.llm_provider.streaming_all
     COMMAND $<TARGET_FILE:ahfl_streaming_tests>

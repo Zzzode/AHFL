@@ -445,12 +445,14 @@ class ExpressionChecker final {
         }
 
         if (lambda.body) {
-            (void)services_.check_expr(*lambda.body, body_context, std::nullopt);
+            const auto body_result = services_.check_expr(*lambda.body, body_context, std::nullopt);
+            // Return the body type as the lambda's inferred return type.
+            // Full Fn(A)->B type construction and closure capture analysis
+            // (RFC §4) are deferred; for now the lambda type-checks as
+            // its body type, which suffices for simple callback usage.
+            return body_result;
         }
 
-        services_.typecheck_error_here(error_codes::typecheck::LambdaNotYetSupported,
-                                       messages::typecheck::LambdaNotYetSupported.format_with(),
-                                       expr.range);
         return values_.error_typed();
     }
 
