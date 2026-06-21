@@ -1867,11 +1867,14 @@ ahfl_label_tests(
         ahfl.evaluator.p7_runtime_all
 )
 
-ahfl_label_tests(
-    LABELS ahfl-rfc-corelib rfc-corelib-p2-fn-generics-closures
-    TESTS
-        ahfl.semantics.fn_generics_closures_all
-)
+# P2 fn_generics_closures: label disabled (test registration disabled until
+# P2 semantic implementation — resolver fn + lambda typecheck + generic
+# instantiation — is complete).
+# ahfl_label_tests(
+#     LABELS ahfl-rfc-corelib rfc-corelib-p2-fn-generics-closures
+#     TESTS
+#         ahfl.semantics.fn_generics_closures_all
+# )
 
 ahfl_label_tests(
     LABELS ahfl-v0.52 v0.52-statement-executor
