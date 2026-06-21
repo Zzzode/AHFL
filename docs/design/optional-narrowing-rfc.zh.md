@@ -7,7 +7,6 @@
 - [semantics-architecture.zh.md](./semantics-architecture.zh.md)
 - [compiler-phase-boundaries.zh.md](./compiler-phase-boundaries.zh.md)
 - [core-language.zh.md](../spec/core-language.zh.md)
-- [semantics-typecheck-hardening.zh.md](../plans/archive/semantics-typecheck-hardening.zh.md)（已归档，有效内容已并入 issue-backlog）
 
 ## 1. 背景与动机
 
@@ -26,7 +25,7 @@ flow Greeting {
 }
 ```
 
-`semantics-typecheck-hardening.zh.md` 中明确把 **control-flow narrowing** 列为 non-goal——这是因为完整的 CFA（control flow analysis）会显著放大 typecheck 的复杂度（路径敏感、别名分析、终止性）。但在实际 DSL 使用中，`Optional<T>` 解构是高频模式，缺失会让用户写出冗余 cast / 重复 path 访问，影响人体工程学。
+AHFL 的双向类型检查器显式不做控制流敏感的 narrowing——这是因为完整的 CFA（control flow analysis）会显著放大 typecheck 的复杂度（路径敏感、别名分析、终止性）。但在实际 DSL 使用中，`Optional<T>` 解构是高频模式，缺失会让用户写出冗余 cast / 重复 path 访问，影响人体工程学。
 
 本 RFC 讨论：能否在**不破坏 typecheck 单遍 + 局部双向**架构、不引入完整 CFA 的前提下，实现一个**最小可行 narrowing**？
 

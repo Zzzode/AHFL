@@ -90,8 +90,6 @@ Avoid:
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
 
-已完成或被取代的 plan 归档于 [plans/archive/](./plans/archive/)。
-
 ### Reference
 
 - [backend-capability-matrix.zh.md](./reference/backend-capability-matrix.zh.md)
