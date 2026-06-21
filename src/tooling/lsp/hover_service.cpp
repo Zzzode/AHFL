@@ -90,6 +90,9 @@ namespace {
         return "workflow";
     case SymbolKind::Function:
         return "function";
+    case SymbolKind::Trait:
+        // P3 (RFC §3.2.2): a trait's display category.
+        return "trait";
     }
     return {};
 }
@@ -345,6 +348,20 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
         }
         if (payload.signature.empty()) {
             payload.signature = "fn " + symbol.canonical_name;
+        }
+        break;
+    }
+    case SymbolKind::Trait: {
+        // P3 (RFC §3.2.2 / type-system §1.3): trait hover surfaces the trait
+        // signature + method/assoc-type counts.
+        payload.signature = "trait " + symbol.canonical_name;
+        if (environment != nullptr) {
+            if (const auto info = environment->get_trait(symbol.id); info.has_value()) {
+                add_primary_fact(payload, "Methods", std::to_string(info->get().methods.size()));
+                add_primary_fact(payload,
+                                 "Associated types",
+                                 std::to_string(info->get().assoc_types.size()));
+            }
         }
         break;
     }

@@ -45,6 +45,10 @@ enum class SymbolKind {
     Workflow,
     // P2 (RFC §3.2.2): a declared `fn` registers as a Function symbol.
     Function,
+    // P3 (RFC §3.2.2 / type-system §1.3): a declared `trait` registers as a
+    // Trait symbol in the Types namespace, so a trait name is usable both at
+    // bound positions (`T: Ord`) and at impl positions (`impl Ord for T`).
+    Trait,
 };
 
 enum class ReferenceKind {

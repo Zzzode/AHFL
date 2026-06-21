@@ -3970,6 +3970,12 @@ add_test(NAME ahfl.semantics.fn_generics_closures_all
     COMMAND $<TARGET_FILE:ahfl_semantics_fn_generics_closures_tests>
 )
 
+# P3 trait/impl: trait declaration + impl block typecheck, signature matching,
+# and the strict orphan rule (RFC §2.2) via a multi-module SourceGraph.
+add_test(NAME ahfl.semantics.trait_impl_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_trait_impl_tests>
+)
+
 add_test(NAME ahfl.llm_provider.streaming_all
     COMMAND $<TARGET_FILE:ahfl_streaming_tests>
 )

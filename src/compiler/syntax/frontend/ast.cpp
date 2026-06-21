@@ -880,6 +880,133 @@ class AstInvariantValidator final {
             }
             break;
         }
+        case NodeKind::TraitDecl: {
+            const auto &node = static_cast<const TraitDecl &>(declaration);
+            require(!node.name.empty(), node.range, "TraitDecl is missing name");
+            for (const auto &type_param : node.type_params) {
+                require(type_param != nullptr, node.range, "TraitDecl.type_params contains null");
+                if (type_param) {
+                    require(!type_param->name.empty(),
+                            type_param->range,
+                            "TypeParamSyntax is missing name");
+                    for (const auto &bound : type_param->bounds) {
+                        if (bound) {
+                            validate_type(*bound);
+                        }
+                    }
+                }
+            }
+            for (const auto &super_trait : node.super_traits) {
+                require(super_trait != nullptr,
+                        node.range,
+                        "TraitDecl.super_traits contains null");
+                if (super_trait) {
+                    validate_type(*super_trait);
+                }
+            }
+            for (const auto &item : node.items) {
+                require(item != nullptr, node.range, "TraitDecl.items contains null");
+                if (!item) {
+                    continue;
+                }
+                require(!item->name.empty(), item->range, "TraitItemSyntax is missing name");
+                if (item->kind == TraitItemKind::Fn) {
+                    for (const auto &param : item->params) {
+                        require(param != nullptr, item->range, "trait fn item params contains null");
+                        if (param) {
+                            require(!param->name.empty(),
+                                    param->range,
+                                    "ParamDeclSyntax is missing name");
+                            require(param->type != nullptr,
+                                    param->range,
+                                    "ParamDeclSyntax is missing type");
+                            if (param->type) {
+                                validate_type(*param->type);
+                            }
+                        }
+                    }
+                    if (item->return_type) {
+                        validate_type(*item->return_type);
+                    }
+                    if (item->effect_clause) {
+                        validate_effect_clause(*item->effect_clause);
+                    }
+                    if (item->where_clause) {
+                        validate_where_clause(*item->where_clause);
+                    }
+                } else if (item->kind == TraitItemKind::AssocType) {
+                    require(item->assoc != nullptr,
+                            item->range,
+                            "TraitItemSyntax assoc type is missing");
+                    if (item->assoc) {
+                        require(!item->assoc->name.empty(),
+                                item->assoc->range,
+                                "assoc type is missing name");
+                        for (const auto &bound : item->assoc->bounds) {
+                            if (bound) {
+                                validate_type(*bound);
+                            }
+                        }
+                        if (item->assoc->default_type) {
+                            validate_type(*item->assoc->default_type);
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        case NodeKind::ImplDecl: {
+            const auto &node = static_cast<const ImplDecl &>(declaration);
+            require(node.target_type != nullptr, node.range, "ImplDecl is missing target_type");
+            if (node.target_type) {
+                validate_type(*node.target_type);
+            }
+            for (const auto &type_param : node.type_params) {
+                require(type_param != nullptr, node.range, "ImplDecl.type_params contains null");
+                if (type_param) {
+                    require(!type_param->name.empty(),
+                            type_param->range,
+                            "TypeParamSyntax is missing name");
+                    for (const auto &bound : type_param->bounds) {
+                        if (bound) {
+                            validate_type(*bound);
+                        }
+                    }
+                }
+            }
+            if (node.trait_ref) {
+                validate_type(*node.trait_ref);
+            }
+            if (node.where_clause) {
+                validate_where_clause(*node.where_clause);
+            }
+            for (const auto &method : node.methods) {
+                require(method != nullptr, node.range, "ImplDecl.methods contains null");
+                if (method) {
+                    require(method->body != nullptr,
+                            method->range,
+                            "impl method definition must carry a body");
+                    require(!method->name.empty(), method->range, "FnDecl is missing name");
+                    if (method->return_type) {
+                        validate_type(*method->return_type);
+                    }
+                    if (method->body) {
+                        validate_block(*method->body);
+                    }
+                }
+            }
+            for (const auto &assoc : node.assoc_items) {
+                require(assoc != nullptr, node.range, "ImplDecl.assoc_items contains null");
+                if (assoc) {
+                    require(!assoc->name.empty(), assoc->range, "assoc item is missing name");
+                    require(assoc->type != nullptr, assoc->range, "assoc item is missing type");
+                    if (assoc->type) {
+                        validate_type(*assoc->type);
+                    }
+                }
+            }
+            break;
+        }
         }
     }
 
@@ -956,6 +1083,10 @@ std::string_view to_string(NodeKind kind) noexcept {
         return "WorkflowDecl";
     case NodeKind::FnDecl:
         return "FnDecl";
+    case NodeKind::TraitDecl:
+        return "TraitDecl";
+    case NodeKind::ImplDecl:
+        return "ImplDecl";
     }
 
     return "Unknown";
@@ -1289,6 +1420,55 @@ std::string FnDecl::headline() const {
 }
 
 void RecursiveVisitor::visit(FnDecl &) {}
+
+TraitDecl::TraitDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::TraitDecl, range), name(std::move(name)) {}
+
+void TraitDecl::accept(Visitor &visitor) {
+    visitor.visit(*this);
+}
+
+std::string TraitDecl::headline() const {
+    std::ostringstream builder;
+    builder << "trait " << name;
+    if (!type_params.empty()) {
+        builder << "<" << type_params.size() << " type param";
+        builder << (type_params.size() == 1 ? "" : "s") << ">";
+    }
+    builder << " (" << items.size() << " item" << (items.size() == 1 ? "" : "s") << ")";
+    return builder.str();
+}
+
+ImplDecl::ImplDecl(ahfl::SourceRange range) : Decl(NodeKind::ImplDecl, range) {}
+
+void ImplDecl::accept(Visitor &visitor) {
+    visitor.visit(*this);
+}
+
+std::string ImplDecl::headline() const {
+    std::ostringstream builder;
+    builder << "impl";
+    if (!type_params.empty()) {
+        builder << "<" << type_params.size() << " type param";
+        builder << (type_params.size() == 1 ? "" : "s") << ">";
+    }
+    if (trait_ref) {
+        builder << " " << trait_ref->spelling() << " for";
+    }
+    if (target_type) {
+        builder << " " << target_type->spelling();
+    }
+    builder << " (" << methods.size() << " method" << (methods.size() == 1 ? "" : "s");
+    if (!assoc_items.empty()) {
+        builder << ", " << assoc_items.size() << " assoc type"
+                << (assoc_items.size() == 1 ? "" : "s");
+    }
+    builder << ")";
+    return builder.str();
+}
+
+void RecursiveVisitor::visit(TraitDecl &) {}
+void RecursiveVisitor::visit(ImplDecl &) {}
 
 std::string_view to_string(EffectClauseKind kind) noexcept {
     switch (kind) {

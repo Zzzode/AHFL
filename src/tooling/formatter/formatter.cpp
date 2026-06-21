@@ -155,11 +155,153 @@ class AstFormatter {
             format_module(*m);
         } else if (auto *f = dynamic_cast<const ahfl::ast::FnDecl *>(&decl)) {
             format_fn(*f);
+        } else if (auto *t = dynamic_cast<const ahfl::ast::TraitDecl *>(&decl)) {
+            format_trait(*t);
+        } else if (auto *i = dynamic_cast<const ahfl::ast::ImplDecl *>(&decl)) {
+            format_impl(*i);
         } else {
             // For any other decl type, emit its headline as a comment
             write("// " + decl.headline());
             newline();
         }
+    }
+
+    // Render the `<T: Bound, U>` generic parameter list (shared by fn / trait /
+    // impl). Returns an empty string when there are no type params.
+    std::string format_type_params(const std::vector<ahfl::Owned<ahfl::ast::TypeParamSyntax>> &params) {
+        if (params.empty()) {
+            return {};
+        }
+        std::ostringstream out;
+        out << "<";
+        for (std::size_t index = 0; index < params.size(); ++index) {
+            if (index != 0) {
+                out << ", ";
+            }
+            const auto &type_param = *params[index];
+            out << type_param.name;
+            if (!type_param.bounds.empty()) {
+                out << ": ";
+                for (std::size_t bound_index = 0; bound_index < type_param.bounds.size();
+                     ++bound_index) {
+                    if (bound_index != 0) {
+                        out << " + ";
+                    }
+                    if (type_param.bounds[bound_index]) {
+                        out << type_param.bounds[bound_index]->spelling();
+                    }
+                }
+            }
+        }
+        out << ">";
+        return out.str();
+    }
+
+    void format_trait(const ahfl::ast::TraitDecl &t) {
+        write("trait " + t.name + format_type_params(t.type_params));
+        if (!t.super_traits.empty()) {
+            write(": ");
+            for (std::size_t index = 0; index < t.super_traits.size(); ++index) {
+                if (index != 0) {
+                    write(" + ");
+                }
+                if (t.super_traits[index]) {
+                    write(t.super_traits[index]->spelling());
+                }
+            }
+        }
+        write(" {");
+        newline();
+        indent_++;
+        for (const auto &item : t.items) {
+            write(make_indent(indent_, opts_));
+            if (item->kind == ahfl::ast::TraitItemKind::Fn) {
+                write("fn " + item->name + format_type_params(item->type_params) + "(");
+                bool first = true;
+                for (const auto &param : item->params) {
+                    if (!first) {
+                        out_ << ", ";
+                    }
+                    out_ << param->name << ": " << param->type->spelling();
+                    first = false;
+                }
+                out_ << ")";
+                if (item->return_type) {
+                    out_ << " -> " << item->return_type->spelling();
+                }
+                out_ << ";";
+            } else {
+                const auto &assoc = *item->assoc;
+                out_ << "type " << assoc.name;
+                if (!assoc.bounds.empty()) {
+                    out_ << ": ";
+                    for (std::size_t index = 0; index < assoc.bounds.size(); ++index) {
+                        if (index != 0) {
+                            out_ << " + ";
+                        }
+                        if (assoc.bounds[index]) {
+                            out_ << assoc.bounds[index]->spelling();
+                        }
+                    }
+                }
+                if (assoc.default_type) {
+                    out_ << " = " << assoc.default_type->spelling();
+                }
+                out_ << ";";
+            }
+            newline();
+        }
+        indent_--;
+        write("}");
+        newline();
+    }
+
+    void format_impl(const ahfl::ast::ImplDecl &i) {
+        write("impl" + format_type_params(i.type_params) + " ");
+        if (i.trait_ref) {
+            write(i.trait_ref->spelling() + " for ");
+        }
+        if (i.target_type) {
+            write(i.target_type->spelling());
+        }
+        write(" {");
+        newline();
+        indent_++;
+        for (const auto &method : i.methods) {
+            write(make_indent(indent_, opts_));
+            out_ << "fn " << method->name << format_type_params(method->type_params) << "(";
+            bool first = true;
+            for (const auto &param : method->params) {
+                if (!first) {
+                    out_ << ", ";
+                }
+                out_ << param->name << ": " << param->type->spelling();
+                first = false;
+            }
+            out_ << ")";
+            if (method->return_type) {
+                out_ << " -> " << method->return_type->spelling();
+            }
+            if (method->effect_clause) {
+                out_ << " ";
+                format_effect_clause(*method->effect_clause);
+            }
+            if (method->body) {
+                out_ << " ";
+                format_block(*method->body);
+            } else {
+                out_ << ";";
+                newline();
+            }
+        }
+        for (const auto &assoc : i.assoc_items) {
+            write(make_indent(indent_, opts_));
+            out_ << "type " << assoc->name << " = " << assoc->type->spelling() << ";";
+            newline();
+        }
+        indent_--;
+        write("}");
+        newline();
     }
 
     void format_fn(const ahfl::ast::FnDecl &f) {

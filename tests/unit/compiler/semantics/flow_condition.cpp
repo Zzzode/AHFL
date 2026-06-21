@@ -885,3 +885,224 @@ flow for NarrowAgent {
     CHECK(facts.when_true.has_fact(level_place, ahfl::TypeFactKind::IsVariant));
     CHECK(facts.when_true.has_variant_fact(level_place, "Priority", "Low"));
 }
+
+// ===========================================================================
+// P3a (RFC corelib-rfc.zh.md §3.2.2 / type-system §1.3 / §1.4)
+// trait + impl: grammar / AST / parser surface.
+//
+// P3a is purely additive — it only needs the AST surface to parse and the
+// resolver/typecheck passes to walk it without crashing. Symbol registration,
+// trait resolution, coherence, signature matching and associated-type
+// defaulting land in P3b. These tests therefore assert only the surface
+// P3a commits to:
+//
+//   - a trait with a super-trait, generic params, a method signature and an
+//     associated type parses into a TraitDecl with the expected item shape;
+//   - an inherent impl and a trait impl parse into ImplDecl nodes with the
+//     expected method / assoc-item counts and the inherent-vs-trait split;
+//   - the resolver and typechecker treat trait/impl declarations as no-ops
+//     (P3a) so a program containing them resolves and typechecks clean.
+// ===========================================================================
+
+namespace {
+
+[[nodiscard]] const ahfl::ast::TraitDecl *
+find_trait_decl(const ahfl::ast::Program &program, std::string_view name) {
+    for (const auto &decl : program.declarations) {
+        if (decl->kind != ahfl::ast::NodeKind::TraitDecl) {
+            continue;
+        }
+        const auto *trait = static_cast<const ahfl::ast::TraitDecl *>(decl.get());
+        if (trait->name == name) {
+            return trait;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] std::size_t count_impl_decls(const ahfl::ast::Program &program) {
+    std::size_t count = 0;
+    for (const auto &decl : program.declarations) {
+        if (decl->kind == ahfl::ast::NodeKind::ImplDecl) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+[[nodiscard]] const ahfl::ast::ImplDecl *
+first_impl_decl(const ahfl::ast::Program &program) {
+    for (const auto &decl : program.declarations) {
+        if (decl->kind == ahfl::ast::NodeKind::ImplDecl) {
+            return static_cast<const ahfl::ast::ImplDecl *>(decl.get());
+        }
+    }
+    return nullptr;
+}
+
+// Parse-only helper: surfaces the first parse diagnostic via MESSAGE so a
+// parse failure is actionable rather than a silent boolean. The ParseResult
+// is returned by value so the caller owns the program for the test's lifetime.
+[[nodiscard]] ahfl::ParseResult parse_only(std::string_view filename,
+                                           const std::string &source) {
+    const ahfl::Frontend frontend;
+    auto parse_result = frontend.parse_text(std::string(filename), source);
+    if (parse_result.has_errors()) {
+        MESSAGE("parse errors detected");
+        for (const auto &entry : parse_result.diagnostics.entries()) {
+            MESSAGE("  parse: " << entry.message);
+        }
+    }
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+    return parse_result;
+}
+
+} // namespace
+
+TEST_CASE("Trait declaration parses with super-trait, method and assoc type") {
+    const std::string source = R"AHFL(
+trait Ord: Eq {
+    fn compare(other: Self) -> Int;
+    type Item;
+}
+)AHFL";
+
+    const auto parse_result = parse_only("trait_ord.ahfl", source);
+    const auto *program = parse_result.program.get();
+    const auto *trait = find_trait_decl(*program, "Ord");
+    REQUIRE(trait != nullptr);
+    CHECK(trait->name == "Ord");
+    CHECK(trait->super_traits.size() == 1);
+    CHECK(trait->super_traits[0]->spelling() == "Eq");
+    CHECK(trait->items.size() == 2);
+
+    // Item ordering follows source order: method first, assoc type second.
+    CHECK(trait->items[0]->kind == ahfl::ast::TraitItemKind::Fn);
+    CHECK(trait->items[0]->name == "compare");
+    REQUIRE_FALSE(trait->items[0]->params.empty());
+    CHECK(trait->items[0]->params[0]->name == "other");
+    CHECK(trait->items[0]->return_type->spelling() == "Int");
+
+    CHECK(trait->items[1]->kind == ahfl::ast::TraitItemKind::AssocType);
+    REQUIRE(trait->items[1]->assoc != nullptr);
+    CHECK(trait->items[1]->assoc->name == "Item");
+}
+
+TEST_CASE("Generic trait parses type params and default assoc type") {
+    const std::string source = R"AHFL(
+trait Foldable<T> {
+    fn fold<U>(acc: U, item: T) -> U;
+    type Element = T;
+}
+)AHFL";
+
+    const auto parse_result = parse_only("trait_foldable.ahfl", source);
+    const auto *program = parse_result.program.get();
+    const auto *trait = find_trait_decl(*program, "Foldable");
+    REQUIRE(trait != nullptr);
+    REQUIRE(trait->type_params.size() == 1);
+    CHECK(trait->type_params[0]->name == "T");
+
+    REQUIRE(trait->items.size() == 2);
+    CHECK(trait->items[0]->kind == ahfl::ast::TraitItemKind::Fn);
+    CHECK(trait->items[0]->name == "fold");
+    REQUIRE(trait->items[0]->type_params.size() == 1);
+    CHECK(trait->items[0]->type_params[0]->name == "U");
+
+    CHECK(trait->items[1]->kind == ahfl::ast::TraitItemKind::AssocType);
+    REQUIRE(trait->items[1]->assoc != nullptr);
+    CHECK(trait->items[1]->assoc->name == "Element");
+    CHECK(trait->items[1]->assoc->default_type->spelling() == "T");
+}
+
+TEST_CASE("Inherent impl and trait impl parse with methods and assoc items") {
+    const std::string source = R"AHFL(
+struct Pair {
+    a: Int;
+    b: Int;
+}
+
+impl Pair {
+    fn sum() -> Int {
+        return 0;
+    }
+}
+
+impl<T> Display for List<T> {
+    fn fmt() -> String {
+        return "";
+    }
+    type Output = T;
+}
+)AHFL";
+
+    const auto parse_result = parse_only("impl_pair.ahfl", source);
+    const auto *program = parse_result.program.get();
+    CHECK(count_impl_decls(*program) == 2);
+
+    // First impl: inherent (no trait_ref).
+    const auto *inherent = first_impl_decl(*program);
+    REQUIRE(inherent != nullptr);
+    CHECK(inherent->trait_ref == nullptr);
+    CHECK(inherent->target_type->spelling() == "Pair");
+    CHECK(inherent->methods.size() == 1);
+    CHECK(inherent->methods[0]->name == "sum");
+    REQUIRE(inherent->methods[0]->body != nullptr);
+    CHECK(inherent->assoc_items.empty());
+
+    // Second impl: trait impl (trait_ref present, generic params, assoc item).
+    const ahfl::ast::ImplDecl *trait_impl = nullptr;
+    for (const auto &decl : program->declarations) {
+        if (decl->kind != ahfl::ast::NodeKind::ImplDecl) {
+            continue;
+        }
+        const auto *impl = static_cast<const ahfl::ast::ImplDecl *>(decl.get());
+        if (impl->trait_ref != nullptr) {
+            trait_impl = impl;
+            break;
+        }
+    }
+    REQUIRE(trait_impl != nullptr);
+    REQUIRE(trait_impl->type_params.size() == 1);
+    CHECK(trait_impl->type_params[0]->name == "T");
+    CHECK(trait_impl->trait_ref->spelling() == "Display");
+    CHECK(trait_impl->target_type->spelling() == "List<T>");
+    CHECK(trait_impl->methods.size() == 1);
+    CHECK(trait_impl->methods[0]->name == "fmt");
+    REQUIRE(trait_impl->assoc_items.size() == 1);
+    CHECK(trait_impl->assoc_items[0]->name == "Output");
+    CHECK(trait_impl->assoc_items[0]->type->spelling() == "T");
+}
+
+TEST_CASE("Trait and impl declarations resolve and typecheck as no-ops (P3a)") {
+    const std::string source = R"AHFL(
+trait Describe {
+    fn describe() -> String;
+}
+
+struct Widget {
+    id: Int;
+}
+
+impl Describe for Widget {
+    fn describe() -> String {
+        return "widget";
+    }
+}
+)AHFL";
+
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text("trait_describe.ahfl", source);
+    REQUIRE_FALSE(parse_result.has_errors());
+    REQUIRE(parse_result.program != nullptr);
+
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    REQUIRE_FALSE(resolve_result.has_errors());
+
+    const ahfl::TypeChecker type_checker;
+    const auto typecheck_result =
+        type_checker.check(*parse_result.program, resolve_result);
+    CHECK_FALSE(typecheck_result.has_errors());
+}

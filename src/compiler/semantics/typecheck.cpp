@@ -501,6 +501,7 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     case SymbolKind::Const:
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
+    case SymbolKind::Trait:
         break;
     }
     return TypedCallTargetKind::None;
@@ -947,6 +948,230 @@ void TypeCheckPass::record_fn_call_site(SymbolId fn_symbol,
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {
     auto resolver = make_type_resolver();
     return resolver.resolve_type_alias(id, use_range);
+}
+
+// P3 (RFC §3.2.2 / type-system §1.4 / §2.2) impl-coherence helpers.
+
+std::optional<SymbolId> TypeCheckPass::nominal_symbol_of(const Type &type) const {
+    // RFC §1.4 TypeRef must be a nominal struct/enum (P3 does not impl compound
+    // types). Both nominal alternatives carry the defining SymbolId; compound
+    // and primitive alternatives return nullopt, which the caller surfaces as
+    // a non-impl-able target.
+    if (const auto *structure = type.get_if<types::StructT>(); structure != nullptr) {
+        return structure->symbol;
+    }
+    if (const auto *enumeration = type.get_if<types::EnumT>(); enumeration != nullptr) {
+        return enumeration->symbol;
+    }
+    return std::nullopt;
+}
+
+std::string TypeCheckPass::nominal_describe(const Type &type) const {
+    return type.describe();
+}
+
+std::string TypeCheckPass::module_name_of(std::optional<SourceId> source_id) const {
+    // P3 coherence: resolve an impl's defining module from its source-id via
+    // the SourceGraph. Single-program mode (no graph) has no per-source module,
+    // so the impl is in the anonymous top-level program (empty string) — same
+    // convention the resolver uses for unqualified local names.
+    if (!source_id.has_value() || graph_ == nullptr) {
+        return {};
+    }
+    for (const auto &source : graph_->sources) {
+        if (source.id == *source_id) {
+            return source.module_name;
+        }
+    }
+    return {};
+}
+
+void TypeCheckPass::check_impl_coherence(const ImplTypeInfo &impl) {
+    // RFC §2.2 strict orphan rule: an `impl Trait for Type` must live in the
+    // module that defines Trait or the module that defines Type. Only enforced
+    // for trait impls (inherent impls are always co-located with their type by
+    // construction — the type's module owns them). Skipped when either side
+    // failed resolution: those errors are reported at the resolution step.
+    if (impl.is_inherent) {
+        return;
+    }
+    if (!impl.trait_symbol.has_value() || !impl.target_symbol.has_value()) {
+        return;
+    }
+    // P3: skip orphan check when the impl is in a root/anonymous module (no
+    // explicit module declaration). Single-file programs have no cross-module
+    // coherence risk. The orphan rule (RFC §2.2) is designed for multi-module
+    // trees where an impl could be written far from both the type and trait.
+    if (impl.module_name.empty() || impl.module_name == "<root>") {
+        return;
+    }
+
+    const auto trait_module = module_of_symbol(*impl.trait_symbol);
+    const auto target_module = module_of_symbol(*impl.target_symbol);
+    const auto &impl_module = impl.module_name;
+
+    if (impl_module == trait_module || impl_module == target_module) {
+        return;
+    }
+
+    const auto trait_name = impl.trait_name;
+    const auto target_name = nominal_describe(*impl.target_type);
+    std::vector<Diagnostic::Related> notes;
+    notes.push_back(Diagnostic::Related{
+        .message = messages::typecheck::OrphanImplHint.format_with(target_name, trait_name),
+        .range = impl.declaration_range,
+    });
+    typecheck_error_here(error_codes::typecheck::OrphanImpl,
+                         messages::typecheck::OrphanImpl.format_with(
+                             trait_name, target_name, impl_module.empty() ? "<root>" : impl_module),
+                         impl.declaration_range,
+                         std::move(notes));
+}
+
+void TypeCheckPass::check_trait_impl_signature_match(const ImplTypeInfo &impl) {
+    // RFC §2.1: every trait method must be implemented with a structurally
+    // equal signature, every impl method must name a real trait method, every
+    // trait assoc type must be provided. Super-trait coverage (RFC §2.4) is
+    // checked here too: if the trait declares super-traits, the target must
+    // have an impl for each (we cannot yet resolve "the target impls S" in
+    // full generality — P3 only checks that an impl exists with matching
+    // (trait, target) keys).
+    const auto trait_info = environment().get_trait(*impl.trait_symbol);
+    if (!trait_info.has_value()) {
+        return;
+    }
+    const auto &trait = trait_info->get();
+
+    // Trait method -> impl method.
+    for (const auto &trait_method : trait.methods) {
+        const auto impl_method = find_impl_method(impl, trait_method.name);
+        if (!impl_method.has_value()) {
+            typecheck_error_here(
+                error_codes::typecheck::TraitMethodNotFound,
+                messages::typecheck::TraitMethodNotFound.format_with(trait.canonical_name,
+                                                                     trait_method.name),
+                impl.declaration_range);
+            continue;
+        }
+        if (!signatures_match(trait_method, impl_method->get())) {
+            typecheck_error_here(
+                error_codes::typecheck::TraitMethodSignatureMismatch,
+                messages::typecheck::TraitMethodSignatureMismatch.format_with(
+                    trait_method.name,
+                    render_param_types(trait_method.params),
+                    render_param_types(impl_method->get().params)),
+                impl_method->get().declaration_range);
+        }
+    }
+
+    // Impl method -> trait method (reject stray methods).
+    for (const auto &impl_method : impl.methods) {
+        if (!trait.find_method(impl_method.name).has_value()) {
+            typecheck_error_here(
+                error_codes::typecheck::TraitMethodNotFound,
+                messages::typecheck::TraitMethodNotInTrait.format_with(impl_method.name,
+                                                                       trait.canonical_name),
+                impl_method.declaration_range);
+        }
+    }
+
+    // Trait assoc type -> impl assoc item.
+    for (const auto &assoc : trait.assoc_types) {
+        bool found = false;
+        for (const auto &impl_assoc : impl.assoc_items) {
+            if (impl_assoc.name == assoc.name) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            typecheck_error_here(
+                error_codes::typecheck::TraitAssocTypeNotFound,
+                messages::typecheck::TraitAssocTypeNotFound.format_with(trait.canonical_name,
+                                                                        assoc.name),
+                impl.declaration_range);
+        }
+    }
+
+    // Super-trait coverage (RFC §2.4). For each super-trait S of T, require an
+    // impl of S for the same target. P3 checks by (trait, target) symbol-keyed
+    // lookup over the impl table — full type-argument unification is deferred.
+    for (const auto super_id : trait.super_traits) {
+        if (!impl_target_implements(*impl.target_symbol, super_id)) {
+            const auto super_info = environment().get_trait(super_id);
+            const auto super_name =
+                super_info.has_value() ? super_info->get().canonical_name : std::string{"<unknown>"};
+            typecheck_error_here(
+                error_codes::typecheck::MissingSuperTrait,
+                messages::typecheck::MissingSuperTrait.format_with(
+                    trait.canonical_name, super_name, nominal_describe(*impl.target_type)),
+                impl.declaration_range);
+        }
+    }
+}
+
+std::string TypeCheckPass::module_of_symbol(SymbolId id) const {
+    const auto symbol = symbol_of(id);
+    return symbol.has_value() ? symbol->get().module_name : std::string{};
+}
+
+MaybeCRef<ImplMethodInfo> TypeCheckPass::find_impl_method(const ImplTypeInfo &impl,
+                                                          std::string_view name) const {
+    for (const auto &method : impl.methods) {
+        if (method.name == name) {
+            return std::cref(method);
+        }
+    }
+    return std::nullopt;
+}
+
+bool TypeCheckPass::signatures_match(const TraitMethodInfo &trait_method,
+                                     const ImplMethodInfo &impl_method) const {
+    // P3b structural match: same arity + same per-position param type + same
+    // return type + same effect kind. Type-param names and where-clause
+    // constraints are not compared here (Self substitution + generic
+    // unification are P3c). The Type* comparisons are pointer-equal because
+    // the type resolver hash-conses (RFC §3.2 + types.hpp TypePtr interning).
+    if (trait_method.params.size() != impl_method.params.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < trait_method.params.size(); ++i) {
+        if (trait_method.params[i].type != impl_method.params[i].type) {
+            return false;
+        }
+    }
+    if (trait_method.return_type != impl_method.return_type) {
+        return false;
+    }
+    return trait_method.effect.kind == impl_method.effect.kind;
+}
+
+std::string TypeCheckPass::render_param_types(const std::vector<ParamTypeInfo> &params) const {
+    std::string rendered;
+    for (std::size_t i = 0; i < params.size(); ++i) {
+        if (i != 0) {
+            rendered += ", ";
+        }
+        rendered += params[i].type ? params[i].type->describe() : std::string{"<error>"};
+    }
+    return rendered;
+}
+
+bool TypeCheckPass::impl_target_implements(SymbolId target_id, SymbolId trait_id) const {
+    // RFC §2.4 super-trait coverage: scan the impl table for a trait impl of
+    // `trait_id` whose target nominal symbol equals `target_id`. Returns true
+    // for an exact-key match; generic-argument unification is deferred.
+    for (const auto &[index, impl] : environment().impls()) {
+        (void)index;
+        if (impl.is_inherent) {
+            continue;
+        }
+        if (impl.trait_symbol.has_value() && *impl.trait_symbol == trait_id &&
+            impl.target_symbol.has_value() && *impl.target_symbol == target_id) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed) {

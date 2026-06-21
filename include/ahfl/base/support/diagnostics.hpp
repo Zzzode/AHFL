@@ -229,6 +229,28 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> LambdaNotYetSupported{
 // a parsed fn body is not silently skipped before the fn pass exists.
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> FnDeclNotYetSupported{
     "FN_DECL_NOT_YET_SUPPORTED"};
+// P3 (RFC §3.2.2 / type-system §2): trait resolution + coherence diagnostics.
+// Surfaced by the P3b trait/impl typecheck pass: orphan rule, impl-trait
+// signature matching, super-trait coverage, and (later) method-call resolution.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> OrphanImpl{"ORPHAN_IMPL"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> DuplicateTraitImpl{
+    "DUPLICATE_TRAIT_IMPL"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTraitUnknown{"IMPL_TRAIT_UNKNOWN"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ImplTargetUnknown{
+    "IMPL_TARGET_UNKNOWN"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodNotFound{
+    "TRAIT_METHOD_NOT_FOUND"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitMethodSignatureMismatch{
+    "TRAIT_METHOD_SIGNATURE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitAssocTypeNotFound{
+    "TRAIT_ASSOC_TYPE_NOT_FOUND"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MissingSuperTrait{
+    "MISSING_SUPER_TRAIT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoTraitImpl{"NO_TRAIT_IMPL"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AmbiguousTraitImpl{
+    "AMBIGUOUS_TRAIT_IMPL"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitBoundNotSatisfied{
+    "TRAIT_BOUND_NOT_SATISFIED"};
 } // namespace typecheck
 
 namespace validation {
@@ -393,6 +415,35 @@ inline constexpr MessageTemplate ConstDependencyCycle{
     "const dependency cycle detected involving '{}'"};
 inline constexpr MessageTemplate ConstDependencyCycleParticipant{
     "const declaration participates in the dependency cycle"};
+// P3 (RFC §3.2.2 / type-system §2) trait / impl diagnostics. Mirrors the
+// diagnostic catalogue in type-system.zh.md §2.1 / §2.2 (orphan rule).
+inline constexpr MessageTemplate OrphanImpl{
+    "impl '{}' for '{}' is an orphan: neither the type nor the trait is defined in module '{}'"};
+inline constexpr MessageTemplate OrphanImplHint{
+    "move this impl to the module that defines '{}' or '{}'"};
+inline constexpr MessageTemplate DuplicateTraitImpl{
+    "impl '{}' for '{}' duplicates an earlier impl of the same trait and type"};
+inline constexpr MessageTemplate ImplTraitUnknown{"impl references unknown trait '{}'"};
+inline constexpr MessageTemplate ImplTargetUnknown{"impl targets unknown type '{}'"};
+inline constexpr MessageTemplate ImplTargetMustBeNominal{
+    "impl target must be a nominal type (struct/enum), got {}"};
+inline constexpr MessageTemplate TraitMethodNotFound{
+    "trait '{}' declares method '{}' but impl does not provide it"};
+inline constexpr MessageTemplate TraitMethodNotInTrait{
+    "impl provides method '{}' which is not declared by trait '{}'"};
+inline constexpr MessageTemplate TraitMethodSignatureMismatch{
+    "method '{}' signature mismatch: trait expects ({}), impl provides ({})"};
+inline constexpr MessageTemplate TraitAssocTypeNotFound{
+    "trait '{}' declares associated type '{}' but impl does not provide it"};
+inline constexpr MessageTemplate MissingSuperTrait{
+    "trait '{}' requires super-trait '{}' but no impl is found for '{}'"};
+inline constexpr MessageTemplate NoTraitImpl{"type '{}' does not implement trait '{}'"};
+inline constexpr MessageTemplate AmbiguousTraitImpl{
+    "multiple impls of trait '{}' for '{}' found; add a where-clause to disambiguate"};
+inline constexpr MessageTemplate TraitBoundNotSatisfied{
+    "trait bound not satisfied: '{}' does not implement '{}'"};
+inline constexpr MessageTemplate TraitSelfNotYetSupported{
+    "'Self' type in trait bounds is not yet supported (P3b only resolves named trait/type references)"};
 } // namespace typecheck
 
 namespace validation {

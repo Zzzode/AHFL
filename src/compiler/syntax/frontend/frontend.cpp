@@ -556,6 +556,14 @@ class ProgramBuilder {
             return build_fn_decl(fn_decl->get());
         }
 
+        if (const auto trait_decl = borrow(context.traitDecl())) {
+            return build_trait_decl(trait_decl->get());
+        }
+
+        if (const auto impl_decl = borrow(context.implDecl())) {
+            return build_impl_decl(impl_decl->get());
+        }
+
         throw std::logic_error(
             "top-level declaration did not match any supported AHFL declaration kind");
     }
@@ -596,6 +604,178 @@ class ProgramBuilder {
         }
 
         return declaration;
+    }
+
+    // ------------------------------------------------------------------
+    // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait & impl builders
+    // ------------------------------------------------------------------
+
+    [[nodiscard]] Owned<ast::Decl> build_trait_decl(AHFLParser::TraitDeclContext &context) const {
+        auto declaration = make_decl<ast::TraitDecl>(
+            source_,
+            context,
+            text_of(require(context.IDENT(), "trait name is missing")));
+
+        if (const auto type_params = borrow(context.typeParams())) {
+            declaration->type_params = build_type_params(type_params->get());
+        }
+
+        // traitDecl: 'trait' IDENT typeParams? (':' typeBoundList)? '{' traitItem* '}'
+        // The optional super-trait bound list carries each bound as a direct
+        // type_ child (same shape as a type-param bound list).
+        if (const auto bound_list = borrow(context.typeBoundList())) {
+            for (auto *bound_context : bound_list->get().type_()) {
+                declaration->super_traits.push_back(
+                    build_type_syntax(require(bound_context, "super-trait bound is missing")));
+            }
+        }
+
+        for (auto *item_context : context.traitItem()) {
+            declaration->items.push_back(
+                build_trait_item(require(item_context, "trait item is missing")));
+        }
+
+        return declaration;
+    }
+
+    [[nodiscard]] Owned<ast::TraitItemSyntax>
+    build_trait_item(AHFLParser::TraitItemContext &context) const {
+        auto item = make_owned<ast::TraitItemSyntax>();
+        item->range = context_range(context, source_);
+
+        // traitItem: traitFnItem | assocTypeItem
+        if (const auto fn_item = borrow(context.traitFnItem())) {
+            populate_trait_fn_item(*item, fn_item->get());
+            return item;
+        }
+
+        if (const auto assoc_item = borrow(context.assocTypeItem())) {
+            populate_assoc_type_item(*item, assoc_item->get());
+            return item;
+        }
+
+        throw std::logic_error("trait item did not match trait fn or assoc type");
+    }
+
+    void populate_trait_fn_item(ast::TraitItemSyntax &item,
+                                AHFLParser::TraitFnItemContext &context) const {
+        item.kind = ast::TraitItemKind::Fn;
+        item.range = context_range(context, source_);
+        item.name = text_of(require(context.IDENT(), "trait fn name is missing"));
+
+        if (const auto type_params = borrow(context.typeParams())) {
+            item.type_params = build_type_params(type_params->get());
+        }
+        if (const auto param_list = borrow(context.paramList())) {
+            item.params = build_param_list(param_list->get());
+        }
+        if (const auto return_type = borrow(context.type_())) {
+            item.return_type = build_type_syntax(return_type->get());
+        }
+        if (const auto effect_clause = borrow(context.effectClause())) {
+            item.effect_clause = build_effect_clause(effect_clause->get());
+        }
+        if (const auto where_clause = borrow(context.whereClause())) {
+            item.where_clause = build_where_clause(where_clause->get());
+        }
+    }
+
+    void populate_assoc_type_item(ast::TraitItemSyntax &item,
+                                  AHFLParser::AssocTypeItemContext &context) const {
+        item.kind = ast::TraitItemKind::AssocType;
+        item.range = context_range(context, source_);
+        item.name = text_of(require(context.IDENT(), "assoc type name is missing"));
+
+        auto assoc = make_owned<ast::TraitItemSyntax::AssocTypeDecl>();
+        assoc->range = context_range(context, source_);
+        assoc->name = item.name;
+        if (const auto type_params = borrow(context.typeParams())) {
+            assoc->type_params = build_type_params(type_params->get());
+        }
+        if (const auto bound_list = borrow(context.typeBoundList())) {
+            for (auto *bound_context : bound_list->get().type_()) {
+                assoc->bounds.push_back(
+                    build_type_syntax(require(bound_context, "assoc type bound is missing")));
+            }
+        }
+        if (const auto default_type = borrow(context.type_())) {
+            assoc->default_type = build_type_syntax(default_type->get());
+        }
+        item.assoc = std::move(assoc);
+    }
+
+    [[nodiscard]] Owned<ast::Decl> build_impl_decl(AHFLParser::ImplDeclContext &context) const {
+        auto declaration = make_decl<ast::ImplDecl>(source_, context);
+
+        if (const auto type_params = borrow(context.typeParams())) {
+            declaration->type_params = build_type_params(type_params->get());
+        }
+
+        // implDecl: 'impl' typeParams? (traitRef 'for')? type_ whereClause? '{' ... '}'
+        // `traitRef 'for'` is present iff the optional traitRef child exists; in
+        // that case the trailing `type_` is the target type. When absent, the
+        // single `type_` child is the inherent-impl target.
+        if (const auto trait_ref = borrow(context.traitRef())) {
+            declaration->trait_ref = build_type_syntax(
+                require(trait_ref->get().type_(), "impl trait reference is missing"));
+        }
+        declaration->target_type =
+            build_type_syntax(require(context.type_(), "impl target type is missing"));
+
+        if (const auto where_clause = borrow(context.whereClause())) {
+            declaration->where_clause = build_where_clause(where_clause->get());
+        }
+
+        for (auto *fn_def_context : context.fnDef()) {
+            declaration->methods.push_back(build_fn_def(require(fn_def_context, "impl fn is missing")));
+        }
+        for (auto *assoc_context : context.assocItemDef()) {
+            declaration->assoc_items.push_back(
+                build_assoc_item_def(require(assoc_context, "impl assoc item is missing")));
+        }
+
+        return declaration;
+    }
+
+    // Method definition inside an impl block. Same surface as a top-level
+    // FnDecl but the body is mandatory (RFC §1.4). Reuses FnDecl so downstream
+    // passes treat impl methods uniformly with top-level functions.
+    [[nodiscard]] Owned<ast::FnDecl> build_fn_def(AHFLParser::FnDefContext &context) const {
+        auto declaration = make_decl<ast::FnDecl>(
+            source_,
+            context,
+            text_of(require(context.IDENT(), "impl fn name is missing")));
+
+        if (const auto type_params = borrow(context.typeParams())) {
+            declaration->type_params = build_type_params(type_params->get());
+        }
+        if (const auto param_list = borrow(context.paramList())) {
+            declaration->params = build_param_list(param_list->get());
+        }
+        if (const auto return_type = borrow(context.type_())) {
+            declaration->return_type = build_type_syntax(return_type->get());
+        }
+        if (const auto effect_clause = borrow(context.effectClause())) {
+            declaration->effect_clause = build_effect_clause(effect_clause->get());
+        }
+        if (const auto where_clause = borrow(context.whereClause())) {
+            declaration->where_clause = build_where_clause(where_clause->get());
+        }
+
+        declaration->body = build_block_syntax(
+            require(require(context.fnBody(), "impl fn body is missing").block(),
+                    "impl fn body block is missing"));
+
+        return declaration;
+    }
+
+    [[nodiscard]] Owned<ast::AssocItemDefSyntax>
+    build_assoc_item_def(AHFLParser::AssocItemDefContext &context) const {
+        auto assoc = make_owned<ast::AssocItemDefSyntax>();
+        assoc->range = context_range(context, source_);
+        assoc->name = text_of(require(context.IDENT(), "assoc item name is missing"));
+        assoc->type = build_type_syntax(require(context.type_(), "assoc item type is missing"));
+        return assoc;
     }
 
     [[nodiscard]] std::vector<Owned<ast::TypeParamSyntax>>

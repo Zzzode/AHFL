@@ -658,6 +658,21 @@ void collect_decl_tokens(const ast::Decl &decl,
         add_token_for_name(tokens, source, fn.range, fn.name, SemanticTokenType::Function);
         break;
     }
+    case ast::NodeKind::TraitDecl: {
+        // P3 (RFC §3.2.2 / type-system §1.3): trait-declaration semantic
+        // tokens (super-traits, item names, assoc types) land in P3b once
+        // trait symbols are registered. P3a highlights the trait name so the
+        // parse surface round-trips through the LSP.
+        const auto &trait = static_cast<const ast::TraitDecl &>(decl);
+        add_token_for_name(tokens, source, trait.range, trait.name, SemanticTokenType::Interface);
+        break;
+    }
+    case ast::NodeKind::ImplDecl: {
+        // P3 (RFC §3.2.2 / type-system §1.4): impl-block semantic tokens land
+        // in P3b. P3a emits no tokens (impl headers carry no name token; the
+        // `impl` keyword is handled by the lexer token stream, not the AST).
+        break;
+    }
     }
 }
 

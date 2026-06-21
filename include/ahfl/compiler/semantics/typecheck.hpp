@@ -75,6 +75,21 @@ class TypeEnvironment {
         return functions_;
     }
 
+    // P3 (RFC §3.2.2 / type-system §1.3): declared traits keyed by their Trait
+    // symbol id. Built by build_trait_types; consumed by the impl signature
+    // matcher, the orphan-rule checker, and trait-method resolution.
+    [[nodiscard]] const std::unordered_map<std::size_t, TraitTypeInfo> &traits() const noexcept {
+        return traits_;
+    }
+
+    // P3 (RFC §3.2.2 / type-system §1.4): all impl blocks in source order.
+    // Keyed by impl index (impls have no name); includes both inherent impls
+    // and trait impls. Consumers iterate the whole list — typical program has
+    // a handful of impls.
+    [[nodiscard]] const std::unordered_map<std::size_t, ImplTypeInfo> &impls() const noexcept {
+        return impls_;
+    }
+
     [[nodiscard]] MaybeCRef<Type> get_const_type(SymbolId id) const;
     [[nodiscard]] MaybeCRef<StructTypeInfo> get_struct(SymbolId id) const;
     [[nodiscard]] MaybeCRef<StructTypeInfo> get_struct(const Type &type) const;
@@ -90,6 +105,20 @@ class TypeEnvironment {
     [[nodiscard]] MaybeCRef<ContractTypeInfo> get_contract(SymbolId id) const;
     // P2 (RFC §3.2.2): lookup a fn by its Function symbol id.
     [[nodiscard]] MaybeCRef<FnTypeInfo> get_fn(SymbolId id) const;
+    // P3 (RFC §3.2.2 / type-system §1.3): lookup a trait by its Trait symbol id.
+    [[nodiscard]] MaybeCRef<TraitTypeInfo> get_trait(SymbolId id) const;
+    // P3 (RFC §3.2.2 / type-system §1.3): find a trait by canonical name.
+    [[nodiscard]] MaybeCRef<TraitTypeInfo> find_trait(std::string_view canonical_name) const;
+    // P3 (RFC §3.2.2 / type-system §2.1): trait-resolution query. Given a
+    // resolved trait symbol and the nominal target symbol (struct/enum), return
+    // the unique trait impl block in the environment, or nullopt when no impl
+    // exists. P3b only resolves exact (trait, target) symbol-keyed matches;
+    // generic-argument unification (RFC §2.1 step 2) and ambiguity diagnosis
+    // land with the method-call expression typecheck (no call sites today).
+    // Surfaced here so a future expr-pass can resolve `Type::method(args)` /
+    // `e.method(args)` without re-walking the impl table.
+    [[nodiscard]] MaybeCRef<ImplTypeInfo>
+    resolve_trait_impl(SymbolId trait_symbol, SymbolId target_symbol) const;
 
     // O(1) lookup: returns true iff `id` is the symbol of any agent's context struct.
     [[nodiscard]] bool is_agent_context_struct(SymbolId id) const noexcept;
@@ -125,10 +154,13 @@ class TypeEnvironment {
     std::unordered_map<std::size_t, FlowTypeInfo> flows_;
     std::unordered_map<std::size_t, ContractTypeInfo> contracts_;
     std::unordered_map<std::size_t, FnTypeInfo> functions_; // P2 (RFC §3.2.2)
+    std::unordered_map<std::size_t, TraitTypeInfo> traits_; // P3 (RFC §3.2.2 / type-system §1.3)
+    std::unordered_map<std::size_t, ImplTypeInfo> impls_;   // P3 (RFC §3.2.2 / type-system §1.4)
 
     // Reverse indices: canonical_name -> SymbolId.value, for O(1) name lookups.
     std::unordered_map<std::string, std::size_t> struct_name_index_;
     std::unordered_map<std::string, std::size_t> enum_name_index_;
+    std::unordered_map<std::string, std::size_t> trait_name_index_; // P3
 
     // SymbolIds of structs used as any agent's context type.
     std::unordered_set<std::size_t> agent_context_struct_ids_;

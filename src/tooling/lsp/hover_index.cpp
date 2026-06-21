@@ -311,6 +311,7 @@ void add_symbol_target(HoverTargetIndex &index,
     case SymbolKind::TypeAlias:
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
+    case SymbolKind::Trait:
         return HoverTargetKind::TypeReference;
     }
     return HoverTargetKind::TypeReference;
@@ -1223,6 +1224,13 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
     case ast::NodeKind::FnDecl:
         // P2 (RFC §3.2.2): fn-declaration hover targets (param/return/effect/
         // where-clause) land in P2b once fn symbols are registered. P2a only
+        // needs the AST surface to parse.
+        return;
+    case ast::NodeKind::TraitDecl:
+    case ast::NodeKind::ImplDecl:
+        // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait/impl hover targets
+        // (super-traits, method signatures, assoc types) land in P3b once
+        // trait symbols and impl-method bindings are registered. P3a only
         // needs the AST surface to parse.
         return;
     }

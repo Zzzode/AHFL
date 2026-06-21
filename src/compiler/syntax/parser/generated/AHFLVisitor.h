@@ -157,6 +157,22 @@ public:
 
     virtual std::any visitLambdaParam(AHFLParser::LambdaParamContext *context) = 0;
 
+    virtual std::any visitTraitDecl(AHFLParser::TraitDeclContext *context) = 0;
+
+    virtual std::any visitTraitItem(AHFLParser::TraitItemContext *context) = 0;
+
+    virtual std::any visitTraitFnItem(AHFLParser::TraitFnItemContext *context) = 0;
+
+    virtual std::any visitAssocTypeItem(AHFLParser::AssocTypeItemContext *context) = 0;
+
+    virtual std::any visitImplDecl(AHFLParser::ImplDeclContext *context) = 0;
+
+    virtual std::any visitTraitRef(AHFLParser::TraitRefContext *context) = 0;
+
+    virtual std::any visitFnDef(AHFLParser::FnDefContext *context) = 0;
+
+    virtual std::any visitAssocItemDef(AHFLParser::AssocItemDefContext *context) = 0;
+
     virtual std::any visitBlock(AHFLParser::BlockContext *context) = 0;
 
     virtual std::any visitStatement(AHFLParser::StatementContext *context) = 0;

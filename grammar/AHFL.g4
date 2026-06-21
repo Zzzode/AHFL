@@ -21,7 +21,9 @@ topLevelDecl:
 	| contractDecl
 	| flowDecl
 	| workflowDecl
-	| fnDecl;
+	| fnDecl
+	| traitDecl
+	| implDecl;
 
 moduleDecl: 'module' qualifiedIdent ';';
 
@@ -244,6 +246,41 @@ lambdaParamList:
 	| '(' (lambdaParam (',' lambdaParam)*)? ','? ')';
 
 lambdaParam: IDENT (':' type_)?;
+
+// P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait declarations and impl
+// blocks. The grammar models the syntactic surface only; trait resolution,
+// coherence / orphan-rule enforcement, signature matching, and where-clause
+// evaluation are deferred to later passes (P3b).
+//   trait Name<T>: Super { fn method<U>(p: T) -> Ret [effect] [where ...]; type Assoc; }
+//   impl<T> TraitRef for TargetType [where ...] { fn method(...) { ... } type Assoc = T; }
+traitDecl:
+	DOC_COMMENT? 'trait' IDENT typeParams? (':' typeBoundList)? '{' traitItem* '}';
+
+traitItem: traitFnItem | assocTypeItem;
+
+traitFnItem:
+	'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+		whereClause? ';';
+
+assocTypeItem:
+	'type' IDENT typeParams? (':' typeBoundList)? ('=' type_)? ';';
+
+implDecl:
+	DOC_COMMENT? 'impl' typeParams? (traitRef 'for')? type_ whereClause? '{'
+		fnDef*
+		assocItemDef* '}';
+
+// A trait reference in an impl header (e.g. `Foldable<T>`). Reuses type_ so a
+// generic trait with arguments parses uniformly with named types.
+traitRef: type_;
+
+// Method definition inside an impl block: same surface as fnDecl but the body
+// is mandatory (RFC §1.4: `FnDef ::= ... FnBody`).
+fnDef:
+	'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+		whereClause? fnBody;
+
+assocItemDef: 'type' IDENT '=' type_ ';';
 
 block: '{' statement* '}';
 

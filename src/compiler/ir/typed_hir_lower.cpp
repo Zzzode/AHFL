@@ -224,6 +224,11 @@ lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
     case SymbolKind::Function:
         // P2c (RFC §3.2.2): a top-level fn symbol lowers as Function.
         return ir::SymbolRefKind::Function;
+    case SymbolKind::Trait:
+        // P3 (RFC §3.2.2 / type-system §1.3): a trait symbol lowers as a Type
+        // ref — it occupies type positions at bound/impl sites. No method-call
+        // lowering today (P3c).
+        return ir::SymbolRefKind::Type;
     }
     return ir::SymbolRefKind::Unknown;
 }
@@ -1432,6 +1437,13 @@ class TypedIrLowerer final {
             // type-parameter names, effect clause); this lowers that payload
             // to an ir::FnDecl.
             return lower_typed_fn(declaration);
+        case ast::NodeKind::TraitDecl:
+        case ast::NodeKind::ImplDecl:
+            // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): trait/impl lowering
+            // lands in P3b. P3a does not index trait/impl declarations into
+            // the typed program, so this branch is unreachable today; it
+            // exists only to keep the NodeKind switch exhaustive.
+            break;
         case ast::NodeKind::Program:
             break;
         }

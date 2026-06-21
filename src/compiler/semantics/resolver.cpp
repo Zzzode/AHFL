@@ -139,6 +139,12 @@ class ResolverPass final {
         case ast::NodeKind::FnDecl:
             visit(static_cast<const ast::FnDecl &>(node));
             return;
+        case ast::NodeKind::TraitDecl:
+            visit(static_cast<const ast::TraitDecl &>(node));
+            return;
+        case ast::NodeKind::ImplDecl:
+            visit(static_cast<const ast::ImplDecl &>(node));
+            return;
         case ast::NodeKind::Program:
             emit_error("unexpected program node in declarations list", current_source_, node.range);
             return;
@@ -393,24 +399,78 @@ class ResolverPass final {
                 generic_type_params_.insert(type_param->name);
             }
 
-            for (const auto &type_param : node.type_params) {
+            resolve_fn_signature(node);
+
+            // P2: clear generic type param scope after fn signature + body.
+            generic_type_params_.clear();
+        }
+    }
+
+    // P3 (RFC §3.2.2 / type-system §1.3 / §1.4): shared signature resolver
+    // for a fn declaration, reused by top-level FnDecl and by impl-block
+    // method bodies (which use the same ast::FnDecl node). Assumes the
+    // caller has already pushed the fn's generic type params into
+    // generic_type_params_ if it wants them treated as opaque.
+    void resolve_fn_signature(const ast::FnDecl &node) {
+        for (const auto &type_param : node.type_params) {
+            for (const auto &bound : type_param->bounds) {
+                resolve_type(*bound);
+            }
+        }
+
+        for (const auto &param : node.params) {
+            if (param->type) {
+                resolve_type(*param->type);
+            }
+        }
+
+        if (node.return_type) {
+            resolve_type(*node.return_type);
+        }
+
+        if (node.where_clause) {
+            for (const auto &constraint : node.where_clause->constraints) {
+                if (constraint->subject) {
+                    resolve_type(*constraint->subject);
+                }
+                for (const auto &argument : constraint->arguments) {
+                    resolve_type(*argument);
+                }
+                for (const auto &bound : constraint->bounds) {
+                    resolve_type(*bound);
+                }
+            }
+        }
+
+        resolve_effect_clause(node.effect_clause);
+
+        if (node.body) {
+            resolve_block_types(*node.body);
+            resolve_block_exprs(*node.body);
+        }
+    }
+
+    // P3 (RFC §3.2.2 / type-system §1.3): walk one trait item, recording
+    // type/callable references in its signature (for TraitFnItem) and in its
+    // bounds/default (for AssocTypeItem). Self is treated as opaque by the
+    // caller (visit(TraitDecl) pushes it).
+    void resolve_trait_item(const ast::TraitItemSyntax &item) {
+        if (item.kind == ast::TraitItemKind::Fn) {
+            for (const auto &type_param : item.type_params) {
                 for (const auto &bound : type_param->bounds) {
                     resolve_type(*bound);
                 }
             }
-
-            for (const auto &param : node.params) {
+            for (const auto &param : item.params) {
                 if (param->type) {
                     resolve_type(*param->type);
                 }
             }
-
-            if (node.return_type) {
-                resolve_type(*node.return_type);
+            if (item.return_type) {
+                resolve_type(*item.return_type);
             }
-
-            if (node.where_clause) {
-                for (const auto &constraint : node.where_clause->constraints) {
+            if (item.where_clause) {
+                for (const auto &constraint : item.where_clause->constraints) {
                     if (constraint->subject) {
                         resolve_type(*constraint->subject);
                     }
@@ -422,17 +482,127 @@ class ResolverPass final {
                     }
                 }
             }
+            resolve_effect_clause(item.effect_clause);
+            return;
+        }
 
-            resolve_effect_clause(node.effect_clause);
+        if (item.kind == ast::TraitItemKind::AssocType && item.assoc) {
+            for (const auto &type_param : item.assoc->type_params) {
+                for (const auto &bound : type_param->bounds) {
+                    resolve_type(*bound);
+                }
+            }
+            for (const auto &bound : item.assoc->bounds) {
+                resolve_type(*bound);
+            }
+            if (item.assoc->default_type) {
+                resolve_type(*item.assoc->default_type);
+            }
+        }
+    }
 
-            if (node.body) {
-                resolve_block_types(*node.body);
-                resolve_block_exprs(*node.body);
+    void visit(const ast::TraitDecl &node) {
+        // P3 (RFC §3.2.2 / type-system §1.3): a trait registers in the Types
+        // namespace as SymbolKind::Trait so it is usable at both bound
+        // positions (`T: Ord`) and impl positions (`impl Ord for T`). The
+        // trait's method signatures, super-trait bounds, and associated-type
+        // references are resolved in ResolveReferences; generic type params
+        // (including the implicit Self) enter scope so they are opaque during
+        // signature resolution.
+        if (current_pass_ == Pass::RegisterSymbols) {
+            (void)register_symbol(
+                SymbolNamespace::Types, SymbolKind::Trait, node.name, node.range);
+            return;
+        }
+
+        if (current_pass_ == Pass::ResolveReferences) {
+            for (const auto &type_param : node.type_params) {
+                generic_type_params_.insert(type_param->name);
+            }
+            // The implicit `Self` parameter names the impl's target type inside
+            // trait items. P3b resolves Self to the impl target at typecheck;
+            // at the resolver it is opaque.
+            generic_type_params_.insert("Self");
+
+            for (const auto &type_param : node.type_params) {
+                for (const auto &bound : type_param->bounds) {
+                    resolve_type(*bound);
+                }
             }
 
-            // P2: clear generic type param scope after fn signature + body.
+            for (const auto &super_trait : node.super_traits) {
+                resolve_type(*super_trait);
+            }
+
+            for (const auto &item : node.items) {
+                resolve_trait_item(*item);
+            }
+
             generic_type_params_.clear();
         }
+    }
+
+    void visit(const ast::ImplDecl &node) {
+        // P3 (RFC §3.2.2 / type-system §1.4): an impl block has no
+        // user-facing name, so nothing is registered in RegisterSymbols. The
+        // impl's trait_ref (when present) resolves to a Trait symbol, the
+        // target_type to a Types symbol, and each method body/where-clause
+        // type is walked so nested references are recorded. Impl method
+        // *names* are not registered as standalone Function symbols today:
+        // they are reached through `Type::method` / `e.method` resolution at
+        // typecheck, not as free callables.
+        if (current_pass_ != Pass::ResolveReferences) {
+            return;
+        }
+
+        for (const auto &type_param : node.type_params) {
+            generic_type_params_.insert(type_param->name);
+        }
+
+        for (const auto &type_param : node.type_params) {
+            for (const auto &bound : type_param->bounds) {
+                resolve_type(*bound);
+            }
+        }
+
+        if (node.trait_ref) {
+            // trait_ref is a TypeSyntax (NamedType) — resolve the trait name.
+            resolve_type(*node.trait_ref);
+        }
+
+        if (node.target_type) {
+            resolve_type(*node.target_type);
+        }
+
+        if (node.where_clause) {
+            for (const auto &constraint : node.where_clause->constraints) {
+                if (constraint->subject) {
+                    resolve_type(*constraint->subject);
+                }
+                for (const auto &argument : constraint->arguments) {
+                    resolve_type(*argument);
+                }
+                for (const auto &bound : constraint->bounds) {
+                    resolve_type(*bound);
+                }
+            }
+        }
+
+        for (const auto &method : node.methods) {
+            resolve_fn_signature(*method);
+            if (method->body) {
+                resolve_block_types(*method->body);
+                resolve_block_exprs(*method->body);
+            }
+        }
+
+        for (const auto &assoc : node.assoc_items) {
+            if (assoc->type) {
+                resolve_type(*assoc->type);
+            }
+        }
+
+        generic_type_params_.clear();
     }
 
   private:

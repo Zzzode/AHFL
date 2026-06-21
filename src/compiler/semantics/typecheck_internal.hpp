@@ -160,6 +160,18 @@ struct DeclarationIndex {
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>> workflow_decls;
     // P2 (RFC §3.2.2): top-level fn declarations keyed by Function symbol id.
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::FnDecl>> fn_decls;
+    // P3 (RFC §3.2.2 / type-system §1.3): top-level trait declarations keyed
+    // by Trait symbol id.
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::TraitDecl>> trait_decls;
+    // P3 (RFC §3.2.2 / type-system §1.4): all impl blocks in source order,
+    // keyed by their source-order index. Impl blocks have no user-facing name.
+    // Each entry carries its source-id alongside the AST reference so the
+    // coherence check can resolve the impl's defining module without a symbol.
+    struct ImplDeclEntry {
+        std::reference_wrapper<const ast::ImplDecl> decl;
+        std::optional<SourceId> source_id;
+    };
+    std::unordered_map<std::size_t, ImplDeclEntry> impl_decls;
 };
 
 class TypeCheckPass;
@@ -311,6 +323,8 @@ class TypeCheckPass final {
           agent_decls_(declaration_index_.agent_decls),
           workflow_decls_(declaration_index_.workflow_decls),
           fn_decls_(declaration_index_.fn_decls),
+          trait_decls_(declaration_index_.trait_decls),
+          impl_decls_(declaration_index_.impl_decls),
           hir_builder_(state_.result.typed_program) {}
     TypeCheckPass(const ast::Program &program, const ResolveResult &resolve_result)
         : TypeCheckPass(TypeCheckSession(
@@ -417,6 +431,9 @@ class TypeCheckPass final {
         &workflow_decls_;
     // P2 (RFC §3.2.2)
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::FnDecl>> &fn_decls_;
+    // P3 (RFC §3.2.2 / type-system §1.3 / §1.4)
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::TraitDecl>> &trait_decls_;
+    std::unordered_map<std::size_t, DeclarationIndex::ImplDeclEntry> &impl_decls_;
     TypedHirBuilder hir_builder_;
 
     TypeAliasResolutionState alias_resolution_;
@@ -441,6 +458,23 @@ class TypeCheckPass final {
     // environment. Body typecheck and where-clause bound evaluation happen
     // in FnSema (separate pass).
     void build_fn_types();
+    // P3 (RFC §3.2.2 / type-system §1.3): resolve trait signatures (methods,
+    // assoc types, super-traits, generic params) and register TraitTypeInfo in
+    // the environment keyed by Trait symbol id. Method bodies are absent by
+    // definition; trait-method-call resolution is deferred to the call-site
+    // typecheck (no call sites today).
+    void build_trait_types();
+    // P3 (RFC §3.2.2 / type-system §1.4): resolve each impl block — target
+    // type, trait_ref (when present), method signatures, associated types —
+    // and enforce coherence (orphan rule RFC §2.2), impl-vs-trait signature
+    // matching, super-trait coverage, and per-trait duplicate-impl detection.
+    // Impl method *bodies* are not type-checked here (same deferral as fn
+    // bodies): the impl method signature is what the matcher needs.
+    void build_impl_types();
+    // P3 effect-clause + trait-method signature resolvers (member functions so
+    // they can reach private resolve_type / make_error_type / find_reference_here).
+    FnEffectClauseInfo resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause);
+    TraitMethodInfo resolve_trait_method_info(const ast::TraitItemSyntax &item);
     void build_flow_types();
     void build_flow_types_in_program(const ast::Program &program);
     void build_contract_types();
@@ -498,6 +532,46 @@ class TypeCheckPass final {
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
     [[nodiscard]] TypePtr resolve_type_alias(SymbolId id, SourceRange use_range);
+
+    // P3 (RFC §3.2.2 / type-system §1.4 / §2.2) impl-coherence helpers.
+    // `nominal_symbol_of` returns the Struct/Enum SymbolId for a resolved type
+    // (nullopt for non-nominal — compound types have no defining module).
+    [[nodiscard]] std::optional<SymbolId> nominal_symbol_of(const Type &type) const;
+    // `nominal_describe` renders a type for diagnostic messages; mirrors
+    // Type::describe but stays inside typecheck_internal.cpp where it is used.
+    [[nodiscard]] std::string nominal_describe(const Type &type) const;
+    // `with_symbol_context_for_impl` runs `fn` with the impl block's defining
+    // module as the current module (mirrors with_symbol_context but keyed by
+    // the impl's source_id rather than a symbol).
+    template <typename Fn>
+    decltype(auto) with_symbol_context_for_impl(std::optional<SourceId> source_id, Fn &&fn);
+    // Coherence (RFC §2.2 strict orphan rule): the impl must live in the
+    // module that defines the trait or the module that defines the target
+    // type. Diagnoses E::orphan_impl otherwise.
+    void check_impl_coherence(const ImplTypeInfo &impl);
+    // Trait-impl signature matching (RFC §2.1): every trait method has a
+    // matching impl method with structurally-equal (params, return) types;
+    // every impl method names a real trait method; every trait assoc type is
+    // provided. Super-trait coverage is checked here too.
+    void check_trait_impl_signature_match(const ImplTypeInfo &impl);
+    // P3 (RFC §2.2) supporting helpers used by the coherence + signature
+    // matcher. module_name_of resolves an impl source-id to its defining
+    // module via the SourceGraph; module_of_symbol reads Symbol::module_name.
+    [[nodiscard]] std::string module_name_of(std::optional<SourceId> source_id) const;
+    [[nodiscard]] std::string module_of_symbol(SymbolId id) const;
+    // Find an impl method by name (linear; impl methods are few).
+    [[nodiscard]] MaybeCRef<ImplMethodInfo> find_impl_method(const ImplTypeInfo &impl,
+                                                             std::string_view name) const;
+    // Structural signature equality (params count + types, return type, effect
+    // kind). Generic type-param names and where-clause constraints are not
+    // compared in P3b — they are part of the trait-method-call resolution.
+    [[nodiscard]] bool signatures_match(const TraitMethodInfo &trait_method,
+                                        const ImplMethodInfo &impl_method) const;
+    // Render a param type list for diagnostics: "Int, String".
+    [[nodiscard]] std::string render_param_types(const std::vector<ParamTypeInfo> &params) const;
+    // True iff some impl in the environment implements `trait_id` for nominal
+    // `target_id`. Used by the super-trait coverage check (RFC §2.4).
+    [[nodiscard]] bool impl_target_implements(SymbolId target_id, SymbolId trait_id) const;
 
     [[nodiscard]] MaybeCRef<ast::TypeAliasDecl> alias_decl_of(SymbolId id) const;
 
@@ -646,5 +720,59 @@ template <typename Fn> decltype(auto) TypeCheckPass::with_symbol_context(SymbolI
         return result;
     }
 }
+
+// P3 (RFC §3.2.2 / type-system §1.4): runs `fn` with the impl block's
+// defining source/module as the current context, then restores the previous
+// context on exit. Impl blocks have no symbol, so the source is the impl's
+// source_id (captured at indexing time). The defining module is resolved from
+// the source via the SourceGraph; the no-graph single-program path keeps the
+// anonymous top-level context (empty module name, nullopt source).
+template <typename Fn>
+decltype(auto) TypeCheckPass::with_symbol_context_for_impl(std::optional<SourceId> source_id,
+                                                           Fn &&fn) {
+    const auto previous_source = current_source_;
+    const auto previous_source_id = current_source_id_;
+    const auto previous_module_name = current_module_name_;
+
+    current_source_id_ = source_id;
+    current_module_name_ = module_name_of(source_id);
+    current_source_ = nullptr;
+    if (graph_ != nullptr && source_id.has_value()) {
+        if (const auto source = source_unit_for(*source_id); source.has_value()) {
+            current_source_ = &source->get();
+        }
+    }
+
+    using Result = std::invoke_result_t<Fn>;
+    if constexpr (std::is_void_v<Result>) {
+        std::forward<Fn>(fn)();
+        current_source_ = previous_source;
+        current_source_id_ = previous_source_id;
+        current_module_name_ = previous_module_name;
+    } else {
+        Result result = std::forward<Fn>(fn)();
+        current_source_ = previous_source;
+        current_source_id_ = previous_source_id;
+        current_module_name_ = previous_module_name;
+        return result;
+    }
+}
+
+// P3 (RFC §3.2.2 / type-system §2.1): hash for std::pair<std::size_t,
+// std::size_t> used by the duplicate-(trait,target)-impl detector. std::pair
+// and std::unordered_set have no std::hash specialisation for pairs, so the
+// coherence check carries its own.
+struct PairHash {
+    [[nodiscard]] std::size_t operator()(
+        const std::pair<std::size_t, std::size_t> &value) const noexcept {
+        return hash_mix(value.first, value.second);
+    }
+
+  private:
+    [[nodiscard]] static std::size_t hash_mix(std::size_t a, std::size_t b) noexcept {
+        a ^= b + 0x9e3779b97f4a7c15ULL + (a << 6U) + (a >> 2U);
+        return a;
+    }
+};
 
 } // namespace ahfl

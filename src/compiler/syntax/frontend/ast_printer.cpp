@@ -345,6 +345,124 @@ class AstPrinter final {
         }
     }
 
+    void visit(const ast::TraitDecl &node) {
+        line(1, "- " + node.headline());
+
+        if (!node.type_params.empty()) {
+            line(2, "type_params");
+            for (const auto &type_param : node.type_params) {
+                std::string entry = type_param->name;
+                if (!type_param->bounds.empty()) {
+                    entry += ": <";
+                    for (std::size_t index = 0; index < type_param->bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (type_param->bounds[index]) {
+                            entry += type_param->bounds[index]->spelling();
+                        }
+                    }
+                    entry += ">";
+                }
+                line(3, entry);
+            }
+        }
+
+        if (!node.super_traits.empty()) {
+            line(2, "super_traits");
+            for (const auto &super_trait : node.super_traits) {
+                line(3, super_trait ? super_trait->spelling() : std::string{});
+            }
+        }
+
+        for (const auto &item : node.items) {
+            if (item->kind == ast::TraitItemKind::Fn) {
+                line(2, "fn " + item->name);
+                for (const auto &param : item->params) {
+                    line(3, "param " + param->name);
+                    print_type_field("type", param->type.get(), 4);
+                }
+                print_type_field("return", item->return_type.get(), 3);
+                if (item->effect_clause) {
+                    print_effect_clause(*item->effect_clause, 3);
+                }
+                if (item->where_clause) {
+                    print_where_clause(*item->where_clause, 3);
+                }
+            } else {
+                const auto &assoc = *item->assoc;
+                line(2, "type " + assoc.name);
+                if (!assoc.bounds.empty()) {
+                    std::string entry;
+                    for (std::size_t index = 0; index < assoc.bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (assoc.bounds[index]) {
+                            entry += assoc.bounds[index]->spelling();
+                        }
+                    }
+                    line(3, "bounds: " + entry);
+                }
+                print_type_field("default", assoc.default_type.get(), 3);
+            }
+        }
+    }
+
+    void visit(const ast::ImplDecl &node) {
+        line(1, "- " + node.headline());
+
+        if (!node.type_params.empty()) {
+            line(2, "type_params");
+            for (const auto &type_param : node.type_params) {
+                std::string entry = type_param->name;
+                if (!type_param->bounds.empty()) {
+                    entry += ": <";
+                    for (std::size_t index = 0; index < type_param->bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (type_param->bounds[index]) {
+                            entry += type_param->bounds[index]->spelling();
+                        }
+                    }
+                    entry += ">";
+                }
+                line(3, entry);
+            }
+        }
+
+        print_type_field("trait_ref", node.trait_ref.get(), 2);
+        print_type_field("target", node.target_type.get(), 2);
+
+        if (node.where_clause) {
+            print_where_clause(*node.where_clause, 2);
+        }
+
+        for (const auto &method : node.methods) {
+            line(2, "fn " + method->name);
+            for (const auto &param : method->params) {
+                line(3, "param " + param->name);
+                print_type_field("type", param->type.get(), 4);
+            }
+            print_type_field("return", method->return_type.get(), 3);
+            if (method->effect_clause) {
+                print_effect_clause(*method->effect_clause, 3);
+            }
+            if (method->where_clause) {
+                print_where_clause(*method->where_clause, 3);
+            }
+            if (method->body) {
+                print_block(*method->body, 3);
+            }
+        }
+
+        for (const auto &assoc : node.assoc_items) {
+            line(2, "type " + assoc->name);
+            print_type_field("value", assoc->type.get(), 3);
+        }
+    }
+
     void print_effect_clause(const ast::EffectClauseSyntax &clause, int indent_level) {
         line(indent_level, "effect");
         line(indent_level + 1, "kind: " + std::string(ast::to_string(clause.kind)));
@@ -436,6 +554,12 @@ class AstPrinter final {
             return;
         case ast::NodeKind::FnDecl:
             visit(static_cast<const ast::FnDecl &>(declaration));
+            return;
+        case ast::NodeKind::TraitDecl:
+            visit(static_cast<const ast::TraitDecl &>(declaration));
+            return;
+        case ast::NodeKind::ImplDecl:
+            visit(static_cast<const ast::ImplDecl &>(declaration));
             return;
         case ast::NodeKind::Program:
             return;

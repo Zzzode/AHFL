@@ -139,6 +139,10 @@ constexpr std::string_view kAllKeywords[] = {
         return LspSymbolKind::Function;
     case SymbolKind::Function:
         return LspSymbolKind::Function;
+    case SymbolKind::Trait:
+        // P3 (RFC §3.2.2): a trait maps to the LSP Interface symbol kind
+        // (closest match — like a capability, traits describe capability).
+        return LspSymbolKind::Interface;
     }
     return LspSymbolKind::Variable;
 }
@@ -159,6 +163,8 @@ constexpr std::string_view kAllKeywords[] = {
     case SymbolKind::Workflow:
     case SymbolKind::TypeAlias:
     case SymbolKind::Function:
+    case SymbolKind::Trait:
+        // P3 (RFC §3.2.2): a trait is offered as a generic completion item.
         return CompletionItemKind::Variable;
     }
     return CompletionItemKind::Text;
@@ -184,6 +190,9 @@ constexpr std::string_view kAllKeywords[] = {
         return "workflow";
     case SymbolKind::Function:
         return "function";
+    case SymbolKind::Trait:
+        // P3 (RFC §3.2.2): a trait's detail label.
+        return "trait";
     }
     return {};
 }

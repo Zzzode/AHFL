@@ -35,7 +35,10 @@ using TypedDeclPayload = std::variant<std::monostate,
                                       WorkflowTypeInfo,
                                       FlowTypeInfo,
                                       ContractTypeInfo,
-                                      FnTypeInfo>;
+                                      FnTypeInfo,
+                                      // P3 (RFC §3.2.2 / type-system §1.3 / §1.4)
+                                      TraitTypeInfo,
+                                      ImplTypeInfo>;
 
 enum class TypedExprChildRole {
     Operand,

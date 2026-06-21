@@ -291,6 +291,38 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitTraitDecl(AHFLParser::TraitDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTraitItem(AHFLParser::TraitItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTraitFnItem(AHFLParser::TraitFnItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitAssocTypeItem(AHFLParser::AssocTypeItemContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitImplDecl(AHFLParser::ImplDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTraitRef(AHFLParser::TraitRefContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitFnDef(AHFLParser::FnDefContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitAssocItemDef(AHFLParser::AssocItemDefContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitBlock(AHFLParser::BlockContext *ctx) override {
     return visitChildren(ctx);
   }

@@ -1874,6 +1874,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-rfc-corelib rfc-corelib-p3-trait-impl
+    TESTS
+        ahfl.semantics.trait_impl_all
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.52 v0.52-statement-executor
     TESTS
         ahfl.executor.exec_all

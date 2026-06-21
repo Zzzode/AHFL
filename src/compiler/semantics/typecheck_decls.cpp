@@ -226,6 +226,50 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             }
             break;
         }
+        case ast::NodeKind::TraitDecl: {
+            // P3 (RFC §3.2.2 / type-system §1.3): index the trait declaration
+            // under its Trait symbol id so build_trait_types can resolve its
+            // method signatures + super-traits + assoc types.
+            const auto &decl = static_cast<const ast::TraitDecl &>(*declaration);
+            if (const auto symbol = find_local(SymbolNamespace::Types, decl.name);
+                symbol.has_value() && symbol->get().kind == SymbolKind::Trait) {
+                index_->trait_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                    .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
+                });
+            }
+            break;
+        }
+        case ast::NodeKind::ImplDecl: {
+            // P3 (RFC §3.2.2 / type-system §1.4): impl blocks have no name;
+            // index them under their source-order index. The TypedDecl record
+            // uses an empty SymbolId so downstream consumers can recognise the
+            // impl by kind alone.
+            const auto &decl = static_cast<const ast::ImplDecl &>(*declaration);
+            const auto impl_index = index_->impl_decls.size();
+            index_->impl_decls.emplace(
+                impl_index,
+                DeclarationIndex::ImplDeclEntry{
+                    .decl = std::cref(decl),
+                    .source_id = state_->current_source_id,
+                });
+            hir_->append_declaration(TypedDecl{
+                .kind = declaration->kind,
+                .symbol = {},
+                .range = declaration->range,
+                .source_id = state_->current_source_id,
+                .associated_agent_symbol = std::nullopt,
+                .type = nullptr,
+                .payload = {},
+            });
+            break;
+        }
         case ast::NodeKind::Program:
         case ast::NodeKind::ContractDecl:
         case ast::NodeKind::FlowDecl:
@@ -273,6 +317,8 @@ EnvironmentBuildResult EnvironmentBuilder::run() {
     driver_->build_fn_types();
     driver_->build_flow_types();
     driver_->build_contract_types();
+    driver_->build_trait_types();
+    driver_->build_impl_types();
 
     build_result.declaration_updates.reserve(driver_->result_.typed_program.declarations.size());
     for (std::size_t index = 0; index < driver_->result_.typed_program.declarations.size();
@@ -362,6 +408,36 @@ EnvironmentBuildResult EnvironmentBuilder::run() {
                 update.payload = info->get();
             }
             break;
+        case ast::NodeKind::TraitDecl:
+            // P3 (RFC §3.2.2 / type-system §1.3): copy TraitTypeInfo out of
+            // TypeEnvironment so downstream passes (LSP hover, dump) read it
+            // from the typed program without borrowing the env map storage.
+            if (auto info = driver_->environment().get_trait(decl.symbol); info.has_value()) {
+                update.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::ImplDecl: {
+            // P3 (RFC §3.2.2 / type-system §1.4): copy ImplTypeInfo. The
+            // impl is keyed by its source-order index; the typed declaration
+            // was appended in source order, so its position among impl-kind
+            // decls equals its impl index. Walk the typed program to find it.
+            std::size_t impl_index = 0;
+            for (std::size_t earlier = 0; earlier <= index; ++earlier) {
+                if (driver_->result_.typed_program.declarations[earlier].kind !=
+                    ast::NodeKind::ImplDecl) {
+                    continue;
+                }
+                if (earlier == index) {
+                    break;
+                }
+                ++impl_index;
+            }
+            const auto &impls = driver_->environment().impls();
+            if (const auto iter = impls.find(impl_index); iter != impls.end()) {
+                update.payload = iter->second;
+            }
+            break;
+        }
         default:
             break;
         }
@@ -783,6 +859,316 @@ void TypeCheckPass::build_fn_types() {
             }
 
             environment().functions_.emplace(id, std::move(info));
+        });
+    }
+}
+
+namespace {
+
+// P3 (RFC §3.2.2 / type-system §1.3 / §1.4): structurally compare a trait
+// method's signature to an impl method's signature. The driver member
+// functions build_trait_types / build_impl_types own the actual resolution
+// (they need private resolve_type / make_error_type); these free helpers only
+// do post-resolution diagnostics rendering, so they stay out of the driver's
+// private surface. Kept in the anonymous namespace so they do not leak into
+// the header.
+
+} // namespace
+
+// P3 (RFC §3.2.2 / type-system §1.4): lift an FnEffectClauseInfo out of an
+// ast::EffectClauseSyntax in the same shape as build_fn_types. Member function
+// so it can reach the private find_reference_here (which honours the current
+// source/module context the same way build_fn_types does).
+FnEffectClauseInfo
+TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause) {
+    FnEffectClauseInfo info{};
+    if (!clause) {
+        return info;
+    }
+    info.kind = static_cast<int>(clause->kind);
+    info.source_range = clause->range;
+    if (clause->kind == ast::EffectClauseKind::Capability) {
+        for (const auto &capability_name : clause->capabilities) {
+            const auto reference =
+                find_reference_here(ReferenceKind::AgentCapability, capability_name->range);
+            if (reference.has_value()) {
+                info.capabilities.push_back(reference->get().target);
+            }
+        }
+    }
+    return info;
+}
+
+// P3 (RFC §3.2.2 / type-system §1.3): turn one trait-item method signature
+// (no body) into a TraitMethodInfo. Self is left opaque — the impl matcher
+// substitutes the impl target type at resolution time.
+TraitMethodInfo TypeCheckPass::resolve_trait_method_info(const ast::TraitItemSyntax &item) {
+    TraitMethodInfo info{
+        .name = item.name,
+        .params = {},
+        .return_type = item.return_type ? resolve_type(*item.return_type) : make_error_type(),
+        .return_type_range = item.return_type ? item.return_type->range : SourceRange{},
+        .type_param_names = {},
+        .effect = resolve_effect_clause_info(item.effect_clause),
+        .declaration_range = item.range,
+    };
+    for (const auto &type_param : item.type_params) {
+        info.type_param_names.push_back(type_param->name);
+    }
+    for (const auto &param : item.params) {
+        info.params.push_back(ParamTypeInfo{
+            .name = param->name,
+            .type = param->type ? resolve_type(*param->type) : make_error_type(),
+            .declaration_range = param->range,
+        });
+    }
+    return info;
+}
+
+void TypeCheckPass::build_trait_types() {
+    // P3 (RFC §3.2.2 / type-system §1.3): resolve each trait's method
+    // signatures, super-traits, and associated types into a TraitTypeInfo
+    // keyed by the Trait symbol id. Method-call resolution is deferred to the
+    // call-site typecheck pass (none today). Super-trait references are
+    // resolved to Trait symbols; an unresolved super-trait or a non-trait
+    // symbol is diagnosed here so a `trait B: NotATrait` is caught.
+    for (const auto &[id, decl] : trait_decls_) {
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
+
+            TraitTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .local_name = decl.get().name,
+                .type_param_names = {},
+                .super_traits = {},
+                .methods = {},
+                .assoc_types = {},
+                .declaration_range = decl.get().range,
+            };
+
+            for (const auto &type_param : decl.get().type_params) {
+                info.type_param_names.push_back(type_param->name);
+            }
+
+            for (const auto &super_type : decl.get().super_traits) {
+                const auto super_named = super_type ? super_type->is<ast::NamedType>() : false;
+                if (!super_named) {
+                    continue;
+                }
+                // P3: honour the resolver's TypeName reference (handles
+                // cross-module imports) rather than re-walking the symbol
+                // table, mirroring how type_resolver reads the same reference.
+                const auto super_ref =
+                    find_reference_here(ReferenceKind::TypeName, super_type->range);
+                std::optional<SymbolId> super_id;
+                if (super_ref.has_value()) {
+                    super_id = super_ref->get().target;
+                } else {
+                    const auto fallback = find_local_here(
+                        SymbolNamespace::Types, super_type->as<ast::NamedType>().name->spelling());
+                    if (fallback.has_value()) {
+                        super_id = fallback->get().id;
+                    }
+                }
+                if (!super_id.has_value()) {
+                    typecheck_error_here(
+                        error_codes::typecheck::ImplTraitUnknown,
+                        messages::typecheck::ImplTraitUnknown.format_with(
+                            super_type->as<ast::NamedType>().name->spelling()),
+                        super_type->range);
+                    continue;
+                }
+                const auto super_symbol = symbol_of(*super_id);
+                if (!super_symbol.has_value() || super_symbol->get().kind != SymbolKind::Trait) {
+                    typecheck_error_here(
+                        error_codes::typecheck::InvalidTypeReference,
+                        messages::typecheck::SymbolDoesNotNameType.format_with(
+                            super_symbol.has_value() ? super_symbol->get().canonical_name
+                                                     : super_type->as<ast::NamedType>().name->spelling()),
+                        super_type->range);
+                    continue;
+                }
+                info.super_traits.push_back(*super_id);
+            }
+
+            for (const auto &item : decl.get().items) {
+                if (item->kind == ast::TraitItemKind::Fn) {
+                    info.methods.push_back(resolve_trait_method_info(*item));
+                    continue;
+                }
+                if (item->kind == ast::TraitItemKind::AssocType && item->assoc) {
+                    TraitAssocTypeInfo assoc{
+                        .name = item->assoc->name,
+                        .type_param_names = {},
+                        .default_type = item->assoc->default_type
+                                            ? resolve_type(*item->assoc->default_type)
+                                            : nullptr,
+                        .declaration_range = item->assoc->range,
+                    };
+                    for (const auto &type_param : item->assoc->type_params) {
+                        assoc.type_param_names.push_back(type_param->name);
+                    }
+                    info.assoc_types.push_back(std::move(assoc));
+                }
+            }
+
+            environment().traits_.emplace(id, std::move(info));
+        });
+    }
+}
+
+void TypeCheckPass::build_impl_types() {
+    // P3 (RFC §3.2.2 / type-system §1.4): resolve each impl block:
+    //   1. target_type -> a nominal Struct/Enum type (RFC §1.4 TypeRef). The
+    //      orphan-rule check (RFC §2.2) compares the impl's module against the
+    //      target type's defining module.
+    //   2. trait_ref (when present) -> a Trait symbol; the impl method set is
+    //      matched against the trait's method signatures + super-trait
+    //      coverage. Inherent impls (no trait_ref) skip signature matching.
+    //   3. duplicate impl detection: two trait impls for the same
+    //      (trait, target) pair are rejected (RFC §2.1 coherence).
+    // Impl method bodies are NOT type-checked here (mirrors the fn body
+    // deferral): the impl method signature is what the matcher needs.
+    //
+    // Impl index = source order, matching the indexing in
+    // DeclarationIndexBuilder::index_program_declarations.
+    std::unordered_set<std::pair<std::size_t, std::size_t>, PairHash> seen_impls;
+
+    for (const auto &[impl_index, entry] : impl_decls_) {
+        const auto &decl = entry.decl.get();
+        with_symbol_context_for_impl(entry.source_id, [&]() {
+            ImplTypeInfo info{
+                .index = impl_index,
+                .is_inherent = !decl.trait_ref,
+                .target_type = nullptr,
+                .type_param_names = {},
+                .methods = {},
+                .assoc_items = {},
+                .declaration_range = decl.range,
+                .trait_ref_range = decl.trait_ref ? decl.trait_ref->range : SourceRange{},
+                .target_type_range = decl.target_type ? decl.target_type->range : SourceRange{},
+                .source_id = entry.source_id,
+                .module_name = module_name_of(entry.source_id),
+            };
+
+            for (const auto &type_param : decl.type_params) {
+                info.type_param_names.push_back(type_param->name);
+            }
+
+            // Resolve target type. RFC §1.4 TypeRef must resolve to a nominal
+            // struct/enum (P3 does not impl compound types — RFC leaves it open
+            // but the type system has no path-type today).
+            if (decl.target_type) {
+                info.target_type = resolve_type(*decl.target_type);
+            } else {
+                info.target_type = make_error_type();
+            }
+            if (info.target_type) {
+                info.target_symbol = nominal_symbol_of(*info.target_type);
+            }
+
+            // Resolve trait_ref -> Trait symbol.
+            if (decl.trait_ref) {
+                const auto trait_named = decl.trait_ref->is<ast::NamedType>();
+                if (trait_named) {
+                    // P3: honour the resolver's TypeName reference (handles
+                    // cross-module imports); fall back to local lookup.
+                    std::optional<SymbolId> trait_id;
+                    const auto trait_ref =
+                        find_reference_here(ReferenceKind::TypeName, decl.trait_ref->range);
+                    if (trait_ref.has_value()) {
+                        trait_id = trait_ref->get().target;
+                    } else {
+                        const auto fallback = find_local_here(
+                            SymbolNamespace::Types,
+                            decl.trait_ref->as<ast::NamedType>().name->spelling());
+                        if (fallback.has_value()) {
+                            trait_id = fallback->get().id;
+                        }
+                    }
+                    if (!trait_id.has_value()) {
+                        typecheck_error_here(
+                            error_codes::typecheck::ImplTraitUnknown,
+                            messages::typecheck::ImplTraitUnknown.format_with(
+                                decl.trait_ref->as<ast::NamedType>().name->spelling()),
+                            decl.trait_ref->range);
+                    } else {
+                        const auto trait_symbol = symbol_of(*trait_id);
+                        if (!trait_symbol.has_value() || trait_symbol->get().kind != SymbolKind::Trait) {
+                            typecheck_error_here(
+                                error_codes::typecheck::InvalidTypeReference,
+                                messages::typecheck::SymbolDoesNotNameType.format_with(
+                                    trait_symbol.has_value()
+                                        ? trait_symbol->get().canonical_name
+                                        : decl.trait_ref->as<ast::NamedType>().name->spelling()),
+                                decl.trait_ref->range);
+                        } else {
+                            info.trait_symbol = trait_symbol->get().id;
+                            info.trait_name = trait_symbol->get().canonical_name;
+                        }
+                    }
+                }
+            }
+
+            // Resolve impl method signatures.
+            for (const auto &method : decl.methods) {
+                ImplMethodInfo method_info{
+                    .name = method->name,
+                    .params = {},
+                    .return_type = method->return_type ? resolve_type(*method->return_type)
+                                                       : make_error_type(),
+                    .return_type_range =
+                        method->return_type ? method->return_type->range : SourceRange{},
+                    .type_param_names = {},
+                    .effect = resolve_effect_clause_info(method->effect_clause),
+                    .has_body = static_cast<bool>(method->body),
+                    .declaration_range = method->range,
+                };
+                for (const auto &type_param : method->type_params) {
+                    method_info.type_param_names.push_back(type_param->name);
+                }
+                for (const auto &param : method->params) {
+                    method_info.params.push_back(ParamTypeInfo{
+                        .name = param->name,
+                        .type = param->type ? resolve_type(*param->type) : make_error_type(),
+                        .declaration_range = param->range,
+                    });
+                }
+                info.methods.push_back(std::move(method_info));
+            }
+
+            for (const auto &assoc : decl.assoc_items) {
+                info.assoc_items.push_back(ImplAssocItemInfo{
+                    .name = assoc->name,
+                    .type = assoc->type ? resolve_type(*assoc->type) : make_error_type(),
+                    .declaration_range = assoc->range,
+                });
+            }
+
+            // Coherence (orphan rule) — RFC §2.2. Only enforced when both the
+            // trait and target resolve cleanly; resolution failures already
+            // produced diagnostics above.
+            check_impl_coherence(info);
+
+            // Trait-impl signature matching (RFC §2.1) + duplicate detection.
+            if (info.trait_symbol.has_value() && info.target_symbol.has_value()) {
+                check_trait_impl_signature_match(info);
+                const auto key = std::make_pair(info.trait_symbol->value, info.target_symbol->value);
+                if (!seen_impls.insert(key).second) {
+                    const auto trait_name = info.trait_name;
+                    const auto target_name = nominal_describe(*info.target_type);
+                    typecheck_error_here(error_codes::typecheck::DuplicateTraitImpl,
+                                         messages::typecheck::DuplicateTraitImpl.format_with(
+                                             trait_name, target_name),
+                                         decl.range);
+                }
+            }
+
+            environment().impls_.emplace(impl_index, std::move(info));
         });
     }
 }

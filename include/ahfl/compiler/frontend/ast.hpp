@@ -67,6 +67,8 @@ enum class NodeKind {
     FlowDecl,
     WorkflowDecl,
     FnDecl, // P2 (RFC §3.2.2): top-level function declaration
+    TraitDecl, // P3 (RFC §3.2.2 / type-system §1.3): trait declaration
+    ImplDecl,  // P3 (RFC §3.2.2 / type-system §1.4): impl block
 };
 
 [[nodiscard]] std::string_view to_string(NodeKind kind) noexcept;
@@ -1279,6 +1281,100 @@ struct FnDecl final : Decl {
 };
 
 // ----------------------------------------------------------------------------
+// P3 (RFC §3.2.2 / type-system §1.3 / §1.4) trait & impl syntax fragments
+// ----------------------------------------------------------------------------
+//
+// These fragments model the syntactic surface of trait declarations and impl
+// blocks. They carry no semantic/type information — trait resolution,
+// coherence / orphan-rule enforcement, signature matching, associated-type
+// defaulting, and where-clause evaluation are all deferred to the typecheck
+// pass (P3b). The grammar accepts both inherent impls (no `TraitRef for`) and
+// trait impls; the distinction is recorded via `ImplDeclSyntax::trait_ref`.
+
+/// Trait item kind discriminator (parallels StatementSyntaxKind).
+enum class TraitItemKind {
+    Fn,        // trait method signature (`fn name(...) -> Ret;`)
+    AssocType, // associated type (`type Name;` / `type Name: Bound;` / `type Name = T;`)
+};
+
+/// A single trait item: either a method signature (carried as the same
+/// fragments as FnDecl — name, type params, params, return type, effect
+/// clause, where clause) or an associated type declaration.
+///
+/// `kind` discriminates the two shapes. For `Fn`, the signature fields are
+/// populated and `assoc` is empty. For `AssocType`, `assoc` carries the
+/// associated-type declaration and the signature fields are empty.
+struct TraitItemSyntax {
+    ahfl::SourceRange range;
+    TraitItemKind kind{TraitItemKind::Fn};
+
+    // Fn signature (RFC §1.3 TraitFnItem) — body is always absent.
+    std::string name;
+    std::vector<Owned<TypeParamSyntax>> type_params;
+    std::vector<Owned<ParamDeclSyntax>> params;
+    Owned<TypeSyntax> return_type;
+    Owned<EffectClauseSyntax> effect_clause;
+    Owned<WhereClauseSyntax> where_clause;
+
+    // Associated type declaration (RFC §1.3 AssocTypeItem).
+    struct AssocTypeDecl {
+        ahfl::SourceRange range;
+        std::string name;
+        std::vector<Owned<TypeParamSyntax>> type_params;
+        std::vector<Owned<TypeSyntax>> bounds; // optional super-bound list
+        Owned<TypeSyntax> default_type;        // optional default (`= Type`)
+    };
+    Owned<AssocTypeDecl> assoc;
+};
+
+/// Trait declaration (RFC §3.2.2 / type-system §1.3):
+///
+///   trait Name<T>: SuperA + SuperB { fn method(...); type Assoc; }
+///
+/// `super_traits` carries the optional super-trait bound list (RFC §1.3
+/// `[ ":" TypeBoundList ]`). `items` carries the (optionally re-ordered) trait
+/// method signatures and associated type declarations.
+struct TraitDecl final : Decl {
+    std::string name;
+    std::vector<Owned<TypeParamSyntax>> type_params;
+    std::vector<Owned<TypeSyntax>> super_traits; // optional super-trait bounds
+    std::vector<Owned<TraitItemSyntax>> items;
+
+    TraitDecl(std::string name, ahfl::SourceRange range = {});
+    void accept(Visitor &visitor) override;
+    [[nodiscard]] std::string headline() const override;
+};
+
+/// A single associated type definition inside an impl block
+/// (`type Name = Type;`, RFC §1.4 AssocItemDef).
+struct AssocItemDefSyntax {
+    ahfl::SourceRange range;
+    std::string name;
+    Owned<TypeSyntax> type;
+};
+
+/// Impl block (RFC §3.2.2 / type-system §1.4):
+///
+///   impl<T> TraitRef for TargetType [where ...] { fn method(...) { ... } type A = T; }
+///   impl TargetType { ... }   // inherent impl (trait_ref empty)
+///
+/// `trait_ref` is empty for an inherent impl (no `TraitRef "for"`). `methods`
+/// are the function definitions (each carries a mandatory body). `assoc_items`
+/// are the associated-type assignments.
+struct ImplDecl final : Decl {
+    std::vector<Owned<TypeParamSyntax>> type_params;
+    Owned<TypeSyntax> trait_ref;  // optional (empty for inherent impl)
+    Owned<TypeSyntax> target_type;
+    Owned<WhereClauseSyntax> where_clause;
+    std::vector<Owned<FnDecl>> methods;
+    std::vector<Owned<AssocItemDefSyntax>> assoc_items;
+
+    ImplDecl(ahfl::SourceRange range = {});
+    void accept(Visitor &visitor) override;
+    [[nodiscard]] std::string headline() const override;
+};
+
+// ----------------------------------------------------------------------------
 // Visitor pattern
 // ----------------------------------------------------------------------------
 
@@ -1302,6 +1398,8 @@ class Visitor {
     virtual void visit(FlowDecl &node) = 0;
     virtual void visit(WorkflowDecl &node) = 0;
     virtual void visit(FnDecl &node) = 0;
+    virtual void visit(TraitDecl &node) = 0;
+    virtual void visit(ImplDecl &node) = 0;
 };
 
 /// Recursive visitor (provides default empty implementations; subclasses only
@@ -1322,6 +1420,8 @@ class RecursiveVisitor : public Visitor {
     void visit(FlowDecl &node) override;
     void visit(WorkflowDecl &node) override;
     void visit(FnDecl &node) override;
+    void visit(TraitDecl &node) override;
+    void visit(ImplDecl &node) override;
 };
 
 // ============================================================================

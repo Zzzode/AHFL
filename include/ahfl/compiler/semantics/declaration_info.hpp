@@ -258,4 +258,108 @@ struct FnTypeInfo {
     SourceRange declaration_range;
 };
 
+// ============================================================================
+// P3 (RFC §3.2.2 / type-system §1.3 / §1.4) trait & impl declaration info
+// ============================================================================
+//
+// These mirror the FnTypeInfo pattern: resolved shallow type information keyed
+// by SymbolId. The trait method/impl method signatures reuse ParamTypeInfo +
+// FnEffectClauseInfo so the same signature-matching helpers work on both
+// trait-declared and impl-provided methods. Body typecheck (RFC §1.4 `FnDef`
+// requires a body) and trait-method-call resolution (RFC §2.1) are deferred
+// to a follow-up pass that has the typed call-site environment.
+
+/// One method signature declared inside a `trait` block (RFC §1.3 TraitFnItem).
+/// Trait methods carry no body (interface-only in P3).
+struct TraitMethodInfo {
+    std::string name;
+    std::vector<ParamTypeInfo> params;
+    TypePtr return_type;
+    SourceRange return_type_range;
+    std::vector<std::string> type_param_names;
+    FnEffectClauseInfo effect;
+    SourceRange declaration_range;
+};
+
+/// One associated type declared inside a `trait` block (RFC §1.3 AssocTypeItem).
+struct TraitAssocTypeInfo {
+    std::string name;
+    std::vector<std::string> type_param_names;
+    // Optional default type (`type A = T;`). nullptr when absent.
+    TypePtr default_type;
+    SourceRange declaration_range;
+};
+
+/// Resolved trait declaration (RFC §3.2.2 / type-system §1.3). `super_traits`
+/// holds the resolved super-trait symbol ids; `self_type_param_name` is the
+/// implicit `Self` (P3 stores the name so typecheck can substitute the impl's
+/// target type). Items carry the method + assoc-type surface in source order.
+struct TraitTypeInfo {
+    SymbolId symbol{0};
+    std::string canonical_name;
+    std::string local_name;
+    std::vector<std::string> type_param_names;
+    std::vector<SymbolId> super_traits;
+    std::vector<TraitMethodInfo> methods;
+    std::vector<TraitAssocTypeInfo> assoc_types;
+    SourceRange declaration_range;
+
+    // Linear lookups (small item count per trait, mirrors EnumTypeInfo).
+    [[nodiscard]] MaybeCRef<TraitMethodInfo> find_method(std::string_view name) const;
+    [[nodiscard]] MaybeCRef<TraitAssocTypeInfo> find_assoc_type(std::string_view name) const;
+};
+
+/// One associated type assignment inside an `impl` block
+/// (`type A = T;`, RFC §1.4 AssocItemDef).
+struct ImplAssocItemInfo {
+    std::string name;
+    TypePtr type;
+    SourceRange declaration_range;
+};
+
+/// One method defined inside an `impl` block (RFC §1.4 FnDef). `symbol` is the
+/// Function symbol registered for the method so callers can resolve
+/// `Type::method` / `e.method` to the impl's fn. The resolved signature mirrors
+/// TraitMethodInfo so signature-matching is structural compare.
+struct ImplMethodInfo {
+    std::string name;
+    SymbolId symbol{0};
+    std::vector<ParamTypeInfo> params;
+    TypePtr return_type;
+    SourceRange return_type_range;
+    std::vector<std::string> type_param_names;
+    FnEffectClauseInfo effect;
+    bool has_body{false};
+    SourceRange declaration_range;
+};
+
+/// Resolved impl block (RFC §3.2.2 / type-system §1.4). `is_inherent` is true
+/// when the impl has no `TraitRef for` (inherent impl). `trait_symbol` is the
+/// resolved trait (nullopt for inherent impls). `target_type` is the resolved
+/// impl target; `target_symbol` is the nominal symbol of the target type when
+/// it resolves to a struct/enum (used by the coherence/orphan-rule check).
+struct ImplTypeInfo {
+    // Index in the source declaration order; impls have no user-facing name.
+    std::size_t index{0};
+    bool is_inherent{false};
+    std::optional<SymbolId> trait_symbol;
+    std::string trait_name;
+    TypePtr target_type;
+    std::optional<SymbolId> target_symbol;
+    std::vector<std::string> type_param_names;
+    std::vector<ImplMethodInfo> methods;
+    std::vector<ImplAssocItemInfo> assoc_items;
+    SourceRange declaration_range;
+    SourceRange trait_ref_range;
+    SourceRange target_type_range;
+    // P3 (RFC §2.2 coherence): source unit the impl lives in, so the
+    // orphan-rule check can resolve the impl's defining module without a
+    // symbol. Resolved to a module name by the typecheck pass via
+    // SourceGraph::sources.
+    std::optional<SourceId> source_id;
+    // Module name the impl is declared in (resolved at typecheck time from
+    // source_id). Empty when the impl is in the anonymous top-level program.
+    std::string module_name;
+};
+
 } // namespace ahfl

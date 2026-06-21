@@ -112,6 +112,27 @@ MaybeCRef<EnumVariantInfo> EnumTypeInfo::find_variant(std::string_view name) con
     return std::nullopt;
 }
 
+// P3 (RFC §3.2.2 / type-system §1.3): trait item lookups. Linear scans — a
+// trait rarely has more than a handful of methods/assoc types (mirrors
+// EnumTypeInfo::find_variant).
+MaybeCRef<TraitMethodInfo> TraitTypeInfo::find_method(std::string_view name) const {
+    for (const auto &method : methods) {
+        if (method.name == name) {
+            return std::cref(method);
+        }
+    }
+    return std::nullopt;
+}
+
+MaybeCRef<TraitAssocTypeInfo> TraitTypeInfo::find_assoc_type(std::string_view name) const {
+    for (const auto &assoc : assoc_types) {
+        if (assoc.name == name) {
+            return std::cref(assoc);
+        }
+    }
+    return std::nullopt;
+}
+
 MaybeCRef<Type> TypeEnvironment::get_const_type(SymbolId id) const {
     if (const auto iter = const_types_.find(id.value);
         iter != const_types_.end() && static_cast<bool>(iter->second)) {
@@ -213,6 +234,51 @@ MaybeCRef<ContractTypeInfo> TypeEnvironment::get_contract(SymbolId id) const {
 
 MaybeCRef<FnTypeInfo> TypeEnvironment::get_fn(SymbolId id) const {
     return get_from_map(functions_, id);
+}
+
+// P3 (RFC §3.2.2 / type-system §1.3): trait lookup mirrors fn lookup.
+MaybeCRef<TraitTypeInfo> TypeEnvironment::get_trait(SymbolId id) const {
+    return get_from_map(traits_, id);
+}
+
+MaybeCRef<TraitTypeInfo> TypeEnvironment::find_trait(std::string_view canonical_name) const {
+    // P3: traits are keyed by symbol id; the reverse name index is built lazily
+    // on first lookup to avoid re-walking the trait table per query. The
+    // typical program has a handful of traits, so the walk is cheap.
+    const auto iter = trait_name_index_.find(std::string(canonical_name));
+    if (iter != trait_name_index_.end()) {
+        const auto trait_iter = traits_.find(iter->second);
+        if (trait_iter != traits_.end()) {
+            return std::cref(trait_iter->second);
+        }
+    }
+    for (const auto &[id, info] : traits_) {
+        if (info.canonical_name == canonical_name) {
+            const_cast<TypeEnvironment *>(this)->trait_name_index_.emplace(info.canonical_name, id);
+            return std::cref(info);
+        }
+    }
+    return std::nullopt;
+}
+
+MaybeCRef<ImplTypeInfo>
+TypeEnvironment::resolve_trait_impl(SymbolId trait_symbol, SymbolId target_symbol) const {
+    // P3 (RFC §2.1): walk the impl table for a trait impl matching the
+    // (trait, target) symbol pair. Coherence guarantees at most one such impl
+    // (the duplicate-trait-impl detector rejects the second), so the first
+    // match is authoritative. Generic-argument unification is deferred to the
+    // method-call expr typecheck (no call sites today).
+    for (const auto &[index, impl] : impls_) {
+        (void)index;
+        if (impl.is_inherent) {
+            continue;
+        }
+        if (impl.trait_symbol.has_value() && *impl.trait_symbol == trait_symbol &&
+            impl.target_symbol.has_value() && *impl.target_symbol == target_symbol) {
+            return std::cref(impl);
+        }
+    }
+    return std::nullopt;
 }
 
 bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
@@ -518,6 +584,38 @@ void dump_type_environment(const TypeEnvironment &environment,
                 out << " -> " << info->get().return_type->describe();
             }
             out << '\n';
+            break;
+        }
+        case SymbolKind::Trait: {
+            // P3 (RFC §3.2.2 / type-system §1.3): dump the trait surface so
+            // the environment dump covers the new declaration.
+            const auto info = environment.get_trait(symbol.id);
+            if (!info.has_value()) {
+                break;
+            }
+            out << "trait " << info->get().canonical_name;
+            if (!info->get().type_param_names.empty()) {
+                out << '<';
+                for (std::size_t index = 0; index < info->get().type_param_names.size(); ++index) {
+                    if (index != 0) {
+                        out << ", ";
+                    }
+                    out << info->get().type_param_names[index];
+                }
+                out << '>';
+            }
+            if (!info->get().super_traits.empty()) {
+                out << ": ";
+                for (std::size_t index = 0; index < info->get().super_traits.size(); ++index) {
+                    if (index != 0) {
+                        out << " + ";
+                    }
+                    const auto super = environment.get_trait(info->get().super_traits[index]);
+                    out << (super.has_value() ? super->get().canonical_name : std::string{"<unknown>"});
+                }
+            }
+            out << " { " << info->get().methods.size() << " method(s), "
+                << info->get().assoc_types.size() << " assoc type(s) }\n";
             break;
         }
         }
