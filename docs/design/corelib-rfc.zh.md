@@ -6,6 +6,12 @@
 - §1–§5：**目标设计**（演进正确路径，对标业内最佳实践）。
 - §6：**迁移路径**（从现状分阶段逼近目标，P0–P7）。
 
+可实施细节见四份 detail 附件（§7 开放问题已在其中全部决议）：
+- [corelib-type-system.zh.md](./corelib-type-system.zh.md) — 完整 EBNF + trait / 泛型 / 闭包 / 单态化（决议 Q1 / Q2 / Q7）
+- [corelib-effect-system.zh.md](./corelib-effect-system.zh.md) — effect 推导 + decreases + 可验证子集检查（决议 Q3）
+- [corelib-stdlib-api.zh.md](./corelib-stdlib-api.zh.md) — stdlib 完整接口 + `@builtin` 清单（决议 Q4 / Q5）
+- [corelib-container-migration.zh.md](./corelib-container-migration.zh.md) — P5 容器库化迁移策略（决议 Q6）
+
 ---
 
 ## 1. 设计哲学（核心原则）
@@ -293,7 +299,7 @@ gantt
 - `Optional/Result/List/Set/Map` 从**关键字迁移到 stdlib ADT / 泛型类型**。
 - `some/none`、`[...]`、`set[...]`、`map[...]` 变为 ADT 构造子 / 字面量语法糖（保留语法友好性，语义在库）。
 - typecheck / IR / SMV 改为消费 stdlib 类型；结构性 op（`length`/下标/字面量构造）下沉为 `@builtin`，算法（`fold/map/filter`）在库。
-- **风险（高）**：牵动现有 SMV 编码最深；需逐容器迁移 + 等价性测试。
+- **风险（中）**：经逐行核查 SMV backend **不消费**容器类型（只建模 agent 状态机 / workflow phase / temporal / contract，见 [corelib-container-migration.zh.md](./corelib-container-migration.zh.md)），容器库化不改 SMV 输出；主要风险是 typecheck 行为等价性，由 P5.0–P5.4 等价性测试覆盖。
 - **验收**：`Optional/Result/List/Set/Map` 是 stdlib 类型，关键字仅为语法糖；现有 SMV golden 等价。
 
 ### P6. stdlib 实现 + prelude（工程量 L）
@@ -309,15 +315,19 @@ gantt
 
 ---
 
-## 7. 开放问题
+## 7. 已决议问题（细节见附件）
 
-1. **trait coherence**：单根模块树能否进一步简化 orphan rule（如 `impl` 必须与类型或 trait 同模块）。
-2. **闭包捕获 refinement**：闭包捕获 `List<T>` 时是否在闭包定义点固化长度上界。
-3. **effect 系统与 capability effect 的统一粒度**：`effect <Capability>+` 与现有 capability effect 系统如何合一。
-4. **`std::result` 与现有错误模型**：AHFL capability fail-closed 错误模型如何与 `Result<T,E>` + `?`/`try` 交互。
-5. **prelude stability policy**：prelude 是 lang stability 边界，需独立策略。
-6. **P5 容器库化对现有 SMV 编码的迁移策略**：最大工程风险，需 P5 前出独立迁移 RFC。
-7. **泛型 refinement 交互**：`List<T> where length <= 8` 中 `T` 与 `length` 约束是否在 P2 一并支持。
+原 7 个开放问题已在四份 detail 附件中逐一决议，摘要：
+
+| # | 问题 | 决议 | 详见 |
+| --- | --- | --- | --- |
+| 1 | trait coherence / orphan rule | **严格版 orphan rule**：`impl Trait for Type` 必须位于定义 Type 或定义 Trait 的模块，其余报 `E::orphan_impl`。单根模块树下冲突候选 ≤ 2，编译期确定。 | [type-system §2](./corelib-type-system.zh.md) |
+| 2 | 闭包捕获 refinement | 闭包捕获 bounded `List<T>` 时，长度上界在**定义点固化**为 `N_def`（该点最紧上界），调用实参须 `<= N_def`（SMV bounded 强制）。 | [type-system §4/§6](./corelib-type-system.zh.md) |
+| 3 | effect 与 capability effect 统一 | `ExprEffect` 6 级保留为表达式层推导中间结果，经 `project` 投影到最终判断层 `EffectJudgement`（Pure / Nondet / CapabilitySet）；`CapabilityEffectKind` 留在 capability 声明作 effect profile。保留 `ExprEffect` 名字。 | [effect-system §2](./corelib-effect-system.zh.md) |
+| 4 | `std::result` 与错误模型 | **分层共存**：capability 失败（provider 崩溃 / 超时 / 网络）走 fail-closed effect，不经 `Result::Err`；`Result<T,E>` 仅承载值层业务可恢复失败；`?`/`try` 仅 fn 体内合法，禁止进 predicate / contract / flow handler / workflow return。 | [stdlib-api](./corelib-stdlib-api.zh.md) |
+| 5 | prelude stability | prelude 是 lang stability boundary，v1 清单冻结（Option / Result / 容器 / 高阶函数 / 核心 trait / format）；semver：新增 minor、删除/重命名 major + deprecated alias；`#![no_prelude]` 关闭注入。 | [stdlib-api §9](./corelib-stdlib-api.zh.md) |
+| 6 | P5 容器库化对 SMV 编码的影响 | 风险**下调为中**：SMV backend 经逐行核查**不消费** Optional/List/Set/Map（只建模 agent 状态机 / workflow phase / temporal / contract），故容器库化不改 SMV 输出。P5.0–P5.11 分阶段，SMV golden 作等价性门槛。 | [container-migration](./corelib-container-migration.zh.md) |
+| 7 | 泛型 × refinement 交互 | **P2 一并支持** `List<T> where length <= N` 的 T（trait bound）与 length（refinement），二者正交、N 必须字面量/const（不可 `length = f(T)`）。 | [type-system §6](./corelib-type-system.zh.md) |
 
 ---
 
@@ -327,6 +337,6 @@ gantt
 
 这是 **Rust/Swift（类型系统形态）+ Dafny/F\*（可验证子集机制）+ Lean/Zig（stdlib 自举）** 的共识路径。核心原则一句话：**语言表达力与可验证性正交，用可验证子集连接，不用降级语言换可判定性。**
 
-迁移分 P0–P7 七阶段；**P2（fn/泛型/闭包，XL）与 P5（容器库化）是两大关键工程节点**，前者是 typechecker 现代化级别，后者牵动 SMV 编码最深。
+迁移分 P0–P7 七阶段；**P2（fn/泛型/闭包，XL）是最大工程节点**（typechecker 现代化级别）；P5（容器库化）经核查 SMV backend 不消费容器类型，风险为中（见 [corelib-container-migration.zh.md](./corelib-container-migration.zh.md)）。
 
-本 RFC 不落代码，等待 owner 评审。
+7 个开放问题已在四份 detail 附件中全部决议（见 §7）。本 RFC + 四份附件构成可实施的设计全集，不落代码，等待 owner 评审。
