@@ -67,7 +67,14 @@ structFieldDecl: IDENT ':' type_ ('=' constExpr)? ';';
 enumDecl:
 	'enum' IDENT '{' enumVariant (',' enumVariant)* ','? '}';
 
-enumVariant: IDENT;
+// P1 (ADT): an enum variant optionally carries a positional tuple payload,
+// e.g. `Some(T)`, `Err(E)`. Existing payload-less variants parse unchanged
+// (payload is optional), preserving full backward compatibility.
+enumVariant: IDENT ('(' typeList ')')?;
+
+// Positional tuple payload type list (RFC §1.5 TupleFieldList). Reused by
+// variant patterns below.
+typeList: type_ (',' type_)* ','?;
 
 capabilityDecl:
 	'capability' IDENT '(' paramList? ')' '->' type_ (';' | capabilityEffectBlock);
@@ -241,9 +248,66 @@ primaryExpr:
 	| listLiteral
 	| setLiteral
 	| mapLiteral
+	| matchExpr
 	| 'some' '(' expr ')'
 	| 'none'
 	| '(' expr ')';
+
+// P1 (ADT): `match` expression. `match scrutinee { arm1; arm2; ... }`.
+// Each arm is `pattern [if guard] => expr,`. The trailing comma is optional
+// for the last arm (RFC §1.6 tolerates comma or newline endings).
+matchExpr: 'match' expr '{' matchArm* '}';
+
+matchArm: pattern ('if' expr)? '=>' expr ','?;
+
+// P1 (ADT): patterns (RFC §1.6). Composition mirrors the RFC EBNF:
+//   pattern  ::= orPattern
+//   orPattern ::= concatPattern ('|' concatPattern)*
+//   concatPattern is one of the concrete pattern forms.
+//
+// Grouping/nesting is handled by `tuplePattern`: `(p)` parses as a single-
+// element tuple and `tuplePattern` re-enters `pattern` via `patternList`, so
+// `(pattern)` does not need a separate parenthesized alt here.
+pattern: orPattern;
+
+orPattern: concatPattern ('|' concatPattern)*;
+
+concatPattern:
+	literalPattern
+	| variantPattern
+	| wildcardPattern
+	| bindingPattern
+	| tuplePattern;
+
+// Literal patterns. `none` is sugar for Option::None (RFC §1.6).
+literalPattern:
+	'true'
+	| 'false'
+	| integerLiteral
+	| floatLiteral
+	| stringLiteral
+	| 'none';
+
+// Variant pattern: an ADT variant optionally carrying sub-patterns.
+// Two forms per RFC §1.6:
+//   - Fully qualified: `Ident '::' Ident ...` (e.g. Option::Some, Option::Some(x))
+//   - Short form: a bare `Ident` followed by a payload list (e.g. `Some(x)`).
+// The short form requires `(` so a bare `IDENT` (no payload) unambiguously
+// parses as `bindingPattern`.
+variantPattern:
+	IDENT '::' IDENT ('::' IDENT)* ('(' patternList ')')?
+	| IDENT '(' patternList ')';
+
+wildcardPattern: '_';
+
+// Binding pattern: `mut? name`, optionally `@`-bound to a nested pattern
+// (`name @ Some(x)`). `mut` is accepted syntactically (RFC reserves it for
+// future refinement; first version treats all bindings as immutable).
+bindingPattern: 'mut'? IDENT ('@' concatPattern)?;
+
+tuplePattern: '(' patternList? ')';
+
+patternList: pattern (',' pattern)* ','?;
 
 pathExpr: pathRoot ('.' IDENT)*;
 

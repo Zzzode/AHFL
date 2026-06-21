@@ -1862,6 +1862,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-rfc-corelib rfc-corelib-p7-runtime
+    TESTS
+        ahfl.evaluator.p7_runtime_all
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.52 v0.52-statement-executor
     TESTS
         ahfl.executor.exec_all

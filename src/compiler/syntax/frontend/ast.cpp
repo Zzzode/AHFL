@@ -293,8 +293,85 @@ class AstInvariantValidator final {
                         validate_expr(*e.inner);
                     }
                 },
+                [&](const MatchExpr &e) {
+                    require(e.scrutinee != nullptr,
+                            expr.range,
+                            "MatchExpr is missing scrutinee");
+                    if (e.scrutinee) {
+                        validate_expr(*e.scrutinee);
+                    }
+                    for (const auto &arm : e.arms) {
+                        require(arm != nullptr, expr.range, "MatchExpr.arms contains null");
+                        if (!arm) {
+                            continue;
+                        }
+                        validate_match_arm(*arm);
+                    }
+                },
             },
             expr.node);
+    }
+
+    /// Validate a match arm (P1 ADT, RFC §1.6).
+    void validate_match_arm(const MatchArmSyntax &arm) {
+        require(arm.pattern != nullptr, arm.range, "MatchArmSyntax is missing pattern");
+        if (arm.pattern) {
+            validate_pattern(*arm.pattern);
+        }
+        if (arm.guard) {
+            validate_expr(*arm.guard);
+        }
+        require(arm.body != nullptr, arm.range, "MatchArmSyntax is missing body");
+        if (arm.body) {
+            validate_expr(*arm.body);
+        }
+    }
+
+    /// Validate a pattern (P1 ADT, RFC §1.6).
+    void validate_pattern(const PatternSyntax &pattern) {
+        std::visit(
+            Overloaded{
+                [&](const LiteralPattern &) {
+                    require(!pattern.text.empty(),
+                            pattern.range,
+                            "LiteralPattern is missing spelling");
+                },
+                [&](const VariantPattern &p) {
+                    validate_qualified_name(
+                        p.path.get(), pattern.range, "VariantPattern.path");
+                    for (const auto &sub : p.subpatterns) {
+                        require(sub != nullptr, pattern.range, "VariantPattern.subpatterns null");
+                        if (sub) {
+                            validate_pattern(*sub);
+                        }
+                    }
+                },
+                [&](const WildcardPattern &) {},
+                [&](const BindingPattern &p) {
+                    require(!p.name.empty(), pattern.range, "BindingPattern is missing name");
+                    if (p.nested) {
+                        validate_pattern(*p.nested);
+                    }
+                },
+                [&](const TuplePattern &p) {
+                    for (const auto &elem : p.elements) {
+                        require(elem != nullptr, pattern.range, "TuplePattern.elements null");
+                        if (elem) {
+                            validate_pattern(*elem);
+                        }
+                    }
+                },
+                [&](const OrPattern &p) {
+                    require(!p.branches.empty(), pattern.range, "OrPattern has no branches");
+                    for (const auto &branch : p.branches) {
+                        require(branch != nullptr, pattern.range, "OrPattern.branches null");
+                        if (branch) {
+                            validate_pattern(*branch);
+                        }
+                    }
+                },
+            },
+            pattern.node);
     }
 
     void validate_statement(const StatementSyntax &statement) {
@@ -586,6 +663,15 @@ class AstInvariantValidator final {
                     require(!variant->name.empty(),
                             variant->range,
                             "EnumVariantDeclSyntax is missing name");
+                    // P1 (ADT): validate the optional positional payload types.
+                    for (const auto &payload_type : variant->payload) {
+                        require(payload_type != nullptr,
+                                variant->range,
+                                "EnumVariantDeclSyntax.payload contains null");
+                        if (payload_type) {
+                            validate_type(*payload_type);
+                        }
+                    }
                 }
             }
             break;

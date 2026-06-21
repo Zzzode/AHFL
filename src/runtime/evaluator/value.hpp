@@ -6,6 +6,7 @@
 #include <ostream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -62,6 +63,32 @@ struct OptionalValue {
     std::unique_ptr<Value> inner; // nullptr means none
 };
 
+// Set value: ordered + de-duplicated vector of items (RFC P7).
+// Ordering enables deterministic equality / printing independent of insertion
+// order; de-duplication mirrors mathematical set semantics.
+struct SetValue {
+    std::vector<std::unique_ptr<Value>> items;
+};
+
+// Map value: ordered key/value pairs (RFC P7).
+// Stored as an ordered vector to keep iteration / equality deterministic;
+// duplicate-key insertion keeps the last value (last-write-wins).
+struct MapValue {
+    std::vector<std::pair<std::unique_ptr<Value>, std::unique_ptr<Value>>> entries;
+};
+
+// UUID value: canonical 32-char lowercase hex string (RFC P7).
+// Chosen over a 128-bit int to preserve spellings / round-tripping without
+// platform-dependent 128-bit integer support.
+struct UuidValue {
+    std::string hex; // 32 lowercase hex chars (no dashes)
+};
+
+// Timestamp value: Unix epoch milliseconds (RFC P7).
+struct TimestampValue {
+    int64_t unix_ms{0};
+};
+
 // ============================================================================
 // Value type (variant)
 // ============================================================================
@@ -76,7 +103,11 @@ using ValueNode = std::variant<NoneValue,
                                StructValue,
                                ListValue,
                                EnumValue,
-                               OptionalValue>;
+                               OptionalValue,
+                               SetValue,
+                               MapValue,
+                               UuidValue,
+                               TimestampValue>;
 
 struct Value {
     ValueNode node;
@@ -98,6 +129,10 @@ enum class ValueKind {
     List,
     Enum,
     Optional,
+    Set,
+    Map,
+    Uuid,
+    Timestamp,
 };
 
 // ============================================================================
@@ -154,6 +189,25 @@ void print_value(const Value &v, std::ostream &out);
                                 std::unordered_map<std::string, Value> fields);
 
 [[nodiscard]] Value make_list(std::vector<Value> items);
+
+// RFC P7 runtime additions ---------------------------------------------------
+
+/// Construct a Set value. Items are normalized: de-duplicated and ordered so
+/// that structurally-equal sets always produce identical values regardless of
+/// input order. Order is defined by a stable structural comparison.
+[[nodiscard]] Value make_set(std::vector<Value> items);
+
+/// Construct a Map value. Duplicate keys keep the last value (last-write-wins)
+/// and entries are ordered by key for deterministic iteration / equality.
+[[nodiscard]] Value make_map(std::vector<std::pair<Value, Value>> entries);
+
+/// Construct a UUID value from a canonical 32-char lowercase hex spelling.
+/// The hex string is normalized (dashes stripped, lowercased) and validated for
+/// length; returns nullopt on malformed input.
+[[nodiscard]] std::optional<Value> make_uuid(std::string spelling);
+
+/// Construct a Timestamp value from Unix epoch milliseconds.
+[[nodiscard]] Value make_timestamp(int64_t unix_ms);
 
 // Deep copy
 [[nodiscard]] Value clone_value(const Value &v);

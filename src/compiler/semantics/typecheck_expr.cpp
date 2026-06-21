@@ -15,6 +15,7 @@
 
 namespace ahfl {
 
+using internal::BindingMap;
 using internal::CallContext;
 using internal::is_bool_type;
 using internal::is_error_type;
@@ -265,6 +266,7 @@ class ExpressionChecker final {
                 [&](const ast::MemberAccessExpr &) { return visit_member_access(expr); },
                 [&](const ast::IndexAccessExpr &) { return visit_index_access(expr); },
                 [&](const ast::GroupExpr &) { return visit_group(expr); },
+                [&](const ast::MatchExpr &) { return visit_match(expr); },
             },
             expr.node);
     }
@@ -388,9 +390,316 @@ class ExpressionChecker final {
         return services_.check_expr(*group.inner, context_, expected_type_);
     }
 
+    // P1b (ADT, RFC §1.6): full match typecheck.
+    //
+    //   1. The scrutinee must type-check to an enum type (the source of
+    //      variants we narrow against). Otherwise report
+    //      MATCH_SCRUTINEE_REQUIRES_ENUM.
+    //   2. For each arm, walk the pattern, registering any `@`-free / explicit
+    //      binding name against the corresponding payload slot type. Sub-patterns
+    //      (tuple/or/literal) are checked structurally; payload arity mismatches
+    //      surface MATCH_VARIANT_PAYLOAD_ARITY.
+    //   3. Each arm body is checked in a context carrying the pattern bindings;
+    //      the first arm's body type is the expected type for every subsequent
+    //      arm body (MATCH_ARM_TYPE_MISMATCH on divergence).
+    //   4. Exhaustiveness: the match is exhaustive when an arm's pattern can
+    //      match every value of the scrutinee type. The first version accepts
+    //      either a wildcard arm (`_`) or a binding-only arm (`x`) at any
+    //      position, or full coverage of all declared variants. Anything else
+    //      reports MATCH_NOT_EXHAUSTIVE with the missing variant names.
+    [[nodiscard]] TypedValue visit_match(const ast::ExprSyntax &expr) const {
+        const auto &match = expr.as<ast::MatchExpr>();
+
+        const auto scrutinee = services_.check_expr(*match.scrutinee, context_, std::nullopt);
+        ExprEffect joined = scrutinee.effect;
+
+        const auto *enum_payload = scrutinee.type->get_if<types::EnumT>();
+        if (enum_payload == nullptr && !is_error_type(*scrutinee.type)) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::MatchScrutineeRequiresEnum,
+                messages::typecheck::MatchScrutineeRequiresEnum.format_with(
+                    scrutinee.type->describe()),
+                match.scrutinee->range);
+            return values_.error_typed_effect(joined);
+        }
+
+        // If the scrutinee failed to resolve to an enum, still walk the arms so
+        // cascaded diagnostics stay localized; the match result is error.
+        const auto enum_info =
+            enum_payload != nullptr ? services_.get_enum(*scrutinee.type) : std::nullopt;
+
+        bool has_catch_all = false;
+        std::unordered_set<std::string> covered_variants;
+        std::optional<TypePtr> unified_body_type;
+        bool unified_is_error = false;
+
+        for (const auto &arm : match.arms) {
+            // Build a per-arm value context that layers the pattern's bindings
+            // on top of the surrounding bindings. Bindings introduced by the
+            // pattern shadow any same-named outer binding (match-arm scope).
+            ValueContext arm_context = context_;
+            const bool arm_catches_all =
+                lower_pattern(*arm->pattern,
+                              scrutinee.type,
+                              enum_info,
+                              arm_context.bindings,
+                              covered_variants,
+                              arm->pattern->range);
+
+            if (arm_catches_all) {
+                has_catch_all = true;
+            }
+
+            // Optional guard: must be a pure Bool expression evaluated in the
+            // arm-local binding scope. A guard with side effects degrades the
+            // match's effect but does not invalidate exhaustiveness accounting.
+            if (arm->guard) {
+                const auto guard_value =
+                    services_.check_expr(*arm->guard, arm_context, std::nullopt);
+                joined = join_effects(joined, guard_value.effect);
+            }
+
+            MaybeCRef<Type> arm_expected = std::nullopt;
+            if (unified_body_type.has_value()) {
+                arm_expected = std::cref(**unified_body_type);
+            }
+            const auto body =
+                services_.check_expr(*arm->body, arm_context, arm_expected);
+            joined = join_effects(joined, body.effect);
+
+            if (!unified_body_type.has_value()) {
+                if (body.type != nullptr) {
+                    unified_body_type = body.type;
+                    unified_is_error = is_error_type(*body.type);
+                } else {
+                    unified_is_error = true;
+                }
+            } else if (!unified_is_error && body.type != nullptr &&
+                       !is_error_type(*body.type)) {
+                (void)services_.check_assignable(*body.type,
+                                                 **unified_body_type,
+                                                 arm->body->range,
+                                                 "match arm body");
+            }
+        }
+
+        // Exhaustiveness: catch-all arm short-circuits; otherwise every variant
+        // of the scrutinee enum must appear in some arm's pattern.
+        if (!has_catch_all) {
+            if (enum_info.has_value()) {
+                for (const auto &variant : enum_info->get().variants) {
+                    if (covered_variants.count(variant.name) == 0) {
+                        std::vector<std::string> missing;
+                        missing.reserve(enum_info->get().variants.size());
+                        for (const auto &v : enum_info->get().variants) {
+                            if (covered_variants.count(v.name) == 0) {
+                                missing.push_back(v.name);
+                            }
+                        }
+                        std::string listing;
+                        for (std::size_t i = 0; i < missing.size(); ++i) {
+                            listing += (i == 0 ? "" : ", ") + missing[i];
+                        }
+                        services_.typecheck_error_here(
+                            error_codes::typecheck::MatchNotExhaustive,
+                            messages::typecheck::MatchNotExhaustive.format_with(listing),
+                            expr.range);
+                        break;
+                    }
+                }
+            }
+            // When the scrutinee is not an enum (error path) we skip the
+            // exhaustiveness check — the MATCH_SCRUTINEE_REQUIRES_ENUM
+            // diagnostic above already flags the real problem.
+        }
+
+        TypePtr result_type =
+            unified_body_type.has_value() && !unified_is_error
+                ? *unified_body_type
+                : values_.make_error_type();
+        return values_.typed_effect(std::move(result_type), joined);
+    }
+
   private:
     [[nodiscard]] TypedValue check_path(const ast::PathSyntax &path) const {
         return services_.resolve_path(path, context_);
+    }
+
+    // ---------------------------------------------------------------------------
+    // P1b ADT: pattern lowering for `match` arms.
+    //
+    // `lower_pattern` walks a PatternSyntax, recording:
+    //   * payload-binding names into `bindings` (mapping name -> slot type)
+    //   * matched variant names into `covered_variants` (for exhaustiveness)
+    //
+    // Returns true when the pattern is irrefutable at the scrutinee type — i.e.
+    // a wildcard `_`, a bare binding `x` (no `@`), or a tuple pattern composed
+    // entirely of irrefutable sub-patterns. Such patterns make the enclosing
+    // arm a catch-all for exhaustiveness purposes.
+    //
+    // `scrutinee_type` is the narrowed type for this sub-pattern (the enum type
+    // at the top level, the slot type inside a variant payload). `enum_info`
+    // is the looked-up EnumTypeInfo for the top-level scrutinee; sub-pattern
+    // recursion passes std::nullopt since nested scrutinees are not enums.
+    [[nodiscard]] bool lower_pattern(const ast::PatternSyntax &pattern,
+                                     TypePtr scrutinee_type,
+                                     std::optional<std::reference_wrapper<const EnumTypeInfo>> enum_info,
+                                     BindingMap &bindings,
+                                     std::unordered_set<std::string> &covered_variants,
+                                     SourceRange range) const {
+        return std::visit(
+            overloaded{
+                [&](const ast::LiteralPattern &) {
+                    // Literal patterns only narrow (no binding); they are not
+                    // catch-alls. Exhaustiveness against literals is not modeled
+                    // in the first version — only variant coverage counts.
+                    (void)scrutinee_type;
+                    (void)enum_info;
+                    (void)bindings;
+                    (void)covered_variants;
+                    (void)range;
+                    return false;
+                },
+                [&](const ast::WildcardPattern &) {
+                    (void)scrutinee_type;
+                    (void)enum_info;
+                    (void)bindings;
+                    (void)covered_variants;
+                    (void)range;
+                    return true;
+                },
+                [&](const ast::BindingPattern &binding) {
+                    // P1 disambiguation (Rust-style): in an enum scrutinee
+                    // context, a bare identifier that names a variant of that
+                    // enum is a payload-less variant pattern (covers the variant,
+                    // is NOT a catch-all). A non-variant identifier is an
+                    // irrefutable binding (catch-all).
+                    if (enum_info.has_value() && !binding.nested &&
+                        enum_info->get().has_variant(binding.name)) {
+                        covered_variants.insert(std::string(binding.name));
+                        return false;
+                    }
+                    // A bare binding matches everything and is irrefutable.
+                    // Bind the name to the (narrowed) scrutinee type. When an
+                    // `@`-bound nested pattern is present, recurse into it for
+                    // its own bindings; the outer name still binds the whole.
+                    if (!binding.name.empty()) {
+                        const auto [iter, inserted] = bindings.emplace(
+                            binding.name, scrutinee_type != nullptr ? scrutinee_type
+                                                                    : values_.make_error_type());
+                        if (!inserted &&
+                            (!iter->second || !is_error_type(*iter->second))) {
+                            services_.typecheck_error_here(
+                                error_codes::typecheck::MatchDuplicateBinding,
+                                messages::typecheck::MatchDuplicateBinding.format_with(
+                                    binding.name),
+                                range);
+                        }
+                    }
+                    if (binding.nested) {
+                        (void)lower_pattern(*binding.nested,
+                                            scrutinee_type,
+                                            enum_info,
+                                            bindings,
+                                            covered_variants,
+                                            binding.nested->range);
+                    }
+                    // A binding is a catch-all unless it is constrained by an
+                    // `@`-bound variant sub-pattern.
+                    if (binding.nested &&
+                        binding.nested->is<ast::VariantPattern>()) {
+                        return false;
+                    }
+                    return true;
+                },
+                [&](const ast::TuplePattern &tuple) {
+                    // Tuple patterns are irrefutable iff every element is. The
+                    // first-version match grammar uses tuple patterns only for
+                    // payload positional structure; the scrutinee slot types
+                    // are not tuples at this stage, so we conservatively treat
+                    // each element against the same scrutinee type.
+                    bool all_irrefutable = true;
+                    for (const auto &element : tuple.elements) {
+                        const auto sub_irrefutable = lower_pattern(*element,
+                                                                   scrutinee_type,
+                                                                   enum_info,
+                                                                   bindings,
+                                                                   covered_variants,
+                                                                   element->range);
+                        all_irrefutable = all_irrefutable && sub_irrefutable;
+                    }
+                    return all_irrefutable && !tuple.elements.empty();
+                },
+                [&](const ast::VariantPattern &variant) {
+                    // Variant patterns only narrow; they are never catch-alls.
+                    if (!enum_info.has_value()) {
+                        // No enum context to validate against (scrutinee failed
+                        // to resolve). Skip variant coverage bookkeeping.
+                        return false;
+                    }
+                    const auto &segments = variant.path->segments;
+                    if (segments.empty()) {
+                        return false;
+                    }
+                    const auto &variant_name = segments.back();
+                    const auto variant_info = enum_info->get().find_variant(variant_name);
+                    if (!variant_info.has_value()) {
+                        services_.typecheck_error_here(
+                            error_codes::typecheck::MatchUnknownVariant,
+                            messages::typecheck::MatchUnknownVariant.format_with(
+                                variant.path->spelling(),
+                                enum_info->get().canonical_name),
+                            range);
+                        return false;
+                    }
+
+                    covered_variants.insert(std::string(variant_name));
+
+                    const auto &payload = variant_info->get().payload;
+                    if (variant.subpatterns.size() != payload.size()) {
+                        services_.typecheck_error_here(
+                            error_codes::typecheck::MatchVariantPayloadArity,
+                            messages::typecheck::MatchVariantPayloadArity.format_with(
+                                std::string(variant_name),
+                                enum_info->get().canonical_name,
+                                std::to_string(payload.size()),
+                                std::to_string(variant.subpatterns.size())),
+                            range);
+                    }
+
+                    const std::size_t limit =
+                        std::min(variant.subpatterns.size(), payload.size());
+                    for (std::size_t index = 0; index < limit; ++index) {
+                        (void)lower_pattern(*variant.subpatterns[index],
+                                            payload[index],
+                                            std::nullopt,
+                                            bindings,
+                                            covered_variants,
+                                            variant.subpatterns[index]->range);
+                    }
+                    return false;
+                },
+                [&](const ast::OrPattern &or_pattern) {
+                    // An or-pattern is catch-all only if every branch is. We
+                    // lower every branch so each branch's variant coverage and
+                    // bindings are recorded (the first-version requirement is
+                    // that all branches bind equivalent names; we do not yet
+                    // enforce that here — coverage is what matters for
+                    // exhaustiveness).
+                    bool all_irrefutable = true;
+                    for (const auto &branch : or_pattern.branches) {
+                        const auto sub_irrefutable = lower_pattern(*branch,
+                                                                   scrutinee_type,
+                                                                   enum_info,
+                                                                   bindings,
+                                                                   covered_variants,
+                                                                   branch->range);
+                        all_irrefutable = all_irrefutable && sub_irrefutable;
+                    }
+                    return all_irrefutable && !or_pattern.branches.empty();
+                },
+            },
+            pattern.node);
     }
 
     [[nodiscard]] TypedValue check_qualified_value(const ast::ExprSyntax &expr) const {

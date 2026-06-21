@@ -423,10 +423,18 @@ void TypeCheckPass::build_enum_types() {
                         variant->range);
                 }
 
-                info.variants.push_back(EnumVariantInfo{
+                // P1 (ADT, RFC §1.5): resolve the variant's optional positional
+                // payload. Empty for the legacy payload-less enum form.
+                EnumVariantInfo variant_info{
                     .name = variant->name,
                     .declaration_range = variant->range,
-                });
+                };
+                variant_info.payload.reserve(variant->payload.size());
+                for (const auto &slot : variant->payload) {
+                    variant_info.payload.push_back(resolve_type(*slot));
+                }
+
+                info.variants.push_back(std::move(variant_info));
             }
 
             environment().index_enum(id, std::move(info));

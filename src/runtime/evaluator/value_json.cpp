@@ -107,6 +107,54 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 } else {
                     out << "null";
                 }
+            } else if constexpr (std::is_same_v<T, SetValue>) {
+                // Serialize Set as a JSON array; canonical ordering is already
+                // baked into the storage, so equal sets serialize identically.
+                out << '[';
+                for (std::size_t i = 0; i < inner.items.size(); ++i) {
+                    if (i > 0)
+                        out << ',';
+                    if (inner.items[i]) {
+                        write_json_impl(*inner.items[i], out);
+                    } else {
+                        out << "null";
+                    }
+                }
+                out << ']';
+            } else if constexpr (std::is_same_v<T, MapValue>) {
+                out << '{';
+                for (std::size_t i = 0; i < inner.entries.size(); ++i) {
+                    if (i > 0)
+                        out << ',';
+                    // Key serialized as string; non-string keys fall back to
+                    // their canonical spelling for round-tripping.
+                    if (inner.entries[i].first) {
+                        std::ostringstream key_oss;
+                        write_json_impl(*inner.entries[i].first, key_oss);
+                        out << key_oss.str();
+                    } else {
+                        out << "null";
+                    }
+                    out << ':';
+                    if (inner.entries[i].second) {
+                        write_json_impl(*inner.entries[i].second, out);
+                    } else {
+                        out << "null";
+                    }
+                }
+                out << '}';
+            } else if constexpr (std::is_same_v<T, UuidValue>) {
+                out << '{';
+                ahfl::write_escaped_json_string(out, "_uuid");
+                out << ':';
+                ahfl::write_escaped_json_string(out, inner.hex);
+                out << '}';
+            } else if constexpr (std::is_same_v<T, TimestampValue>) {
+                out << '{';
+                ahfl::write_escaped_json_string(out, "_timestamp");
+                out << ':';
+                out << inner.unix_ms;
+                out << '}';
             }
         },
         v.node);
@@ -148,6 +196,20 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     const auto *variant_name = string_field_value(object, "_variant");
     if (enum_name != nullptr && variant_name != nullptr) {
         return Value{EnumValue{*enum_name, *variant_name}};
+    }
+
+    // RFC P7: UUID marker.
+    const auto *uuid_hex = string_field_value(object, "_uuid");
+    if (uuid_hex != nullptr) {
+        return Value{UuidValue{*uuid_hex}};
+    }
+
+    // RFC P7: Timestamp marker.
+    if (const auto *ts_field = object.get("_timestamp")) {
+        if (ts_field->kind == ahfl::json::Kind::Int) {
+            return Value{TimestampValue{ts_field->int_val}};
+        }
+        return std::nullopt;
     }
 
     StructValue struct_value;

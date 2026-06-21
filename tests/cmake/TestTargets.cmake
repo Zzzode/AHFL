@@ -315,6 +315,18 @@ target_link_libraries(ahfl_value_json_tests
 )
 ahfl_apply_project_warnings(ahfl_value_json_tests)
 
+# RFC P7 runtime additions: Set / Map / UUID / Timestamp evaluation tests.
+add_executable(ahfl_runtime_evaluator_p7_tests
+    unit/runtime/evaluator/set_map_uuid_timestamp.cpp
+)
+target_link_libraries(ahfl_runtime_evaluator_p7_tests
+    PRIVATE
+        ahfl_runtime_evaluator
+)
+target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOURCE_DIR}/src)
+target_include_directories(ahfl_runtime_evaluator_p7_tests PRIVATE ${PROJECT_SOURCE_DIR}/tests)
+ahfl_apply_project_warnings(ahfl_runtime_evaluator_p7_tests)
+
 add_executable(ahfl_counterexample_parse_tests
     unit/verification/formal/counterexample_parse.cpp
 )
@@ -438,6 +450,16 @@ target_link_libraries(ahfl_semantics_flow_condition_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_flow_condition_tests)
+
+add_executable(ahfl_semantics_adt_match_tests
+    unit/compiler/semantics/adt_match.cpp
+)
+target_link_libraries(ahfl_semantics_adt_match_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_adt_match_tests)
 
 add_executable(ahfl_semantics_concurrency_tests
     unit/compiler/semantics/concurrency.cpp
@@ -747,6 +769,7 @@ foreach(_tgt
     ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
     ahfl_semantics_flow_condition_tests
+    ahfl_semantics_adt_match_tests
     ahfl_semantics_concurrency_tests
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests

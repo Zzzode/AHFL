@@ -268,6 +268,14 @@ struct NoneComparisonFinder {
     void visit_none_literal(const ahfl::ast::ExprSyntax &) {}
     void visit_path(const ahfl::ast::ExprSyntax &) {}
     void visit_qualified_value(const ahfl::ast::ExprSyntax &) {}
+    // P1 (ADT): match expressions are walked for nested conditions in the
+    // scrutinee; arm patterns/guards/bodies are not conditions themselves.
+    void visit_match(const ahfl::ast::ExprSyntax &expr) {
+        const auto &scrutinee = expr.as<ahfl::ast::MatchExpr>().scrutinee;
+        if (scrutinee) {
+            ahfl::ast::visit_expr_syntax(*scrutinee, *this);
+        }
+    }
 };
 
 } // namespace

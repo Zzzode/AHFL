@@ -179,7 +179,19 @@ class AstFormatter {
         newline();
         indent_++;
         for (const auto &variant : e.variants) {
-            write(make_indent(indent_, opts_) + variant->name + ",");
+            std::string text = make_indent(indent_, opts_) + variant->name;
+            if (!variant->payload.empty()) {
+                text += "(";
+                for (std::size_t i = 0; i < variant->payload.size(); ++i) {
+                    if (i > 0) {
+                        text += ", ";
+                    }
+                    text += variant->payload[i]->spelling();
+                }
+                text += ")";
+            }
+            text += ",";
+            write(std::move(text));
             newline();
         }
         indent_--;
@@ -649,8 +661,94 @@ class AstFormatter {
                     }
                     write(")");
                 },
+                [&](const ahfl::ast::MatchExpr &e) {
+                    write("match ");
+                    if (e.scrutinee) {
+                        format_expr(*e.scrutinee);
+                    }
+                    write(" {");
+                    newline();
+                    indent_++;
+                    for (const auto &arm : e.arms) {
+                        if (!arm) {
+                            continue;
+                        }
+                        write(make_indent(indent_, opts_));
+                        format_pattern(*arm->pattern);
+                        if (arm->guard) {
+                            write(" if ");
+                            format_expr(*arm->guard);
+                        }
+                        write(" => ");
+                        if (arm->body) {
+                            format_expr(*arm->body);
+                        }
+                        write(",");
+                        newline();
+                    }
+                    indent_--;
+                    write("}");
+                },
             },
             expr.node);
+    }
+
+    void format_pattern(const ahfl::ast::PatternSyntax &pattern) {
+        std::visit(
+            Overloaded{
+                [&](const ahfl::ast::LiteralPattern &p) { write(p.spelling); },
+                [&](const ahfl::ast::VariantPattern &p) {
+                    if (p.path) {
+                        write(p.path->spelling());
+                    }
+                    if (!p.subpatterns.empty()) {
+                        write("(");
+                        for (std::size_t i = 0; i < p.subpatterns.size(); ++i) {
+                            if (i > 0) {
+                                out_ << ", ";
+                            }
+                            if (p.subpatterns[i]) {
+                                format_pattern(*p.subpatterns[i]);
+                            }
+                        }
+                        write(")");
+                    }
+                },
+                [&](const ahfl::ast::WildcardPattern &) { write("_"); },
+                [&](const ahfl::ast::BindingPattern &p) {
+                    if (p.is_mut) {
+                        write("mut ");
+                    }
+                    write(p.name);
+                    if (p.nested) {
+                        write(" @ ");
+                        format_pattern(*p.nested);
+                    }
+                },
+                [&](const ahfl::ast::TuplePattern &p) {
+                    write("(");
+                    for (std::size_t i = 0; i < p.elements.size(); ++i) {
+                        if (i > 0) {
+                            out_ << ", ";
+                        }
+                        if (p.elements[i]) {
+                            format_pattern(*p.elements[i]);
+                        }
+                    }
+                    write(")");
+                },
+                [&](const ahfl::ast::OrPattern &p) {
+                    for (std::size_t i = 0; i < p.branches.size(); ++i) {
+                        if (i > 0) {
+                            out_ << " | ";
+                        }
+                        if (p.branches[i]) {
+                            format_pattern(*p.branches[i]);
+                        }
+                    }
+                },
+            },
+            pattern.node);
     }
 
     void format_unary_op(ahfl::ast::ExprUnaryOp op) {

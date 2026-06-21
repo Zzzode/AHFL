@@ -66,6 +66,11 @@ struct StructTypeInfo {
 
 struct EnumVariantInfo {
     std::string name;
+    // P1 (ADT, RFC §1.5): positional tuple payload types. Empty for the legacy
+    // payload-less `enumDecl: IDENT` form, preserving full backward compatibility.
+    // Resolved once by the typecheck pass (see build_enum_types) and consumed by
+    // match arm narrowing (binding positions to payload slot types).
+    std::vector<TypePtr> payload;
     SourceRange declaration_range;
 };
 
@@ -76,6 +81,10 @@ struct EnumTypeInfo {
     SourceRange declaration_range;
 
     [[nodiscard]] bool has_variant(std::string_view name) const noexcept;
+    // P1 (ADT): linear lookup used by the match typecheck pass. The variant
+    // count is small (an enum rarely has more than a handful of variants), so
+    // no hash index is built — callers iterate at most once per match arm.
+    [[nodiscard]] MaybeCRef<EnumVariantInfo> find_variant(std::string_view name) const;
     void rebuild_variant_index();
 
     std::unordered_set<std::string> variant_set_;

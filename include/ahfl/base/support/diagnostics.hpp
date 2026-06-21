@@ -203,6 +203,24 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> CapabilityNotAllowed{
     "CAPABILITY_NOT_ALLOWED"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> WrongArity{"WRONG_ARITY"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> ShadowedBinding{"SHADOWED_BINDING"};
+// P1 (ADT, RFC §1.6): match typecheck diagnostics. Surfaced by the P1b
+// match typecheck pass (scrutinee narrowing + arm unification + exhaustiveness).
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchNotYetSupported{
+    "MATCH_NOT_YET_SUPPORTED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchScrutineeRequiresEnum{
+    "MATCH_SCRUTINEE_REQUIRES_ENUM"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchUnknownVariant{
+    "MATCH_UNKNOWN_VARIANT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchVariantPayloadArity{
+    "MATCH_VARIANT_PAYLOAD_ARITY"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchNotExhaustive{
+    "MATCH_NOT_EXHAUSTIVE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchArmTypeMismatch{
+    "MATCH_ARM_TYPE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
+    "MATCH_DUPLICATE_BINDING"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchPatternBindingTypeMismatch{
+    "MATCH_PATTERN_BINDING_TYPE_MISMATCH"};
 } // namespace typecheck
 
 namespace validation {
@@ -316,6 +334,24 @@ inline constexpr MessageTemplate ArithmeticOperatorInvalid{
 inline constexpr MessageTemplate ModuloRequiresInt{"operator '%' requires Int operands"};
 inline constexpr MessageTemplate NoneWithoutContext{
     "cannot infer type of 'none' without an expected Optional<T> context"};
+// P1 (ADT): match typecheck lands in P1b; surfaced by P1a parsers.
+inline constexpr MessageTemplate MatchNotYetSupported{
+    "'match' expressions are not yet type-checked (ADT support is in progress)"};
+// P1b match typecheck messages.
+inline constexpr MessageTemplate MatchScrutineeRequiresEnum{
+    "'match' scrutinee must have an enum type, got {}"};
+inline constexpr MessageTemplate MatchUnknownVariant{
+    "match arm references unknown variant '{}' of enum '{}'"};
+inline constexpr MessageTemplate MatchVariantPayloadArity{
+    "variant '{}' of enum '{}' expects {} payload slot(s), got {} in pattern"};
+inline constexpr MessageTemplate MatchNotExhaustive{
+    "match is not exhaustive: variant(s) not covered: {}"};
+inline constexpr MessageTemplate MatchArmTypeMismatch{
+    "match arm body type mismatch: expected {}, got {}"};
+inline constexpr MessageTemplate MatchDuplicateBinding{
+    "duplicate binding '{}' in match pattern"};
+inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
+    "match binding '{}' expects type {}, got payload slot type {}"};
 inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};
 inline constexpr MessageTemplate EmptySetWithoutContext{"cannot infer type of empty set literal"};
 inline constexpr MessageTemplate EmptyMapWithoutContext{"cannot infer type of empty map literal"};

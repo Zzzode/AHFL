@@ -659,6 +659,9 @@ class ProgramBuilder {
         case ast::ExprSyntaxKind::Group:
             expr->node = ast::GroupExpr{};
             break;
+        case ast::ExprSyntaxKind::Match:
+            expr->node = ast::MatchExpr{};
+            break;
         default:
             throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
         }
@@ -966,6 +969,10 @@ class ProgramBuilder {
             return build_map_literal_expr(map->get());
         }
 
+        if (const auto match = borrow(context.matchExpr())) {
+            return build_match_expr(match->get());
+        }
+
         if (const auto inner_expr = borrow(context.expr())) {
             if (!context.children.empty() &&
                 require(context.children[0], "primary expression child is missing").getText() ==
@@ -1113,6 +1120,164 @@ class ProgramBuilder {
         }
 
         return expr;
+    }
+
+    // ----------------------------------------------------------------------
+    // P1 (ADT, RFC §1.6): `match` expression + patterns
+    // ----------------------------------------------------------------------
+
+    [[nodiscard]] Owned<ast::ExprSyntax>
+    build_match_expr(AHFLParser::MatchExprContext &context) const {
+        auto expr =
+            make_expr_syntax(ast::ExprSyntaxKind::Match, context_range(context, source_));
+        auto &match_node = std::get<ast::MatchExpr>(expr->node);
+
+        // matchExpr: 'match' expr '{' matchArm* '}' — the single direct expr
+        // child is the scrutinee (antlr generates a single expr() accessor).
+        match_node.scrutinee = build_expr_syntax(
+            require(context.expr(), "match scrutinee is missing"));
+
+        for (auto *arm_context : context.matchArm()) {
+            match_node.arms.push_back(
+                build_match_arm(require(arm_context, "match arm is missing")));
+        }
+
+        return expr;
+    }
+
+    [[nodiscard]] Owned<ast::MatchArmSyntax>
+    build_match_arm(AHFLParser::MatchArmContext &context) const {
+        auto arm = make_owned<ast::MatchArmSyntax>();
+        arm->range = context_range(context, source_);
+        arm->pattern = build_pattern(require(context.pattern(), "match arm pattern is missing"));
+
+        // Optional guard: `if expr`. The grammar emits at most one `expr`
+        // before the `=>`; `context.expr()` returns [guard?, body] in source
+        // order, so the guard (when present) is the first expr and the body
+        // is the last.
+        const auto exprs = context.expr();
+        if (exprs.size() > 1) {
+            arm->guard = build_expr_syntax(
+                require(exprs.front(), "match arm guard expression is missing"));
+        }
+
+        arm->body =
+            build_expr_syntax(require(exprs.back(), "match arm body expression is missing"));
+        return arm;
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_pattern(AHFLParser::PatternContext &context) const {
+        return build_or_pattern(require(context.orPattern(), "pattern body is missing"));
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_or_pattern(AHFLParser::OrPatternContext &context) const {
+        const auto &concat_contexts = context.concatPattern();
+        if (concat_contexts.size() == 1) {
+            return build_concat_pattern(
+                require(concat_contexts.front(), "pattern alternative is missing"));
+        }
+
+        auto pattern = make_owned<ast::PatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->text = source_text(source_, pattern->range);
+        pattern->node = ast::OrPattern{};
+        auto &or_node = std::get<ast::OrPattern>(pattern->node);
+        for (auto *concat_context : concat_contexts) {
+            or_node.branches.push_back(
+                build_concat_pattern(require(concat_context, "or-pattern branch is missing")));
+        }
+        return pattern;
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_concat_pattern(AHFLParser::ConcatPatternContext &context) const {
+        if (const auto literal = borrow(context.literalPattern())) {
+            return build_literal_pattern(literal->get());
+        }
+        if (const auto variant = borrow(context.variantPattern())) {
+            return build_variant_pattern(variant->get());
+        }
+        if (borrow(context.wildcardPattern()).has_value()) {
+            auto pattern = make_owned<ast::PatternSyntax>();
+            pattern->range = context_range(context, source_);
+            pattern->text = source_text(source_, pattern->range);
+            pattern->node = ast::WildcardPattern{};
+            return pattern;
+        }
+        if (const auto binding = borrow(context.bindingPattern())) {
+            return build_binding_pattern(binding->get());
+        }
+        if (const auto tuple = borrow(context.tuplePattern())) {
+            return build_tuple_pattern(tuple->get());
+        }
+
+        throw std::logic_error("pattern did not match any supported AHFL kind");
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_literal_pattern(AHFLParser::LiteralPatternContext &context) const {
+        auto pattern = make_owned<ast::PatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->text = source_text(source_, pattern->range);
+        pattern->node = ast::LiteralPattern{.spelling = pattern->text};
+        return pattern;
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_variant_pattern(AHFLParser::VariantPatternContext &context) const {
+        auto pattern = make_owned<ast::PatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->text = source_text(source_, pattern->range);
+        pattern->node = ast::VariantPattern{};
+        auto &variant_node = std::get<ast::VariantPattern>(pattern->node);
+        variant_node.path = build_qualified_name(context.IDENT(), pattern->range);
+
+        // Optional positional sub-patterns: `Some(x, _)`.
+        if (const auto pattern_list = borrow(context.patternList())) {
+            for (auto *sub_context : pattern_list->get().pattern()) {
+                variant_node.subpatterns.push_back(
+                    build_pattern(require(sub_context, "variant sub-pattern is missing")));
+            }
+        }
+        return pattern;
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_binding_pattern(AHFLParser::BindingPatternContext &context) const {
+        auto pattern = make_owned<ast::PatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->text = source_text(source_, pattern->range);
+        pattern->node = ast::BindingPattern{};
+        auto &binding_node = std::get<ast::BindingPattern>(pattern->node);
+        binding_node.is_mut = !context.children.empty() &&
+                              require(context.children.front(), "binding prefix is missing")
+                                      .getText() == "mut";
+        binding_node.name = text_of(require(context.IDENT(), "binding name is missing"));
+
+        // Optional `@`-bound nested pattern.
+        if (const auto nested = borrow(context.concatPattern())) {
+            binding_node.nested = build_concat_pattern(nested->get());
+        }
+        return pattern;
+    }
+
+    [[nodiscard]] Owned<ast::PatternSyntax>
+    build_tuple_pattern(AHFLParser::TuplePatternContext &context) const {
+        auto pattern = make_owned<ast::PatternSyntax>();
+        pattern->range = context_range(context, source_);
+        pattern->text = source_text(source_, pattern->range);
+        pattern->node = ast::TuplePattern{};
+        auto &tuple_node = std::get<ast::TuplePattern>(pattern->node);
+
+        if (const auto pattern_list = borrow(context.patternList())) {
+            for (auto *elem_context : pattern_list->get().pattern()) {
+                tuple_node.elements.push_back(
+                    build_pattern(require(elem_context, "tuple pattern element is missing")));
+            }
+        }
+        return pattern;
     }
 
     [[nodiscard]] std::vector<Owned<ast::ExprSyntax>>
@@ -1777,6 +1942,17 @@ class ProgramBuilder {
         auto variant = make_owned<ast::EnumVariantDeclSyntax>();
         variant->range = context_range(context, source_);
         variant->name = text_of(require(context.IDENT(), "enum variant name is missing"));
+
+        // P1 (ADT, RFC §1.5): optional positional tuple payload, e.g.
+        // `Some(T)`, `Err(E)`. Absent for legacy payload-less variants —
+        // backward compatible (empty vector).
+        if (const auto type_list = borrow(context.typeList())) {
+            for (auto *type_context : type_list->get().type_()) {
+                variant->payload.push_back(
+                    build_type_syntax(require(type_context, "enum variant payload type is missing")));
+            }
+        }
+
         return variant;
     }
 

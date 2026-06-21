@@ -364,6 +364,11 @@ void append_const_value_key_part(std::string &key, std::string_view part) {
                 reason = "capability and predicate calls are not compile-time constants";
                 return false;
             },
+            [&reason](const ast::MatchExpr &) {
+                // P1 (ADT): match expressions are not compile-time constants.
+                reason = "match expressions are not compile-time constants";
+                return false;
+            },
         },
         expr.node);
 }
@@ -1221,6 +1226,8 @@ std::optional<ConstValue> ConstEvaluator::evaluate(const ast::ExprSyntax &expr) 
             },
             [](const ast::PathExpr &) -> std::optional<ConstValue> { return std::nullopt; },
             [](const ast::CallExpr &) -> std::optional<ConstValue> { return std::nullopt; },
+            // P1 (ADT): match expressions are not foldable compile-time constants.
+            [](const ast::MatchExpr &) -> std::optional<ConstValue> { return std::nullopt; },
         },
         expr.node);
 }

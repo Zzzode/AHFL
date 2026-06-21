@@ -103,6 +103,15 @@ void EnumTypeInfo::rebuild_variant_index() {
     }
 }
 
+MaybeCRef<EnumVariantInfo> EnumTypeInfo::find_variant(std::string_view name) const {
+    for (const auto &variant : variants) {
+        if (variant.name == name) {
+            return std::cref(variant);
+        }
+    }
+    return std::nullopt;
+}
+
 MaybeCRef<Type> TypeEnvironment::get_const_type(SymbolId id) const {
     if (const auto iter = const_types_.find(id.value);
         iter != const_types_.end() && static_cast<bool>(iter->second)) {

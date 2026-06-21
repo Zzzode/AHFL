@@ -325,6 +325,13 @@ using Json = json::JsonValue;
         for (const auto &variant : info->variants) {
             auto variant_json = Json::make_object();
             variant_json->set("name", Json::make_string(variant.name));
+            // P1 (ADT): positional payload type list. Empty for legacy
+            // payload-less variants; round-trips with the read side below.
+            auto payload_json = Json::make_array();
+            for (const auto slot : variant.payload) {
+                payload_json->push(j_type(slot));
+            }
+            variant_json->set("payload", std::move(payload_json));
             variant_json->set("declaration_range", j_range(variant.declaration_range));
             variants->push(std::move(variant_json));
         }
@@ -1070,10 +1077,20 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         if (variants != nullptr && variants->kind == json::Kind::Array) {
             info.variants.reserve(variants->array_items.size());
             for (const auto &item : variants->array_items) {
-                info.variants.push_back(EnumVariantInfo{
+                EnumVariantInfo variant{
                     .name = reader.string_field(*item, "name"),
                     .declaration_range = reader.range_field(*item, "declaration_range"),
-                });
+                };
+                // P1 (ADT): read optional positional payload list. Absent for
+                // legacy serialized enums (treated as no payload).
+                if (const auto *payload = reader.field(*item, "payload");
+                    payload != nullptr && payload->kind == json::Kind::Array) {
+                    variant.payload.reserve(payload->array_items.size());
+                    for (const auto &slot : payload->array_items) {
+                        variant.payload.push_back(reader.type_value(slot.get()));
+                    }
+                }
+                info.variants.push_back(std::move(variant));
             }
         }
         info.rebuild_variant_index();

@@ -141,7 +141,18 @@ class AstPrinter final {
         line(1, "- " + node.headline());
 
         for (const auto &variant : node.variants) {
-            line(2, "variant " + variant->name);
+            std::string label = "variant " + variant->name;
+            if (!variant->payload.empty()) {
+                label += " (";
+                for (std::size_t i = 0; i < variant->payload.size(); ++i) {
+                    if (i != 0) {
+                        label += ", ";
+                    }
+                    label += variant->payload[i]->spelling();
+                }
+                label += ")";
+            }
+            line(2, label);
         }
     }
 
@@ -517,8 +528,66 @@ class AstPrinter final {
                     line(indent_level, "group");
                     print_expr(*e.inner, indent_level + 1);
                 },
+                [&](const ast::MatchExpr &e) {
+                    line(indent_level, "match");
+                    line(indent_level + 1, "scrutinee");
+                    print_expr(*e.scrutinee, indent_level + 2);
+                    for (std::size_t index = 0; index < e.arms.size(); ++index) {
+                        line(indent_level + 1, "arm " + std::to_string(index));
+                        const auto &arm = *e.arms[index];
+                        print_pattern(*arm.pattern, indent_level + 2);
+                        if (arm.guard) {
+                            line(indent_level + 2, "guard");
+                            print_expr(*arm.guard, indent_level + 3);
+                        }
+                        line(indent_level + 2, "body");
+                        print_expr(*arm.body, indent_level + 3);
+                    }
+                },
             },
             expr.node);
+    }
+
+    void print_pattern(const ast::PatternSyntax &pattern, int indent_level) {
+        std::visit(
+            Overloaded{
+                [&](const ast::LiteralPattern &p) {
+                    line(indent_level, "pattern_literal " + p.spelling);
+                },
+                [&](const ast::VariantPattern &p) {
+                    line(indent_level, "pattern_variant " + p.path->spelling());
+                    for (std::size_t index = 0; index < p.subpatterns.size(); ++index) {
+                        line(indent_level + 1, "sub " + std::to_string(index));
+                        print_pattern(*p.subpatterns[index], indent_level + 2);
+                    }
+                },
+                [&](const ast::WildcardPattern &) {
+                    line(indent_level, "pattern_wildcard");
+                },
+                [&](const ast::BindingPattern &p) {
+                    line(indent_level,
+                         std::string("pattern_binding ") + (p.is_mut ? "mut " : "") + p.name);
+                    if (p.nested) {
+                        line(indent_level + 1, "nested");
+                        print_pattern(*p.nested, indent_level + 2);
+                    }
+                },
+                [&](const ast::TuplePattern &p) {
+                    line(indent_level, "pattern_tuple");
+                    for (std::size_t index = 0; index < p.elements.size(); ++index) {
+                        line(indent_level + 1, "elem " + std::to_string(index));
+                        print_pattern(*p.elements[index], indent_level + 2);
+                    }
+                },
+                [&](const ast::OrPattern &p) {
+                    line(indent_level, "pattern_or");
+                    for (std::size_t index = 0; index < p.branches.size(); ++index) {
+                        line(indent_level + 1, "branch " + std::to_string(index));
+                        print_pattern(*p.branches[index], indent_level + 2);
+                    }
+                },
+            },
+            pattern.node);
     }
 
     void print_block(const ast::BlockSyntax &block, int indent_level) {

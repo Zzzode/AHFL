@@ -3879,6 +3879,10 @@ add_test(NAME ahfl.evaluator.eval_all
     COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_tests>
 )
 
+add_test(NAME ahfl.evaluator.p7_runtime_all
+    COMMAND $<TARGET_FILE:ahfl_runtime_evaluator_p7_tests>
+)
+
 add_test(NAME ahfl.executor.exec_all
     COMMAND $<TARGET_FILE:ahfl_executor_tests>
 )
@@ -3954,6 +3958,10 @@ add_test(NAME ahfl.semantics.effects_all
 
 add_test(NAME ahfl.semantics.flow_condition_all
     COMMAND $<TARGET_FILE:ahfl_semantics_flow_condition_tests>
+)
+
+add_test(NAME ahfl.semantics.adt_match_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_adt_match_tests>
 )
 
 add_test(NAME ahfl.llm_provider.streaming_all

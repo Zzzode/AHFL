@@ -53,6 +53,8 @@ public:
 
     virtual std::any visitEnumVariant(AHFLParser::EnumVariantContext *context) = 0;
 
+    virtual std::any visitTypeList(AHFLParser::TypeListContext *context) = 0;
+
     virtual std::any visitCapabilityDecl(AHFLParser::CapabilityDeclContext *context) = 0;
 
     virtual std::any visitCapabilityEffectBlock(AHFLParser::CapabilityEffectBlockContext *context) = 0;
@@ -170,6 +172,28 @@ public:
     virtual std::any visitPostfixExpr(AHFLParser::PostfixExprContext *context) = 0;
 
     virtual std::any visitPrimaryExpr(AHFLParser::PrimaryExprContext *context) = 0;
+
+    virtual std::any visitMatchExpr(AHFLParser::MatchExprContext *context) = 0;
+
+    virtual std::any visitMatchArm(AHFLParser::MatchArmContext *context) = 0;
+
+    virtual std::any visitPattern(AHFLParser::PatternContext *context) = 0;
+
+    virtual std::any visitOrPattern(AHFLParser::OrPatternContext *context) = 0;
+
+    virtual std::any visitConcatPattern(AHFLParser::ConcatPatternContext *context) = 0;
+
+    virtual std::any visitLiteralPattern(AHFLParser::LiteralPatternContext *context) = 0;
+
+    virtual std::any visitVariantPattern(AHFLParser::VariantPatternContext *context) = 0;
+
+    virtual std::any visitWildcardPattern(AHFLParser::WildcardPatternContext *context) = 0;
+
+    virtual std::any visitBindingPattern(AHFLParser::BindingPatternContext *context) = 0;
+
+    virtual std::any visitTuplePattern(AHFLParser::TuplePatternContext *context) = 0;
+
+    virtual std::any visitPatternList(AHFLParser::PatternListContext *context) = 0;
 
     virtual std::any visitPathExpr(AHFLParser::PathExprContext *context) = 0;
 

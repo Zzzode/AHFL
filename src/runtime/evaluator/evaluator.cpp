@@ -2,8 +2,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace ahfl::evaluator {
 
@@ -18,6 +21,123 @@ EvalResult make_error(std::string message) {
     result.value = make_none();
     std::move(result.diagnostics.error()).message(std::move(message)).emit();
     return result;
+}
+
+// ============================================================================
+// Deep equality (RFC P7)
+// ----------------------------------------------------------------------------
+// Structural equality used by `==`/`!=` for the new container/scalar kinds
+// (Set/Map/UUID/Timestamp) and for `contains` membership tests. Canonical Set
+// and Map values compare via their ordered storage; UUID/Timestamp compare via
+// their scalar payload. Falls back to existing per-kind logic otherwise.
+// ============================================================================
+
+bool deep_equal(const Value &lhs, const Value &rhs);
+
+bool deep_equal_value_ptr(const std::unique_ptr<Value> &lhs,
+                          const std::unique_ptr<Value> &rhs) {
+    if (!lhs && !rhs)
+        return true;
+    if (!lhs || !rhs)
+        return false;
+    return deep_equal(*lhs, *rhs);
+}
+
+bool deep_equal(const Value &lhs, const Value &rhs) {
+    if (lhs.node.index() != rhs.node.index())
+        return false;
+    if (auto *ls = std::get_if<SetValue>(&lhs.node)) {
+        const auto *rs = std::get_if<SetValue>(&rhs.node);
+        if (ls->items.size() != rs->items.size())
+            return false;
+        for (size_t i = 0; i < ls->items.size(); ++i) {
+            if (!deep_equal_value_ptr(ls->items[i], rs->items[i]))
+                return false;
+        }
+        return true;
+    }
+    if (auto *lm = std::get_if<MapValue>(&lhs.node)) {
+        const auto *rm = std::get_if<MapValue>(&rhs.node);
+        if (lm->entries.size() != rm->entries.size())
+            return false;
+        for (size_t i = 0; i < lm->entries.size(); ++i) {
+            if (!deep_equal_value_ptr(lm->entries[i].first, rm->entries[i].first))
+                return false;
+            if (!deep_equal_value_ptr(lm->entries[i].second, rm->entries[i].second))
+                return false;
+        }
+        return true;
+    }
+    if (auto *lu = std::get_if<UuidValue>(&lhs.node)) {
+        const auto *ru = std::get_if<UuidValue>(&rhs.node);
+        return lu->hex == ru->hex;
+    }
+    if (auto *lt = std::get_if<TimestampValue>(&lhs.node)) {
+        const auto *rt = std::get_if<TimestampValue>(&rhs.node);
+        return lt->unix_ms == rt->unix_ms;
+    }
+    if (auto *lv = std::get_if<ListValue>(&lhs.node)) {
+        const auto *rv = std::get_if<ListValue>(&rhs.node);
+        if (lv->items.size() != rv->items.size())
+            return false;
+        for (size_t i = 0; i < lv->items.size(); ++i) {
+            if (!deep_equal_value_ptr(lv->items[i], rv->items[i]))
+                return false;
+        }
+        return true;
+    }
+    if (auto *lo = std::get_if<OptionalValue>(&lhs.node)) {
+        const auto *ro = std::get_if<OptionalValue>(&rhs.node);
+        return deep_equal_value_ptr(lo->inner, ro->inner);
+    }
+    if (is_none(lhs) && is_none(rhs))
+        return true;
+    // Scalar kinds: rely on existing evaluator-side primitive equality.
+    if (auto *li = std::get_if<IntValue>(&lhs.node)) {
+        const auto *ri = std::get_if<IntValue>(&rhs.node);
+        return li->value == ri->value;
+    }
+    if (auto *lf = std::get_if<FloatValue>(&lhs.node)) {
+        const auto *rf = std::get_if<FloatValue>(&rhs.node);
+        return lf->value == rf->value;
+    }
+    if (auto *lb = std::get_if<BoolValue>(&lhs.node)) {
+        const auto *rb = std::get_if<BoolValue>(&rhs.node);
+        return lb->value == rb->value;
+    }
+    if (auto *lstr = std::get_if<StringValue>(&lhs.node)) {
+        const auto *rstr = std::get_if<StringValue>(&rhs.node);
+        return lstr->value == rstr->value;
+    }
+    if (auto *ld = std::get_if<DecimalValue>(&lhs.node)) {
+        const auto *rd = std::get_if<DecimalValue>(&rhs.node);
+        return ld->spelling == rd->spelling;
+    }
+    if (auto *ldur = std::get_if<DurationValue>(&lhs.node)) {
+        const auto *rdur = std::get_if<DurationValue>(&rhs.node);
+        return ldur->spelling == rdur->spelling;
+    }
+    if (auto *le = std::get_if<EnumValue>(&lhs.node)) {
+        const auto *re = std::get_if<EnumValue>(&rhs.node);
+        return le->enum_name == re->enum_name && le->variant == re->variant;
+    }
+    // StructValue: compare fields (unordered).
+    if (auto *lst = std::get_if<StructValue>(&lhs.node)) {
+        const auto *rst = std::get_if<StructValue>(&rhs.node);
+        if (lst->type_name != rst->type_name)
+            return false;
+        if (lst->fields.size() != rst->fields.size())
+            return false;
+        for (const auto &[name, val] : lst->fields) {
+            auto it = rst->fields.find(name);
+            if (it == rst->fields.end())
+                return false;
+            if (!deep_equal_value_ptr(val, it->second))
+                return false;
+        }
+        return true;
+    }
+    return false;
 }
 
 // ============================================================================
@@ -221,6 +341,66 @@ EvalResult eval_list_literal(const ir::ListLiteralExpr &expr,
 }
 
 // ============================================================================
+// SetLiteralExpr / MapLiteralExpr  (RFC P7 runtime)
+// ============================================================================
+
+EvalResult eval_set_literal(const ir::SetLiteralExpr &expr,
+                            const EvalContext &ctx,
+                            const CallEvalFn *call_eval) {
+    std::vector<Value> items;
+    DiagnosticBag diagnostics;
+
+    for (const auto &item_expr : expr.items) {
+        if (!item_expr) {
+            std::move(diagnostics.error()).message("set element has null expression").emit();
+            continue;
+        }
+        auto result = eval_expr_impl(*item_expr, ctx, call_eval);
+        diagnostics.append(result.diagnostics);
+        if (!result.has_errors()) {
+            items.push_back(std::move(result.value));
+        }
+    }
+
+    if (diagnostics.has_error()) {
+        return EvalResult{make_none(), std::move(diagnostics)};
+    }
+    // make_set canonicalizes (de-dup + order).
+    return EvalResult{make_set(std::move(items)), std::move(diagnostics)};
+}
+
+EvalResult eval_map_literal(const ir::MapLiteralExpr &expr,
+                            const EvalContext &ctx,
+                            const CallEvalFn *call_eval) {
+    std::vector<std::pair<Value, Value>> entries;
+    DiagnosticBag diagnostics;
+
+    for (const auto &entry : expr.entries) {
+        if (!entry.key || !entry.value) {
+            std::move(diagnostics.error()).message("map entry has null key/value").emit();
+            continue;
+        }
+        auto key_result = eval_expr_impl(*entry.key, ctx, call_eval);
+        diagnostics.append(key_result.diagnostics);
+        if (key_result.has_errors()) {
+            continue;
+        }
+        auto val_result = eval_expr_impl(*entry.value, ctx, call_eval);
+        diagnostics.append(val_result.diagnostics);
+        if (val_result.has_errors()) {
+            continue;
+        }
+        entries.emplace_back(std::move(key_result.value), std::move(val_result.value));
+    }
+
+    if (diagnostics.has_error()) {
+        return EvalResult{make_none(), std::move(diagnostics)};
+    }
+    // make_map canonicalizes (last-write-wins + key order).
+    return EvalResult{make_map(std::move(entries)), std::move(diagnostics)};
+}
+
+// ============================================================================
 // UnaryExpr
 // ============================================================================
 
@@ -350,6 +530,20 @@ eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx, const CallE
 
     // --- Equality operators ---
     case ir::ExprBinaryOp::Equal: {
+        // RFC P7: Set / Map / UUID / Timestamp (and unified deep equality for
+        // List / Optional / Struct) — only applies when both sides share a kind.
+        if (lhs.value.node.index() == rhs.value.node.index()) {
+            const auto &lnode = lhs.value.node;
+            if (std::holds_alternative<SetValue>(lnode) ||
+                std::holds_alternative<MapValue>(lnode) ||
+                std::holds_alternative<UuidValue>(lnode) ||
+                std::holds_alternative<TimestampValue>(lnode) ||
+                std::holds_alternative<ListValue>(lnode) ||
+                std::holds_alternative<OptionalValue>(lnode) ||
+                std::holds_alternative<StructValue>(lnode)) {
+                return EvalResult{make_bool(deep_equal(lhs.value, rhs.value)), {}};
+            }
+        }
         // Compare same-type values
         if (auto nums = extract_numeric(lhs.value, rhs.value)) {
             if (nums->both_int) {
@@ -381,6 +575,19 @@ eval_binary_expr(const ir::BinaryExpr &expr, const EvalContext &ctx, const CallE
         return EvalResult{make_bool(false), {}};
     }
     case ir::ExprBinaryOp::NotEqual: {
+        // RFC P7: symmetric with Equal for the unified kinds.
+        if (lhs.value.node.index() == rhs.value.node.index()) {
+            const auto &lnode = lhs.value.node;
+            if (std::holds_alternative<SetValue>(lnode) ||
+                std::holds_alternative<MapValue>(lnode) ||
+                std::holds_alternative<UuidValue>(lnode) ||
+                std::holds_alternative<TimestampValue>(lnode) ||
+                std::holds_alternative<ListValue>(lnode) ||
+                std::holds_alternative<OptionalValue>(lnode) ||
+                std::holds_alternative<StructValue>(lnode)) {
+                return EvalResult{make_bool(!deep_equal(lhs.value, rhs.value)), {}};
+            }
+        }
         // Inline equality check and negate result
         if (auto nums = extract_numeric(lhs.value, rhs.value)) {
             if (nums->both_int)
@@ -528,6 +735,22 @@ EvalResult eval_member_access(const ir::MemberAccessExpr &expr,
         return make_error("list has no member: " + expr.member);
     }
 
+    // RFC P7: Set.length / Set.size
+    if (auto *sv = std::get_if<SetValue>(&base.value.node)) {
+        if (expr.member == "length" || expr.member == "size") {
+            return EvalResult{make_int(static_cast<int64_t>(sv->items.size())), {}};
+        }
+        return make_error("set has no member: " + expr.member);
+    }
+
+    // RFC P7: Map.length / Map.size
+    if (auto *mv = std::get_if<MapValue>(&base.value.node)) {
+        if (expr.member == "length" || expr.member == "size") {
+            return EvalResult{make_int(static_cast<int64_t>(mv->entries.size())), {}};
+        }
+        return make_error("map has no member: " + expr.member);
+    }
+
     return make_error("cannot access member '" + expr.member + "' on this value");
 }
 
@@ -549,21 +772,45 @@ EvalResult eval_index_access(const ir::IndexAccessExpr &expr,
         return index;
 
     auto *lv = std::get_if<ListValue>(&base.value.node);
-    if (!lv) {
-        return make_error("index access requires list base");
+    if (lv) {
+        auto *iv = std::get_if<IntValue>(&index.value.node);
+        if (!iv) {
+            return make_error("index must be an integer");
+        }
+        auto idx = iv->value;
+        if (idx < 0 || static_cast<size_t>(idx) >= lv->items.size()) {
+            return make_error("index out of bounds: " + std::to_string(idx));
+        }
+        if (!lv->items[static_cast<size_t>(idx)]) {
+            return make_error("list item at index is null");
+        }
+        return EvalResult{clone_value(*lv->items[static_cast<size_t>(idx)]), {}};
     }
-    auto *iv = std::get_if<IntValue>(&index.value.node);
-    if (!iv) {
-        return make_error("index must be an integer");
+
+    // RFC P7: Map[key] — returns the value for an equal key, error if absent.
+    if (auto *mv = std::get_if<MapValue>(&base.value.node)) {
+        for (const auto &entry : mv->entries) {
+            if (entry.first && deep_equal(*entry.first, index.value)) {
+                if (!entry.second) {
+                    return make_error("map entry value is null");
+                }
+                return EvalResult{clone_value(*entry.second), {}};
+            }
+        }
+        return make_error("map key not found");
     }
-    auto idx = iv->value;
-    if (idx < 0 || static_cast<size_t>(idx) >= lv->items.size()) {
-        return make_error("index out of bounds: " + std::to_string(idx));
+
+    // RFC P7: Set[member] — membership test (Boolean). Mirrors `contains`.
+    if (auto *sv = std::get_if<SetValue>(&base.value.node)) {
+        for (const auto &item : sv->items) {
+            if (item && deep_equal(*item, index.value)) {
+                return EvalResult{make_bool(true), {}};
+            }
+        }
+        return EvalResult{make_bool(false), {}};
     }
-    if (!lv->items[static_cast<size_t>(idx)]) {
-        return make_error("list item at index is null");
-    }
-    return EvalResult{clone_value(*lv->items[static_cast<size_t>(idx)]), {}};
+
+    return make_error("index access requires list, map, or set base");
 }
 
 // ============================================================================
@@ -614,9 +861,9 @@ eval_expr_impl(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn *c
             } else if constexpr (std::is_same_v<T, ir::ListLiteralExpr>) {
                 return eval_list_literal(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::SetLiteralExpr>) {
-                return make_error("SetLiteralExpr not supported in v0.51");
+                return eval_set_literal(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::MapLiteralExpr>) {
-                return make_error("MapLiteralExpr not supported in v0.51");
+                return eval_map_literal(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::UnaryExpr>) {
                 return eval_unary_expr(node, ctx, call_eval);
             } else if constexpr (std::is_same_v<T, ir::BinaryExpr>) {

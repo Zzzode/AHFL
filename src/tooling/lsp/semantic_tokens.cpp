@@ -363,6 +363,25 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                            collect_expr_tokens(*e.inner, source, tokens);
                        }
                    },
+                   [&](const ast::MatchExpr &e) {
+                       // P1 (ADT): walk the scrutinee; arm patterns/guards/bodies
+                       // are tokenized at a coarse level here (full semantic
+                       // highlighting of patterns lands with the match typecheck pass).
+                       if (e.scrutinee != nullptr) {
+                           collect_expr_tokens(*e.scrutinee, source, tokens);
+                       }
+                       for (const auto &arm : e.arms) {
+                           if (arm == nullptr) {
+                               continue;
+                           }
+                           if (arm->guard != nullptr) {
+                               collect_expr_tokens(*arm->guard, source, tokens);
+                           }
+                           if (arm->body != nullptr) {
+                               collect_expr_tokens(*arm->body, source, tokens);
+                           }
+                       }
+                   },
                },
                expr.node);
 }

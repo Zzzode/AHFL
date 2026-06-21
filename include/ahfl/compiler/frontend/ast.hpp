@@ -158,6 +158,7 @@ enum class ExprSyntaxKind {
     MemberAccess,    // expr.member
     IndexAccess,     // expr[index]
     Group,           // (expr) parenthesized grouping
+    Match,           // match scrutinee { arm* } (P1 ADT, RFC §1.6)
 };
 
 /// Unary operators
@@ -488,6 +489,125 @@ struct GroupExpr {
     Owned<ExprSyntax> inner;
 };
 
+// ----------------------------------------------------------------------------
+// P1 (ADT) pattern syntax (RFC §1.6)
+// ----------------------------------------------------------------------------
+//
+// Patterns form a tagged-union analogous to ExprSyntaxNode. Each concrete
+// pattern form maps to a dedicated struct carried uniformly by the
+// PatternSyntaxNode variant. Match arms reference PatternSyntax, and the
+// match expression references MatchArmSyntax.
+
+// Forward declaration (Owned<PatternSyntax> appears inside pattern variants)
+struct PatternSyntax;
+
+/// Literal pattern: true / false / integer / float / string / none (RFC §1.6).
+/// The literal spelling is stored verbatim; typecheck narrows the scrutinee
+/// accordingly. `none` is sugar for Option::None.
+struct LiteralPattern {
+    std::string spelling; // original literal text ("true", "42", "\"s\"", "none")
+};
+
+/// Variant (ADT constructor) pattern: `Option::Some(x)`, `Some(x)`, `Err(_)`.
+///
+/// `path` carries the qualified variant name; `subpatterns` carries the
+/// optional positional sub-patterns. When `subpatterns` is empty, the variant
+/// is matched without inspecting its payload.
+struct VariantPattern {
+    Owned<QualifiedName> path;
+    std::vector<Owned<PatternSyntax>> subpatterns;
+};
+
+/// Wildcard pattern: `_`. Always matches; binds nothing.
+struct WildcardPattern {};
+
+/// Binding pattern: `mut? name [@ nested]` (RFC §1.6).
+///
+/// `name` binds the scrutinee (or sub-value) to a local. `nested` is the
+/// optional `@`-bound inner pattern (`x @ Some(y)`). `is_mut` is reserved —
+/// accepted by the grammar for forward compatibility, but treated as immutable
+/// binding by the first version of the type system.
+struct BindingPattern {
+    std::string name;
+    bool is_mut{false};
+    Owned<PatternSyntax> nested; // optional `@`-bound sub-pattern
+};
+
+/// Tuple pattern: `(p1, p2, ...)`. Empty list matches the unit tuple `()`.
+struct TuplePattern {
+    std::vector<Owned<PatternSyntax>> elements;
+};
+
+/// Or pattern: `p1 | p2 | ...`. Each branch is a non-or `concatPattern`;
+/// the typechecker requires all branches to bind equivalent names/types
+/// (RFC §1.6).
+struct OrPattern {
+    std::vector<Owned<PatternSyntax>> branches;
+};
+
+/// Variant alias for the pattern syntax node
+using PatternSyntaxNode = std::variant<LiteralPattern,
+                                       VariantPattern,
+                                       WildcardPattern,
+                                       BindingPattern,
+                                       TuplePattern,
+                                       OrPattern>;
+
+/// Pattern syntax node (tagged-union via std::variant).
+///
+/// Mirrors the ExprSyntax tagged-union pattern: each variant alternative
+/// carries semantically named fields, and std::visit enforces full coverage
+/// when new alternatives are added.
+struct PatternSyntax {
+    ahfl::SourceRange range;
+    std::string text; // original source text
+
+    PatternSyntaxNode node;
+
+    /// Test whether the current node is of the given pattern type
+    template <typename T> [[nodiscard]] bool is() const {
+        return std::holds_alternative<T>(node);
+    }
+
+    /// Read the node as the given type (const overload)
+    template <typename T> [[nodiscard]] const T &as() const {
+        return std::get<T>(node);
+    }
+
+    /// Read the node as the given type (non-const overload)
+    template <typename T> [[nodiscard]] T &as() {
+        return std::get<T>(node);
+    }
+};
+
+/// Pattern kind discriminator (parallels ExprSyntaxKind).
+enum class PatternSyntaxKind {
+    Literal,
+    Variant,
+    Wildcard,
+    Binding,
+    Tuple,
+    Or,
+};
+
+/// A single `match` arm: `pattern [if guard] => expr` (RFC §1.6).
+struct MatchArmSyntax {
+    ahfl::SourceRange range;
+    Owned<PatternSyntax> pattern;          // arm pattern
+    Owned<ExprSyntax> guard;               // optional `if` guard
+    Owned<ExprSyntax> body;                // arm body expression
+};
+
+/// `match` expression: `match scrutinee { arm* }` (RFC §1.6).
+///
+/// Carried as an ExprSyntaxNode variant alternative so `match` is a regular
+/// primaryExpr. The scrutinee and arms are owned child nodes; exhaustiveness,
+/// narrowing, and payload typing are deferred to the typecheck pass (P1b).
+struct MatchExpr {
+    Owned<ExprSyntax> scrutinee;
+    std::vector<Owned<MatchArmSyntax>> arms;
+};
+
 /// Variant alias for the expression syntax node
 using ExprSyntaxNode = std::variant<NoneLiteralExpr,
                                     BoolLiteralExpr,
@@ -508,7 +628,8 @@ using ExprSyntaxNode = std::variant<NoneLiteralExpr,
                                     BinaryExpr,
                                     MemberAccessExpr,
                                     IndexAccessExpr,
-                                    GroupExpr>;
+                                    GroupExpr,
+                                    MatchExpr>;
 
 /// Expression syntax node
 ///
@@ -735,10 +856,16 @@ struct StructFieldDeclSyntax {
     Owned<ExprSyntax> default_value; // optional default value
 };
 
-/// Enum variant alternative declaration
+/// Enum variant alternative declaration.
+///
+/// P1 (ADT, RFC §1.5): a variant optionally carries a positional tuple
+/// payload (`Some(T)`, `Err(E)`). `payload` is empty for payload-less
+/// variants, preserving full backward compatibility with the legacy
+/// `enumDecl: IDENT` grammar.
 struct EnumVariantDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
+    std::vector<Owned<TypeSyntax>> payload; // optional positional tuple payload
 };
 
 /// State transition declaration: from_state -> to_state
@@ -1144,6 +1271,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
                 return std::forward<Visitor>(visitor).visit_index_access(expr);
             },
             [&](const GroupExpr &) { return std::forward<Visitor>(visitor).visit_group(expr); },
+            [&](const MatchExpr &) { return std::forward<Visitor>(visitor).visit_match(expr); },
         },
         expr.node);
 }
@@ -1173,6 +1301,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const MemberAccessExpr &) { return ExprSyntaxKind::MemberAccess; },
             [](const IndexAccessExpr &) { return ExprSyntaxKind::IndexAccess; },
             [](const GroupExpr &) { return ExprSyntaxKind::Group; },
+            [](const MatchExpr &) { return ExprSyntaxKind::Match; },
         },
         expr.node);
 }
@@ -1191,6 +1320,21 @@ temporal_expr_syntax_kind(const TemporalExprSyntax &expr) {
             [](const BinaryTemporalExpr &) { return TemporalExprSyntaxKind::Binary; },
         },
         expr.node);
+}
+
+/// Derive PatternSyntaxKind from the variant (P1 ADT, parallels expr/temporal)
+[[nodiscard]] inline PatternSyntaxKind
+pattern_syntax_kind(const PatternSyntax &pattern) {
+    return std::visit(
+        Overloaded{
+            [](const LiteralPattern &) { return PatternSyntaxKind::Literal; },
+            [](const VariantPattern &) { return PatternSyntaxKind::Variant; },
+            [](const WildcardPattern &) { return PatternSyntaxKind::Wildcard; },
+            [](const BindingPattern &) { return PatternSyntaxKind::Binding; },
+            [](const TuplePattern &) { return PatternSyntaxKind::Tuple; },
+            [](const OrPattern &) { return PatternSyntaxKind::Or; },
+        },
+        pattern.node);
 }
 
 } // namespace ahfl::ast

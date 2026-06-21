@@ -83,6 +83,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitTypeList(AHFLParser::TypeListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitCapabilityDecl(AHFLParser::CapabilityDeclContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -316,6 +320,50 @@ public:
   }
 
   virtual std::any visitPrimaryExpr(AHFLParser::PrimaryExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitMatchExpr(AHFLParser::MatchExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitMatchArm(AHFLParser::MatchArmContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitPattern(AHFLParser::PatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitOrPattern(AHFLParser::OrPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitConcatPattern(AHFLParser::ConcatPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitLiteralPattern(AHFLParser::LiteralPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitVariantPattern(AHFLParser::VariantPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitWildcardPattern(AHFLParser::WildcardPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitBindingPattern(AHFLParser::BindingPatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTuplePattern(AHFLParser::TuplePatternContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitPatternList(AHFLParser::PatternListContext *ctx) override {
     return visitChildren(ctx);
   }
 

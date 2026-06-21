@@ -48,6 +48,11 @@ enum class TypedExprChildRole {
     Base,
     Index,
     Grouped,
+    // P1 (ADT): match arm sub-expressions. The scrutinee is tracked as
+    // Operand; each arm's guard and body are tracked under these roles so the
+    // typed-tree graph covers all match sub-expressions.
+    MatchArmGuard,
+    MatchArmBody,
 };
 
 enum class TypedCallTargetKind {
@@ -514,6 +519,15 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_index_access(expr);
     case ast::ExprSyntaxKind::Group:
         return std::forward<Visitor>(visitor).visit_group(expr);
+    case ast::ExprSyntaxKind::Match:
+        // P1 (ADT, RFC §1.6): `match` parsing landed in P1a; lowering of
+        // fully-typed match (with exhaustiveness/narrowing) arrives in P1b.
+        // Until then, route match through `visit_unknown` so the typed-tree
+        // lowering pipeline keeps compiling without forcing every per-kind
+        // visitor to grow a `visit_match` arm. A P1a-parsed match already
+        // surfaces MATCH_NOT_YET_SUPPORTED at typecheck, so it never reaches
+        // lowering with a real type.
+        return std::forward<Visitor>(visitor).visit_unknown(expr);
     }
 
     return std::forward<Visitor>(visitor).visit_unknown(expr);

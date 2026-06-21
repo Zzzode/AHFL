@@ -197,6 +197,36 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                 append_typed_child(
                     children, program, e.inner.get(), source_id, TypedExprChildRole::Grouped);
             },
+            [&](const ast::MatchExpr &e) {
+                // P1 (ADT): match is a primaryExpr. Its scrutinee and every
+                // arm's guard/body participate as typed children so the
+                // typed-tree graph covers all match sub-expressions. Patterns
+                // are not expressions and are not tracked here (they are
+                // handled by the match typecheck pass directly).
+                if (e.scrutinee) {
+                    append_typed_child(children,
+                                       program,
+                                       e.scrutinee.get(),
+                                       source_id,
+                                       TypedExprChildRole::Operand);
+                }
+                for (const auto &arm : e.arms) {
+                    if (arm->guard) {
+                        append_typed_child(children,
+                                           program,
+                                           arm->guard.get(),
+                                           source_id,
+                                           TypedExprChildRole::MatchArmGuard);
+                    }
+                    if (arm->body) {
+                        append_typed_child(children,
+                                           program,
+                                           arm->body.get(),
+                                           source_id,
+                                           TypedExprChildRole::MatchArmBody);
+                    }
+                }
+            },
         },
         expr.node);
     return children;
