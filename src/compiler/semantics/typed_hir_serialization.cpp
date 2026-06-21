@@ -488,6 +488,44 @@ using Json = json::JsonValue;
         return object;
     }
 
+    if (const auto *info = std::get_if<FnTypeInfo>(&payload)) {
+        // P2c (RFC §3.2.2 / §3.2.3 / §6): top-level fn signature payload.
+        // Mirrors the capability signature surface (params, return type) plus
+        // the generic type-parameter names and the three-state effect clause.
+        auto value = Json::make_object();
+        value->set("symbol", j_symbol_id(info->symbol));
+        value->set("canonical_name", Json::make_string(info->canonical_name));
+        value->set("local_name", Json::make_string(info->local_name));
+        auto params = Json::make_array();
+        for (const auto &param : info->params) {
+            params->push(j_param(param));
+        }
+        value->set("params", std::move(params));
+        value->set("return_type", j_type(info->return_type));
+        value->set("return_type_range", j_range(info->return_type_range));
+        auto type_params = Json::make_array();
+        for (const auto &type_param : info->type_param_names) {
+            type_params->push(Json::make_string(type_param));
+        }
+        value->set("type_param_names", std::move(type_params));
+        // Effect clause: kind is the ast::EffectClauseKind int (0=Pure,
+        // 1=Nondet, 2=Capability) per FnEffectClauseInfo.
+        auto effect = Json::make_object();
+        effect->set("kind", Json::make_int(static_cast<std::int64_t>(info->effect.kind)));
+        auto capabilities = Json::make_array();
+        for (const auto capability : info->effect.capabilities) {
+            capabilities->push(j_symbol_id(capability));
+        }
+        effect->set("capabilities", std::move(capabilities));
+        effect->set("source_range", j_range(info->effect.source_range));
+        value->set("effect", std::move(effect));
+        value->set("has_body", Json::make_bool(info->has_body));
+        value->set("declaration_range", j_range(info->declaration_range));
+        object->set("kind", Json::make_string("Fn"));
+        object->set("value", std::move(value));
+        return object;
+    }
+
     object->set("kind", Json::make_string("None"));
     object->set("value", Json::make_null());
     return object;
@@ -513,6 +551,22 @@ using Json = json::JsonValue;
     object->set("source_id", j_source_id(reference.source_id));
     object->set("range", j_range(reference.range));
     object->set("target", j_symbol_id(reference.target));
+    return object;
+}
+
+// P2c (RFC §3.5): serialize a recorded fn call site consumed by the
+// monomorphization pass.
+[[nodiscard]] std::unique_ptr<Json>
+j_fn_call_site(const TypedProgram::FnCallSiteRecord &site) {
+    auto object = Json::make_object();
+    object->set("fn_symbol", j_symbol_id(site.fn_symbol));
+    object->set("call_range", j_range(site.call_range));
+    object->set("source_id", j_source_id(site.source_id));
+    auto type_args = Json::make_array();
+    for (const auto type_arg : site.type_args) {
+        type_args->push(j_type(type_arg));
+    }
+    object->set("type_args", std::move(type_args));
     return object;
 }
 
@@ -1241,6 +1295,54 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         return info;
     }
 
+    if (kind == "Fn") {
+        // P2c (RFC §3.2.2): round-trip a fn signature payload.
+        FnTypeInfo info{
+            .symbol = reader.symbol_id_field(*value, "symbol"),
+            .canonical_name = reader.string_field(*value, "canonical_name"),
+            .local_name = reader.string_field(*value, "local_name"),
+            .params = {},
+            .return_type = reader.type_field(*value, "return_type"),
+            .return_type_range = reader.range_field(*value, "return_type_range"),
+            .type_param_names = {},
+            .effect =
+                FnEffectClauseInfo{
+                    .kind = static_cast<int>(reader.int_field(*reader.field(*value, "effect"),
+                                                               "kind")),
+                    .capabilities = {},
+                    .source_range = reader.range_field(*reader.field(*value, "effect"),
+                                                       "source_range"),
+                },
+            .has_body = reader.bool_field(*value, "has_body"),
+            .declaration_range = reader.range_field(*value, "declaration_range"),
+        };
+        if (const auto *params = reader.field(*value, "params");
+            params != nullptr && params->kind == json::Kind::Array) {
+            info.params.reserve(params->array_items.size());
+            for (const auto &item : params->array_items) {
+                info.params.push_back(ParamTypeInfo{
+                    .name = reader.string_field(*item, "name"),
+                    .type = reader.type_field(*item, "type"),
+                    .declaration_range = reader.range_field(*item, "declaration_range"),
+                });
+            }
+        }
+        if (const auto *type_params = reader.field(*value, "type_param_names");
+            type_params != nullptr) {
+            info.type_param_names = reader.string_array_field(*value, "type_param_names");
+        }
+        if (const auto *effect = reader.field(*value, "effect"); effect != nullptr) {
+            if (const auto *capabilities = reader.field(*effect, "capabilities");
+                capabilities != nullptr && capabilities->kind == json::Kind::Array) {
+                info.effect.capabilities.reserve(capabilities->array_items.size());
+                for (const auto &item : capabilities->array_items) {
+                    info.effect.capabilities.push_back(reader.symbol_id_value(item.get()));
+                }
+            }
+        }
+        return info;
+    }
+
     return std::monostate{};
 }
 
@@ -1444,6 +1546,8 @@ std::string serialize_typed_program_json(const TypedProgram &program) {
     root->set("blocks", j_array(program.blocks, j_block));
     root->set("statements", j_array(program.statements, j_statement));
     root->set("temporal_exprs", j_array(program.temporal_exprs, j_temporal));
+    // P2c (RFC §3.5): recorded fn call sites for the monomorphization pass.
+    root->set("fn_call_sites", j_array(program.fn_call_sites, j_fn_call_site));
     return json::serialize_json(*root);
 }
 

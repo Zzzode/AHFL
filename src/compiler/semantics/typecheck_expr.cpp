@@ -188,6 +188,18 @@ class ExpressionCheckerServices final {
         return delegate_->resolve_type_symbol(id, use_range);
     }
 
+    // P2 (RFC §6): resolve a closure parameter's type annotation.
+    [[nodiscard]] TypePtr resolve_type_syntax(const ast::TypeSyntax &type) const {
+        return delegate_->resolve_type_syntax(type);
+    }
+
+    // P2c (RFC §3.5): record a resolved fn call site for monomorphization.
+    void record_fn_call_site(SymbolId fn_symbol,
+                             SourceRange call_range,
+                             std::vector<TypePtr> type_args) const {
+        delegate_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
+    }
+
     [[nodiscard]] MaybeCRef<EnumTypeInfo> get_enum(const Type &type) const {
         return environment_.get_enum(type);
     }
@@ -206,6 +218,11 @@ class ExpressionCheckerServices final {
 
     [[nodiscard]] MaybeCRef<PredicateTypeInfo> get_predicate(SymbolId id) const {
         return environment_.get_predicate(id);
+    }
+
+    // P2 (RFC §3.2.2): fn signature lookup for fn-call typecheck.
+    [[nodiscard]] MaybeCRef<FnTypeInfo> get_fn(SymbolId id) const {
+        return environment_.get_fn(id);
     }
 
     [[nodiscard]] TypePtr
@@ -267,6 +284,7 @@ class ExpressionChecker final {
                 [&](const ast::IndexAccessExpr &) { return visit_index_access(expr); },
                 [&](const ast::GroupExpr &) { return visit_group(expr); },
                 [&](const ast::MatchExpr &) { return visit_match(expr); },
+                [&](const ast::LambdaExpr &) { return visit_lambda(expr); },
             },
             expr.node);
     }
@@ -388,6 +406,52 @@ class ExpressionChecker final {
             return services_.check_expr(*group.inner, context_, *expectation_);
         }
         return services_.check_expr(*group.inner, context_, expected_type_);
+    }
+
+    // P2 (RFC §6 / §2.6.3): lambda (closure) typecheck. RFC §2.6.3 note 3
+    // restricts the P2/P4 closure model to Pure closures only; the structural
+    // `Fn(A) -> B` closure type itself (RFC §1.8) lands with the type-system
+    // extension that introduces it, since the current TypeContext has no Fn
+    // type representation. To keep the parse surface honest in the meantime
+    // this pass:
+    //   1. Walks the closure body so nested references/expressions are still
+    //      type-checked (and their typed-tree entries recorded) — the body's
+    //      free-variable references thus resolve and surface ordinary
+    //      type/diagnostic errors instead of being silently skipped.
+    //   2. Emits LAMBDA_NOT_YET_SUPPORTED and returns the error type, since a
+    //      real `Fn` return type cannot be constructed yet. This keeps the
+    //      closure from being mis-typed to a concrete shape before the Fn
+    //      type lands.
+    // Capture inference (RFC §4.1/§4.2) and effect propagation (§4.4) are
+    // deferred alongside the Fn type.
+    [[nodiscard]] TypedValue visit_lambda(const ast::ExprSyntax &expr) const {
+        const auto &lambda = expr.as<ast::LambdaExpr>();
+
+        // Bind the closure's parameters into a child value context so the
+        // body can reference them by name. Parameters without a type
+        // annotation are bound to the error type so a missing annotation
+        // surfaces as an ordinary type error rather than a binding miss.
+        ValueContext body_context{
+            .bindings = context_.bindings,
+            .flow_facts = {},
+            .call_context = CallContext::PureOnly,
+            .current_agent = context_.current_agent,
+        };
+        for (const auto &param : lambda.params) {
+            body_context.bindings.emplace(
+                param->name,
+                param->type ? services_.resolve_type_syntax(*param->type)
+                            : values_.make_error_type());
+        }
+
+        if (lambda.body) {
+            (void)services_.check_expr(*lambda.body, body_context, std::nullopt);
+        }
+
+        services_.typecheck_error_here(error_codes::typecheck::LambdaNotYetSupported,
+                                       messages::typecheck::LambdaNotYetSupported.format_with(),
+                                       expr.range);
+        return values_.error_typed();
     }
 
     // P1b (ADT, RFC §1.6): full match typecheck.
@@ -1084,6 +1148,17 @@ class ExpressionChecker final {
 
     [[nodiscard]] TypedValue check_call(const ast::ExprSyntax &expr) const {
         const auto &call = expr.as<ast::CallExpr>();
+
+        // P2 (RFC §3.2.2): a fn call resolves to a FnCallTarget reference.
+        // Check it first so a fn name takes precedence over the legacy
+        // capability/predicate CallTarget reference (the resolver only writes
+        // one reference kind per callee range, so the two never collide).
+        if (const auto fn_reference =
+                services_.find_reference(ReferenceKind::FnCallTarget, call.callee->range);
+            fn_reference.has_value()) {
+            return check_fn_call(expr, fn_reference->get().target);
+        }
+
         const auto reference =
             services_.find_reference(ReferenceKind::CallTarget, call.callee->range);
         if (!reference.has_value()) {
@@ -1117,6 +1192,86 @@ class ExpressionChecker final {
         }
 
         return check_predicate_call(expr, reference->get().target);
+    }
+
+    // P2 (RFC §3.2.2 / §2.6.1): resolve a fn call against its FnTypeInfo
+    // signature. Matches positional arguments to declared params, applies the
+    // declared effect clause to derive the call-site ExprEffect (Pure stays
+    // Pure; Nondet/Capability widen to the existing ExprEffect lattice), and
+    // returns the declared return type. Generic instantiation at the call
+    // site (substituting type_args into a generic fn) and the (fn_decl,
+    // type_args) recording for monomorphization land in P2d; for now a
+    // generic fn is treated structurally — the resolved signature types are
+    // already the declared param/return types.
+    [[nodiscard]] TypedValue check_fn_call(const ast::ExprSyntax &expr, SymbolId target) const {
+        const auto &call = expr.as<ast::CallExpr>();
+        const auto fn = services_.get_fn(target);
+        if (!fn.has_value()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::MissingCallableMetadata,
+                messages::typecheck::CallTargetSymbolMissing.format_with(),
+                expr.range);
+            return values_.error_typed();
+        }
+
+        // P2c (RFC §3.5): record the resolved fn call site so the
+        // monomorphization pass has stable input without re-walking the
+        // typed tree. Explicit type arguments are empty today (the grammar's
+        // call surface does not carry `foo<T>(...)` syntax); generic
+        // instantiation from inferred argument types lands with the
+        // generic-body typecheck work.
+        services_.record_fn_call_site(target, expr.range, {});
+
+        if (call.arguments.size() != fn->get().params.size()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("function",
+                                                            call.callee->spelling(),
+                                                            std::to_string(fn->get().params.size()),
+                                                            std::to_string(call.arguments.size())),
+                expr.range);
+        }
+
+        // RFC §2.6.1: the call-site effect is the join of the declared fn
+        // effect and each argument's effect. Map the declared effect clause
+        // (Pure/Nondet/Capability) to the existing ExprEffect lattice: Pure
+        // contributes Pure; Nondet and Capability widen to External-effect,
+        // mirroring how the existing capability-call path surfaces non-pure
+        // effects through ExprEffect::CapabilityCall.
+        ExprEffect declared_effect = ExprEffect::Pure;
+        switch (static_cast<ast::EffectClauseKind>(fn->get().effect.kind)) {
+        case ast::EffectClauseKind::Pure:
+            declared_effect = ExprEffect::Pure;
+            break;
+        case ast::EffectClauseKind::Nondet:
+        case ast::EffectClauseKind::Capability:
+            declared_effect = ExprEffect::ExternalEffect;
+            break;
+        }
+
+        ExprEffect effect = declared_effect;
+        const auto limit = std::min(call.arguments.size(), fn->get().params.size());
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto &param = fn->get().params[index];
+            const auto expectation = TypeExpectation{
+                .expected = param.type,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = param.declaration_range,
+                .description = "parameter '" + param.name + "'",
+            };
+            const auto argument =
+                services_.check_expr(*call.arguments[index], context_, expectation);
+            effect = join_effects(effect, argument.effect);
+            (void)services_.check_assignable(*argument.type,
+                                             *param.type,
+                                             call.arguments[index]->range,
+                                             "function argument",
+                                             expectation);
+        }
+
+        return values_.typed_effect(
+            fn->get().return_type ? fn->get().return_type->clone() : values_.make_error_type(),
+            effect);
     }
 
     [[nodiscard]] TypedValue check_capability_call(const ast::ExprSyntax &expr,
@@ -1566,6 +1721,21 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return type_resolver_->resolve_type_symbol(id, range);
         }
 
+        // P2 (RFC §6): resolve a closure parameter's type annotation through
+        // the shared TypeCheckPass resolver so the current symbol / module
+        // context is honoured.
+        TypePtr resolve_type_syntax(const ast::TypeSyntax &type) override {
+            return pass_->resolve_type_syntax(type);
+        }
+
+        // P2c (RFC §3.5): forward the recorded fn call site to the
+        // TypeCheckPass so it lands in the typed program's fn_call_sites.
+        void record_fn_call_site(SymbolId fn_symbol,
+                                 SourceRange call_range,
+                                 std::vector<TypePtr> type_args) override {
+            pass_->record_fn_call_site(fn_symbol, call_range, std::move(type_args));
+        }
+
       private:
         TypeCheckPass *pass_{nullptr};
         TypeResolver *type_resolver_{nullptr};
@@ -1628,6 +1798,20 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
         TypePtr resolve_type_symbol(SymbolId id, SourceRange range) override {
             return pass_->resolve_type_symbol(id, range);
         }
+
+        // P2 (RFC §6): path resolution does not enter a closure body, so a
+        // type annotation resolution request is rare here; forward it to the
+        // TypeCheckPass resolver for correctness when it does occur.
+        TypePtr resolve_type_syntax(const ast::TypeSyntax &type) override {
+            return pass_->resolve_type_syntax(type);
+        }
+
+        // P2c (RFC §3.5): path resolution never resolves a fn call site, so
+        // the recording hook is a no-op here. (The fn-call typecheck path
+        // runs through the PassExpressionSemaDelegate, which does forward.)
+        void record_fn_call_site(SymbolId /*fn_symbol*/,
+                                 SourceRange /*call_range*/,
+                                 std::vector<TypePtr> /*type_args*/) override {}
 
       private:
         TypeCheckPass *pass_{nullptr};

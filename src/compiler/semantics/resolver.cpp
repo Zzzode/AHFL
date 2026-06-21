@@ -47,6 +47,8 @@ namespace {
         return "agent";
     case SymbolNamespace::Workflows:
         return "workflow";
+    case SymbolNamespace::Functions:
+        return "function";
     }
 
     return "symbol";
@@ -133,6 +135,9 @@ class ResolverPass final {
             return;
         case ast::NodeKind::WorkflowDecl:
             visit(static_cast<const ast::WorkflowDecl &>(node));
+            return;
+        case ast::NodeKind::FnDecl:
+            visit(static_cast<const ast::FnDecl &>(node));
             return;
         case ast::NodeKind::Program:
             emit_error("unexpected program node in declarations list", current_source_, node.range);
@@ -358,6 +363,66 @@ class ResolverPass final {
             }
 
             resolve_declaration_expr(*node.return_value);
+        }
+    }
+
+    void visit(const ast::FnDecl &node) {
+        // P2 (RFC §3.2.2): three-pass fn handling, mirroring the existing
+        // capability/predicate/agent pattern:
+        //   Pass::RegisterSymbols  — register the fn name in the Functions
+        //                           namespace so call sites can resolve it.
+        //   Pass::ResolveReferences — walk the signature (generic bounds,
+        //                           param types, return type, where-clause
+        //                           types) and, for a fn with a body, the
+        //                           body's expressions so nested type / fn /
+        //                           callable references are recorded. Effect
+        //                           clause capability names are also resolved.
+        // Closure-capture analysis (RFC §4) and where-clause bound evaluation
+        // are deferred to the typecheck pass, which has the typed environment
+        // needed to unify generic parameters.
+        if (current_pass_ == Pass::RegisterSymbols) {
+            (void)register_symbol(
+                SymbolNamespace::Functions, SymbolKind::Function, node.name, node.range);
+            return;
+        }
+
+        if (current_pass_ == Pass::ResolveReferences) {
+            for (const auto &type_param : node.type_params) {
+                for (const auto &bound : type_param->bounds) {
+                    resolve_type(*bound);
+                }
+            }
+
+            for (const auto &param : node.params) {
+                if (param->type) {
+                    resolve_type(*param->type);
+                }
+            }
+
+            if (node.return_type) {
+                resolve_type(*node.return_type);
+            }
+
+            if (node.where_clause) {
+                for (const auto &constraint : node.where_clause->constraints) {
+                    if (constraint->subject) {
+                        resolve_type(*constraint->subject);
+                    }
+                    for (const auto &argument : constraint->arguments) {
+                        resolve_type(*argument);
+                    }
+                    for (const auto &bound : constraint->bounds) {
+                        resolve_type(*bound);
+                    }
+                }
+            }
+
+            resolve_effect_clause(node.effect_clause);
+
+            if (node.body) {
+                resolve_block_types(*node.body);
+                resolve_block_exprs(*node.body);
+            }
         }
     }
 
@@ -658,6 +723,7 @@ class ResolverPass final {
     resolve_callable_reference(const ast::QualifiedName &name) {
         const auto capability = lookup(SymbolNamespace::Capabilities, name);
         const auto predicate = lookup(SymbolNamespace::Predicates, name);
+        const auto function = lookup(SymbolNamespace::Functions, name);
 
         if (capability.has_value() && predicate.has_value()) {
             emit_error("ambiguous callable '" + name.spelling() +
@@ -706,8 +772,41 @@ class ResolverPass final {
             return predicate;
         }
 
+        // P2 (RFC §3.2.2): a fn call resolves to a Function symbol under a
+        // dedicated ReferenceKind (FnCallTarget) so the typecheck
+        // call-target-kind lookup — which keys off ReferenceKind::CallTarget
+        // for capability/predicate — can recognise a fn call without an
+        // extra namespace re-walk at every call site.
+        if (function.has_value()) {
+            result_.add_reference(ResolvedReference{
+                .kind = ReferenceKind::FnCallTarget,
+                .text = name.spelling(),
+                .source_id = current_source_id_,
+                .range = name.range,
+                .target = *function,
+            });
+            return function;
+        }
+
         emit_error("unknown callable '" + name.spelling() + "'", current_source_, name.range);
         return std::nullopt;
+    }
+
+    // P2 (RFC §2): resolve the capability references named in an effect
+    // clause (`effect ChargeCard + RefundCard`). Each name must resolve to a
+    // declared capability; an unresolvable capability is diagnosed here so
+    // the typecheck pass can trust the clause's capability list later.
+    void resolve_effect_clause(const Owned<ast::EffectClauseSyntax> &clause) {
+        if (!clause || clause->kind != ast::EffectClauseKind::Capability) {
+            return;
+        }
+
+        for (const auto &capability_name : clause->capabilities) {
+            (void)resolve_reference(SymbolNamespace::Capabilities,
+                                    *capability_name,
+                                    ReferenceKind::AgentCapability,
+                                    "capability");
+        }
     }
 
     void resolve_temporal_expr(const ast::TemporalExprSyntax &expr) {
@@ -822,6 +921,21 @@ class ResolverPass final {
                            }
                        },
                        [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },
+                       [&](const ast::LambdaExpr &e) {
+                           // P2 (RFC §6): a closure body is an expression;
+                           // resolve it so free-variable references inside the
+                           // closure are recorded. Parameter type annotations
+                           // are resolved by the fn typecheck pass which owns
+                           // the typed environment for generic instantiation.
+                           for (const auto &param : e.params) {
+                               if (param->type) {
+                                   resolve_type(*param->type);
+                               }
+                           }
+                           if (e.body) {
+                               resolve_declaration_expr(*e.body);
+                           }
+                       },
                        [&](const ast::QualifiedValueExpr &e) {
                            if (const auto resolved = lookup(SymbolNamespace::Consts, *e.name);
                                resolved.has_value()) {
@@ -1104,6 +1218,8 @@ const SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space
         return agent_symbols_;
     case SymbolNamespace::Workflows:
         return workflow_symbols_;
+    case SymbolNamespace::Functions:
+        return function_symbols_;
     }
 
     return type_symbols_;
@@ -1123,6 +1239,8 @@ SymbolTable::NamespaceIndex &SymbolTable::index(SymbolNamespace name_space) {
         return agent_symbols_;
     case SymbolNamespace::Workflows:
         return workflow_symbols_;
+    case SymbolNamespace::Functions:
+        return function_symbols_;
     }
 
     return type_symbols_;

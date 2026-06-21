@@ -153,10 +153,89 @@ class AstFormatter {
             format_flow(*f);
         } else if (auto *m = dynamic_cast<const ahfl::ast::ModuleDecl *>(&decl)) {
             format_module(*m);
+        } else if (auto *f = dynamic_cast<const ahfl::ast::FnDecl *>(&decl)) {
+            format_fn(*f);
         } else {
             // For any other decl type, emit its headline as a comment
             write("// " + decl.headline());
             newline();
+        }
+    }
+
+    void format_fn(const ahfl::ast::FnDecl &f) {
+        write("fn " + f.name);
+        if (!f.type_params.empty()) {
+            write("<");
+            for (std::size_t index = 0; index < f.type_params.size(); ++index) {
+                if (index != 0) {
+                    write(", ");
+                }
+                const auto &type_param = *f.type_params[index];
+                write(type_param.name);
+                if (!type_param.bounds.empty()) {
+                    write(": ");
+                    for (std::size_t bound_index = 0; bound_index < type_param.bounds.size();
+                         ++bound_index) {
+                        if (bound_index != 0) {
+                            write(" + ");
+                        }
+                        if (type_param.bounds[bound_index]) {
+                            write(type_param.bounds[bound_index]->spelling());
+                        }
+                    }
+                }
+            }
+            write(">");
+        }
+        write("(");
+        for (std::size_t index = 0; index < f.params.size(); ++index) {
+            if (index != 0) {
+                write(", ");
+            }
+            const auto &param = *f.params[index];
+            write(param.name + ": ");
+            if (param.type) {
+                write(param.type->spelling());
+            }
+        }
+        write(")");
+        if (f.return_type) {
+            write(" -> " + f.return_type->spelling());
+        }
+        if (f.effect_clause) {
+            write(" ");
+            format_effect_clause(*f.effect_clause);
+        }
+        if (f.body) {
+            write(" ");
+            format_block(*f.body);
+        } else {
+            write(";");
+            newline();
+        }
+    }
+
+    void format_effect_clause(const ahfl::ast::EffectClauseSyntax &clause) {
+        switch (clause.kind) {
+        case ahfl::ast::EffectClauseKind::Pure:
+            write("[Pure]");
+            break;
+        case ahfl::ast::EffectClauseKind::Nondet:
+            write("[Nondet]");
+            break;
+        case ahfl::ast::EffectClauseKind::Capability: {
+            write("[");
+            for (std::size_t index = 0; index < clause.capabilities.size(); ++index) {
+                if (index != 0) {
+                    write(", ");
+                }
+                if (clause.capabilities[index]) {
+                    write(clause.capabilities[index]->spelling());
+                }
+            }
+            write("]");
+            break;
+        }
         }
     }
 
@@ -688,6 +767,32 @@ class AstFormatter {
                     }
                     indent_--;
                     write("}");
+                },
+                [&](const ahfl::ast::LambdaExpr &e) {
+                    write("\\");
+                    if (e.params.size() == 1 && !e.params.front()->type) {
+                        // Bare-IDENT form: `\x -> body`. Round-trip without
+                        // adding parentheses the source did not carry.
+                        write(e.params.front()->name);
+                    } else {
+                        write("(");
+                        for (std::size_t index = 0; index < e.params.size(); ++index) {
+                            if (index != 0) {
+                                write(", ");
+                            }
+                            const auto &param = *e.params[index];
+                            write(param.name);
+                            if (param.type) {
+                                write(": ");
+                                write(param.type->spelling());
+                            }
+                        }
+                        write(")");
+                    }
+                    write(" -> ");
+                    if (e.body) {
+                        format_expr(*e.body);
+                    }
                 },
             },
             expr.node);

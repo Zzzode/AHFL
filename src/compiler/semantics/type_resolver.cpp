@@ -84,6 +84,10 @@ TypePtr TypeResolver::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     case SymbolKind::Predicate:
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
+    case SymbolKind::Function:
+        // P2 (RFC §3.2.2): a function name does not name a type. Surfaced
+        // here so `fn f(...) -> f { ... }` (or similar) is diagnosed at the
+        // point of use rather than silently producing an opaque type.
         diagnose_(
             error_codes::typecheck::InvalidTypeReference,
             messages::typecheck::SymbolDoesNotNameType.format_with(symbol->get().canonical_name),

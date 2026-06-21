@@ -64,6 +64,20 @@ class ExpressionSemaDelegate {
                                                        const ExpressionContext &context,
                                                        const TypeExpectation &expectation) = 0;
     [[nodiscard]] virtual TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range) = 0;
+    // P2 (RFC §6): resolve a closure parameter's optional type annotation.
+    // Returns the error type when the annotation is absent (the closure
+    // typecheck pass then treats the parameter as unannotated).
+    [[nodiscard]] virtual TypePtr
+    resolve_type_syntax(const ast::TypeSyntax &type) = 0;
+    // P2c (RFC §3.5): record a resolved fn call site for the
+    // monomorphization pass. Explicit type arguments are empty today (the
+    // grammar's call surface does not yet carry `foo<T>(...)` syntax), so the
+    // recorded entry ties the call range to the resolved fn symbol with an
+    // empty type-args list; the monomorphization pass consumes it as the
+    // instantiation surface input.
+    virtual void record_fn_call_site(SymbolId fn_symbol,
+                                     SourceRange call_range,
+                                     std::vector<TypePtr> type_args) = 0;
 };
 
 struct ExpressionSemaServices {

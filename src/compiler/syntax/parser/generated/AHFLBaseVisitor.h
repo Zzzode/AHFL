@@ -239,6 +239,58 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitFnDecl(AHFLParser::FnDeclContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTypeParams(AHFLParser::TypeParamsContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTypeParam(AHFLParser::TypeParamContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitTypeBoundList(AHFLParser::TypeBoundListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitFnBody(AHFLParser::FnBodyContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitEffectClause(AHFLParser::EffectClauseContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitEffectSpec(AHFLParser::EffectSpecContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitCapabilityRef(AHFLParser::CapabilityRefContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitWhereClause(AHFLParser::WhereClauseContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitWhereConstraint(AHFLParser::WhereConstraintContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitLambdaExpr(AHFLParser::LambdaExprContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitLambdaParamList(AHFLParser::LambdaParamListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitLambdaParam(AHFLParser::LambdaParamContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitBlock(AHFLParser::BlockContext *ctx) override {
     return visitChildren(ctx);
   }

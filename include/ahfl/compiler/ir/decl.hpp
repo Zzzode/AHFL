@@ -271,6 +271,54 @@ struct WorkflowDecl {
 };
 
 // ----------------------------------------------------------------------------
+// P2 (RFC §3.2.2 / §3.2.3 / §6): first-class fn declaration
+// ----------------------------------------------------------------------------
+//
+// The IR representation of a top-level `fn`. The IR keeps the resolved
+// structural signature (params, return type, effect clause) plus the declared
+// generic type-parameter names so a downstream monomorphization consumer can
+// read the instantiation surface without re-entering the typed tree.
+//
+// The body is intentionally NOT lowered into the IR here: a `fn` body is a
+// statement block whose lowering machinery (typed-statement → IR statement
+// translation) is part of the typed-tree → IR body lowering that follows the
+// existing capability/agent handler shape. P2c wires the declaration surface
+// (signature + symbol + provenance + generics + effect); body lowering rides
+// on the same typed-block infrastructure once a typed fn body is indexed into
+// the typed program (currently the body is type-checked structurally but not
+// stored as a TypedBlock, matching the P2b scope).
+/// Effect clause kind on a fn, mirroring ast::EffectClauseKind (0=Pure,
+/// 1=Nondet, 2=Capability) without pulling the AST into the IR layer.
+enum class FnEffectKind : std::int32_t {
+    Pure = 0,
+    Nondet = 1,
+    Capability = 2,
+};
+
+struct FnEffectClause {
+    FnEffectKind kind{FnEffectKind::Pure};
+    // Resolved symbol ids of the capabilities referenced by a Capability
+    // clause. Empty for Pure / Nondet.
+    std::vector<SymbolRef> capabilities;
+    SourceRangeOpt source_range;
+};
+
+struct FnDecl {
+    DeclarationProvenance provenance;
+    std::string name;
+    std::vector<ParamDecl> params;
+    TypeRef return_type_ref; // Optional: unit-returning fns leave this empty
+    bool has_return_type{false};
+    FnEffectClause effect;
+    // Generic type-parameter names in declaration order. Substituted by the
+    // monomorphization pass (RFC §5) at each call site; empty for a
+    // non-generic fn.
+    std::vector<std::string> type_param_names;
+    bool has_body{false};
+    SymbolRef symbol_ref;
+};
+
+// ----------------------------------------------------------------------------
 // Formal Observations
 // ----------------------------------------------------------------------------
 

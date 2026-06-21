@@ -207,6 +207,25 @@ void DeclarationIndexBuilder::index_program_declarations(const ast::Program &pro
             }
             break;
         }
+        case ast::NodeKind::FnDecl: {
+            // P2 (RFC §3.2.2): index the fn declaration under its Function
+            // symbol id so build_fn_types can resolve its signature.
+            const auto &decl = static_cast<const ast::FnDecl &>(*declaration);
+            if (const auto symbol = find_local(SymbolNamespace::Functions, decl.name);
+                symbol.has_value()) {
+                index_->fn_decls.emplace(symbol->get().id.value, std::cref(decl));
+                hir_->append_declaration(TypedDecl{
+                    .kind = declaration->kind,
+                    .symbol = symbol->get().id,
+                    .range = declaration->range,
+                    .source_id = state_->current_source_id,
+                    .associated_agent_symbol = std::nullopt,
+                    .type = nullptr,
+                    .payload = {},
+                });
+            }
+            break;
+        }
         case ast::NodeKind::Program:
         case ast::NodeKind::ContractDecl:
         case ast::NodeKind::FlowDecl:
@@ -251,6 +270,7 @@ EnvironmentBuildResult EnvironmentBuilder::run() {
     driver_->build_predicate_types();
     driver_->build_agent_types();
     driver_->build_workflow_types();
+    driver_->build_fn_types();
     driver_->build_flow_types();
     driver_->build_contract_types();
 
@@ -331,6 +351,14 @@ EnvironmentBuildResult EnvironmentBuilder::run() {
             break;
         case ast::NodeKind::WorkflowDecl:
             if (auto info = driver_->environment().get_workflow(decl.symbol); info.has_value()) {
+                update.payload = info->get();
+            }
+            break;
+        case ast::NodeKind::FnDecl:
+            // P2 (RFC §3.2.2): copy FnTypeInfo out of TypeEnvironment so the
+            // typed program carries the resolved fn signature for downstream
+            // passes (LSP hover, lowering, future monomorphization).
+            if (auto info = driver_->environment().get_fn(decl.symbol); info.has_value()) {
                 update.payload = info->get();
             }
             break;
@@ -682,6 +710,79 @@ void TypeCheckPass::build_workflow_types() {
             }
 
             environment().workflows_.emplace(id, std::move(info));
+        });
+    }
+}
+
+void TypeCheckPass::build_fn_types() {
+    // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): resolve each fn's signature into a
+    // FnTypeInfo registered under its Function symbol id. The body is NOT
+    // type-checked here: fn bodies can call other fns (mutual recursion) and
+    // may use generic type parameters that need the full environment, so body
+    // typecheck is deferred to FnSema after the environment is fully built.
+    //
+    // The signature-only pass is sufficient for call-site resolution: a
+    // fn call `f(args)` needs f's param/return types, which are resolved
+    // here. Generic instantiation at the call site substitutes type_args
+    // into the resolved signature (P2d monomorphization records these
+    // call sites).
+    for (const auto &[id, decl] : fn_decls_) {
+        with_symbol_context(SymbolId{id}, [&]() {
+            const auto symbol = symbol_of(SymbolId{id});
+            if (!symbol.has_value()) {
+                return;
+            }
+
+            FnTypeInfo info{
+                .symbol = SymbolId{id},
+                .canonical_name = symbol->get().canonical_name,
+                .local_name = decl.get().name,
+                .params = {},
+                .return_type = nullptr,
+                .return_type_range =
+                    decl.get().return_type ? decl.get().return_type->range : SourceRange{},
+                .type_param_names = {},
+                .effect = {},
+                .has_body = static_cast<bool>(decl.get().body),
+                .declaration_range = decl.get().range,
+            };
+
+            for (const auto &type_param : decl.get().type_params) {
+                info.type_param_names.push_back(type_param->name);
+            }
+
+            for (const auto &param : decl.get().params) {
+                info.params.push_back(ParamTypeInfo{
+                    .name = param->name,
+                    .type = param->type ? resolve_type(*param->type) : make_error_type(),
+                    .declaration_range = param->range,
+                });
+            }
+
+            info.return_type =
+                decl.get().return_type ? resolve_type(*decl.get().return_type) : make_error_type();
+
+            // Resolve the effect clause: Pure/Nondet pass through as the
+            // canonical kind; Capability resolves each named capability to its
+            // symbol id (the resolver already emitted a diagnostic for any
+            // unresolvable capability, so missing references become nullopt
+            // silently here — the typed signature just omits them).
+            if (decl.get().effect_clause) {
+                const auto &clause = *decl.get().effect_clause;
+                info.effect.kind = static_cast<int>(clause.kind);
+                info.effect.source_range = clause.range;
+                if (clause.kind == ast::EffectClauseKind::Capability) {
+                    for (const auto &capability_name : clause.capabilities) {
+                        const auto reference = find_reference_here(
+                            ReferenceKind::AgentCapability, capability_name->range);
+                        if (reference.has_value()) {
+                            info.effect.capabilities.push_back(reference->get().target);
+                        }
+                    }
+                }
+            }
+
+            environment().functions_.emplace(id, std::move(info));
         });
     }
 }

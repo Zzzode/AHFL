@@ -308,6 +308,19 @@ class AstInvariantValidator final {
                         validate_match_arm(*arm);
                     }
                 },
+                [&](const LambdaExpr &e) {
+                    // P2 (RFC §6): closure body is the only expression child.
+                    for (const auto &param : e.params) {
+                        require(param != nullptr, expr.range, "LambdaExpr.params contains null");
+                        if (param && param->type) {
+                            validate_type(*param->type);
+                        }
+                    }
+                    require(e.body != nullptr, expr.range, "LambdaExpr is missing body");
+                    if (e.body) {
+                        validate_expr(*e.body);
+                    }
+                },
             },
             expr.node);
     }
@@ -827,6 +840,86 @@ class AstInvariantValidator final {
             }
             break;
         }
+        case NodeKind::FnDecl: {
+            const auto &node = static_cast<const FnDecl &>(declaration);
+            require(!node.name.empty(), node.range, "FnDecl is missing name");
+            for (const auto &type_param : node.type_params) {
+                require(type_param != nullptr, node.range, "FnDecl.type_params contains null");
+                if (type_param) {
+                    require(!type_param->name.empty(),
+                            type_param->range,
+                            "TypeParamSyntax is missing name");
+                    for (const auto &bound : type_param->bounds) {
+                        if (bound) {
+                            validate_type(*bound);
+                        }
+                    }
+                }
+            }
+            for (const auto &param : node.params) {
+                require(param != nullptr, node.range, "FnDecl.params contains null");
+                if (param) {
+                    require(!param->name.empty(), param->range, "ParamDeclSyntax is missing name");
+                    require(param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
+                    if (param->type) {
+                        validate_type(*param->type);
+                    }
+                }
+            }
+            if (node.return_type) {
+                validate_type(*node.return_type);
+            }
+            if (node.effect_clause) {
+                validate_effect_clause(*node.effect_clause);
+            }
+            if (node.where_clause) {
+                validate_where_clause(*node.where_clause);
+            }
+            if (node.body) {
+                validate_block(*node.body);
+            }
+            break;
+        }
+        }
+    }
+
+    /// Validate an effect clause (P2, RFC §2).
+    void validate_effect_clause(const EffectClauseSyntax &clause) {
+        if (clause.kind == EffectClauseKind::Capability) {
+            for (const auto &capability : clause.capabilities) {
+                require(capability != nullptr,
+                        clause.range,
+                        "EffectClauseSyntax.capabilities contains null");
+                if (capability) {
+                    validate_qualified_name(capability.get(), clause.range, "effect capability");
+                }
+            }
+        }
+    }
+
+    /// Validate a where-clause (P2, RFC §6).
+    void validate_where_clause(const WhereClauseSyntax &clause) {
+        for (const auto &constraint : clause.constraints) {
+            require(constraint != nullptr, clause.range, "WhereClauseSyntax.constraints contains null");
+            if (!constraint) {
+                continue;
+            }
+            require(constraint->subject != nullptr,
+                    constraint->range,
+                    "WhereConstraintSyntax is missing subject");
+            if (constraint->subject) {
+                validate_type(*constraint->subject);
+            }
+            for (const auto &argument : constraint->arguments) {
+                if (argument) {
+                    validate_type(*argument);
+                }
+            }
+            for (const auto &bound : constraint->bounds) {
+                if (bound) {
+                    validate_type(*bound);
+                }
+            }
         }
     }
 };
@@ -861,6 +954,8 @@ std::string_view to_string(NodeKind kind) noexcept {
         return "FlowDecl";
     case NodeKind::WorkflowDecl:
         return "WorkflowDecl";
+    case NodeKind::FnDecl:
+        return "FnDecl";
     }
 
     return "Unknown";
@@ -1167,6 +1262,44 @@ void WorkflowDecl::accept(Visitor &visitor) {
 
 std::string WorkflowDecl::headline() const {
     return with_count("workflow " + name, nodes.size(), "node");
+}
+
+FnDecl::FnDecl(std::string name, ahfl::SourceRange range)
+    : Decl(NodeKind::FnDecl, range), name(std::move(name)) {}
+
+void FnDecl::accept(Visitor &visitor) {
+    visitor.visit(*this);
+}
+
+std::string FnDecl::headline() const {
+    std::ostringstream builder;
+    builder << "fn " << name;
+    if (!type_params.empty()) {
+        builder << "<" << type_params.size() << " type param";
+        builder << (type_params.size() == 1 ? "" : "s") << ">";
+    }
+    builder << " (" << params.size() << " param" << (params.size() == 1 ? "" : "s") << ")";
+    if (return_type) {
+        builder << " -> " << return_type->spelling();
+    }
+    if (!body) {
+        builder << " ;";
+    }
+    return builder.str();
+}
+
+void RecursiveVisitor::visit(FnDecl &) {}
+
+std::string_view to_string(EffectClauseKind kind) noexcept {
+    switch (kind) {
+    case EffectClauseKind::Pure:
+        return "Pure";
+    case EffectClauseKind::Nondet:
+        return "Nondet";
+    case EffectClauseKind::Capability:
+        return "Capability";
+    }
+    return "Unknown";
 }
 
 void RecursiveVisitor::visit(Program &node) {

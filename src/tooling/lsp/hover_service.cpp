@@ -88,6 +88,8 @@ namespace {
         return "agent";
     case SymbolKind::Workflow:
         return "workflow";
+    case SymbolKind::Function:
+        return "function";
     }
     return {};
 }
@@ -111,6 +113,24 @@ namespace {
 [[nodiscard]] std::string callable_signature(const PredicateTypeInfo &predicate) {
     return "predicate " + predicate.canonical_name + "(" + params_signature(predicate.params) +
            ") -> Bool";
+}
+
+// P2 (RFC §3.2.2): fn signature for hover. Generic type parameters are listed
+// inline; the effect clause is appended when declared.
+[[nodiscard]] std::string callable_signature(const FnTypeInfo &fn) {
+    std::string head = "fn " + fn.canonical_name;
+    if (!fn.type_param_names.empty()) {
+        head += "<";
+        for (std::size_t index = 0; index < fn.type_param_names.size(); ++index) {
+            if (index != 0) {
+                head += ", ";
+            }
+            head += fn.type_param_names[index];
+        }
+        head += ">";
+    }
+    head += "(" + params_signature(fn.params) + ") -> " + type_description(fn.return_type);
+    return head;
 }
 
 template <typename T>
@@ -301,6 +321,30 @@ void add_state_facts(HoverPayload &payload, const AgentTypeInfo &agent) {
                     payload, "Output", inline_code(type_description(info->get().output_type)));
                 add_primary_fact(payload, "Nodes", std::to_string(info->get().nodes.size()));
             }
+        }
+        break;
+    }
+    case SymbolKind::Function: {
+        // P2 (RFC §3.2.2): render the fn signature, surfacing the resolved
+        // param/return types and the declared effect clause.
+        if (environment != nullptr) {
+            if (const auto info = environment->get_fn(symbol.id); info.has_value()) {
+                payload.signature = callable_signature(info->get());
+                switch (static_cast<ast::EffectClauseKind>(info->get().effect.kind)) {
+                case ast::EffectClauseKind::Pure:
+                    add_primary_fact(payload, "Effect", "Pure");
+                    break;
+                case ast::EffectClauseKind::Nondet:
+                    add_primary_fact(payload, "Effect", "Nondet");
+                    break;
+                case ast::EffectClauseKind::Capability:
+                    add_primary_fact(payload, "Effect", "Capability");
+                    break;
+                }
+            }
+        }
+        if (payload.signature.empty()) {
+            payload.signature = "fn " + symbol.canonical_name;
         }
         break;
     }

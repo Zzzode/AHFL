@@ -1868,6 +1868,12 @@ ahfl_label_tests(
 )
 
 ahfl_label_tests(
+    LABELS ahfl-rfc-corelib rfc-corelib-p2-fn-generics-closures
+    TESTS
+        ahfl.semantics.fn_generics_closures_all
+)
+
+ahfl_label_tests(
     LABELS ahfl-v0.52 v0.52-statement-executor
     TESTS
         ahfl.executor.exec_all

@@ -104,9 +104,22 @@ void append_typed_child(std::vector<TypedExprChild> &children,
             [&](const ast::CallExpr &e) {
                 std::vector<std::string> parameter_names;
                 if (e.callee != nullptr) {
-                    if (const auto reference = resolve_result.find_reference(
-                            ReferenceKind::CallTarget, e.callee->range, source_id);
-                        reference.has_value()) {
+                    // P2 (RFC §3.2.2): a fn call carries its parameter names on
+                    // the FnTypeInfo. Check it first, then fall back to the
+                    // legacy capability/predicate call targets.
+                    if (const auto fn_reference = resolve_result.find_reference(
+                            ReferenceKind::FnCallTarget, e.callee->range, source_id);
+                        fn_reference.has_value()) {
+                        if (const auto fn = environment.get_fn(fn_reference->get().target);
+                            fn.has_value()) {
+                            parameter_names.reserve(fn->get().params.size());
+                            for (const auto &param : fn->get().params) {
+                                parameter_names.push_back(param.name);
+                            }
+                        }
+                    } else if (const auto reference = resolve_result.find_reference(
+                                   ReferenceKind::CallTarget, e.callee->range, source_id);
+                               reference.has_value()) {
                         if (const auto capability =
                                 environment.get_capability(reference->get().target);
                             capability.has_value()) {
@@ -225,6 +238,19 @@ void append_typed_child(std::vector<TypedExprChild> &children,
                                            source_id,
                                            TypedExprChildRole::MatchArmBody);
                     }
+                }
+            },
+            [&](const ast::LambdaExpr &e) {
+                // P2 (RFC §6): a closure's body is its only expression child.
+                // Parameters are not expressions (their optional type
+                // annotations are tracked by the fn typecheck pass, P2b), so
+                // only the body participates in the typed-tree graph here.
+                if (e.body) {
+                    append_typed_child(children,
+                                       program,
+                                       e.body.get(),
+                                       source_id,
+                                       TypedExprChildRole::Operand);
                 }
             },
         },
@@ -380,6 +406,14 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         Overloaded{
             [&](const ast::CallExpr &e) -> std::optional<SymbolId> {
                 if (e.callee != nullptr) {
+                    // P2 (RFC §3.2.2): prefer the FnCallTarget reference for a
+                    // fn call; fall back to the legacy capability/predicate
+                    // CallTarget reference otherwise.
+                    if (const auto fn_reference = resolve_result.find_reference(
+                            ReferenceKind::FnCallTarget, e.callee->range, source_id);
+                        fn_reference.has_value()) {
+                        return fn_reference->get().target;
+                    }
                     if (const auto reference = resolve_result.find_reference(
                             ReferenceKind::CallTarget, e.callee->range, source_id);
                         reference.has_value()) {
@@ -429,6 +463,17 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         return TypedCallTargetKind::None;
     }
 
+    // P2 (RFC §3.2.2): a fn call resolves to a FnCallTarget reference whose
+    // symbol is a Function, so it is recognised as a Function call target.
+    if (const auto fn_reference =
+            resolve_result.find_reference(ReferenceKind::FnCallTarget, call.callee->range, source_id);
+        fn_reference.has_value()) {
+        if (const auto symbol = resolve_result.symbol_table.get(fn_reference->get().target);
+            symbol.has_value() && symbol->get().kind == SymbolKind::Function) {
+            return TypedCallTargetKind::Function;
+        }
+    }
+
     const auto reference =
         resolve_result.find_reference(ReferenceKind::CallTarget, call.callee->range, source_id);
     if (!reference.has_value()) {
@@ -445,6 +490,11 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         return TypedCallTargetKind::Capability;
     case SymbolKind::Predicate:
         return TypedCallTargetKind::Predicate;
+    case SymbolKind::Function:
+        // A Function symbol reached via the legacy CallTarget reference (e.g.
+        // when both a fn and a capability share a name). Treat it as a
+        // Function call target for consistency.
+        return TypedCallTargetKind::Function;
     case SymbolKind::Struct:
     case SymbolKind::Enum:
     case SymbolKind::TypeAlias:
@@ -869,6 +919,29 @@ TypePtr TypeCheckPass::resolve_named_type(const ast::QualifiedName &name) {
 TypePtr TypeCheckPass::resolve_type_symbol(SymbolId id, SourceRange use_range) {
     auto resolver = make_type_resolver();
     return resolver.resolve_type_symbol(id, use_range);
+}
+
+// P2 (RFC §6): ExpressionSemaDelegate hook used by the lambda typecheck to
+// resolve a closure parameter's type annotation through the shared
+// TypeResolver (which honours the current symbol / module context).
+TypePtr TypeCheckPass::resolve_type_syntax(const ast::TypeSyntax &type) {
+    return resolve_type(type);
+}
+
+// P2c (RFC §3.5): ExpressionSemaDelegate hook that records a resolved fn call
+// site into the typed program so the monomorphization pass has stable input
+// without re-walking the typed tree. The recorded entry ties the resolved fn
+// symbol to the call range and the (currently empty) explicit type-args list;
+// inference of type args from argument types lands with the generic-body
+// typecheck work.
+void TypeCheckPass::record_fn_call_site(SymbolId fn_symbol,
+                                        SourceRange call_range,
+                                        std::vector<TypePtr> type_args) {
+    result_.typed_program.fn_call_sites.push_back(
+        TypedProgram::FnCallSiteRecord{.fn_symbol = fn_symbol,
+                                       .call_range = call_range,
+                                       .source_id = current_source_id_,
+                                       .type_args = std::move(type_args)});
 }
 
 TypePtr TypeCheckPass::resolve_type_alias(SymbolId id, SourceRange use_range) {

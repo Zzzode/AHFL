@@ -20,7 +20,8 @@ topLevelDecl:
 	| agentDecl
 	| contractDecl
 	| flowDecl
-	| workflowDecl;
+	| workflowDecl
+	| fnDecl;
 
 moduleDecl: 'module' qualifiedIdent ';';
 
@@ -192,6 +193,58 @@ workflowLivenessDecl: 'liveness' ':' workflowTemporalExpr ';';
 
 workflowReturnDecl: 'return' ':' expr ';';
 
+// P2 (RFC §3.2.2 / §3.2.3 / §6): top-level function declarations with generic
+// type parameters, an optional effect clause, and an optional where-clause.
+//   fn name<T: bound, U>(p: Type, ...) -> Ret [effect] [where ...] { ... }
+//   fn name(...);                      // prototype (no body)
+// The grammar models syntax only: purity/effect enforcement and where-clause
+// evaluation are deferred to the typecheck pass (P2b).
+fnDecl:
+	DOC_COMMENT? 'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+		whereClause? (fnBody | ';');
+
+typeParams: '<' typeParam (',' typeParam)* ','? '>';
+
+typeParam: IDENT (':' typeBoundList)?;
+
+typeBoundList: type_ ('+' type_)*;
+
+fnBody: block;
+
+// P2 (RFC §2): function effect clause. A clause is exactly one of:
+//   - a literal purity annotation (`Pure` / `Nondet`)
+//   - one or more capability references (comma-separated), naming the
+//     capabilities the function may exercise.
+// `Pure` and `Nondet` are keywords (RFC §2); capability references are bare
+// qualified idents, mirroring the capabilityRef spelling used elsewhere.
+effectClause: 'effect' effectSpec;
+
+effectSpec: 'Pure' | 'Nondet' | capabilityRef (',' capabilityRef)*;
+
+capabilityRef: qualifiedIdent;
+
+// P2 (RFC §6): where-clause constraining generic type parameters. The grammar
+// accepts a comma-separated list of type-predicate / type-bound constraints;
+// semantics are evaluated in the typecheck pass (P2b).
+whereClause: 'where' whereConstraint (',' whereConstraint)* ','?;
+
+whereConstraint:
+	type_ '::' IDENT ('(' typeList ')')?  // type predicate, e.g. T::Addable(U)
+	| type_ ':' typeBoundList;             // bound list, e.g. T: Hashable
+
+// P2 (RFC §6): lambda (closure) expression as a primaryExpr.
+//   \ param -> expr          (single param, optional parens)
+//   \ (p, ...) -> expr       (param list)
+//   \ -> expr                (zero-arg thunk)
+// The body is a single expr (RFC §6 closures are expression-bodied).
+lambdaExpr: BACKSLASH lambdaParamList? '->' expr;
+
+lambdaParamList:
+	IDENT                                   // single unparenthesised param
+	| '(' (lambdaParam (',' lambdaParam)*)? ','? ')';
+
+lambdaParam: IDENT (':' type_)?;
+
 block: '{' statement* '}';
 
 statement:
@@ -249,6 +302,7 @@ primaryExpr:
 	| setLiteral
 	| mapLiteral
 	| matchExpr
+	| lambdaExpr
 	| 'some' '(' expr ')'
 	| 'none'
 	| '(' expr ')';
@@ -395,6 +449,9 @@ DECIMAL_LITERAL: DIGIT+ '.' DIGIT+ 'd';
 FLOAT_LITERAL: DIGIT+ '.' DIGIT+ EXPONENT?;
 
 INT_LITERAL: DIGIT+;
+
+// P2 (RFC §6): backslash introduces a lambda expression.
+BACKSLASH: '\\';
 
 STRING_LITERAL: '"' (ESCAPE_SEQUENCE | ~["\\\r\n])* '"';
 

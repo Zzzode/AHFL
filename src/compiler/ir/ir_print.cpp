@@ -748,6 +748,42 @@ class IrProgramPrinter final {
         line(1, "return: " + render_expr(*declaration.return_value));
         line(0, "}");
     }
+
+    // P2c (RFC §3.2.2): human-readable IR dump for a top-level `fn`. Mirrors
+    // the capability/predicate signature surface plus the generic
+    // type-parameter names and the three-state effect clause.
+    void print_decl(const ir::FnDecl &declaration) {
+        std::string signature = "fn " + declaration.name;
+        if (!declaration.type_param_names.empty()) {
+            signature += "<" + join(declaration.type_param_names, ", ") + ">";
+        }
+        signature += "(" + print_params(declaration.params) + ")";
+        if (declaration.has_return_type) {
+            signature += " -> " + type_name(declaration.return_type_ref);
+        }
+        if (!declaration.has_body) {
+            signature += ";";
+        }
+        line(0, signature);
+
+        const auto effect_name = [](ir::FnEffectKind kind) -> std::string_view {
+            switch (kind) {
+            case ir::FnEffectKind::Pure:
+                return "Pure";
+            case ir::FnEffectKind::Nondet:
+                return "Nondet";
+            case ir::FnEffectKind::Capability:
+                return "Capability";
+            }
+            return "Unknown";
+        };
+        line(1, std::string("effect: ") + std::string(effect_name(declaration.effect.kind)));
+        if (!declaration.effect.capabilities.empty()) {
+            line(1,
+                 "capabilities: [" +
+                     join(symbol_names(declaration.effect.capabilities), ", ") + "]");
+        }
+    }
 };
 
 } // namespace

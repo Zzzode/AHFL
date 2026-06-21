@@ -27,6 +27,11 @@ enum class SymbolNamespace {
     Predicates,
     Agents,
     Workflows,
+    // P2 (RFC §3.2.2): top-level function declarations live in their own
+    // namespace so a fn name `f` is distinct from a capability / predicate /
+    // type of the same spelling, mirroring how the existing namespaces keep
+    // capabilities and predicates disjoint at call sites.
+    Functions,
 };
 
 enum class SymbolKind {
@@ -38,6 +43,8 @@ enum class SymbolKind {
     Predicate,
     Agent,
     Workflow,
+    // P2 (RFC §3.2.2): a declared `fn` registers as a Function symbol.
+    Function,
 };
 
 enum class ReferenceKind {
@@ -50,6 +57,12 @@ enum class ReferenceKind {
     ContractTarget,
     FlowTarget,
     WorkflowNodeTarget,
+    // P2 (RFC §3.2.2): a fn call `f(args)` resolves its callee to a Function
+    // symbol. Kept distinct from `CallTarget` (which the existing
+    // capability/predicate resolver writes) so the call-target kind lookup
+    // can disambiguate a fn call from a capability/predicate call without
+    // re-walking both namespaces.
+    FnCallTarget,
 };
 
 struct SymbolId {
@@ -117,6 +130,7 @@ class SymbolTable {
     NamespaceIndex predicate_symbols_;
     NamespaceIndex agent_symbols_;
     NamespaceIndex workflow_symbols_;
+    NamespaceIndex function_symbols_; // P2 (RFC §3.2.2)
 };
 
 struct ResolveResult {

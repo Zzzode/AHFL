@@ -158,6 +158,8 @@ struct DeclarationIndex {
         predicate_decls;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> agent_decls;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>> workflow_decls;
+    // P2 (RFC §3.2.2): top-level fn declarations keyed by Function symbol id.
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::FnDecl>> fn_decls;
 };
 
 class TypeCheckPass;
@@ -308,6 +310,7 @@ class TypeCheckPass final {
           predicate_decls_(declaration_index_.predicate_decls),
           agent_decls_(declaration_index_.agent_decls),
           workflow_decls_(declaration_index_.workflow_decls),
+          fn_decls_(declaration_index_.fn_decls),
           hir_builder_(state_.result.typed_program) {}
     TypeCheckPass(const ast::Program &program, const ResolveResult &resolve_result)
         : TypeCheckPass(TypeCheckSession(
@@ -412,6 +415,8 @@ class TypeCheckPass final {
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::AgentDecl>> &agent_decls_;
     std::unordered_map<std::size_t, std::reference_wrapper<const ast::WorkflowDecl>>
         &workflow_decls_;
+    // P2 (RFC §3.2.2)
+    std::unordered_map<std::size_t, std::reference_wrapper<const ast::FnDecl>> &fn_decls_;
     TypedHirBuilder hir_builder_;
 
     TypeAliasResolutionState alias_resolution_;
@@ -431,6 +436,11 @@ class TypeCheckPass final {
     void build_predicate_types();
     void build_agent_types();
     void build_workflow_types();
+    // P2 (RFC §3.2.2): resolve fn signatures (params, return type, effect
+    // clause, generic parameter names) and register FnTypeInfo in the
+    // environment. Body typecheck and where-clause bound evaluation happen
+    // in FnSema (separate pass).
+    void build_fn_types();
     void build_flow_types();
     void build_flow_types_in_program(const ast::Program &program);
     void build_contract_types();
@@ -477,6 +487,14 @@ class TypeCheckPass final {
     [[nodiscard]] MaybeCRef<Symbol> symbol_of(SymbolId id) const;
     [[nodiscard]] TypeResolver make_type_resolver();
     [[nodiscard]] TypePtr resolve_type(const ast::TypeSyntax &type);
+    // P2 (RFC §6): ExpressionSemaDelegate override — resolve a closure
+    // parameter's type annotation.
+    [[nodiscard]] TypePtr resolve_type_syntax(const ast::TypeSyntax &type);
+    // P2c (RFC §3.5): record a resolved fn call site into the typed program
+    // for the monomorphization pass. Called by PassExpressionSemaDelegate.
+    void record_fn_call_site(SymbolId fn_symbol,
+                             SourceRange call_range,
+                             std::vector<TypePtr> type_args);
     [[nodiscard]] TypePtr resolve_named_type(const ast::QualifiedName &name);
     [[nodiscard]] TypePtr resolve_type_symbol(SymbolId id, SourceRange use_range);
     [[nodiscard]] TypePtr resolve_type_alias(SymbolId id, SourceRange use_range);

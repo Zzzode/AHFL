@@ -131,6 +131,32 @@ public:
 
     virtual std::any visitWorkflowReturnDecl(AHFLParser::WorkflowReturnDeclContext *context) = 0;
 
+    virtual std::any visitFnDecl(AHFLParser::FnDeclContext *context) = 0;
+
+    virtual std::any visitTypeParams(AHFLParser::TypeParamsContext *context) = 0;
+
+    virtual std::any visitTypeParam(AHFLParser::TypeParamContext *context) = 0;
+
+    virtual std::any visitTypeBoundList(AHFLParser::TypeBoundListContext *context) = 0;
+
+    virtual std::any visitFnBody(AHFLParser::FnBodyContext *context) = 0;
+
+    virtual std::any visitEffectClause(AHFLParser::EffectClauseContext *context) = 0;
+
+    virtual std::any visitEffectSpec(AHFLParser::EffectSpecContext *context) = 0;
+
+    virtual std::any visitCapabilityRef(AHFLParser::CapabilityRefContext *context) = 0;
+
+    virtual std::any visitWhereClause(AHFLParser::WhereClauseContext *context) = 0;
+
+    virtual std::any visitWhereConstraint(AHFLParser::WhereConstraintContext *context) = 0;
+
+    virtual std::any visitLambdaExpr(AHFLParser::LambdaExprContext *context) = 0;
+
+    virtual std::any visitLambdaParamList(AHFLParser::LambdaParamListContext *context) = 0;
+
+    virtual std::any visitLambdaParam(AHFLParser::LambdaParamContext *context) = 0;
+
     virtual std::any visitBlock(AHFLParser::BlockContext *context) = 0;
 
     virtual std::any visitStatement(AHFLParser::StatementContext *context) = 0;

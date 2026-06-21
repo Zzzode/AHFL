@@ -69,6 +69,12 @@ class TypeEnvironment {
         return contracts_;
     }
 
+    // P2 (RFC §3.2.2): declared top-level functions keyed by their Function
+    // symbol id.
+    [[nodiscard]] const std::unordered_map<std::size_t, FnTypeInfo> &functions() const noexcept {
+        return functions_;
+    }
+
     [[nodiscard]] MaybeCRef<Type> get_const_type(SymbolId id) const;
     [[nodiscard]] MaybeCRef<StructTypeInfo> get_struct(SymbolId id) const;
     [[nodiscard]] MaybeCRef<StructTypeInfo> get_struct(const Type &type) const;
@@ -82,6 +88,8 @@ class TypeEnvironment {
     [[nodiscard]] MaybeCRef<WorkflowTypeInfo> get_workflow(SymbolId id) const;
     [[nodiscard]] MaybeCRef<FlowTypeInfo> get_flow(SymbolId id) const;
     [[nodiscard]] MaybeCRef<ContractTypeInfo> get_contract(SymbolId id) const;
+    // P2 (RFC §3.2.2): lookup a fn by its Function symbol id.
+    [[nodiscard]] MaybeCRef<FnTypeInfo> get_fn(SymbolId id) const;
 
     // O(1) lookup: returns true iff `id` is the symbol of any agent's context struct.
     [[nodiscard]] bool is_agent_context_struct(SymbolId id) const noexcept;
@@ -116,6 +124,7 @@ class TypeEnvironment {
     std::unordered_map<std::size_t, WorkflowTypeInfo> workflows_;
     std::unordered_map<std::size_t, FlowTypeInfo> flows_;
     std::unordered_map<std::size_t, ContractTypeInfo> contracts_;
+    std::unordered_map<std::size_t, FnTypeInfo> functions_; // P2 (RFC §3.2.2)
 
     // Reverse indices: canonical_name -> SymbolId.value, for O(1) name lookups.
     std::unordered_map<std::string, std::size_t> struct_name_index_;

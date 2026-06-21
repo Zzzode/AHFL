@@ -552,8 +552,159 @@ class ProgramBuilder {
             return declaration;
         }
 
+        if (const auto fn_decl = borrow(context.fnDecl())) {
+            return build_fn_decl(fn_decl->get());
+        }
+
         throw std::logic_error(
             "top-level declaration did not match any supported AHFL declaration kind");
+    }
+
+    // ----------------------------------------------------------------------
+    // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): function-declaration builders
+    // ----------------------------------------------------------------------
+
+    [[nodiscard]] Owned<ast::Decl> build_fn_decl(AHFLParser::FnDeclContext &context) const {
+        auto declaration = make_decl<ast::FnDecl>(
+            source_,
+            context,
+            text_of(require(context.IDENT(), "fn name is missing")));
+
+        if (const auto type_params = borrow(context.typeParams())) {
+            declaration->type_params = build_type_params(type_params->get());
+        }
+
+        if (const auto param_list = borrow(context.paramList())) {
+            declaration->params = build_param_list(param_list->get());
+        }
+
+        if (const auto return_type = borrow(context.type_())) {
+            declaration->return_type = build_type_syntax(return_type->get());
+        }
+
+        if (const auto effect_clause = borrow(context.effectClause())) {
+            declaration->effect_clause = build_effect_clause(effect_clause->get());
+        }
+
+        if (const auto where_clause = borrow(context.whereClause())) {
+            declaration->where_clause = build_where_clause(where_clause->get());
+        }
+
+        if (const auto body = borrow(context.fnBody())) {
+            declaration->body = build_block_syntax(
+                require(body->get().block(), "fn body block is missing"));
+        }
+
+        return declaration;
+    }
+
+    [[nodiscard]] std::vector<Owned<ast::TypeParamSyntax>>
+    build_type_params(AHFLParser::TypeParamsContext &context) const {
+        std::vector<Owned<ast::TypeParamSyntax>> type_params;
+        type_params.reserve(context.typeParam().size());
+        for (auto *param_context : context.typeParam()) {
+            type_params.push_back(
+                build_type_param(require(param_context, "type parameter is missing")));
+        }
+        return type_params;
+    }
+
+    [[nodiscard]] Owned<ast::TypeParamSyntax>
+    build_type_param(AHFLParser::TypeParamContext &context) const {
+        auto type_param = make_owned<ast::TypeParamSyntax>();
+        type_param->range = context_range(context, source_);
+        type_param->name = text_of(require(context.IDENT(), "type parameter name is missing"));
+        if (const auto bound_list = borrow(context.typeBoundList())) {
+            // typeBoundList: type_ ('+' type_)* — antlr generates a vector type_()
+            // accessor (each bound is a direct type_ child), so we do not pass
+            // an index (pitfall #1: vector accessors are index-free).
+            for (auto *bound_context : bound_list->get().type_()) {
+                type_param->bounds.push_back(
+                    build_type_syntax(require(bound_context, "type bound is missing")));
+            }
+        }
+        return type_param;
+    }
+
+    [[nodiscard]] Owned<ast::EffectClauseSyntax>
+    build_effect_clause(AHFLParser::EffectClauseContext &context) const {
+        auto clause = make_owned<ast::EffectClauseSyntax>();
+        clause->range = context_range(context, source_);
+
+        // effectClause delegates to a single effectSpec. effectSpec is one of:
+        //   'Pure' | 'Nondet' | capabilityRef (',' capabilityRef)*
+        // We discriminate by the spec's start token text rather than by
+        // generated literal-token accessors (which would couple us to ANTLR's
+        // implicit token naming).
+        auto &spec = require(context.effectSpec(), "effect spec is missing");
+        const auto spec_kind = effect_clause_kind_from(
+            require(spec.getStart(), "effect spec start token is missing").getText());
+        clause->kind = spec_kind;
+        if (spec_kind == ast::EffectClauseKind::Capability) {
+            for (auto *capability_context : spec.capabilityRef()) {
+                clause->capabilities.push_back(build_qualified_name(
+                    require(require(capability_context, "capability reference is missing")
+                                .qualifiedIdent(),
+                            "capability reference name is missing")));
+            }
+        }
+        return clause;
+    }
+
+    [[nodiscard]] ast::EffectClauseKind
+    effect_clause_kind_from(std::string_view spelling) const {
+        if (spelling == "Pure") {
+            return ast::EffectClauseKind::Pure;
+        }
+        if (spelling == "Nondet") {
+            return ast::EffectClauseKind::Nondet;
+        }
+        return ast::EffectClauseKind::Capability;
+    }
+
+    [[nodiscard]] Owned<ast::WhereClauseSyntax>
+    build_where_clause(AHFLParser::WhereClauseContext &context) const {
+        auto clause = make_owned<ast::WhereClauseSyntax>();
+        clause->range = context_range(context, source_);
+        for (auto *constraint_context : context.whereConstraint()) {
+            clause->constraints.push_back(
+                build_where_constraint(require(constraint_context, "where constraint is missing")));
+        }
+        return clause;
+    }
+
+    [[nodiscard]] Owned<ast::WhereConstraintSyntax>
+    build_where_constraint(AHFLParser::WhereConstraintContext &context) const {
+        auto constraint = make_owned<ast::WhereConstraintSyntax>();
+        constraint->range = context_range(context, source_);
+
+        // whereConstraint has two alternatives:
+        //   type_ '::' IDENT ('(' typeList ')')?   — predicate
+        //   type_ ':' typeBoundList                 — bound list
+        // The bound list (`:` alt) carries a single typeBoundList child; the
+        // predicate (`::` alt) carries a terminal IDENT and an optional typeList.
+        if (const auto bound_list = borrow(context.typeBoundList())) {
+            constraint->is_predicate = false;
+            constraint->subject = build_type_syntax(
+                require(context.type_(), "where-constraint subject type is missing"));
+            for (auto *bound_context : bound_list->get().type_()) {
+                constraint->bounds.push_back(
+                    build_type_syntax(require(bound_context, "where bound type is missing")));
+            }
+        } else {
+            constraint->is_predicate = true;
+            constraint->subject = build_type_syntax(
+                require(context.type_(), "where-constraint subject type is missing"));
+            constraint->trait_name =
+                text_of(require(context.IDENT(), "where-predicate trait name is missing"));
+            if (const auto type_list = borrow(context.typeList())) {
+                for (auto *argument_context : type_list->get().type_()) {
+                    constraint->arguments.push_back(
+                        build_type_syntax(require(argument_context, "where-predicate argument is missing")));
+                }
+            }
+        }
+        return constraint;
     }
 
     [[nodiscard]] Owned<ast::ExprSyntax>
@@ -661,6 +812,9 @@ class ProgramBuilder {
             break;
         case ast::ExprSyntaxKind::Match:
             expr->node = ast::MatchExpr{};
+            break;
+        case ast::ExprSyntaxKind::Lambda:
+            expr->node = ast::LambdaExpr{};
             break;
         default:
             throw std::logic_error("unhandled ExprSyntaxKind in make_expr_syntax");
@@ -973,6 +1127,10 @@ class ProgramBuilder {
             return build_match_expr(match->get());
         }
 
+        if (const auto lambda = borrow(context.lambdaExpr())) {
+            return build_lambda_expr(lambda->get());
+        }
+
         if (const auto inner_expr = borrow(context.expr())) {
             if (!context.children.empty() &&
                 require(context.children[0], "primary expression child is missing").getText() ==
@@ -1164,6 +1322,65 @@ class ProgramBuilder {
         arm->body =
             build_expr_syntax(require(exprs.back(), "match arm body expression is missing"));
         return arm;
+    }
+
+    // ----------------------------------------------------------------------
+    // P2 (RFC §6): lambda (closure) expression builder
+    // ----------------------------------------------------------------------
+
+    [[nodiscard]] Owned<ast::ExprSyntax>
+    build_lambda_expr(AHFLParser::LambdaExprContext &context) const {
+        auto expr =
+            make_expr_syntax(ast::ExprSyntaxKind::Lambda, context_range(context, source_));
+        auto &lambda_node = std::get<ast::LambdaExpr>(expr->node);
+
+        // lambdaExpr: BACKSLASH lambdaParamList? '->' expr
+        // The single direct `expr` child is the body; lambdaParamList is the
+        // optional parameter list (absent for a zero-arg thunk `\ -> expr`).
+        if (const auto param_list = borrow(context.lambdaParamList())) {
+            lambda_node.params = build_lambda_param_list(param_list->get());
+        }
+
+        lambda_node.body = build_expr_syntax(require(context.expr(), "lambda body is missing"));
+        return expr;
+    }
+
+    [[nodiscard]] std::vector<Owned<ast::LambdaParamSyntax>>
+    build_lambda_param_list(AHFLParser::LambdaParamListContext &context) const {
+        std::vector<Owned<ast::LambdaParamSyntax>> params;
+
+        // lambdaParamList: IDENT | '(' (lambdaParam (',' lambdaParam)*)? ')'
+        // The parenthesised alt carries zero or more lambdaParam children; the
+        // bare-IDENT alt carries a single parameter with no type annotation.
+        const auto named_params = context.lambdaParam();
+        if (!named_params.empty()) {
+            params.reserve(named_params.size());
+            for (auto *param_context : named_params) {
+                params.push_back(
+                    build_lambda_param(require(param_context, "lambda parameter is missing")));
+            }
+            return params;
+        }
+
+        // Bare-IDENT alt: a single unparenthesised, untyped parameter.
+        if (const auto ident = borrow(context.IDENT())) {
+            auto param = make_owned<ast::LambdaParamSyntax>();
+            param->range = terminal_range(ident->get(), source_);
+            param->name = text_of(ident->get());
+            params.push_back(std::move(param));
+        }
+        return params;
+    }
+
+    [[nodiscard]] Owned<ast::LambdaParamSyntax>
+    build_lambda_param(AHFLParser::LambdaParamContext &context) const {
+        auto param = make_owned<ast::LambdaParamSyntax>();
+        param->range = context_range(context, source_);
+        param->name = text_of(require(context.IDENT(), "lambda parameter name is missing"));
+        if (const auto type_annotation = borrow(context.type_())) {
+            param->type = build_type_syntax(type_annotation->get());
+        }
+        return param;
     }
 
     [[nodiscard]] Owned<ast::PatternSyntax>

@@ -289,6 +289,7 @@ void add_symbol_target(HoverTargetIndex &index,
     case ReferenceKind::CallTarget:
     case ReferenceKind::TemporalCapability:
     case ReferenceKind::AgentCapability:
+    case ReferenceKind::FnCallTarget:
         return HoverTargetKind::CallableReference;
     case ReferenceKind::WorkflowNodeTarget:
         break;
@@ -301,6 +302,7 @@ void add_symbol_target(HoverTargetIndex &index,
     switch (symbol.kind) {
     case SymbolKind::Capability:
     case SymbolKind::Predicate:
+    case SymbolKind::Function:
         return HoverTargetKind::CallableReference;
     case SymbolKind::Const:
         return HoverTargetKind::ConstReference;
@@ -1218,6 +1220,10 @@ void add_ast_targets_for_declaration(HoverTargetIndex &index,
         return;
     case ast::NodeKind::ContractDecl:
     case ast::NodeKind::Program:
+    case ast::NodeKind::FnDecl:
+        // P2 (RFC §3.2.2): fn-declaration hover targets (param/return/effect/
+        // where-clause) land in P2b once fn symbols are registered. P2a only
+        // needs the AST surface to parse.
         return;
     }
 }

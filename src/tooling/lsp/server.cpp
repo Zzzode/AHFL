@@ -137,6 +137,8 @@ constexpr std::string_view kAllKeywords[] = {
         return LspSymbolKind::Class;
     case SymbolKind::Workflow:
         return LspSymbolKind::Function;
+    case SymbolKind::Function:
+        return LspSymbolKind::Function;
     }
     return LspSymbolKind::Variable;
 }
@@ -156,6 +158,7 @@ constexpr std::string_view kAllKeywords[] = {
     case SymbolKind::Agent:
     case SymbolKind::Workflow:
     case SymbolKind::TypeAlias:
+    case SymbolKind::Function:
         return CompletionItemKind::Variable;
     }
     return CompletionItemKind::Text;
@@ -179,6 +182,8 @@ constexpr std::string_view kAllKeywords[] = {
         return "agent";
     case SymbolKind::Workflow:
         return "workflow";
+    case SymbolKind::Function:
+        return "function";
     }
     return {};
 }

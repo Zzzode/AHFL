@@ -221,6 +221,14 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchDuplicateBinding{
     "MATCH_DUPLICATE_BINDING"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MatchPatternBindingTypeMismatch{
     "MATCH_PATTERN_BINDING_TYPE_MISMATCH"};
+// P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers so a
+// lambda never silently type-checks to the wrong shape before its pass exists.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> LambdaNotYetSupported{
+    "LAMBDA_NOT_YET_SUPPORTED"};
+// P2 (RFC §3.2.2): fn-declaration typecheck lands in P2b; surfaced by P2a so
+// a parsed fn body is not silently skipped before the fn pass exists.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> FnDeclNotYetSupported{
+    "FN_DECL_NOT_YET_SUPPORTED"};
 } // namespace typecheck
 
 namespace validation {
@@ -352,6 +360,12 @@ inline constexpr MessageTemplate MatchDuplicateBinding{
     "duplicate binding '{}' in match pattern"};
 inline constexpr MessageTemplate MatchPatternBindingTypeMismatch{
     "match binding '{}' expects type {}, got payload slot type {}"};
+// P2 (RFC §6): closure typecheck lands in P2b; surfaced by P2a parsers.
+inline constexpr MessageTemplate LambdaNotYetSupported{
+    "'lambda' expressions are not yet type-checked (closure support is in progress)"};
+// P2 (RFC §3.2.2): fn-declaration typecheck lands in P2b; surfaced by P2a.
+inline constexpr MessageTemplate FnDeclNotYetSupported{
+    "'fn' declarations are not yet type-checked (function support is in progress)"};
 inline constexpr MessageTemplate EmptyListWithoutContext{"cannot infer type of empty list literal"};
 inline constexpr MessageTemplate EmptySetWithoutContext{"cannot infer type of empty set literal"};
 inline constexpr MessageTemplate EmptyMapWithoutContext{"cannot infer type of empty map literal"};

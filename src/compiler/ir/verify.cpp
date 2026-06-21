@@ -48,6 +48,8 @@ namespace {
         return "agent";
     case SymbolRefKind::Workflow:
         return "workflow";
+    case SymbolRefKind::Function:
+        return "function";
     }
     return "unknown";
 }
@@ -173,6 +175,10 @@ class ProgramVerifier {
     }
     void collect_decl_symbol_identity(const WorkflowDecl &decl) {
         collect_symbol_identity(decl.symbol_ref, "workflow " + decl.name);
+    }
+    // P2c (RFC §3.2.2): collect a fn declaration's self symbol reference.
+    void collect_decl_symbol_identity(const FnDecl &decl) {
+        collect_symbol_identity(decl.symbol_ref, "fn " + decl.name);
     }
 
     void collect_symbol_identity(const SymbolRef &symbol, const std::string &path) {
@@ -326,6 +332,26 @@ class ProgramVerifier {
                                 path + ".liveness[" + std::to_string(index) + "]");
         }
         verify_required_expr_ref(decl.return_value, path + ".return_value");
+    }
+
+    // P2c (RFC §3.2.2): verify a top-level fn declaration. The signature
+    // surface (params, optional return type, effect clause capabilities) and
+    // the self symbol reference are checked; the body is not lowered into the
+    // IR yet (see lower_typed_fn), so there is no block to verify here.
+    void verify_decl(const FnDecl &decl, const std::string &path) {
+        verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref", SymbolRefKind::Function, decl.name);
+        verify_params(decl.params, path + ".params");
+        if (decl.has_return_type) {
+            verify_type_ref(decl.return_type_ref, path + ".return_type_ref");
+        }
+        verify_source_range(decl.effect.source_range, path + ".effect", "source range");
+        for (std::uint32_t index = 0; index < decl.effect.capabilities.size(); ++index) {
+            const auto capability_path =
+                path + ".effect.capabilities[" + std::to_string(index) + "]";
+            verify_symbol_ref(decl.effect.capabilities[index],
+                              capability_path,
+                              SymbolRefKind::Capability);
+        }
     }
 
     void verify_params(const std::vector<ParamDecl> &params, const std::string &path) {

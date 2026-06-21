@@ -34,7 +34,8 @@ using TypedDeclPayload = std::variant<std::monostate,
                                       AgentTypeInfo,
                                       WorkflowTypeInfo,
                                       FlowTypeInfo,
-                                      ContractTypeInfo>;
+                                      ContractTypeInfo,
+                                      FnTypeInfo>;
 
 enum class TypedExprChildRole {
     Operand,
@@ -59,6 +60,10 @@ enum class TypedCallTargetKind {
     None,
     Capability,
     Predicate,
+    // P2 (RFC §3.2.2): a call resolving to a top-level `fn`. Mirrors the
+    // capability/predicate kinds so the existing switch sites (LSP hover,
+    // typed-tree lowering) treat a fn call uniformly.
+    Function,
 };
 
 enum class ConstValueKind : std::uint8_t {
@@ -367,6 +372,25 @@ struct TypedProgram {
     std::vector<TypedStatement> statements;
     std::vector<TypedTemporalExpr> temporal_exprs;
 
+    // P2 (RFC §3.5 / §5): recorded generic fn call sites for the
+    // monomorphization pass (P2d). Each entry ties a fn declaration (by its
+    // Function symbol id) to the explicit type arguments supplied at the call
+    // site (empty for a non-generic or inference-driven call). The
+    // monomorphization pass consumes this to build the (decl, type_args)
+    // instantiation set; P2b only records the sites so the pass has stable
+    // input without re-walking the typed-tree.
+    struct FnCallSiteRecord {
+        SymbolId fn_symbol{0};
+        SourceRange call_range;
+        std::optional<SourceId> source_id;
+        // Explicit type arguments in source order. Empty when the call omits
+        // them (the typecheck pass currently treats such calls structurally;
+        // inference of type args from argument types lands with the generic
+        // instantiation work in P2c/P2d).
+        std::vector<TypePtr> type_args;
+    };
+    std::vector<FnCallSiteRecord> fn_call_sites;
+
     // Resolver snapshot copied into TypedProgram during typecheck. This makes
     // typed consumers independent of ResolveResult lifetime.
     std::vector<Symbol> symbols;
@@ -527,6 +551,14 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         // visitor to grow a `visit_match` arm. A P1a-parsed match already
         // surfaces MATCH_NOT_YET_SUPPORTED at typecheck, so it never reaches
         // lowering with a real type.
+        return std::forward<Visitor>(visitor).visit_unknown(expr);
+    case ast::ExprSyntaxKind::Lambda:
+        // P2 (RFC §6): closure parsing landed in P2a; typed lowering of
+        // closures (capture inference, effect propagation) arrives in P2c.
+        // Route through `visit_unknown` so the typed-tree pipeline keeps
+        // compiling; a P2a-parsed lambda already surfaces
+        // LAMBDA_NOT_YET_SUPPORTED at typecheck and never reaches lowering
+        // with a real type.
         return std::forward<Visitor>(visitor).visit_unknown(expr);
     }
 

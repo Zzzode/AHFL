@@ -382,6 +382,26 @@ void collect_expr_tokens(const ast::ExprSyntax &expr,
                            }
                        }
                    },
+                   [&](const ast::LambdaExpr &e) {
+                       // P2 (RFC §6): tokenize lambda params (names) and walk
+                       // the body. Param type annotations are tokenized via
+                       // collect_type_syntax_tokens.
+                       for (const auto &param : e.params) {
+                           if (param != nullptr) {
+                               add_token_for_name(tokens,
+                                                  source,
+                                                  param->range,
+                                                  param->name,
+                                                  SemanticTokenType::Parameter);
+                               if (param->type != nullptr) {
+                                   collect_type_syntax_tokens(*param->type, source, tokens);
+                               }
+                           }
+                       }
+                       if (e.body != nullptr) {
+                           collect_expr_tokens(*e.body, source, tokens);
+                       }
+                   },
                },
                expr.node);
 }
@@ -629,6 +649,15 @@ void collect_decl_tokens(const ast::Decl &decl,
     case ast::NodeKind::Program:
         // Not a decl — should not reach here
         break;
+    case ast::NodeKind::FnDecl: {
+        // P2 (RFC §3.2.2): fn-declaration semantic tokens (name as Function,
+        // type params, return type, effect/where clauses) land in P2b once
+        // fn symbols are registered. P2a highlights the fn name as a function
+        // token so the parse surface round-trips through the LSP.
+        const auto &fn = static_cast<const ast::FnDecl &>(decl);
+        add_token_for_name(tokens, source, fn.range, fn.name, SemanticTokenType::Function);
+        break;
+    }
     }
 }
 

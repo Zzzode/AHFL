@@ -124,6 +124,10 @@ enum class SymbolRefKind {
     Predicate,
     Agent,
     Workflow,
+    // P2c (RFC §3.2.2): a top-level `fn` symbol reference. Lets the lowering
+    // and verify paths treat a fn symbol uniformly instead of collapsing to
+    // Unknown.
+    Function,
 };
 
 /// Type reference kinds

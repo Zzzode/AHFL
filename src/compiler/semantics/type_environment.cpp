@@ -211,6 +211,10 @@ MaybeCRef<ContractTypeInfo> TypeEnvironment::get_contract(SymbolId id) const {
     return get_from_map(contracts_, id);
 }
 
+MaybeCRef<FnTypeInfo> TypeEnvironment::get_fn(SymbolId id) const {
+    return get_from_map(functions_, id);
+}
+
 bool TypeEnvironment::is_agent_context_struct(SymbolId id) const noexcept {
     return agent_context_struct_ids_.contains(id.value);
 }
@@ -482,6 +486,40 @@ void dump_type_environment(const TypeEnvironment &environment,
         }
         case SymbolKind::TypeAlias:
             break;
+        case SymbolKind::Function: {
+            // P2 (RFC §3.2.2): dump the fn signature so the environment dump
+            // covers the new declaration surface.
+            const auto info = environment.get_fn(symbol.id);
+            if (!info.has_value()) {
+                break;
+            }
+
+            out << "fn " << info->get().canonical_name;
+            if (!info->get().type_param_names.empty()) {
+                out << '<';
+                for (std::size_t index = 0; index < info->get().type_param_names.size(); ++index) {
+                    if (index != 0) {
+                        out << ", ";
+                    }
+                    out << info->get().type_param_names[index];
+                }
+                out << '>';
+            }
+            out << '(';
+            for (std::size_t index = 0; index < info->get().params.size(); ++index) {
+                if (index != 0) {
+                    out << ", ";
+                }
+                const auto &param = info->get().params[index];
+                out << param.name << ": " << (param.type ? param.type->describe() : "Any");
+            }
+            out << ')';
+            if (info->get().return_type) {
+                out << " -> " << info->get().return_type->describe();
+            }
+            out << '\n';
+            break;
+        }
         }
     }
 }

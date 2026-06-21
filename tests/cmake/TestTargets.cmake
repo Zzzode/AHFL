@@ -461,6 +461,16 @@ target_link_libraries(ahfl_semantics_adt_match_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_adt_match_tests)
 
+add_executable(ahfl_semantics_fn_generics_closures_tests
+    unit/compiler/semantics/fn_generics_closures.cpp
+)
+target_link_libraries(ahfl_semantics_fn_generics_closures_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_fn_generics_closures_tests)
+
 add_executable(ahfl_semantics_concurrency_tests
     unit/compiler/semantics/concurrency.cpp
 )
@@ -770,6 +780,7 @@ foreach(_tgt
     ahfl_semantics_effects_tests
     ahfl_semantics_flow_condition_tests
     ahfl_semantics_adt_match_tests
+    ahfl_semantics_fn_generics_closures_tests
     ahfl_semantics_concurrency_tests
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests

@@ -300,6 +300,98 @@ class AstPrinter final {
         print_expr_field("return", node.return_value.get(), 2);
     }
 
+    void visit(const ast::FnDecl &node) {
+        line(1, "- " + node.headline());
+
+        if (!node.type_params.empty()) {
+            line(2, "type_params");
+            for (const auto &type_param : node.type_params) {
+                std::string entry = type_param->name;
+                if (!type_param->bounds.empty()) {
+                    entry += ": <";
+                    for (std::size_t index = 0; index < type_param->bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (type_param->bounds[index]) {
+                            entry += type_param->bounds[index]->spelling();
+                        }
+                    }
+                    entry += ">";
+                }
+                line(3, entry);
+            }
+        }
+
+        for (const auto &param : node.params) {
+            line(2, "param " + param->name);
+            print_type_field("type", param->type.get(), 3);
+        }
+
+        print_type_field("return", node.return_type.get(), 2);
+
+        if (node.effect_clause) {
+            print_effect_clause(*node.effect_clause, 2);
+        }
+
+        if (node.where_clause) {
+            print_where_clause(*node.where_clause, 2);
+        }
+
+        if (node.body) {
+            print_block(*node.body, 2);
+        } else {
+            line(2, "(prototype)");
+        }
+    }
+
+    void print_effect_clause(const ast::EffectClauseSyntax &clause, int indent_level) {
+        line(indent_level, "effect");
+        line(indent_level + 1, "kind: " + std::string(ast::to_string(clause.kind)));
+        if (clause.kind == ast::EffectClauseKind::Capability) {
+            std::vector<std::string> capabilities;
+            capabilities.reserve(clause.capabilities.size());
+            for (const auto &capability : clause.capabilities) {
+                capabilities.push_back(capability ? capability->spelling() : std::string{});
+            }
+            print_string_list("capabilities", capabilities, indent_level + 1);
+        }
+    }
+
+    void print_where_clause(const ast::WhereClauseSyntax &clause, int indent_level) {
+        line(indent_level, "where");
+        for (const auto &constraint : clause.constraints) {
+            std::string entry;
+            if (constraint->subject) {
+                entry += constraint->subject->spelling();
+            }
+            if (constraint->is_predicate) {
+                entry += "::" + constraint->trait_name;
+                entry += "(";
+                for (std::size_t index = 0; index < constraint->arguments.size(); ++index) {
+                    if (index != 0) {
+                        entry += ", ";
+                    }
+                    if (constraint->arguments[index]) {
+                        entry += constraint->arguments[index]->spelling();
+                    }
+                }
+                entry += ")";
+            } else {
+                entry += ": ";
+                for (std::size_t index = 0; index < constraint->bounds.size(); ++index) {
+                    if (index != 0) {
+                        entry += " + ";
+                    }
+                    if (constraint->bounds[index]) {
+                        entry += constraint->bounds[index]->spelling();
+                    }
+                }
+            }
+            line(indent_level + 1, entry);
+        }
+    }
+
   private:
     std::ostream &out_;
     int base_indent_{0};
@@ -341,6 +433,9 @@ class AstPrinter final {
             return;
         case ast::NodeKind::WorkflowDecl:
             visit(static_cast<const ast::WorkflowDecl &>(declaration));
+            return;
+        case ast::NodeKind::FnDecl:
+            visit(static_cast<const ast::FnDecl &>(declaration));
             return;
         case ast::NodeKind::Program:
             return;
@@ -543,6 +638,18 @@ class AstPrinter final {
                         line(indent_level + 2, "body");
                         print_expr(*arm.body, indent_level + 3);
                     }
+                },
+                [&](const ast::LambdaExpr &e) {
+                    line(indent_level, "lambda");
+                    for (const auto &param : e.params) {
+                        std::string entry = "param " + param->name;
+                        if (param->type) {
+                            entry += ": " + param->type->spelling();
+                        }
+                        line(indent_level + 1, entry);
+                    }
+                    line(indent_level + 1, "body");
+                    print_expr(*e.body, indent_level + 2);
                 },
             },
             expr.node);

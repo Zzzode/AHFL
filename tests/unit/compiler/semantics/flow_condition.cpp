@@ -276,6 +276,10 @@ struct NoneComparisonFinder {
             ahfl::ast::visit_expr_syntax(*scrutinee, *this);
         }
     }
+    // P2 (RFC §6): the ExprSyntax dispatcher routes lambda (and any future
+    // unspecialised kind) here. Closures carry no top-level binary condition,
+    // so this is a no-op.
+    void visit_unknown(const ahfl::ast::ExprSyntax &) {}
 };
 
 } // namespace

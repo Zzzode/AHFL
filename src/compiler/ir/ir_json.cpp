@@ -172,6 +172,8 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
         return "agent";
     case ir::SymbolRefKind::Workflow:
         return "workflow";
+    case ir::SymbolRefKind::Function:
+        return "function";
     }
 
     return "invalid";
@@ -1465,6 +1467,71 @@ class IrJsonPrinter final {
                         });
                         field("return_value",
                               [&]() { print_expr(*value.return_value, indent_level + 1); });
+                    });
+                },
+                // P2c (RFC §3.2.2): top-level fn declaration. Mirrors the
+                // capability signature surface plus generic type-parameter
+                // names and the three-state effect clause.
+                [&](const ir::FnDecl &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("fn"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
+                        }
+                        field("name", [&]() { write_string(value.name); });
+                        if (!value.type_param_names.empty()) {
+                            field("type_params", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &type_param : value.type_param_names) {
+                                        item([&]() { write_string(type_param); });
+                                    }
+                                });
+                            });
+                        }
+                        field("params", [&]() { print_params(value.params, indent_level + 1); });
+                        if (value.has_return_type) {
+                            field("return_type",
+                                  [&]() { write_string(type_name(value.return_type_ref)); });
+                            if (has_type_ref(value.return_type_ref)) {
+                                field("return_type_ref", [&]() {
+                                    print_type_ref(value.return_type_ref, indent_level + 1);
+                                });
+                            }
+                        }
+                        field("has_body", [&]() { write_bool(value.has_body); });
+                        field("effect", [&]() {
+                            print_object(indent_level + 1, [&](const auto &entry) {
+                                entry("kind", [&]() {
+                                    switch (value.effect.kind) {
+                                    case ir::FnEffectKind::Pure:
+                                        write_string("Pure");
+                                        break;
+                                    case ir::FnEffectKind::Nondet:
+                                        write_string("Nondet");
+                                        break;
+                                    case ir::FnEffectKind::Capability:
+                                        write_string("Capability");
+                                        break;
+                                    }
+                                });
+                                if (!value.effect.capabilities.empty()) {
+                                    entry("capabilities", [&]() {
+                                        print_array(indent_level + 2, [&](const auto &item) {
+                                            for (const auto &capability : value.effect.capabilities) {
+                                                item([&]() {
+                                                    print_symbol_ref(capability, indent_level + 3);
+                                                });
+                                            }
+                                        });
+                                    });
+                                }
+                            });
+                        });
+                        if (has_symbol_ref(value.symbol_ref)) {
+                            field("symbol_ref",
+                                  [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
+                        }
                     });
                 },
             },

@@ -156,6 +156,9 @@ void accumulate_workflow_reads(const ir::WorkflowExprSummary &summary,
                                                   stats.workflow_return_reads_from_nodes);
                     }
                 },
+                [&](const ir::FnDecl &) {
+                    // P2 (fn/closures): fn declarations have no dedicated stat.
+                },
             },
             declaration);
     }

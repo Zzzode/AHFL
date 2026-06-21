@@ -223,4 +223,39 @@ struct ContractTypeInfo {
     SourceRange declaration_range;
 };
 
+// P2 (RFC §2): the three-state effect clause on a fn declaration
+// (Pure / Nondet / Capability-list). The canonical kind is stored as an int
+// mirroring the ast::EffectClauseKind enum so this header does not need to
+// pull in the AST; the named capability symbol ids are captured by the
+// resolver pass for the declared capabilities.
+struct FnEffectClauseInfo {
+    // 0 = Pure, 1 = Nondet, 2 = Capability (mirrors ast::EffectClauseKind).
+    int kind{0};
+    std::vector<SymbolId> capabilities;
+    SourceRange source_range;
+};
+
+// P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): declaration-level signature of a
+// top-level `fn`. Carries the resolved param/return types, the generic
+// parameter names (instantiation happens at call sites in the typecheck
+// pass), and the resolved effect clause. Body typecheck and
+// where-clause bound evaluation are part of the FnDecl typecheck pass.
+struct FnTypeInfo {
+    SymbolId symbol{0};
+    std::string canonical_name;
+    std::string local_name;
+    std::vector<ParamTypeInfo> params;
+    TypePtr return_type;
+    SourceRange return_type_range;
+    // Generic type-parameter names in declaration order. The bound list and
+    // where-clause constraints are validated by the typecheck pass; the
+    // resolved types here are kept shallow so monomorphization (RFC §5) can
+    // substitute type_args into a known parameter-name list without
+    // re-parsing the AST.
+    std::vector<std::string> type_param_names;
+    FnEffectClauseInfo effect;
+    bool has_body{false};
+    SourceRange declaration_range;
+};
+
 } // namespace ahfl

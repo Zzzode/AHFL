@@ -221,6 +221,9 @@ lower_capability_effect_from_info(const CapabilityEffectTypeInfo &info) {
         return ir::SymbolRefKind::Agent;
     case SymbolKind::Workflow:
         return ir::SymbolRefKind::Workflow;
+    case SymbolKind::Function:
+        // P2c (RFC §3.2.2): a top-level fn symbol lowers as Function.
+        return ir::SymbolRefKind::Function;
     }
     return ir::SymbolRefKind::Unknown;
 }
@@ -1422,6 +1425,13 @@ class TypedIrLowerer final {
             return lower_typed_flow(declaration);
         case ast::NodeKind::WorkflowDecl:
             return lower_typed_workflow(declaration);
+        case ast::NodeKind::FnDecl:
+            // P2c (RFC §3.2.2 / §6): fn-declaration lowering from the typed
+            // HIR signature. P2b indexes a FnDecl into the typed program with
+            // a FnTypeInfo payload (resolved params, return type, generic
+            // type-parameter names, effect clause); this lowers that payload
+            // to an ir::FnDecl.
+            return lower_typed_fn(declaration);
         case ast::NodeKind::Program:
             break;
         }
@@ -1716,6 +1726,58 @@ class TypedIrLowerer final {
         lowered.liveness.reserve(info.liveness_ranges.size());
         for (const auto range : info.liveness_ranges) {
             lowered.liveness.push_back(lower_temporal_range(range));
+        }
+        return lowered;
+    }
+
+    // P2c (RFC §3.2.2 / §1.2 / §2): lower a top-level `fn` declaration from
+    // its FnTypeInfo payload. The IR keeps the resolved signature surface
+    // (params, optional return type, generic type-parameter names, effect
+    // clause). The fn body is not lowered here — the existing typed-block →
+    // IR body machinery consumes a TypedBlock, and P2b type-checks the fn
+    // body structurally without indexing it as a TypedBlock, so there is no
+    // block to lower yet. `has_body` is preserved so downstream tooling can
+    // distinguish a prototype (`fn name(...);`) from a definition.
+    [[nodiscard]] ir::FnDecl lower_typed_fn(const TypedDecl &decl) const {
+        const auto &info = require_payload<FnTypeInfo>(decl, "fn");
+
+        ir::FnEffectClause effect;
+        switch (static_cast<ast::EffectClauseKind>(info.effect.kind)) {
+        case ast::EffectClauseKind::Pure:
+            effect.kind = ir::FnEffectKind::Pure;
+            break;
+        case ast::EffectClauseKind::Nondet:
+            effect.kind = ir::FnEffectKind::Nondet;
+            break;
+        case ast::EffectClauseKind::Capability:
+            effect.kind = ir::FnEffectKind::Capability;
+            break;
+        }
+        effect.source_range = info.effect.source_range;
+        effect.capabilities.reserve(info.effect.capabilities.size());
+        for (const auto capability_symbol : info.effect.capabilities) {
+            effect.capabilities.push_back(
+                symbol_ref_from_symbol(typed_program_->find_symbol(capability_symbol),
+                                       "fn effect capability"));
+        }
+
+        ir::FnDecl lowered = with_provenance(
+            ir::FnDecl{
+                .provenance = {},
+                .name = info.canonical_name,
+                .params = lower_params(info.params),
+                .return_type_ref = {},
+                .has_return_type = info.return_type != nullptr,
+                .effect = std::move(effect),
+                .type_param_names = info.type_param_names,
+                .has_body = info.has_body,
+                .symbol_ref = symbol_ref_from_decl(decl, "fn declaration"),
+            },
+            info.declaration_range);
+
+        if (info.return_type != nullptr) {
+            lowered.return_type_ref = type_ref_from_required_type(
+                info.return_type, info.return_type_range, "fn return type");
         }
         return lowered;
     }

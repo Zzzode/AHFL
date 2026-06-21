@@ -66,6 +66,7 @@ enum class NodeKind {
     ContractDecl,
     FlowDecl,
     WorkflowDecl,
+    FnDecl, // P2 (RFC §3.2.2): top-level function declaration
 };
 
 [[nodiscard]] std::string_view to_string(NodeKind kind) noexcept;
@@ -159,6 +160,7 @@ enum class ExprSyntaxKind {
     IndexAccess,     // expr[index]
     Group,           // (expr) parenthesized grouping
     Match,           // match scrutinee { arm* } (P1 ADT, RFC §1.6)
+    Lambda,          // \ params -> expr  (P2 closures, RFC §6)
 };
 
 /// Unary operators
@@ -608,6 +610,93 @@ struct MatchExpr {
     std::vector<Owned<MatchArmSyntax>> arms;
 };
 
+// ----------------------------------------------------------------------------
+// P2 (RFC §3.2.2 / §3.2.3 / §2 / §6) function-declaration syntax fragments
+// ----------------------------------------------------------------------------
+//
+// These fragments model the syntactic surface of top-level function
+// declarations and closures. They carry no semantic/type information —
+// generic instantiation, effect enforcement, where-clause evaluation, and
+// closure capture analysis are all deferred to later passes (P2b/P2c).
+
+/// Effect clause kind (RFC §2). A function's effect clause is one of:
+///   - Pure      — declared side-effect free
+///   - Nondet    — explicitly non-deterministic
+///   - Capability — names one or more capabilities the function may exercise
+enum class EffectClauseKind {
+    Pure,
+    Nondet,
+    Capability,
+};
+
+[[nodiscard]] std::string_view to_string(EffectClauseKind kind) noexcept;
+
+/// A single generic type parameter: `IDENT [: bound [ '+' bound ]*]`.
+///
+/// `bounds` carries the optional type-bound list (RFC §3.2.3). It is a list so
+/// multiple intersection bounds (`T: A + B`) compose; the typecheck pass
+/// enforces that each bound is satisfiable.
+struct TypeParamSyntax {
+    ahfl::SourceRange range;
+    std::string name;
+    std::vector<Owned<TypeSyntax>> bounds; // optional type-bound list
+};
+
+/// Function effect clause (RFC §2): `Pure | Nondet | cap [, cap]*`.
+///
+/// `kind` discriminates the three clause shapes. When `kind == Capability`,
+/// `capabilities` carries the named capability references; otherwise it is
+/// empty.
+struct EffectClauseSyntax {
+    ahfl::SourceRange range;
+    EffectClauseKind kind{EffectClauseKind::Pure};
+    std::vector<Owned<QualifiedName>> capabilities;
+};
+
+/// A single where-clause constraint (RFC §6). Two shapes share this node:
+///   - `Type::Trait(args...)`  — a type predicate (e.g. `T::Addable(U)`)
+///   - `Type: Bound[ + Bound]*` — a bound list (e.g. `T: Hashable`)
+///
+/// `is_predicate` discriminates the two. For predicates, `trait_name` holds
+/// the trait identifier and `arguments` the type-argument list. For bounds,
+/// `bounds` holds the bound-type list.
+struct WhereConstraintSyntax {
+    ahfl::SourceRange range;
+    bool is_predicate{false};
+    Owned<TypeSyntax> subject;                 // the constrained type
+    std::string trait_name;                    // predicate trait identifier
+    std::vector<Owned<TypeSyntax>> arguments;  // predicate type arguments
+    std::vector<Owned<TypeSyntax>> bounds;     // bound-list bound types
+};
+
+/// Where-clause: `where constraint [, constraint]*` (RFC §6).
+struct WhereClauseSyntax {
+    ahfl::SourceRange range;
+    std::vector<Owned<WhereConstraintSyntax>> constraints;
+};
+
+/// A single function parameter (reuses ParamDeclSyntax for `name: Type`).
+/// `ParamDeclSyntax` is defined later; forward-declared via the existing
+/// forward declaration at the top of the type fragment section.
+
+/// Lambda (closure) parameter: `IDENT [: Type]`. The type annotation is
+/// optional (RFC §6 allows inferred parameter types).
+struct LambdaParamSyntax {
+    ahfl::SourceRange range;
+    std::string name;
+    Owned<TypeSyntax> type; // optional type annotation
+};
+
+/// Lambda (closure) expression: `\ params -> expr` (RFC §6).
+///
+/// `params` may be empty (zero-arg thunk: `\ -> expr`). The body is a single
+/// expression (RFC §6 closures are expression-bodied). Captured-variable
+/// resolution and effect inference happen in the typecheck pass (P2b).
+struct LambdaExpr {
+    std::vector<Owned<LambdaParamSyntax>> params;
+    Owned<ExprSyntax> body;
+};
+
 /// Variant alias for the expression syntax node
 using ExprSyntaxNode = std::variant<NoneLiteralExpr,
                                     BoolLiteralExpr,
@@ -629,7 +718,8 @@ using ExprSyntaxNode = std::variant<NoneLiteralExpr,
                                     MemberAccessExpr,
                                     IndexAccessExpr,
                                     GroupExpr,
-                                    MatchExpr>;
+                                    MatchExpr,
+                                    LambdaExpr>;
 
 /// Expression syntax node
 ///
@@ -1162,6 +1252,32 @@ struct WorkflowDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
+/// Function declaration (RFC §3.2.2 / §3.2.3 / §2 / §6):
+///
+///   fn name<T: bound, U>(p: Type, ...) -> Ret [effect] [where ...] { ... }
+///   fn name(...);   // prototype (no body)
+///
+/// `type_params` carries the optional generic parameter list; `params` the
+/// positional parameter list; `return_type` the optional return annotation;
+/// `effect_clause` the optional effect declaration (Pure/Nondet/capabilities);
+/// `where_clause` the optional generic constraints; `body` the optional
+/// statement block (empty for a prototype). All semantic resolution —
+/// generic instantiation, effect enforcement, where-clause evaluation — is
+/// deferred to the typecheck pass (P2b).
+struct FnDecl final : Decl {
+    std::string name;
+    std::vector<Owned<TypeParamSyntax>> type_params;
+    std::vector<Owned<ParamDeclSyntax>> params;
+    Owned<TypeSyntax> return_type;
+    Owned<EffectClauseSyntax> effect_clause;
+    Owned<WhereClauseSyntax> where_clause;
+    Owned<BlockSyntax> body; // empty for a prototype (`fn name(...);`)
+
+    FnDecl(std::string name, ahfl::SourceRange range = {});
+    void accept(Visitor &visitor) override;
+    [[nodiscard]] std::string headline() const override;
+};
+
 // ----------------------------------------------------------------------------
 // Visitor pattern
 // ----------------------------------------------------------------------------
@@ -1185,6 +1301,7 @@ class Visitor {
     virtual void visit(ContractDecl &node) = 0;
     virtual void visit(FlowDecl &node) = 0;
     virtual void visit(WorkflowDecl &node) = 0;
+    virtual void visit(FnDecl &node) = 0;
 };
 
 /// Recursive visitor (provides default empty implementations; subclasses only
@@ -1204,6 +1321,7 @@ class RecursiveVisitor : public Visitor {
     void visit(ContractDecl &node) override;
     void visit(FlowDecl &node) override;
     void visit(WorkflowDecl &node) override;
+    void visit(FnDecl &node) override;
 };
 
 // ============================================================================
@@ -1272,6 +1390,15 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             },
             [&](const GroupExpr &) { return std::forward<Visitor>(visitor).visit_group(expr); },
             [&](const MatchExpr &) { return std::forward<Visitor>(visitor).visit_match(expr); },
+            // P2 (RFC §6): lambda expressions are routed through the generic
+            // `visit_unknown` fallback rather than a dedicated `visit_lambda`.
+            // Not every consumer that opts into the ExprSyntax dispatcher
+            // cares about closures, so forcing a per-kind hook would require
+            // touching every visitor; `visit_unknown` is the shared escape
+            // hatch consumers already provide for unspecialised kinds.
+            [&](const LambdaExpr &) {
+                return std::forward<Visitor>(visitor).visit_unknown(expr);
+            },
         },
         expr.node);
 }
@@ -1302,6 +1429,7 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [](const IndexAccessExpr &) { return ExprSyntaxKind::IndexAccess; },
             [](const GroupExpr &) { return ExprSyntaxKind::Group; },
             [](const MatchExpr &) { return ExprSyntaxKind::Match; },
+            [](const LambdaExpr &) { return ExprSyntaxKind::Lambda; },
         },
         expr.node);
 }
