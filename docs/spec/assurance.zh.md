@@ -2,6 +2,18 @@
 
 本文档是 AHFL assurance profile、validation gate 和 assurance bundle 的规范来源。`docs/design/assurance-architecture.zh.md` 解释工程设计；本文定义编译器必须遵守的可验证控制系统契约。
 
+## 命令名约定
+
+本文档涉及的三个 CLI 命令同时支持**长名**与**短别名**，二者等价：
+
+| 长名（本文统一采用） | 短别名 |
+| --- | --- |
+| `ahflc validate-assurance <input>` | `ahflc validate <input>` |
+| `ahflc verify-formal <input>` | `ahflc verify <input>` |
+| `ahflc emit-assurance-json <input>` | `ahflc emit assurance-json <input>` |
+
+两套写法在 CLI 命令注册表中映射到同一 `CommandKind`（`command_registry.cpp`、`command_help.cpp`），行为完全一致。本文统一使用长名以保证可被全文检索与正则匹配；任何使用短别名的示例代码同样合法。
+
 ## 目标
 
 Assurance 的目标是让用户定义的 Harness 编排代码具备可静态检查的控制面事实：

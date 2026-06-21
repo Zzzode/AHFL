@@ -171,7 +171,29 @@ EnumVariant     ::= Ident ;
 ### 3.4 capability 与 predicate 声明
 
 ```ebnf
-CapabilityDecl  ::= "capability" Ident "(" [ ParamList ] ")" "->" Type ";" ;
+CapabilityDecl  ::= "capability" Ident "(" [ ParamList ] ")" "->" Type
+                     ( ";" | CapabilityEffectBlock ) ;
+
+CapabilityEffectBlock ::= "{" { CapabilityEffectItem } "}" ;
+
+CapabilityEffectItem  ::= "effect" ":" CapabilityEffectKind ";"
+                        | "domain" ":" QualifiedIdent ";"
+                        | "idempotency" ":" PathExpr ";"
+                        | "receipt" ":" CapabilityReceiptMode ";"
+                        | "retry" ":" CapabilityRetryMode ";"
+                        | "timeout" ":" DurationLiteral ";"
+                        | "compensation" ":" QualifiedIdent ";"
+                        | "policy" ":" "[" QualifiedIdentListOpt "]" ";" ;
+
+CapabilityEffectKind  ::= "read"
+                        | "external_side_effect"
+                        | "durable_write"
+                        | "financial_write"
+                        | "unknown" ;
+
+CapabilityReceiptMode ::= "required" | "optional" | "none" ;
+CapabilityRetryMode   ::= "safe" | "safe_if_idempotent" | "unsafe" ;
+
 PredicateDecl   ::= "predicate" Ident "(" [ ParamList ] ")" "->" "Bool" ";" ;
 
 ParamList       ::= Param { "," Param } [ "," ] ;
@@ -183,6 +205,9 @@ Param           ::= Ident ":" Type ;
 1. `capability` 表示外部 effectful 调用点
 2. `predicate` 表示纯、确定、无副作用布尔函数
 3. `predicate` 不得调用 `capability`
+4. `CapabilityEffectBlock` 为可选；缺省时该 capability 语法合法，但无法通过 assurance production gate（见 `assurance.zh.md`）。effect block 中各字段的语义定义、production gate 规则与 obligation 合成见 `assurance.zh.md` 的 "Capability Effect Profile"、"Production Gate 规则"、"Obligation Synthesis" 章节，本规范不重复
+5. `CapabilityEffectItem` 各字段在 effect block 内至多出现一次；字段顺序任意
+6. `domain`、`compensation`、`policy` 中的 `QualifiedIdent` 在前端只校验词法合法性，不将其解析为强制存在的符号引用；其真实可用性由 assurance profile 在后续阶段校验
 
 ### 3.5 agent 定义
 
@@ -493,15 +518,25 @@ EnumName
 ```text
 Any
 Never
+Error
 ```
 
 约束：
 
-1. `Any` 与 `Never` 不是源码语法的一部分
-2. 用户程序不得显式书写 `Any` 或 `Never`
+1. `Any`、`Never` 与 `Error` 不是源码语法的一部分
+2. 用户程序不得显式书写 `Any`、`Never` 或 `Error`
 3. `Any` 仅可用于错误恢复、占位或未决类型状态
 4. `Never` 仅可用于不可达表达式、终止控制流或类似内部语义位置
-5. 规范后续若写 `T`，默认指源码可写值类型，而不是这些内部辅助类型
+5. `Error` 仅作为诊断传播哨兵，标识一次确定失败的类型推导；不得作为正常值的类型
+6. 规范后续若写 `T`，默认指源码可写值类型，而不是这些内部辅助类型
+
+这三个内部辅助类型在类型关系求解器（`type_relations.cpp`）中按以下规则处理，用于错误恢复而不污染用户可见的子类型闭包：
+
+1. **等价**：`Any`、`Never`、`Error` 各自与同种辅助类型等价；它们彼此之间不等价（`Any` ≠ `Never` ≠ `Error`），且不与任何源码可写类型 `T` 等价
+2. **Error 双向通配**：只要 `Error` 出现在子类型关系 `S <: T` 的某一侧（无论源侧还是目标侧），关系即判定为成立。这样一次真实错误不会级联放大为数十条虚假二级诊断
+3. **Any 作为 top**：对任意类型 `T`（包括源码可写类型与 `Never`），都有 `T <: Any`
+4. **Never 作为 bottom**：对任意类型 `T`（包括源码可写类型与 `Any`），都有 `Never <: T`
+5. **不传染源码关系**：除上述 `Error`/`Any`/`Never` 规则外，源码可写类型之间的子类型关系不受内部辅助类型影响；§4.3.2 列出的源码子类型闭包不因这些辅助类型而扩大
 
 此外还定义两个语义层：
 
@@ -736,6 +771,28 @@ predicate 调用允许出现在：
 测试要求：混合 numeric operator、不同 scale `Decimal` 运算、`Decimal` 乘除、以及 `Int < Float` 必须以稳定诊断
 `typecheck.INVALID_OPERATION` 失败。`TypeRelationOptions::allow_numeric_widening` 仅可用于显式兼容或分析模式，
 不得改变源码表达式类型规则。
+
+#### 4.6.8 表达式 Effect 分级
+
+除类型判断 `Σ ; Γ ⊢ e : T` 外，编译器对每个 `Expr` 同时维护一个 **effect 等级** `ε(e)`，用于在静态语义层区分纯/不纯表达式，是 §3.9、§4.6.5、§4.7.2 中"纯表达式"约束的判定依据（实现见 `src/compiler/semantics/effects.cpp`）。Effect 等级按副作用强度递增分为 6 级：
+
+| 等级 | 名称 | 典型来源 | 是否纯 |
+| --- | --- | --- | --- |
+| 0 | `Pure` | 字面量、变量引用、字段访问、纯算术/比较/逻辑运算 | 是 |
+| 1 | `ConstOnly` | 引用 `const` 常量或枚举变体，但表达式中不含运行时输入或调用 | 是 |
+| 2 | `PredicateCall` | `predicate(...)` 调用及其组合（predicate 自身保证纯、确定、无副作用） | 是 |
+| 3 | `CapabilityCall` | `capability(...)` 调用（外部 effectful 调用点） | 否 |
+| 4 | `ExternalEffect` | 显式标注为 `external_side_effect`/`durable_write`/`financial_write` 的 capability 调用 | 否 |
+| 5 | `Unknown` | 无法静态判定的 effect，或 effect profile 为 `unknown` 的 capability 调用 | 否 |
+
+合成规则（`join_effects`）：
+
+1. 子表达式 effect 通过取两侧等级的**较大者**汇合，即 `join(ε₁, ε₂) = ε₁` 当 `rank(ε₁) ≥ rank(ε₂)`，否则 `ε₂`
+2. 因此 `if cond ...`、`assert cond`、`requires`、`ensures` 等"要求纯表达式"位置，校验条件等价于 `rank(ε(e)) ≤ 2`（即 `Pure`、`ConstOnly` 或 `PredicateCall`）
+3. `ExprStmt`（§3.9）允许 `CapabilityCall`/`ExternalEffect`/`Unknown`，但仅在 `flow` handler 内、且 capability 在当前 agent 白名单中时合法（§4.6.5）
+4. `predicate` 声明的函数体若出现 `rank(ε) ≥ 3`，违反"predicate 不得调用 capability"约束（§3.4 语义约束 3）
+
+effect 等级不改变表达式的**值类型** `T`，仅作为附加静态事实参与合法性判定。
 
 ### 4.7 合同与时序公式类型规则
 

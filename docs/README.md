@@ -66,6 +66,7 @@ Avoid:
 - [compiler-evolution.zh.md](./design/compiler-evolution.zh.md)
 - [compiler-phase-boundaries.zh.md](./design/compiler-phase-boundaries.zh.md)
 - [core-scope.en.md](./design/core-scope.en.md)
+- [corelib-rfc.zh.md](./design/corelib-rfc.zh.md)
 - [diagnostics-architecture.zh.md](./design/diagnostics-architecture.zh.md)
 - [durable-store-import-architecture.zh.md](./design/durable-store-import-architecture.zh.md)
 - [formal-backend.zh.md](./design/formal-backend.zh.md)
@@ -81,14 +82,15 @@ Avoid:
 - [repository-layout.zh.md](./design/repository-layout.zh.md)
 - [semantics-architecture.zh.md](./design/semantics-architecture.zh.md)
 - [source-graph.zh.md](./design/source-graph.zh.md)
+- [spec-restructure.zh.md](./design/spec-restructure.zh.md)
 - [testing-strategy.zh.md](./design/testing-strategy.zh.md)
 
 ### Plan
 
 - [issue-backlog-global-gaps.zh.md](./plans/issue-backlog-global-gaps.zh.md)
 - [project-status.zh.md](./plans/project-status.zh.md)
-- [semantics-typecheck-hardening.zh.md](./plans/semantics-typecheck-hardening.zh.md)
-- [semantics-typecheck-optimization-tasks.zh.md](./plans/semantics-typecheck-optimization-tasks.zh.md)
+
+已完成或被取代的 plan 归档于 [plans/archive/](./plans/archive/)。
 
 ### Reference
 
