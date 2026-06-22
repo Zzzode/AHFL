@@ -5,6 +5,8 @@ compile_commands.json
 .agents/
 .claude/
 grammar/.antlr/
+src/compiler/syntax/parser/generated/*.interp
+src/compiler/syntax/parser/generated/*.tokens
 log/
 .codex
 llm_config.json
