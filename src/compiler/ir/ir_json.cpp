@@ -219,6 +219,8 @@ formal_observation_scope_kind_name(ir::FormalObservationScopeKind kind) {
         return "set";
     case ir::TypeRefKind::Map:
         return "map";
+    case ir::TypeRefKind::Fn:
+        return "fn";
     }
 
     return "invalid";

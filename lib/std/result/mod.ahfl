@@ -1,0 +1,117 @@
+// std::result — Result<T, E> ADT
+//
+// Part of the AHFL standard library. `Result` represents either a successful
+// value (`Ok(T)`) or a recoverable error (`Err(E)`). It is the canonical way
+// to express value-layer failures in AHFL; capability-layer failures
+// (timeouts, provider crashes, network errors) use the effect system instead.
+//
+// Defined as a generic enum so it participates in the normal nominal type
+// system (generic instantiation, match exhaustiveness, trait impls, etc.).
+
+module std::result;
+
+// The Result enum itself.
+enum Result<T, E> {
+    /// Contains the success value.
+    Ok(T),
+    /// Contains the error value.
+    Err(E),
+}
+
+// ---------------------------------------------------------------------------
+// Inherent impls
+// ---------------------------------------------------------------------------
+
+impl<T, E> Result<T, E> {
+    /// Returns `true` if the result is `Ok`.
+    fn is_ok(self) effect Pure decreases * -> Bool {
+        match self {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// Returns `true` if the result is `Err`.
+    fn is_err(self) effect Pure decreases * -> Bool {
+        !self.is_ok()
+    }
+
+    /// Converts from `Result<T, E>` to `Option<T>`, discarding the error.
+    fn ok(self) effect Pure -> Option<T> {
+        match self {
+            Ok(v) => Some(v),
+            Err(_) => None,
+        }
+    }
+
+    /// Converts from `Result<T, E>` to `Option<E>`, discarding the success value.
+    fn err(self) effect Pure -> Option<E> {
+        match self {
+            Ok(_) => None,
+            Err(e) => Some(e),
+        }
+    }
+
+    /// Returns the contained `Ok` value. Panics if the value is `Err`.
+    fn unwrap(self) effect Pure -> T {
+        match self {
+            Ok(v) => v,
+            Err(_) => error("called Result::unwrap() on an Err value"),
+        }
+    }
+
+    /// Returns the contained `Err` value. Panics if the value is `Ok`.
+    fn unwrap_err(self) effect Pure -> E {
+        match self {
+            Ok(_) => error("called Result::unwrap_err() on an Ok value"),
+            Err(e) => e,
+        }
+    }
+
+    /// Maps a `Result<T, E>` to `Result<U, E>` by applying `f` to the `Ok` value.
+    fn map<U>(self, f: Fn(T) effect Pure -> U) effect Pure -> Result<U, E> {
+        match self {
+            Ok(v) => Ok(f(v)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Maps a `Result<T, E>` to `Result<T, F>` by applying `f` to the `Err` value.
+    fn map_err<F>(self, f: Fn(E) effect Pure -> F) effect Pure -> Result<T, F> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(e) => Err(f(e)),
+        }
+    }
+
+    /// Returns `res` if the result is `Ok`, otherwise returns the `Err` value.
+    fn and<U>(self, res: Result<U, E>) effect Pure -> Result<U, E> {
+        match self {
+            Ok(_) => res,
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Calls `f` on the `Ok` value and returns its result, or propagates the `Err`.
+    fn and_then<U>(self, f: Fn(T) effect Pure -> Result<U, E>) effect Pure -> Result<U, E> {
+        match self {
+            Ok(v) => f(v),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Returns the result if it is `Ok`, otherwise returns `res`.
+    fn or(self, res: Result<T, E>) effect Pure -> Result<T, E> {
+        match self {
+            Ok(v) => Ok(v),
+            Err(_) => res,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Trait impls
+// ---------------------------------------------------------------------------
+
+// TODO(P3): impl<T, E> Eq for Result<T, E> where T: Eq, E: Eq
+// TODO(P3): impl<T, E> Ord for Result<T, E> where T: Ord, E: Ord

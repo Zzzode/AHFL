@@ -90,11 +90,90 @@ int compare_values(const Value &lhs, const Value &rhs) {
         lhs.node);
 }
 
-bool structurally_equal(const Value &lhs, const Value &rhs) {
-    return compare_values(lhs, rhs) == 0;
-}
-
 } // namespace
+
+bool structurally_equal(const Value &lhs, const Value &rhs) {
+    // Implemented in terms of the internal compare_values helper so the
+    // public equality function stays consistent with canonical ordering.
+    const auto li = lhs.node.index();
+    const auto ri = rhs.node.index();
+    if (li != ri) return false;
+    return std::visit(
+        [&](const auto &inner) -> bool {
+            using T = std::decay_t<decltype(inner)>;
+            if constexpr (std::is_same_v<T, NoneValue>) {
+                return true;
+            } else if constexpr (std::is_same_v<T, BoolValue>) {
+                const auto *r = std::get_if<BoolValue>(&rhs.node);
+                return inner.value == r->value;
+            } else if constexpr (std::is_same_v<T, IntValue>) {
+                const auto *r = std::get_if<IntValue>(&rhs.node);
+                return inner.value == r->value;
+            } else if constexpr (std::is_same_v<T, FloatValue>) {
+                const auto *r = std::get_if<FloatValue>(&rhs.node);
+                return inner.value == r->value;
+            } else if constexpr (std::is_same_v<T, StringValue>) {
+                const auto *r = std::get_if<StringValue>(&rhs.node);
+                return inner.value == r->value;
+            } else if constexpr (std::is_same_v<T, DecimalValue>) {
+                const auto *r = std::get_if<DecimalValue>(&rhs.node);
+                return inner.spelling == r->spelling;
+            } else if constexpr (std::is_same_v<T, DurationValue>) {
+                const auto *r = std::get_if<DurationValue>(&rhs.node);
+                return inner.spelling == r->spelling;
+            } else if constexpr (std::is_same_v<T, StructValue>) {
+                const auto *r = std::get_if<StructValue>(&rhs.node);
+                if (inner.type_name != r->type_name) return false;
+                if (inner.fields.size() != r->fields.size()) return false;
+                for (const auto &[name, val] : inner.fields) {
+                    auto it = r->fields.find(name);
+                    if (it == r->fields.end()) return false;
+                    if (!structurally_equal(*val, *it->second)) return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<T, ListValue>) {
+                const auto *r = std::get_if<ListValue>(&rhs.node);
+                if (inner.items.size() != r->items.size()) return false;
+                for (size_t i = 0; i < inner.items.size(); ++i) {
+                    if (!structurally_equal(*inner.items[i], *r->items[i])) return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<T, EnumValue>) {
+                const auto *r = std::get_if<EnumValue>(&rhs.node);
+                return inner.enum_name == r->enum_name && inner.variant == r->variant;
+            } else if constexpr (std::is_same_v<T, OptionalValue>) {
+                const auto *r = std::get_if<OptionalValue>(&rhs.node);
+                if (!inner.inner && !r->inner) return true;
+                if (!inner.inner || !r->inner) return false;
+                return structurally_equal(*inner.inner, *r->inner);
+            } else if constexpr (std::is_same_v<T, SetValue>) {
+                const auto *r = std::get_if<SetValue>(&rhs.node);
+                if (inner.items.size() != r->items.size()) return false;
+                for (size_t i = 0; i < inner.items.size(); ++i) {
+                    if (!structurally_equal(*inner.items[i], *r->items[i])) return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<T, MapValue>) {
+                const auto *r = std::get_if<MapValue>(&rhs.node);
+                if (inner.entries.size() != r->entries.size()) return false;
+                for (size_t i = 0; i < inner.entries.size(); ++i) {
+                    if (!structurally_equal(*inner.entries[i].first, *r->entries[i].first))
+                        return false;
+                    if (!structurally_equal(*inner.entries[i].second, *r->entries[i].second))
+                        return false;
+                }
+                return true;
+            } else if constexpr (std::is_same_v<T, UuidValue>) {
+                const auto *r = std::get_if<UuidValue>(&rhs.node);
+                return inner.hex == r->hex;
+            } else if constexpr (std::is_same_v<T, TimestampValue>) {
+                const auto *r = std::get_if<TimestampValue>(&rhs.node);
+                return inner.unix_ms == r->unix_ms;
+            }
+            return false;
+        },
+        lhs.node);
+}
 
 // ============================================================================
 // value_kind implementation

@@ -151,6 +151,7 @@ enum class TypeRefKind {
     List,
     Set,
     Map,
+    Fn,
 };
 
 /// Resolved symbol reference. canonical_name is the stable backend identity;
@@ -177,6 +178,7 @@ struct TypeRef {
     std::optional<SourceRange> source_range{};
     TypeRefPtr first{};
     TypeRefPtr second{};
+    std::vector<TypeRefPtr> params{};
 };
 
 } // namespace ahfl::ir

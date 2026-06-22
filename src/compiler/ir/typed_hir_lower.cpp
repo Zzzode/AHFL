@@ -524,6 +524,30 @@ class TypedIrLowerer final {
                     ref.second = make_type_ref(type_ref_from_type(*value.value));
                 return ref;
             },
+            [&](const types::FnT &value) {
+                auto ref = make_type_ref_value(ir::TypeRefKind::Fn, type.describe());
+                for (const auto &param : value.params) {
+                    if (param != nullptr) {
+                        ref.params.push_back(make_type_ref(type_ref_from_type(*param)));
+                    }
+                }
+                if (value.return_type != nullptr) {
+                    ref.first = make_type_ref(type_ref_from_type(*value.return_type));
+                }
+                return ref;
+            },
+            [&](const types::TypeVarT &value) -> ir::TypeRef {
+                // A TypeVar here belongs to a generic declaration's own
+                // signature (e.g. the `T` in `fn f<T>(x: Option<T>) -> Option<T>`),
+                // which is lowered as a prototype — its body is instantiated by
+                // monomorphization and lowered separately. The prototype's
+                // signature TypeVar has no concrete IR type, so it is lowered
+                // as `Any` (the top type) as a faithful placeholder. A TypeVar
+                // reaching here from an *instantiated* body would be a
+                // monomorphization bug; the Any fallback keeps the prototype
+                // path working without aborting the whole lowering pass.
+                return make_type_ref_value(ir::TypeRefKind::Any, value.name);
+            },
         });
     }
 
@@ -542,11 +566,30 @@ class TypedIrLowerer final {
     // Typed-tree-only helpers (zero AST dereference)
     // =====================================================================
 
+    [[nodiscard]] const TypedDecl *find_decl_by_symbol(SymbolId id) const noexcept {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol == id) return &decl;
+        }
+        return nullptr;
+    }
+
     [[nodiscard]] std::string render_call_target(const TypedExpr &expr) const {
-        if (expr.resolved_symbol.has_value())
-            if (const auto symbol = typed_program_->find_symbol(*expr.resolved_symbol);
-                symbol.has_value())
+        if (expr.resolved_symbol.has_value()) {
+            const auto symbol = typed_program_->find_symbol(*expr.resolved_symbol);
+            if (symbol.has_value()) {
+                // If the callee is a builtin function, use its builtin name
+                // directly so the evaluator can dispatch to the C++ builtin
+                // table instead of trying to interpret it as a capability call.
+                const TypedDecl *decl = find_decl_by_symbol(*expr.resolved_symbol);
+                if (decl != nullptr) {
+                    const auto *fn_info = std::get_if<FnTypeInfo>(&decl->payload);
+                    if (fn_info != nullptr && fn_info->builtin_name.has_value()) {
+                        return *fn_info->builtin_name;
+                    }
+                }
                 return symbol->get().canonical_name;
+            }
+        }
         return expr.semantic_name;
     }
 

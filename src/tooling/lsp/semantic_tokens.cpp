@@ -184,6 +184,17 @@ void collect_type_syntax_tokens(const ast::TypeSyntax &type,
                            collect_type_syntax_tokens(*t.value_type, source, tokens);
                        }
                    },
+                   [&](const ast::AppType &t) {
+                       if (t.name != nullptr) {
+                           collect_qualified_name_tokens(
+                               *t.name, source, tokens, SemanticTokenType::Type);
+                       }
+                       for (const auto &arg : t.arguments) {
+                           if (arg != nullptr) {
+                               collect_type_syntax_tokens(*arg, source, tokens);
+                           }
+                       }
+                   },
                    [](const auto &) {
                        // Built-in types — no tokens for now (could add Keyword/Type later)
                    },

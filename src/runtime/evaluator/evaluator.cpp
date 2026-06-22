@@ -1,4 +1,5 @@
 #include "runtime/evaluator/evaluator.hpp"
+#include "runtime/evaluator/builtins.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -822,7 +823,32 @@ eval_call_expr(const ir::CallExpr &expr, const EvalContext &ctx, const CallEvalF
     if (call_eval != nullptr && *call_eval) {
         return (*call_eval)(expr, ctx);
     }
-    return make_error("CallExpr not supported in v0.51");
+    // Fall back to builtin table — used for @builtin functions from stdlib
+    // that are lowered directly into IR CallExpr nodes.
+    const BuiltinTable &table = BuiltinTable::instance();
+    const BuiltinFn *fn = table.find(expr.callee);
+    if (fn != nullptr) {
+        // Evaluate all arguments
+        std::vector<Value> args;
+        args.reserve(expr.arguments.size());
+        DiagnosticBag diags;
+        for (const auto &arg_ref : expr.arguments) {
+            if (!arg_ref) {
+                return make_error("builtin call: null argument expression");
+            }
+            EvalResult arg_result = eval_expr_impl(*arg_ref, ctx, call_eval);
+            if (arg_result.has_errors()) {
+                diags.append(std::move(arg_result.diagnostics));
+                return EvalResult{make_none(), std::move(diags)};
+            }
+            diags.append(std::move(arg_result.diagnostics));
+            args.push_back(std::move(arg_result.value));
+        }
+        EvalResult result = (*fn)(args, ctx);
+        result.diagnostics.append(std::move(diags));
+        return result;
+    }
+    return make_error("CallExpr not supported: unknown callee '" + expr.callee + "'");
 }
 
 // ============================================================================

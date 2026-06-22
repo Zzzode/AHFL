@@ -50,6 +50,8 @@ namespace {
         return "set";
     case TypeRefKind::Map:
         return "map";
+    case TypeRefKind::Fn:
+        return "fn";
     }
     return "unknown";
 }

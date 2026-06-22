@@ -81,6 +81,8 @@ void write_string(std::ostream &out, std::string_view value) {
         return "set";
     case TypeRefKind::Map:
         return "map";
+    case TypeRefKind::Fn:
+        return "fn";
     }
     return "unresolved";
 }

@@ -1,0 +1,21 @@
+// std::prelude — default imports
+//
+// Items re-exported here are automatically available in every module (unless
+// `#![no_prelude]` is specified).
+//
+// The prelude is a language stability boundary: items may be added in minor
+// versions, but removals/renames require a major version bump (with a
+// deprecated alias for one major cycle).
+//
+// TODO: placeholder stub. Requires P6 stdlib implementation.
+
+module std::prelude;
+
+// TODO: re-export core types and traits
+//   use std::option::{Option, Some, None};
+//   use std::result::{Result, Ok, Err};
+//   use std::collections::{List, Set, Map, Foldable, Functor};
+//   use std::string::String;
+//   use std::time::{Timestamp, Duration};
+//   use std::uuid::UUID;
+//   use std::fmt::format;

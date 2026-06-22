@@ -145,6 +145,11 @@ enum class ValueKind {
 
 void print_value(const Value &v, std::ostream &out);
 
+/// Structural equality: two values are equal iff they have the same kind
+/// and their contents compare equal.  Used by Set/Map canonicalization and
+/// by builtin dispatchers for membership / lookup checks.
+[[nodiscard]] bool structurally_equal(const Value &lhs, const Value &rhs);
+
 // ============================================================================
 // Convenience constructors
 // ============================================================================

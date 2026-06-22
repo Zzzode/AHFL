@@ -4,6 +4,7 @@ add_library(ahfl_runtime_evaluator STATIC
     eval_context.cpp
     evaluator.cpp
     executor.cpp
+    builtins.cpp
 )
 
 target_link_libraries(ahfl_runtime_evaluator

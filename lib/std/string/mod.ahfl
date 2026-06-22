@@ -1,0 +1,22 @@
+// std::string — String type
+//
+// String is a library type (not a language primitive). String literals "..."
+// are built-in syntax, but the String type, its methods, and formatting are
+// all in std::string.
+//
+// TODO: placeholder stub. Requires P5/P6 + @builtin for raw string ops.
+
+module std::string;
+
+// TODO: String struct (backed by @builtin raw bytes)
+// struct String { ... }
+
+// TODO: inherent impls
+//   fn length(self) effect Pure decreases * -> Int
+//   fn is_empty(self) effect Pure decreases * -> Bool
+//   fn contains(self, substr: String) effect Pure -> Bool
+//   fn starts_with(self, prefix: String) effect Pure -> Bool
+//   fn ends_with(self, suffix: String) effect Pure -> Bool
+//   fn upper(self) effect Pure -> String
+//   fn lower(self) effect Pure -> String
+//   fn concat(self, other: String) effect Pure -> String

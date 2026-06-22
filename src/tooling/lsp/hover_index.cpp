@@ -290,6 +290,7 @@ void add_symbol_target(HoverTargetIndex &index,
     case ReferenceKind::TemporalCapability:
     case ReferenceKind::AgentCapability:
     case ReferenceKind::FnCallTarget:
+    case ReferenceKind::EnumVariantConstructor:
         return HoverTargetKind::CallableReference;
     case ReferenceKind::WorkflowNodeTarget:
         break;
@@ -605,6 +606,8 @@ void add_agent_capability_targets(HoverTargetIndex &index,
             [](const ast::ListType &) -> std::string_view { return "List"; },
             [](const ast::SetType &) -> std::string_view { return "Set"; },
             [](const ast::MapType &) -> std::string_view { return "Map"; },
+            [](const ast::FnType &) -> std::string_view { return "Fn"; },
+            [](const ast::AppType &) -> std::string_view { return {}; },
         },
         type.node);
 }
@@ -672,6 +675,25 @@ void add_type_syntax_targets(HoverTargetIndex &index,
                    [&](const ast::MapType &t) {
                        add_type_syntax_targets(index, snapshot, source, t.key_type.get());
                        add_type_syntax_targets(index, snapshot, source, t.value_type.get());
+                   },
+                   [&](const ast::AppType &t) {
+                       if (t.name &&
+                           !has_resolved_type_reference(snapshot, source, t.name->range)) {
+                           for (const auto &segment :
+                                identifier_segments_in_range(*source.source, t.name->range)) {
+                               index.add(HoverTarget{
+                                   .kind = HoverTargetKind::TypeReference,
+                                   .token_range = segment.range,
+                                   .source_id = source.source_id,
+                                   .local_name = segment.text,
+                                   .role = "type constructor",
+                                   .source_label = source.source->display_name,
+                               });
+                           }
+                       }
+                       for (const auto &arg : t.arguments) {
+                           add_type_syntax_targets(index, snapshot, source, arg.get());
+                       }
                    },
                    [](const auto &) {
                        // Leaf types with no sub-types or name — nothing to add
