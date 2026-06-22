@@ -5,6 +5,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
+#include "ahfl/compiler/semantics/type_context.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "ahfl/compiler/semantics/typed_hir.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
@@ -110,7 +111,7 @@ find_function_symbol(const ahfl::TypeCheckResult &result, std::string_view name)
 // ---------------------------------------------------------------------------
 TEST_CASE("Non-generic fn with Pure effect clause typechecks") {
     const std::string source = R"AHFL(
-fn double(x: Int) -> Int effect Pure {
+fn double(x: Int) -> Int effect Pure decreases 0 {
     return x + x;
 }
 )AHFL";
@@ -131,11 +132,11 @@ fn double(x: Int) -> Int effect Pure {
 // ---------------------------------------------------------------------------
 TEST_CASE("Multiple fn declarations resolve to distinct Function symbols") {
     const std::string source = R"AHFL(
-fn double(x: Int) -> Int effect Pure {
+fn double(x: Int) -> Int effect Pure decreases 0 {
     return x + x;
 }
 
-fn add_one(n: Int) -> Int effect Pure {
+fn add_one(n: Int) -> Int effect Pure decreases 0 {
     return n + 1;
 }
 )AHFL";
@@ -159,7 +160,7 @@ fn add_one(n: Int) -> Int effect Pure {
 // ---------------------------------------------------------------------------
 TEST_CASE("Pure and Nondet effect clauses typecheck at the fn declaration") {
     const std::string source = R"AHFL(
-fn pure_fn(n: Int) -> Int effect Pure {
+fn pure_fn(n: Int) -> Int effect Pure decreases 0 {
     return n;
 }
 
@@ -347,4 +348,420 @@ flow for LegacyAgent {
 
     const auto result = typecheck_source("fn_backward_compat.ahfl", source);
     CHECK_FALSE(result.has_errors());
+}
+
+// ---------------------------------------------------------------------------
+// TC9 (P2b): Fn body type-check — parameter binding and return value type
+// checking work end-to-end. A function whose body is well-typed typechecks
+// clean and the body's TypedBlock index is recorded on FnTypeInfo.
+// ---------------------------------------------------------------------------
+TEST_CASE("Fn body typechecks with correct return type") {
+    const std::string source = R"AHFL(
+fn double(x: Int) -> Int effect Pure decreases 0 {
+    return x + x;
+}
+)AHFL";
+
+    const auto result = typecheck_source("fn_body_ok.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    // Verify body_block_index is populated on the FnTypeInfo.
+    const auto *symbol = find_function_symbol(result, "double");
+    REQUIRE(symbol != nullptr);
+    const auto fn_info = result.environment.get_fn(symbol->id);
+    REQUIRE(fn_info.has_value());
+    CHECK(fn_info->get().body_block_index != UINT32_MAX);
+    CHECK(fn_info->get().body_block_index < result.typed_program.blocks.size());
+}
+
+// ---------------------------------------------------------------------------
+// TC10 (P2b): Fn body return-type mismatch produces a type error. The
+// type-checker must catch that the returned expression type does not match
+// the declared return type.
+// ---------------------------------------------------------------------------
+TEST_CASE("Fn body with wrong return type produces error") {
+    const std::string source = R"AHFL(
+fn bad_return(x: Int) -> String effect Pure decreases 0 {
+    return x + 1;
+}
+)AHFL";
+
+    const auto result = typecheck_source("fn_bad_return.ahfl", source);
+    CHECK(result.has_errors());
+}
+
+// ---------------------------------------------------------------------------
+// TC11 (P2b): Fn body effect-underdeclared check — a function declared Pure
+// whose body calls a Nondet function triggers the EffectUnderdeclared
+// diagnostic.
+// ---------------------------------------------------------------------------
+TEST_CASE("Fn body effect underdeclared is diagnosed") {
+    const std::string source = R"AHFL(
+fn nondet_source() -> Int effect Nondet {
+    return 42;
+}
+
+fn pure_but_cheats() -> Int effect Pure decreases 0 {
+    return nondet_source();
+}
+)AHFL";
+
+    const auto result = typecheck_source("fn_underdeclared.ahfl", source);
+    CHECK(result.has_errors());
+    // Verify at least one diagnostic is an effect-related error.
+    bool found = false;
+    for (const auto &d : result.diagnostics.entries()) {
+        if (d.severity == ahfl::DiagnosticSeverity::Error &&
+            d.message.find("declares effect") != std::string::npos &&
+            d.message.find("body infers effect") != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+    CHECK(found);
+}
+
+// ---------------------------------------------------------------------------
+// TC12 (P2b): Multiple fn declarations with bodies all get their bodies
+// type-checked and their body_block_index populated.
+// ---------------------------------------------------------------------------
+TEST_CASE("Multiple fn bodies are all typechecked") {
+    const std::string source = R"AHFL(
+fn add(a: Int, b: Int) -> Int effect Pure decreases 0 {
+    return a + b;
+}
+
+fn negate(x: Int) -> Int effect Pure decreases 0 {
+    return 0 - x;
+}
+)AHFL";
+
+    const auto result = typecheck_source("fn_multi_body.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    for (const auto &name : {"add", "negate"}) {
+        const auto *symbol = find_function_symbol(result, name);
+        REQUIRE(symbol != nullptr);
+        const auto fn_info = result.environment.get_fn(symbol->id);
+        REQUIRE(fn_info.has_value());
+        CHECK(fn_info->get().body_block_index != UINT32_MAX);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TC13 (P2b): Fn with no body (prototype / declaration only) is skipped by
+// FnSema — no body, no type-checking needed, no errors from missing body.
+// ---------------------------------------------------------------------------
+TEST_CASE("Fn prototype without body is skipped by FnSema") {
+    const std::string source = R"AHFL(
+fn proto(x: Int) -> Int effect Pure;
+)AHFL";
+
+    const auto result = typecheck_source("fn_prototype.ahfl", source);
+    CHECK_FALSE(result.has_errors());
+
+    const auto *symbol = find_function_symbol(result, "proto");
+    REQUIRE(symbol != nullptr);
+    const auto fn_info = result.environment.get_fn(symbol->id);
+    REQUIRE(fn_info.has_value());
+    CHECK_FALSE(fn_info->get().has_body);
+    CHECK(fn_info->get().body_block_index == UINT32_MAX);
+}
+
+// ===========================================================================
+// P2d tests: monomorphization + type substitution + body instantiation
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// TC14 (P2d): substitute_type replaces a TypeVar with a concrete type.
+// ---------------------------------------------------------------------------
+TEST_CASE("substitute_type replaces TypeVar with concrete type") {
+    auto &types = ahfl::TypeContext::global();
+    const auto int_type = types.make(ahfl::TypeKind::Int);
+
+    ahfl::TypeSubstitutionMap subst;
+    subst.push_back(int_type);
+
+    // TypeVar at index 0 ("T") should become Int.
+    const auto t_var = types.type_var(0, "T");
+    const auto replaced = ahfl::substitute_type(t_var, subst, types);
+    CHECK(replaced == int_type);
+    CHECK(replaced->describe() == "Int");
+
+    // TypeVar at index 1 ("U") not in map stays as TypeVar.
+    const auto u_var = types.type_var(1, "U");
+    const auto kept = ahfl::substitute_type(u_var, subst, types);
+    CHECK(kept->describe() == "U");
+
+    // Nullptr passes through.
+    CHECK(ahfl::substitute_type(nullptr, subst, types) == nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// TC15 (P2d): substitute_type recurses into composite types.
+// ---------------------------------------------------------------------------
+TEST_CASE("substitute_type recurses into composite types") {
+    auto &types = ahfl::TypeContext::global();
+    const auto int_type = types.make(ahfl::TypeKind::Int);
+
+    ahfl::TypeSubstitutionMap subst;
+    subst.push_back(int_type);
+
+    // Optional<T> -> Optional<Int>
+    const auto opt_t = types.optional(types.type_var(0, "T"));
+    const auto opt_int = ahfl::substitute_type(opt_t, subst, types);
+    CHECK(opt_int->describe() == "Optional<Int>");
+
+    // List<T> -> List<Int>
+    const auto list_t = types.list(types.type_var(0, "T"));
+    const auto list_int = ahfl::substitute_type(list_t, subst, types);
+    CHECK(list_int->describe() == "List<Int>");
+
+    // Set<T> -> Set<Int>
+    const auto set_t = types.set(types.type_var(0, "T"));
+    const auto set_int = ahfl::substitute_type(set_t, subst, types);
+    CHECK(set_int->describe() == "Set<Int>");
+
+    // Map<T, T> -> Map<Int, Int>
+    const auto map_tt = types.map(types.type_var(0, "T"), types.type_var(0, "T"));
+    const auto map_int = ahfl::substitute_type(map_tt, subst, types);
+    CHECK(map_int->describe() == "Map<Int, Int>");
+
+    // Fn(T) -> T becomes Fn(Int) -> Int
+    std::vector<ahfl::TypePtr> params = {types.type_var(0, "T")};
+    const auto fn_t = types.fn(std::move(params), types.type_var(0, "T"),
+                               ahfl::EffectJudgement::make_pure());
+    const auto fn_int = ahfl::substitute_type(fn_t, subst, types);
+    CHECK(fn_int->describe().find("Int") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// TC16 (P2d): run_monomorphization with TypeContext sets body_block_index
+// for non-generic fns (they reuse the original body directly).
+// ---------------------------------------------------------------------------
+TEST_CASE("Monomorphization P2d sets body_block_index for non-generic fns") {
+    const std::string source = R"AHFL(
+fn add(a: Int, b: Int) -> Int effect Pure decreases 0 {
+    return a + b;
+}
+
+fn negate(x: Int) -> Int effect Pure decreases 0 {
+    return 0 - x;
+}
+
+// Call the fns so they appear in fn_call_sites.
+fn caller() -> Int effect Pure decreases 0 {
+    return add(1, 2) + negate(3);
+}
+)AHFL";
+
+    auto result = typecheck_source("fn_mono_p2d.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    auto &types = ahfl::TypeContext::global();
+    const auto mono = ahfl::run_monomorphization(result.typed_program, types);
+
+    // Should have instances for add, negate, caller.
+    CHECK(mono.instances.size() >= 2);
+
+    // Each instance with a body should have body_block_index set.
+    std::size_t with_body = 0;
+    for (const auto &inst : mono.instances) {
+        if (inst.body_block_index != UINT32_MAX) {
+            ++with_body;
+            CHECK(inst.body_block_index < result.typed_program.blocks.size());
+        }
+    }
+    CHECK(with_body >= 2);
+}
+
+// ---------------------------------------------------------------------------
+// TC17 (P2d): instantiate_fn_body deep-clones a generic fn body and
+// substitutes all TypeVars with concrete types.
+//
+// We typecheck a generic identity fn `id<T>(x: T) -> T { return x; }`, then
+// manually build a substitution map and call instantiate_fn_body directly.
+// The resulting body's let/return types should all be concrete (Int), not
+// TypeVar "T".
+// ---------------------------------------------------------------------------
+TEST_CASE("instantiate_fn_body substitutes TypeVars in cloned body") {
+    const std::string source = R"AHFL(
+fn id<T>(x: T) -> T effect Pure decreases 0 {
+    return x;
+}
+)AHFL";
+
+    auto result = typecheck_source("fn_id_generic.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *symbol = find_function_symbol(result, "id");
+    REQUIRE(symbol != nullptr);
+    const auto fn_info = result.environment.get_fn(symbol->id);
+    REQUIRE(fn_info.has_value());
+    CHECK(fn_info->get().type_param_names.size() == 1);
+    CHECK(fn_info->get().type_param_names[0] == "T");
+    const auto orig_body_idx = fn_info->get().body_block_index;
+    CHECK(orig_body_idx != UINT32_MAX);
+    CHECK(orig_body_idx < result.typed_program.blocks.size());
+
+    // Verify the original body has statements and TypeVar types.
+    // Take the size by value (not reference) to avoid vector-reallocation UB
+    // after instantiate_fn_body appends new blocks.
+    const auto orig_stmt_count =
+        result.typed_program.blocks[orig_body_idx].statement_indexes.size();
+    REQUIRE(orig_stmt_count > 0);
+
+    // Instantiate with T -> Int (T is index 0, the first type param).
+    auto &types = ahfl::TypeContext::global();
+    ahfl::TypeSubstitutionMap subst;
+    subst.push_back(types.make(ahfl::TypeKind::Int));
+
+    const auto inst = ahfl::instantiate_fn_body(
+        result.typed_program, orig_body_idx, subst, types);
+
+    CHECK(inst.body_block_index != UINT32_MAX);
+    CHECK(inst.body_block_index != orig_body_idx);
+    CHECK(inst.body_block_index < result.typed_program.blocks.size());
+    CHECK(inst.block_count > 0);
+    CHECK(inst.stmt_count > 0);
+
+    // The cloned block should have the same number of statements as the original.
+    const auto &clone_block = result.typed_program.blocks[inst.body_block_index];
+    CHECK(clone_block.statement_indexes.size() == orig_stmt_count);
+
+    // Original body should still have the same number of statements (untouched).
+    CHECK(result.typed_program.blocks[orig_body_idx].statement_indexes.size() ==
+          orig_stmt_count);
+
+    // All expression types in the cloned body should be Int (no TypeVars left).
+    bool found_int = false;
+    for (const auto stmt_idx : clone_block.statement_indexes) {
+        const auto &stmt = result.typed_program.statements[stmt_idx];
+        // Check let type annotation if present.
+        if (stmt.let_type != nullptr) {
+            CHECK(stmt.let_type->describe() != "T");
+            if (stmt.let_type->describe() == "Int") {
+                found_int = true;
+            }
+        }
+        // Check child expression types.
+        for (const auto expr_idx : stmt.children_expr_index) {
+            if (expr_idx == UINT32_MAX) continue;
+            const auto &expr = result.typed_program.expressions[expr_idx];
+            if (expr.type != nullptr) {
+                CHECK(expr.type->describe() != "T");
+                if (expr.type->describe() == "Int") {
+                    found_int = true;
+                }
+            }
+        }
+    }
+    // With `return x;` the return value references the param `x`; the
+    // expression's type should have been substituted to Int.
+    CHECK(found_int);
+
+    // Original body should be untouched (still has TypeVar "T").
+    // Re-lookup by index after instantiation (vector may have reallocated).
+    bool orig_has_typevar = false;
+    const auto &orig_stmts = result.typed_program.blocks[orig_body_idx].statement_indexes;
+    for (const auto stmt_idx : orig_stmts) {
+        const auto &stmt = result.typed_program.statements[stmt_idx];
+        for (const auto expr_idx : stmt.children_expr_index) {
+            if (expr_idx == UINT32_MAX) continue;
+            const auto &expr = result.typed_program.expressions[expr_idx];
+            if (expr.type != nullptr && expr.type->describe() == "T") {
+                orig_has_typevar = true;
+                break;
+            }
+        }
+        if (orig_has_typevar) break;
+    }
+    CHECK(orig_has_typevar);
+}
+
+// ---------------------------------------------------------------------------
+// TC18 (P2d): Repeated instantiations with the same substitution are not
+// deduped at the instantiate_fn_body level — dedup happens at the
+// run_monomorphization pass level via the instance cache. Each call to
+// instantiate_fn_body produces a fresh clone (the caller owns dedup).
+// ---------------------------------------------------------------------------
+TEST_CASE("instantiate_fn_body produces fresh clone each call") {
+    const std::string source = R"AHFL(
+fn id<T>(x: T) -> T effect Pure decreases 0 {
+    return x;
+}
+)AHFL";
+
+    auto result = typecheck_source("fn_id_dedup.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const auto *symbol = find_function_symbol(result, "id");
+    REQUIRE(symbol != nullptr);
+    const auto fn_info = result.environment.get_fn(symbol->id);
+    REQUIRE(fn_info.has_value());
+
+    auto &types = ahfl::TypeContext::global();
+    ahfl::TypeSubstitutionMap subst;
+    subst.push_back(types.make(ahfl::TypeKind::Int));
+
+    const auto before_blocks = result.typed_program.blocks.size();
+
+    const auto inst1 = ahfl::instantiate_fn_body(
+        result.typed_program, fn_info->get().body_block_index, subst, types);
+    const auto inst2 = ahfl::instantiate_fn_body(
+        result.typed_program, fn_info->get().body_block_index, subst, types);
+
+    // Two independent clones at different indexes.
+    CHECK(inst1.body_block_index != inst2.body_block_index);
+    CHECK(inst1.block_count == inst2.block_count);
+    CHECK(result.typed_program.blocks.size() == before_blocks + inst1.block_count + inst2.block_count);
+}
+
+// ---------------------------------------------------------------------------
+// TC19 (P2d): Monomorphization pass produces deduped instances — two call
+// sites of the same (fn, type_args) produce one instance, not two.
+//
+// Note: today fn_call_sites type_args are always empty (no <T> call syntax),
+// so we test the non-generic dedup case (which exercises the same cache path).
+// ---------------------------------------------------------------------------
+TEST_CASE("Monomorphization dedups identical call sites") {
+    const std::string source = R"AHFL(
+fn double(x: Int) -> Int effect Pure decreases 0 {
+    return x + x;
+}
+
+fn caller1() -> Int effect Pure decreases 0 {
+    return double(1);
+}
+
+fn caller2() -> Int effect Pure decreases 0 {
+    return double(2) + double(3);
+}
+)AHFL";
+
+    auto result = typecheck_source("fn_mono_dedup.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    // double is called 3 times across caller1 and caller2, but should
+    // produce only 1 instance (non-generic, all type_args empty).
+    auto &types = ahfl::TypeContext::global();
+    const auto mono = ahfl::run_monomorphization(result.typed_program, types);
+
+    // Find the instance for `double`.
+    bool found_double = false;
+    std::string double_canonical;
+    for (const auto &inst : mono.instances) {
+        if (inst.decl_canonical_name.find("double") != std::string::npos) {
+            found_double = true;
+            double_canonical = inst.decl_canonical_name;
+            CHECK(inst.body_block_index != UINT32_MAX);
+            break;
+        }
+    }
+    CHECK(found_double);
+
+    // instances_per_decl for double should be exactly 1 (dedup works).
+    const auto it = mono.instances_per_decl.find(double_canonical);
+    REQUIRE(it != mono.instances_per_decl.end());
+    CHECK(it->second == 1);
 }
