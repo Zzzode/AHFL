@@ -1,3 +1,4 @@
+#include "ahfl/compiler/frontend/desugar.hpp"
 #include "ahfl/compiler/frontend/frontend.hpp"
 
 #include <algorithm>
@@ -382,6 +383,9 @@ class ProgramBuilder {
                 source_,
                 type_alias_decl->get(),
                 text_of(require(type_alias_decl->get().IDENT(), "type alias name is missing")));
+            if (const auto params = borrow(type_alias_decl->get().typeParams())) {
+                declaration->type_params = build_type_params(params->get());
+            }
             declaration->aliased_type = build_type_syntax(
                 require(type_alias_decl->get().type_(), "type alias target is missing"));
             return declaration;
@@ -392,6 +396,9 @@ class ProgramBuilder {
                 source_,
                 struct_decl->get(),
                 text_of(require(struct_decl->get().IDENT(), "struct name is missing")));
+            if (const auto params = borrow(struct_decl->get().typeParams())) {
+                declaration->type_params = build_type_params(params->get());
+            }
             for (auto *field_context : struct_decl->get().structFieldDecl()) {
                 declaration->fields.push_back(
                     build_struct_field_decl(require(field_context, "struct field is missing")));
@@ -404,6 +411,9 @@ class ProgramBuilder {
                 source_,
                 enum_decl->get(),
                 text_of(require(enum_decl->get().IDENT(), "enum name is missing")));
+            if (const auto params = borrow(enum_decl->get().typeParams())) {
+                declaration->type_params = build_type_params(params->get());
+            }
             for (auto *variant_context : enum_decl->get().enumVariant()) {
                 declaration->variants.push_back(
                     build_enum_variant_decl(require(variant_context, "enum variant is missing")));
@@ -577,6 +587,20 @@ class ProgramBuilder {
             source_,
             context,
             text_of(require(context.IDENT(), "fn name is missing")));
+
+        // P5 (RFC §3.3): @builtin attribute. The builtin name is the string
+        // literal content with surrounding quotes stripped.
+        if (const auto builtin_attr = borrow(context.builtinAttr())) {
+            if (const auto str_lit = borrow(builtin_attr->get().STRING_LITERAL())) {
+                std::string raw = text_of(str_lit->get());
+                // Strip surrounding double quotes
+                if (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"') {
+                    declaration->builtin_name = raw.substr(1, raw.size() - 2);
+                } else {
+                    declaration->builtin_name = raw;
+                }
+            }
+        }
 
         if (const auto type_params = borrow(context.typeParams())) {
             declaration->type_params = build_type_params(type_params->get());
@@ -827,6 +851,11 @@ class ProgramBuilder {
                                 .qualifiedIdent(),
                             "capability reference name is missing")));
             }
+        }
+        // P4a (RFC §3.1): optional `decreases` termination measure.
+        if (const auto decreases_ctx = context.decreasesClause()) {
+            clause->decreases_expr = build_expr_syntax(
+                require(decreases_ctx->expr(), "decreases measure expression is missing"));
         }
         return clause;
     }
@@ -2012,6 +2041,14 @@ class ProgramBuilder {
             return build_primitive_type_syntax(primitive_type->get());
         }
 
+        if (const auto fn_type = borrow(context.fnType())) {
+            return build_fn_type_syntax(fn_type->get());
+        }
+
+        if (const auto app_type = borrow(context.appType())) {
+            return build_app_type_syntax(app_type->get());
+        }
+
         auto type = make_owned<ast::TypeSyntax>();
         type->range = context_range(context, source_);
 
@@ -2127,6 +2164,66 @@ class ProgramBuilder {
         }
 
         throw std::logic_error("primitive type did not match any supported AHFL primitive");
+    }
+
+    [[nodiscard]] Owned<ast::TypeSyntax>
+    build_fn_type_syntax(AHFLParser::FnTypeContext &context) const {
+        auto type = make_owned<ast::TypeSyntax>();
+        type->range = context_range(context, source_);
+
+        ast::FnType fn_type;
+
+        // Build parameter types from typeList.
+        if (const auto type_list = borrow(context.typeList())) {
+            for (auto *param_type_ctx : type_list->get().type_()) {
+                fn_type.params.push_back(build_type_syntax(*param_type_ctx));
+            }
+        }
+
+        // Optional return type (defaults to Unit if omitted).
+        if (const auto return_ctx = borrow(context.type_())) {
+            fn_type.return_type = build_type_syntax(return_ctx->get());
+        }
+
+        // Optional effect clause.
+        if (const auto effect_spec_ctx = borrow(context.effectSpec())) {
+            auto &spec = effect_spec_ctx->get();
+            fn_type.has_effect_clause = true;
+
+            const auto spec_kind = effect_clause_kind_from(
+                require(spec.getStart(), "effect spec start token is missing").getText());
+            fn_type.effect_kind = spec_kind;
+            if (spec_kind == ast::EffectClauseKind::Capability) {
+                for (auto *capability_context : spec.capabilityRef()) {
+                    fn_type.effect_capabilities.push_back(build_qualified_name(
+                        require(require(capability_context, "capability reference is missing")
+                                    .qualifiedIdent(),
+                                "capability reference name is missing")));
+                }
+            }
+        }
+
+        type->node = std::move(fn_type);
+        return type;
+    }
+
+    [[nodiscard]] Owned<ast::TypeSyntax>
+    build_app_type_syntax(AHFLParser::AppTypeContext &context) const {
+        auto type = make_owned<ast::TypeSyntax>();
+        type->range = context_range(context, source_);
+
+        ast::AppType app_type;
+        app_type.name = build_qualified_name(
+            require(context.qualifiedIdent(), "app type name is missing"));
+
+        if (const auto type_list = borrow(context.typeList())) {
+            for (auto *arg_type_ctx : type_list->get().type_()) {
+                app_type.arguments.push_back(build_type_syntax(*arg_type_ctx));
+            }
+        }
+
+        type->node = std::move(app_type);
+        return type;
     }
 
     [[nodiscard]] Owned<ast::QualifiedName>
@@ -2534,6 +2631,15 @@ ParseResult Frontend::parse_text(std::string display_name, std::string text) con
         result.diagnostics.note()
             .message("parsed with the generated ANTLR4 C++ parser from grammar/AHFL.g4")
             .emit();
+    }
+
+    // M4: Desugar built-in container syntax into nominal stdlib equivalents.
+    // Runs after parsing and invariant validation, before name resolution.
+    // Controlled by FrontendOptions::enable_desugaring — off by default
+    // during the migration period while downstream passes are adapted.
+    if (result.program && !result.has_errors() && options_.enable_desugaring) {
+        DesugarPass desugar;
+        desugar.run(*result.program);
     }
 
     return result;

@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -39,6 +39,8 @@ public:
 
     virtual std::any visitType_(AHFLParser::Type_Context *context) = 0;
 
+    virtual std::any visitAppType(AHFLParser::AppTypeContext *context) = 0;
+
     virtual std::any visitPrimitiveType(AHFLParser::PrimitiveTypeContext *context) = 0;
 
     virtual std::any visitConstDecl(AHFLParser::ConstDeclContext *context) = 0;
@@ -54,6 +56,8 @@ public:
     virtual std::any visitEnumVariant(AHFLParser::EnumVariantContext *context) = 0;
 
     virtual std::any visitTypeList(AHFLParser::TypeListContext *context) = 0;
+
+    virtual std::any visitFnType(AHFLParser::FnTypeContext *context) = 0;
 
     virtual std::any visitCapabilityDecl(AHFLParser::CapabilityDeclContext *context) = 0;
 
@@ -131,6 +135,8 @@ public:
 
     virtual std::any visitWorkflowReturnDecl(AHFLParser::WorkflowReturnDeclContext *context) = 0;
 
+    virtual std::any visitBuiltinAttr(AHFLParser::BuiltinAttrContext *context) = 0;
+
     virtual std::any visitFnDecl(AHFLParser::FnDeclContext *context) = 0;
 
     virtual std::any visitTypeParams(AHFLParser::TypeParamsContext *context) = 0;
@@ -146,6 +152,8 @@ public:
     virtual std::any visitEffectSpec(AHFLParser::EffectSpecContext *context) = 0;
 
     virtual std::any visitCapabilityRef(AHFLParser::CapabilityRefContext *context) = 0;
+
+    virtual std::any visitDecreasesClause(AHFLParser::DecreasesClauseContext *context) = 0;
 
     virtual std::any visitWhereClause(AHFLParser::WhereClauseContext *context) = 0;
 

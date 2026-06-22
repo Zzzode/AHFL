@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -34,9 +34,10 @@ public:
     T__114 = 115, T__115 = 116, T__116 = 117, T__117 = 118, T__118 = 119,
     T__119 = 120, T__120 = 121, T__121 = 122, T__122 = 123, T__123 = 124,
     T__124 = 125, T__125 = 126, T__126 = 127, T__127 = 128, T__128 = 129,
-    DURATION_LITERAL = 130, DECIMAL_LITERAL = 131, FLOAT_LITERAL = 132,
-    INT_LITERAL = 133, BACKSLASH = 134, STRING_LITERAL = 135, IDENT = 136,
-    DOC_COMMENT = 137, LINE_COMMENT = 138, BLOCK_COMMENT = 139, WS = 140
+    T__129 = 130, T__130 = 131, T__131 = 132, DURATION_LITERAL = 133, DECIMAL_LITERAL = 134,
+    FLOAT_LITERAL = 135, INT_LITERAL = 136, BACKSLASH = 137, STRING_LITERAL = 138,
+    IDENT = 139, DOC_COMMENT = 140, LINE_COMMENT = 141, BLOCK_COMMENT = 142,
+    WS = 143
   };
 
   explicit AHFLLexer(antlr4::CharStream *input);

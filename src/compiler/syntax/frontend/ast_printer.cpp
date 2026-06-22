@@ -122,11 +122,50 @@ class AstPrinter final {
 
     void visit(const ast::TypeAliasDecl &node) {
         line(1, "- " + node.headline());
+        if (!node.type_params.empty()) {
+            line(2, "type_params");
+            for (const auto &type_param : node.type_params) {
+                std::string entry = type_param->name;
+                if (!type_param->bounds.empty()) {
+                    entry += ": <";
+                    for (std::size_t index = 0; index < type_param->bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (type_param->bounds[index]) {
+                            entry += type_param->bounds[index]->spelling();
+                        }
+                    }
+                    entry += ">";
+                }
+                line(3, entry);
+            }
+        }
         print_type_field("aliased_type", node.aliased_type.get(), 2);
     }
 
     void visit(const ast::StructDecl &node) {
         line(1, "- " + node.headline());
+
+        if (!node.type_params.empty()) {
+            line(2, "type_params");
+            for (const auto &type_param : node.type_params) {
+                std::string entry = type_param->name;
+                if (!type_param->bounds.empty()) {
+                    entry += ": <";
+                    for (std::size_t index = 0; index < type_param->bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (type_param->bounds[index]) {
+                            entry += type_param->bounds[index]->spelling();
+                        }
+                    }
+                    entry += ">";
+                }
+                line(3, entry);
+            }
+        }
 
         for (const auto &field : node.fields) {
             line(2, "field " + field->name);
@@ -139,6 +178,26 @@ class AstPrinter final {
 
     void visit(const ast::EnumDecl &node) {
         line(1, "- " + node.headline());
+
+        if (!node.type_params.empty()) {
+            line(2, "type_params");
+            for (const auto &type_param : node.type_params) {
+                std::string entry = type_param->name;
+                if (!type_param->bounds.empty()) {
+                    entry += ": <";
+                    for (std::size_t index = 0; index < type_param->bounds.size(); ++index) {
+                        if (index != 0) {
+                            entry += " + ";
+                        }
+                        if (type_param->bounds[index]) {
+                            entry += type_param->bounds[index]->spelling();
+                        }
+                    }
+                    entry += ">";
+                }
+                line(3, entry);
+            }
+        }
 
         for (const auto &variant : node.variants) {
             std::string label = "variant " + variant->name;
@@ -302,6 +361,10 @@ class AstPrinter final {
 
     void visit(const ast::FnDecl &node) {
         line(1, "- " + node.headline());
+
+        if (node.builtin_name.has_value()) {
+            line(2, "builtin: \"" + *node.builtin_name + "\"");
+        }
 
         if (!node.type_params.empty()) {
             line(2, "type_params");
@@ -474,6 +537,9 @@ class AstPrinter final {
             }
             print_string_list("capabilities", capabilities, indent_level + 1);
         }
+        if (clause.decreases_expr) {
+            print_expr_field("decreases", clause.decreases_expr.get(), indent_level + 1);
+        }
     }
 
     void print_where_clause(const ast::WhereClauseSyntax &clause, int indent_level) {
@@ -641,6 +707,33 @@ class AstPrinter final {
                     print_type(*t.key_type, indent_level + 2);
                     line(indent_level + 1, "value");
                     print_type(*t.value_type, indent_level + 2);
+                },
+                [&](const ast::FnType &t) {
+                    line(indent_level, "fn");
+                    line(indent_level + 1,
+                         "params (" + std::to_string(t.params.size()) + ")");
+                    for (const auto &param : t.params) {
+                        if (param) {
+                            print_type(*param, indent_level + 2);
+                        }
+                    }
+                    if (t.return_type) {
+                        line(indent_level + 1, "return");
+                        print_type(*t.return_type, indent_level + 2);
+                    }
+                    if (t.has_effect_clause) {
+                        line(indent_level + 1,
+                             "effect " + std::string(to_string(t.effect_kind)));
+                    }
+                },
+                [&](const ast::AppType &t) {
+                    line(indent_level, "app_type " + t.name->spelling());
+                    for (std::size_t i = 0; i < t.arguments.size(); ++i) {
+                        line(indent_level + 1, "arg " + std::to_string(i));
+                        if (t.arguments[i]) {
+                            print_type(*t.arguments[i], indent_level + 2);
+                        }
+                    }
                 },
             },
             type.node);

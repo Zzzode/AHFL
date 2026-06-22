@@ -1,5 +1,5 @@
 
-// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.2
 
 #pragma once
 
@@ -55,6 +55,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitAppType(AHFLParser::AppTypeContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitPrimitiveType(AHFLParser::PrimitiveTypeContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -84,6 +88,10 @@ public:
   }
 
   virtual std::any visitTypeList(AHFLParser::TypeListContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitFnType(AHFLParser::FnTypeContext *ctx) override {
     return visitChildren(ctx);
   }
 
@@ -239,6 +247,10 @@ public:
     return visitChildren(ctx);
   }
 
+  virtual std::any visitBuiltinAttr(AHFLParser::BuiltinAttrContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
   virtual std::any visitFnDecl(AHFLParser::FnDeclContext *ctx) override {
     return visitChildren(ctx);
   }
@@ -268,6 +280,10 @@ public:
   }
 
   virtual std::any visitCapabilityRef(AHFLParser::CapabilityRefContext *ctx) override {
+    return visitChildren(ctx);
+  }
+
+  virtual std::any visitDecreasesClause(AHFLParser::DecreasesClauseContext *ctx) override {
     return visitChildren(ctx);
   }
 

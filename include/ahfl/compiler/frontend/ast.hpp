@@ -139,6 +139,17 @@ enum class PathRootKind {
     Output,
 };
 
+/// Effect clause kind (P2, RFC §2). Lifted before TypeSyntax so that FnType
+/// can reference the enum without pulling in the full EffectClauseSyntax
+/// (which depends on ExprSyntax).
+enum class EffectClauseKind {
+    Pure,
+    Nondet,
+    Capability,
+};
+
+[[nodiscard]] std::string_view to_string(EffectClauseKind kind) noexcept;
+
 /// Expression syntax kinds (20 kinds)
 enum class ExprSyntaxKind {
     BoolLiteral,     // true / false
@@ -310,6 +321,22 @@ struct MapType {
     Owned<TypeSyntax> value_type;
 };
 
+/// Function type: Fn(A1, A2, ...) -> Ret [effect Spec]
+struct FnType {
+    std::vector<Owned<TypeSyntax>> params;
+    Owned<TypeSyntax> return_type;        // null if omitted (defaults to Unit)
+    bool has_effect_clause{false};
+    EffectClauseKind effect_kind{EffectClauseKind::Pure};
+    std::vector<Owned<QualifiedName>> effect_capabilities; // populated when effect_kind == Capability
+};
+
+/// Nominal type application: Vec<Int>, std::collections::Map<String, Int>
+struct AppType {
+    Owned<QualifiedName> name;
+    std::vector<Owned<TypeSyntax>> arguments;
+    SourceRange range;
+};
+
 /// Variant alias for the type syntax node
 using TypeSyntaxNode = std::variant<UnitType,
                                     BoolType,
@@ -325,7 +352,9 @@ using TypeSyntaxNode = std::variant<UnitType,
                                     OptionalType,
                                     ListType,
                                     SetType,
-                                    MapType>;
+                                    MapType,
+                                    FnType,
+                                    AppType>;
 
 /// Type syntax node
 struct TypeSyntax {
@@ -625,13 +654,10 @@ struct MatchExpr {
 ///   - Pure      — declared side-effect free
 ///   - Nondet    — explicitly non-deterministic
 ///   - Capability — names one or more capabilities the function may exercise
-enum class EffectClauseKind {
-    Pure,
-    Nondet,
-    Capability,
-};
-
-[[nodiscard]] std::string_view to_string(EffectClauseKind kind) noexcept;
+///
+/// The enum is defined earlier in this file (above TypeSyntax) so that FnType
+/// can reference it. The comment is repeated here for locality with the rest of
+/// the P2 fn-decl fragments.
 
 /// A single generic type parameter: `IDENT [: bound [ '+' bound ]*]`.
 ///
@@ -649,10 +675,18 @@ struct TypeParamSyntax {
 /// `kind` discriminates the three clause shapes. When `kind == Capability`,
 /// `capabilities` carries the named capability references; otherwise it is
 /// empty.
+///
+/// P4a (RFC corelib-effect-system.zh.md §3.1): an optional `decreases` measure
+/// expression may follow the effect spec — `effect Pure decreases expr` /
+/// `effect Nondet decreases expr` / `effect <Cap>+ decreases expr`. `decreases_expr`
+/// carries the measure (or is null when the clause has no decreases). Pure
+/// functions require a decreases measure (RFC §2.6.4 / §3.4); non-Pure
+/// functions may carry one optionally.
 struct EffectClauseSyntax {
     ahfl::SourceRange range;
     EffectClauseKind kind{EffectClauseKind::Pure};
     std::vector<Owned<QualifiedName>> capabilities;
+    Owned<ExprSyntax> decreases_expr; // optional P4a decreases measure (RFC §3.1)
 };
 
 /// A single where-clause constraint (RFC §6). Two shapes share this node:
@@ -1121,6 +1155,7 @@ struct ConstDecl final : Decl {
 /// Type alias: type NewName = ExistingType;
 struct TypeAliasDecl final : Decl {
     std::string name;
+    std::vector<Owned<TypeParamSyntax>> type_params;
     Owned<TypeSyntax> aliased_type;
 
     TypeAliasDecl(std::string name, ahfl::SourceRange range = {});
@@ -1128,9 +1163,13 @@ struct TypeAliasDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// Struct declaration: struct Name { field1: Type1; field2: Type2 = default; }
+/// Struct declaration: struct Name<T> { field1: Type1; field2: Type2 = default; }
+///
+/// `type_params` carries the optional generic parameter list. An empty
+/// vector means the struct is monomorphic (no type parameters).
 struct StructDecl final : Decl {
     std::string name;
+    std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<StructFieldDeclSyntax>> fields;
 
     StructDecl(std::string name, ahfl::SourceRange range = {});
@@ -1138,9 +1177,13 @@ struct StructDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// Enum declaration: enum Name { Variant1; Variant2; Variant3; }
+/// Enum declaration: enum Name<T> { Variant1; Variant2(T); Variant3; }
+///
+/// `type_params` carries the optional generic parameter list. An empty
+/// vector means the enum is monomorphic (no type parameters).
 struct EnumDecl final : Decl {
     std::string name;
+    std::vector<Owned<TypeParamSyntax>> type_params;
     std::vector<Owned<EnumVariantDeclSyntax>> variants;
 
     EnumDecl(std::string name, ahfl::SourceRange range = {});
@@ -1162,10 +1205,17 @@ struct CapabilityDecl final : Decl {
 };
 
 /// Predicate declaration: predicate Name(param1: Type1, ...);
-/// Used for logical assertions in formal verification
+/// Used for logical assertions in formal verification.
+///
+/// P4a (RFC corelib-effect-system.zh.md §2.4): predicates are implicitly
+/// effect Pure. The `effect_clause` field is always null — the grammar does
+/// not allow an explicit effect clause on predicates. The field exists so the
+/// semantic check (EffectOnPredicate) has a consistent shape to inspect; if
+/// the grammar is ever extended, the diagnostic is already in place.
 struct PredicateDecl final : Decl {
     std::string name;
     std::vector<Owned<ParamDeclSyntax>> params;
+    Owned<EffectClauseSyntax> effect_clause; // always null, see struct doc
 
     PredicateDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;
@@ -1266,6 +1316,11 @@ struct WorkflowDecl final : Decl {
 /// statement block (empty for a prototype). All semantic resolution —
 /// generic instantiation, effect enforcement, where-clause evaluation — is
 /// deferred to the typecheck pass (P2b).
+///
+/// P5 (RFC §3.3 / corelib-stdlib-api.zh.md §5): `builtin_name` is set when the
+/// fn declaration carries an `@builtin("name")` attribute. Only stdlib modules
+/// may declare @builtin functions; the name maps to a compiler/runtime builtin
+/// implementation. Empty (nullopt) means the fn is a normal user function.
 struct FnDecl final : Decl {
     std::string name;
     std::vector<Owned<TypeParamSyntax>> type_params;
@@ -1274,6 +1329,7 @@ struct FnDecl final : Decl {
     Owned<EffectClauseSyntax> effect_clause;
     Owned<WhereClauseSyntax> where_clause;
     Owned<BlockSyntax> body; // empty for a prototype (`fn name(...);`)
+    std::optional<std::string> builtin_name; // P5: @builtin name, nullopt if not a builtin
 
     FnDecl(std::string name, ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;

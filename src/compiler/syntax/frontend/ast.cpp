@@ -142,6 +142,38 @@ class AstInvariantValidator final {
                         validate_type(*t.value_type);
                     }
                 },
+                [&](const FnType &t) {
+                    for (const auto &param : t.params) {
+                        require(param != nullptr, type.range, "FnType.params contains null");
+                        if (param) {
+                            validate_type(*param);
+                        }
+                    }
+                    if (t.return_type) {
+                        validate_type(*t.return_type);
+                    }
+                    if (t.has_effect_clause &&
+                        t.effect_kind == EffectClauseKind::Capability) {
+                        for (const auto &cap : t.effect_capabilities) {
+                            require(cap != nullptr,
+                                    type.range,
+                                    "FnType.effect_capabilities contains null");
+                            if (cap) {
+                                validate_qualified_name(
+                                    cap.get(), type.range, "fn type effect capability");
+                            }
+                        }
+                    }
+                },
+                [&](const AppType &t) {
+                    validate_qualified_name(t.name.get(), type.range, "AppType.name");
+                    for (const auto &arg : t.arguments) {
+                        require(arg != nullptr, type.range, "AppType.arguments contains null");
+                        if (arg) {
+                            validate_type(*arg);
+                        }
+                    }
+                },
             },
             type.node);
     }
@@ -641,6 +673,22 @@ class AstInvariantValidator final {
             require(!node.name.empty(), node.range, "TypeAliasDecl is missing name");
             require(
                 node.aliased_type != nullptr, node.range, "TypeAliasDecl is missing aliased_type");
+            for (const auto &param : node.type_params) {
+                require(param != nullptr, node.range, "TypeAliasDecl.type_params contains null");
+                if (param) {
+                    require(!param->name.empty(),
+                            param->range,
+                            "TypeParamSyntax is missing name");
+                    for (const auto &bound : param->bounds) {
+                        require(bound != nullptr,
+                                param->range,
+                                "TypeParamSyntax.bounds contains null");
+                        if (bound) {
+                            validate_type(*bound);
+                        }
+                    }
+                }
+            }
             if (node.aliased_type) {
                 validate_type(*node.aliased_type);
             }
@@ -649,6 +697,22 @@ class AstInvariantValidator final {
         case NodeKind::StructDecl: {
             const auto &node = static_cast<const StructDecl &>(declaration);
             require(!node.name.empty(), node.range, "StructDecl is missing name");
+            for (const auto &param : node.type_params) {
+                require(param != nullptr, node.range, "StructDecl.type_params contains null");
+                if (param) {
+                    require(!param->name.empty(),
+                            param->range,
+                            "TypeParamSyntax is missing name");
+                    for (const auto &bound : param->bounds) {
+                        require(bound != nullptr,
+                                param->range,
+                                "TypeParamSyntax.bounds contains null");
+                        if (bound) {
+                            validate_type(*bound);
+                        }
+                    }
+                }
+            }
             for (const auto &field : node.fields) {
                 require(field != nullptr, node.range, "StructDecl.fields contains null");
                 if (!field) {
@@ -670,6 +734,22 @@ class AstInvariantValidator final {
         case NodeKind::EnumDecl: {
             const auto &node = static_cast<const EnumDecl &>(declaration);
             require(!node.name.empty(), node.range, "EnumDecl is missing name");
+            for (const auto &param : node.type_params) {
+                require(param != nullptr, node.range, "EnumDecl.type_params contains null");
+                if (param) {
+                    require(!param->name.empty(),
+                            param->range,
+                            "TypeParamSyntax is missing name");
+                    for (const auto &bound : param->bounds) {
+                        require(bound != nullptr,
+                                param->range,
+                                "TypeParamSyntax.bounds contains null");
+                        if (bound) {
+                            validate_type(*bound);
+                        }
+                    }
+                }
+            }
             for (const auto &variant : node.variants) {
                 require(variant != nullptr, node.range, "EnumDecl.variants contains null");
                 if (variant) {
@@ -1010,7 +1090,7 @@ class AstInvariantValidator final {
         }
     }
 
-    /// Validate an effect clause (P2, RFC §2).
+    /// Validate an effect clause (P2, RFC §2; P4a RFC §3.1 decreases measure).
     void validate_effect_clause(const EffectClauseSyntax &clause) {
         if (clause.kind == EffectClauseKind::Capability) {
             for (const auto &capability : clause.capabilities) {
@@ -1021,6 +1101,9 @@ class AstInvariantValidator final {
                     validate_qualified_name(capability.get(), clause.range, "effect capability");
                 }
             }
+        }
+        if (clause.decreases_expr) {
+            validate_expr(*clause.decreases_expr);
         }
     }
 
@@ -1217,6 +1300,52 @@ struct TypeSyntaxSpellingVisitor {
     std::string operator()(const MapType &t) const {
         return "Map<" + t.key_type->spelling() + ", " + t.value_type->spelling() + ">";
     }
+    std::string operator()(const FnType &t) const {
+        std::ostringstream builder;
+        builder << "Fn(";
+        for (std::size_t i = 0; i < t.params.size(); ++i) {
+            if (i > 0) {
+                builder << ", ";
+            }
+            builder << t.params[i]->spelling();
+        }
+        builder << ")";
+        if (t.return_type) {
+            builder << " -> " << t.return_type->spelling();
+        }
+        if (t.has_effect_clause) {
+            builder << " effect ";
+            switch (t.effect_kind) {
+            case EffectClauseKind::Pure:
+                builder << "Pure";
+                break;
+            case EffectClauseKind::Nondet:
+                builder << "Nondet";
+                break;
+            case EffectClauseKind::Capability:
+                for (std::size_t i = 0; i < t.effect_capabilities.size(); ++i) {
+                    if (i > 0) {
+                        builder << ", ";
+                    }
+                    builder << t.effect_capabilities[i]->spelling();
+                }
+                break;
+            }
+        }
+        return builder.str();
+    }
+    std::string operator()(const AppType &t) const {
+        std::ostringstream builder;
+        builder << t.name->spelling() << "<";
+        for (std::size_t i = 0; i < t.arguments.size(); ++i) {
+            if (i > 0) {
+                builder << ", ";
+            }
+            builder << t.arguments[i]->spelling();
+        }
+        builder << ">";
+        return builder.str();
+    }
 };
 
 } // namespace
@@ -1293,7 +1422,14 @@ std::string TypeAliasDecl::headline() const {
         return with_name("type ", name);
     }
 
-    return "type " + name + " = " + aliased_type->spelling();
+    std::ostringstream builder;
+    builder << "type " << name;
+    if (!type_params.empty()) {
+        builder << "<" << type_params.size() << " type param";
+        builder << (type_params.size() == 1 ? "" : "s") << ">";
+    }
+    builder << " = " << aliased_type->spelling();
+    return builder.str();
 }
 
 StructDecl::StructDecl(std::string name, ahfl::SourceRange range)
@@ -1304,7 +1440,14 @@ void StructDecl::accept(Visitor &visitor) {
 }
 
 std::string StructDecl::headline() const {
-    return with_count("struct " + name, fields.size(), "field");
+    std::ostringstream builder;
+    builder << "struct " << name;
+    if (!type_params.empty()) {
+        builder << "<" << type_params.size() << " type param";
+        builder << (type_params.size() == 1 ? "" : "s") << ">";
+    }
+    builder << " (" << fields.size() << " field" << (fields.size() == 1 ? "" : "s") << ")";
+    return builder.str();
 }
 
 EnumDecl::EnumDecl(std::string name, ahfl::SourceRange range)
@@ -1315,7 +1458,14 @@ void EnumDecl::accept(Visitor &visitor) {
 }
 
 std::string EnumDecl::headline() const {
-    return with_count("enum " + name, variants.size(), "variant");
+    std::ostringstream builder;
+    builder << "enum " << name;
+    if (!type_params.empty()) {
+        builder << "<" << type_params.size() << " type param";
+        builder << (type_params.size() == 1 ? "" : "s") << ">";
+    }
+    builder << " (" << variants.size() << " variant" << (variants.size() == 1 ? "" : "s") << ")";
+    return builder.str();
 }
 
 CapabilityDecl::CapabilityDecl(std::string name, ahfl::SourceRange range)

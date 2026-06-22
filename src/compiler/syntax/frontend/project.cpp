@@ -758,13 +758,23 @@ resolve_import_path(std::string_view module_name,
     std::vector<std::filesystem::path> candidates;
     for (const auto &root : search_roots) {
         std::error_code error;
+        // Try single-file layout: root/path/to/module.ahfl
         const auto candidate = normalize_path(root / relative);
-        if (!std::filesystem::exists(candidate, error) || error) {
+        if (std::filesystem::exists(candidate, error) && !error) {
+            if (std::find(candidates.begin(), candidates.end(), candidate) == candidates.end()) {
+                candidates.push_back(candidate);
+            }
             continue;
         }
-
-        if (std::find(candidates.begin(), candidates.end(), candidate) == candidates.end()) {
-            candidates.push_back(candidate);
+        // Try directory-module layout: root/path/to/module/mod.ahfl
+        // (Rust-style: directory with mod.ahfl as the entry point)
+        const auto dir_candidate = normalize_path(
+            root / relative.parent_path() / relative.stem() / "mod.ahfl");
+        if (std::filesystem::exists(dir_candidate, error) && !error) {
+            if (std::find(candidates.begin(), candidates.end(), dir_candidate) ==
+                candidates.end()) {
+                candidates.push_back(dir_candidate);
+            }
         }
     }
 

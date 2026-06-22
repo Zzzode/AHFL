@@ -18,6 +18,12 @@ inline constexpr std::string_view kPackageAuthoringFormatVersion = "ahfl.package
 
 struct FrontendOptions {
     bool emit_parse_note{false};
+    /// M4: Enable syntax desugaring pass. When true, built-in container
+    /// syntax (Optional<T>, some/none, list/set/map literals) is rewritten
+    /// into canonical nominal-generic stdlib equivalents after parsing.
+    /// Defaults to false during the migration period; will become the
+    /// default once all downstream passes support the desugared form.
+    bool enable_desugaring{false};
 };
 
 struct ParseResult {

@@ -41,11 +41,16 @@ qualifiedIdentListOpt: qualifiedIdentList?;
 
 type_:
 	primitiveType
+	| fnType
+	| appType
 	| qualifiedIdent
 	| 'Optional' '<' type_ '>'
 	| 'List' '<' type_ '>'
 	| 'Set' '<' type_ '>'
 	| 'Map' '<' type_ ',' type_ '>';
+
+// Generic type application: Vec<Int>, std::collections::Map<String, Int>
+appType: qualifiedIdent '<' typeList '>';
 
 primitiveType:
 	'Unit'
@@ -61,14 +66,14 @@ primitiveType:
 
 constDecl: 'const' IDENT ':' type_ '=' constExpr ';';
 
-typeAliasDecl: 'type' IDENT '=' type_ ';';
+typeAliasDecl: 'type' IDENT typeParams? '=' type_ ';';
 
-structDecl: 'struct' IDENT '{' structFieldDecl* '}';
+structDecl: 'struct' IDENT typeParams? '{' structFieldDecl* '}';
 
 structFieldDecl: IDENT ':' type_ ('=' constExpr)? ';';
 
 enumDecl:
-	'enum' IDENT '{' enumVariant (',' enumVariant)* ','? '}';
+	'enum' IDENT typeParams? '{' enumVariant (',' enumVariant)* ','? '}';
 
 // P1 (ADT): an enum variant optionally carries a positional tuple payload,
 // e.g. `Some(T)`, `Err(E)`. Existing payload-less variants parse unchanged
@@ -78,6 +83,15 @@ enumVariant: IDENT ('(' typeList ')')?;
 // Positional tuple payload type list (RFC §1.5 TupleFieldList). Reused by
 // variant patterns below.
 typeList: type_ (',' type_)* ','?;
+
+// P2: first-class function type. Syntax mirrors fn declarations:
+//   Fn() -> Ret
+//   Fn(A) -> Ret
+//   Fn(A, B) -> Ret
+//   Fn(A, B) -> Ret effect Pure
+//   Fn(A, B) -> Ret effect cap1, cap2
+// Return type defaults to Unit when omitted; effect defaults to Pure.
+fnType: 'Fn' '(' typeList? ')' ('->' type_)? ('effect' effectSpec)?;
 
 capabilityDecl:
 	'capability' IDENT '(' paramList? ')' '->' type_ (';' | capabilityEffectBlock);
@@ -195,6 +209,13 @@ workflowLivenessDecl: 'liveness' ':' workflowTemporalExpr ';';
 
 workflowReturnDecl: 'return' ':' expr ';';
 
+// P5 (RFC §3.3 / corelib-stdlib-api.zh.md §5): @builtin attribute on fn declarations.
+// Only stdlib modules may declare @builtin functions. The attribute binds a
+// compiler/runtime builtin name to the fn so that calls to the fn are lowered
+// to the builtin implementation instead of a normal fn call.
+//   @builtin("list_raw_length") fn length<T>(xs: List<T>) effect Pure -> Int;
+builtinAttr: '@builtin' '(' STRING_LITERAL ')';
+
 // P2 (RFC §3.2.2 / §3.2.3 / §6): top-level function declarations with generic
 // type parameters, an optional effect clause, and an optional where-clause.
 //   fn name<T: bound, U>(p: Type, ...) -> Ret [effect] [where ...] { ... }
@@ -202,7 +223,7 @@ workflowReturnDecl: 'return' ':' expr ';';
 // The grammar models syntax only: purity/effect enforcement and where-clause
 // evaluation are deferred to the typecheck pass (P2b).
 fnDecl:
-	DOC_COMMENT? 'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
+	DOC_COMMENT? builtinAttr? 'fn' IDENT typeParams? '(' paramList? ')' ('->' type_)? effectClause?
 		whereClause? (fnBody | ';');
 
 typeParams: '<' typeParam (',' typeParam)* ','? '>';
@@ -219,11 +240,23 @@ fnBody: block;
 //     capabilities the function may exercise.
 // `Pure` and `Nondet` are keywords (RFC §2); capability references are bare
 // qualified idents, mirroring the capabilityRef spelling used elsewhere.
-effectClause: 'effect' effectSpec;
+effectClause: 'effect' effectSpec decreasesClause?;
 
 effectSpec: 'Pure' | 'Nondet' | capabilityRef (',' capabilityRef)*;
 
 capabilityRef: qualifiedIdent;
+
+// P4a (RFC corelib-effect-system.zh.md §3.1): optional termination measure
+// following an effect clause. The measure is a single expr (a single nat, a
+// tuple expr for lexicographic ordering, or `*` for the trivial measure on
+// non-recursive functions). The grammar accepts the surface syntax only;
+// effect-system termination checking (decreases prover, §3.2) is deferred to
+// the typecheck pass (P4b).
+//
+//   fn f(xs: List<Int>) effect Pure decreases length(xs) { ... }
+//   fn g(n: Int, xs: List<Int>) effect Pure decreases (n, length(xs)) { ... }
+//   fn h(x: Int) effect Pure decreases * { ... }    // non-recursive only
+decreasesClause: 'decreases' expr;
 
 // P2 (RFC §6): where-clause constraining generic type parameters. The grammar
 // accepts a comma-separated list of type-predicate / type-bound constraints;
