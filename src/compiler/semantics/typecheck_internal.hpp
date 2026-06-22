@@ -284,6 +284,24 @@ class WorkflowSema {
     void check_workflows();
 };
 
+// P2b (RFC §3.2.3): function-body type-check pass. Walks all top-level `fn`
+// declarations that have a body, builds a parameter-binding context, and
+// type-checks the body block. Also computes the body's overall effect and
+// enforces the effect-underdeclared check.
+class FnSema {
+  public:
+    explicit FnSema(TypeCheckPass &driver) : driver_(&driver) {}
+
+    void run();
+
+  private:
+    TypeCheckPass *driver_{nullptr};
+
+    void check_fns();
+    void check_fns_in_program(const ast::Program &program);
+    void check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl);
+};
+
 class TypedHirBuilder {
   public:
     explicit TypedHirBuilder(TypedProgram &program) : program_(&program) {}
@@ -370,6 +388,7 @@ class TypeCheckPass final {
     friend class ContractSema;
     friend class FlowSema;
     friend class WorkflowSema;
+    friend class FnSema;
 
     // Re-export internal aliases inside the class so existing implementation
     // files can keep referring to them by their unqualified names.
@@ -396,6 +415,11 @@ class TypeCheckPass final {
     std::unordered_map<std::size_t, const SourceUnit *> &source_units_by_id_;
     DiagnosticReporter reporter_;
     DeclarationIndex declaration_index_;
+
+    // P2: currently-in-scope generic type parameter names. Nullptr when no
+    // generic scope is active. Set by build_fn_types / FnSema so that
+    // resolve_type produces TypeVar for names matching a type parameter.
+    const std::vector<std::string> *current_type_param_names_{nullptr};
 
     // After the most recent check_statement call completes, holds the index
     // of the TypedStatement that was just appended to
@@ -474,6 +498,24 @@ class TypeCheckPass final {
     // P3 effect-clause + trait-method signature resolvers (member functions so
     // they can reach private resolve_type / make_error_type / find_reference_here).
     FnEffectClauseInfo resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &clause);
+    // P4a (RFC §2.2 / §6.1): project an ast::EffectClauseSyntax to the
+    // signature-level EffectJudgement (Pure / Nondet / CapabilitySet over
+    // resolved capability symbols). Used by build_fn_types and
+    // resolve_effect_clause_info to populate FnEffectClauseInfo::judgement.
+    EffectJudgement build_effect_judgement(const ast::EffectClauseSyntax &clause);
+    // P4a (RFC §2.6.4 / §4.5 V2): check that a function's inferred body effect
+    // is covered by its declared effect (i.e. body ⊑ declared). Emits
+    // EffectUnderdeclared if the body effect is stronger than declared.
+    //
+    // The body effect is passed as an ExprEffect (the expression-level
+    // inference lattice) and projected to EffectJudgement via `project()`.
+    //
+    // TODO(FnSema): call this from the FnSema pass after type-checking the
+    // function body. The body's overall ExprEffect is the join of all
+    // statement/expression effects in the body (see check_block / check_expr).
+    void check_fn_effect_underdeclared(SymbolId fn_symbol,
+                                       ExprEffect body_effect,
+                                       SourceRange body_range);
     TraitMethodInfo resolve_trait_method_info(const ast::TraitItemSyntax &item);
     void build_flow_types();
     void build_flow_types_in_program(const ast::Program &program);

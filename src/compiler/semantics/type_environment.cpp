@@ -347,6 +347,13 @@ namespace {
             seed = fingerprint_mix(seed, fingerprint_type(m.key));
             seed = fingerprint_mix(seed, fingerprint_type(m.value));
         },
+        [&](const types::FnT &f) {
+            for (const auto &p : f.params) {
+                seed = fingerprint_mix(seed, fingerprint_type(p));
+            }
+            seed = fingerprint_mix(seed, fingerprint_type(f.return_type));
+            seed = fingerprint_mix(seed, static_cast<std::uint64_t>(f.effect.kind));
+        },
         [](const auto &) {},
     });
 

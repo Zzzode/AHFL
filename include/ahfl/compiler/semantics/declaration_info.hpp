@@ -2,6 +2,7 @@
 
 #include "ahfl/base/support/ownership.hpp"
 #include "ahfl/base/support/source.hpp"
+#include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 #include "ahfl/compiler/semantics/types.hpp"
 
@@ -39,6 +40,10 @@ struct TypeAliasDeclInfo {
     SymbolId symbol;
     std::string canonical_name;
     std::string local_name;
+    // Generic type-parameter names in declaration order. Empty for monomorphic
+    // type aliases. Used by the type resolver to resolve type variables inside
+    // the aliased type, and by instantiation to match type_args by position.
+    std::vector<std::string> type_param_names;
     TypePtr aliased_type;
     SourceRange aliased_type_range;
     SourceRange declaration_range;
@@ -55,6 +60,12 @@ struct StructFieldInfo {
 struct StructTypeInfo {
     SymbolId symbol;
     std::string canonical_name;
+    // Generic type-parameter names in declaration order. Empty for monomorphic
+    // structs. The indices match positions in the struct's type_args vector
+    // (see types::StructT). Resolved by the typecheck pass during struct
+    // declaration building; used by the type resolver to resolve type
+    // variables inside field types and by monomorphization to align arguments.
+    std::vector<std::string> type_param_names;
     std::vector<StructFieldInfo> fields;
     SourceRange declaration_range;
 
@@ -77,6 +88,11 @@ struct EnumVariantInfo {
 struct EnumTypeInfo {
     SymbolId symbol;
     std::string canonical_name;
+    // Generic type-parameter names in declaration order. Empty for monomorphic
+    // enums. Indices align with enum instantiation type_args positions
+    // (see types::EnumT). Resolved by the typecheck pass; used by type
+    // variable resolution inside variant payload types and by monomorphization.
+    std::vector<std::string> type_param_names;
     std::vector<EnumVariantInfo> variants;
     SourceRange declaration_range;
 
@@ -233,6 +249,14 @@ struct FnEffectClauseInfo {
     int kind{0};
     std::vector<SymbolId> capabilities;
     SourceRange source_range;
+    // P4a (RFC corelib-effect-system.zh.md §2.2 / §6.1): the signature-level
+    // effect judgement projected from this clause. Built by build_fn_types /
+    // resolve_effect_clause_info; consumed by the fn-call effect derivation
+    // and the verified-subset check. Defaults to Pure (matches kind==0).
+    EffectJudgement judgement{EffectJudgement::make_pure()};
+    // P4a (RFC §3.1 / §3.4): whether a `decreases` measure was present on the
+    // clause. Pure functions require one; non-Pure functions may omit it.
+    bool has_decreases{false};
 };
 
 // P2 (RFC §3.2.2 / §3.2.3 / §2 / §6): declaration-level signature of a
@@ -240,6 +264,11 @@ struct FnEffectClauseInfo {
 // parameter names (instantiation happens at call sites in the typecheck
 // pass), and the resolved effect clause. Body typecheck and
 // where-clause bound evaluation are part of the FnDecl typecheck pass.
+//
+// P5 (RFC §3.3 / corelib-stdlib-api.zh.md §5): `builtin_name` is the
+// @builtin hook name when the fn is declared with @builtin("name").
+// Empty (nullopt) for normal user functions. Only stdlib modules may
+// declare @builtin functions.
 struct FnTypeInfo {
     SymbolId symbol{0};
     std::string canonical_name;
@@ -256,6 +285,11 @@ struct FnTypeInfo {
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;
+    std::optional<std::string> builtin_name; // P5: @builtin hook name, nullopt if not a builtin
+    // P2b (RFC §3.2.3): index of the function body's TypedBlock in
+    // TypedProgram::blocks. UINT32_MAX when the function has no body or when
+    // body type-checking has not been performed yet. Populated by FnSema.
+    std::uint32_t body_block_index{UINT32_MAX};
 };
 
 // ============================================================================

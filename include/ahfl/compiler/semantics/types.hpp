@@ -5,16 +5,23 @@
 #include <sstream>
 #include <string>
 #include <variant>
+#include <vector>
 
+#include "ahfl/compiler/semantics/effect_judgement.hpp"
 #include "ahfl/compiler/semantics/resolver.hpp"
 
 namespace ahfl {
 
 enum class TypeKind {
-    // Checker-internal helper kinds. These are not source-level AHFL types.
+    // Checker-internal helper kinds. These are not directly written by users
+    // but are produced by the type system during inference / instantiation.
     Any,
     Never,
     Error,
+    // P2 (RFC §3.2.2 / §5): a type variable standing in for a concrete type
+    // inside a generic declaration. Resolved to a concrete type during
+    // monomorphization (type substitution).
+    TypeVar,
 
     // Source-level primitive kinds.
     Unit,
@@ -38,6 +45,7 @@ enum class TypeKind {
     List,
     Set,
     Map,
+    Fn,
 };
 
 struct Type;
@@ -82,15 +90,24 @@ struct DecimalT {
 struct StructT {
     std::string canonical_name;
     std::optional<SymbolId> symbol;
+    // Concrete type arguments of an instantiated generic struct.
+    // Empty for monomorphic structs or the generic definition itself.
+    // Index matches the declaration's type parameter position.
+    std::vector<TypePtr> type_args;
 };
 struct EnumT {
     std::string canonical_name;
     std::optional<SymbolId> symbol;
+    // Concrete type arguments of an instantiated generic enum.
+    // Empty for monomorphic enums or the generic definition itself.
+    std::vector<TypePtr> type_args;
 };
 struct EnumVariantT {
     std::string canonical_name;
     std::optional<SymbolId> symbol;
     std::string variant_name;
+    // Concrete type arguments of the parent enum's instantiation.
+    std::vector<TypePtr> type_args;
 };
 struct OptionalT {
     TypePtr inner{nullptr};
@@ -104,6 +121,26 @@ struct SetT {
 struct MapT {
     TypePtr key{nullptr};
     TypePtr value{nullptr};
+};
+struct FnT {
+    std::vector<TypePtr> params;
+    TypePtr return_type{nullptr};
+    EffectJudgement effect;
+};
+// P2 (RFC §5): a named type variable. Used as a placeholder inside generic
+// P2 (RFC §3.2.2 / §5): a type variable placeholder. Used inside generic
+// fn/trait signatures and their bodies; replaced with a concrete type during
+// monomorphization.
+//
+// `index` is the zero-based position of this type parameter in the enclosing
+// generic declaration's parameter list. This is the *canonical identity* of
+// the variable — substitution uses index-based O(1) lookup (industry standard
+// practice: Rust Substs, Swift GenericTypeParamKey, Clang TemplateParmIndex),
+// not string hashing. The `name` is preserved only for diagnostics and
+// human-readable rendering.
+struct TypeVarT {
+    std::uint32_t index{0};
+    std::string name;
 };
 
 using Payload = std::variant<AnyT,
@@ -125,7 +162,9 @@ using Payload = std::variant<AnyT,
                              OptionalT,
                              ListT,
                              SetT,
-                             MapT>;
+                             MapT,
+                             FnT,
+                             TypeVarT>;
 
 // Helper for ad-hoc visitors using the overload pattern, e.g.
 //
@@ -191,10 +230,51 @@ struct Type {
                 builder << "Decimal(" << value.scale << ")";
                 return builder.str();
             },
-            [](const types::StructT &value) { return value.canonical_name; },
-            [](const types::EnumT &value) { return value.canonical_name; },
+            [](const types::StructT &value) {
+                std::string result = value.canonical_name;
+                if (!value.type_args.empty()) {
+                    result += '<';
+                    for (std::size_t i = 0; i < value.type_args.size(); ++i) {
+                        if (i > 0) {
+                            result += ", ";
+                        }
+                        result += value.type_args[i] ? value.type_args[i]->describe()
+                                                      : std::string{"Any"};
+                    }
+                    result += '>';
+                }
+                return result;
+            },
+            [](const types::EnumT &value) {
+                std::string result = value.canonical_name;
+                if (!value.type_args.empty()) {
+                    result += '<';
+                    for (std::size_t i = 0; i < value.type_args.size(); ++i) {
+                        if (i > 0) {
+                            result += ", ";
+                        }
+                        result += value.type_args[i] ? value.type_args[i]->describe()
+                                                      : std::string{"Any"};
+                    }
+                    result += '>';
+                }
+                return result;
+            },
             [](const types::EnumVariantT &value) {
-                return value.canonical_name + "::" + value.variant_name;
+                std::string result = value.canonical_name;
+                if (!value.type_args.empty()) {
+                    result += '<';
+                    for (std::size_t i = 0; i < value.type_args.size(); ++i) {
+                        if (i > 0) {
+                            result += ", ";
+                        }
+                        result += value.type_args[i] ? value.type_args[i]->describe()
+                                                      : std::string{"Any"};
+                    }
+                    result += '>';
+                }
+                result += "::" + value.variant_name;
+                return result;
             },
             [](const types::OptionalT &value) {
                 return "Optional<" + (value.inner ? value.inner->describe() : std::string{"Any"}) +
@@ -212,6 +292,23 @@ struct Type {
                 return "Map<" + (value.key ? value.key->describe() : std::string{"Any"}) + ", " +
                        (value.value ? value.value->describe() : std::string{"Any"}) + ">";
             },
+            [](const types::FnT &value) {
+                std::ostringstream builder;
+                builder << "Fn(";
+                for (std::size_t i = 0; i < value.params.size(); ++i) {
+                    if (i > 0) {
+                        builder << ", ";
+                    }
+                    builder << (value.params[i] ? value.params[i]->describe() : std::string{"Any"});
+                }
+                builder << ") -> " << (value.return_type ? value.return_type->describe()
+                                                          : std::string{"Any"});
+                if (value.effect.kind != EffectJudgement::Kind::Pure) {
+                    builder << " effect " << to_string(value.effect);
+                }
+                return builder.str();
+            },
+            [](const types::TypeVarT &value) { return value.name; },
         });
     }
 };

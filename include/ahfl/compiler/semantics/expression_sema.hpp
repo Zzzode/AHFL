@@ -32,6 +32,17 @@ enum class ExpressionCallContext {
     Workflow,
 };
 
+// P4a (RFC corelib-effect-system.zh.md §4.5): distinguishes "regular"
+// pure-only contexts (if conditions, assert) from verified-subset contexts
+// (contract clauses, invariant/safety/liveness formulas). The latter get
+// richer diagnostics (EffectNotPure / NotInVerifiedSubset / NondetInInvariant)
+// and stricter rules (no Nondet in temporal formulas).
+enum class VerificationContext {
+    None,
+    Contract,
+    InvariantSafetyLiveness,
+};
+
 struct ExpressionValue {
     TypePtr type;
     ExprEffect effect{ExprEffect::Pure};
@@ -44,6 +55,11 @@ struct ExpressionContext {
     FlowFacts flow_facts;
     ExpressionCallContext call_context{ExpressionCallContext::PureOnly};
     std::optional<SymbolId> current_agent;
+    // P4a (RFC corelib-effect-system.zh.md §4.5): verified-subset context.
+    // When != None, the expression typechecker emits richer effect diagnostics
+    // (EffectNotPure / NotInVerifiedSubset / NondetInInvariant) for function
+    // calls that violate the subset rules.
+    VerificationContext verification_context{VerificationContext::None};
 };
 
 class ExpressionSemaDelegate {

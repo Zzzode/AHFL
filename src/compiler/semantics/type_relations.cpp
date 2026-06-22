@@ -1,5 +1,7 @@
 #include "ahfl/compiler/semantics/type_relations.hpp"
 
+#include "ahfl/compiler/semantics/effect_judgement.hpp"
+
 #include <functional>
 #include <sstream>
 #include <utility>
@@ -280,7 +282,7 @@ bool equivalent_impl(const Type &lhs,
         },
         [&](const types::StructT &l) {
             // Struct equivalence is nominal:
-            //   AND ( symbol match OR fallback canonical_name match )
+            //   AND ( name match, type_args[i] equivalent for all i )
             const auto *r = rhs.get_if<types::StructT>();
             if (r == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
@@ -301,29 +303,84 @@ bool equivalent_impl(const Type &lhs,
                 ctx->push_node(std::move(n));
                 ctx->pop_node();
             }
-            // Note: StructT has no fields in the payload in this codebase
-            // version, so the And node has exactly one child (struct.name).
-            (void)name_ok;
-            return name_ok;
+            if (!name_ok) return false;
+
+            // Type arguments must match arity and be pairwise equivalent.
+            if (l.type_args.size() != r->type_args.size()) {
+                return false;
+            }
+            for (std::size_t i = 0; i < l.type_args.size(); ++i) {
+                if (l.type_args[i] == nullptr || r->type_args[i] == nullptr) {
+                    return false;
+                }
+                if (!solver.solve(TypeRelationKind::Equivalent,
+                                  *l.type_args[i],
+                                  *r->type_args[i],
+                                  join_path(path,
+                                            "struct.type_args[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            return true;
         },
         [&](const types::EnumT &l) {
             const auto *r = rhs.get_if<types::EnumT>();
             if (r == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            bool eq =
+            const bool name_ok =
                 nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
-            return equivalent_leaf(lhs, rhs, ctx, path, eq);
+            if (!name_ok) {
+                return equivalent_leaf(lhs, rhs, ctx, path, false);
+            }
+            // Type arguments must match arity and be pairwise equivalent.
+            if (l.type_args.size() != r->type_args.size()) {
+                return equivalent_leaf(lhs, rhs, ctx, path, false);
+            }
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            for (std::size_t i = 0; i < l.type_args.size(); ++i) {
+                if (l.type_args[i] == nullptr || r->type_args[i] == nullptr) {
+                    return false;
+                }
+                if (!solver.solve(TypeRelationKind::Equivalent,
+                                  *l.type_args[i],
+                                  *r->type_args[i],
+                                  join_path(path,
+                                            "enum.type_args[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            return true;
         },
         [&](const types::EnumVariantT &l) {
             const auto *r = rhs.get_if<types::EnumVariantT>();
             if (r == nullptr) {
                 return equivalent_leaf(lhs, rhs, ctx, path, false);
             }
-            const bool eq =
+            const bool name_ok =
                 l.variant_name == r->variant_name &&
                 nominal_name_matches(l.symbol, l.canonical_name, r->symbol, r->canonical_name);
-            return equivalent_leaf(lhs, rhs, ctx, path, eq);
+            if (!name_ok) {
+                return equivalent_leaf(lhs, rhs, ctx, path, false);
+            }
+            // Type arguments must match arity and be pairwise equivalent.
+            if (l.type_args.size() != r->type_args.size()) {
+                return equivalent_leaf(lhs, rhs, ctx, path, false);
+            }
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            for (std::size_t i = 0; i < l.type_args.size(); ++i) {
+                if (l.type_args[i] == nullptr || r->type_args[i] == nullptr) {
+                    return false;
+                }
+                if (!solver.solve(TypeRelationKind::Equivalent,
+                                  *l.type_args[i],
+                                  *r->type_args[i],
+                                  join_path(path,
+                                            "variant.type_args[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            return true;
         },
         [&](const types::OptionalT &l) {
             const auto *r = rhs.get_if<types::OptionalT>();
@@ -367,6 +424,49 @@ bool equivalent_impl(const Type &lhs,
             FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
             return equivalent_pairwise(
                 *l.key, *r->key, *l.value, *r->value, path, "map.key", "map.value", solver);
+        },
+        [&](const types::FnT &l) {
+            const auto *r = rhs.get_if<types::FnT>();
+            if (r == nullptr || l.params.size() != r->params.size()) {
+                return equivalent_leaf(lhs, rhs, ctx, path, false);
+            }
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, lhs, rhs);
+            // All parameter types must be equivalent.
+            for (std::size_t i = 0; i < l.params.size(); ++i) {
+                if (l.params[i] == nullptr || r->params[i] == nullptr) {
+                    return false;
+                }
+                if (!solver.solve(TypeRelationKind::Equivalent,
+                                  *l.params[i],
+                                  *r->params[i],
+                                  join_path(path, "fn.param[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            // Return type must be equivalent.
+            if (l.return_type == nullptr || r->return_type == nullptr) {
+                return false;
+            }
+            if (!solver.solve(TypeRelationKind::Equivalent,
+                              *l.return_type,
+                              *r->return_type,
+                              join_path(path, "fn.return"))) {
+                return false;
+            }
+            // Effect must be equal (structural equality on the judgement).
+            return l.effect == r->effect;
+        },
+        [&](const types::TypeVarT &l) {
+            // Type variables are equivalent iff they have the same index within
+            // their enclosing generic declaration. Index is the canonical
+            // identity (industry standard: position-based substitution keys);
+            // the name is diagnostic-only. We additionally require name match
+            // as a defensive sanity check — the global TypeContext interns
+            // TypeVars by (index, name) so the pointers are already identical
+            // for equivalent vars.
+            const auto *r = rhs.get_if<types::TypeVarT>();
+            bool eq = r != nullptr && l.index == r->index && l.name == r->name;
+            return equivalent_leaf(lhs, rhs, ctx, path, eq);
         },
     });
 }
@@ -448,7 +548,26 @@ bool subtype_impl(const Type &source,
             }
             return variant->canonical_name == target_enum->canonical_name;
         }();
-        return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), same_enum);
+        if (!same_enum) {
+            return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), false);
+        }
+        // Type arguments must be pairwise equivalent for variant-to-enum subtyping.
+        if (variant->type_args.size() != target_enum->type_args.size()) {
+            return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), false);
+        }
+        for (std::size_t i = 0; i < variant->type_args.size(); ++i) {
+            if (variant->type_args[i] == nullptr || target_enum->type_args[i] == nullptr) {
+                return false;
+            }
+            if (!solver.solve(TypeRelationKind::Equivalent,
+                              *variant->type_args[i],
+                              *target_enum->type_args[i],
+                              join_path(path,
+                                        "enum.variant.type_args[" + std::to_string(i) + "]"))) {
+                return false;
+            }
+        }
+        return subtype_leaf(source, target, ctx, join_path(path, "enum.variant"), true);
     }
 
     // Container covariance: Optional<A> <: Optional<B> if A <: B
@@ -494,6 +613,47 @@ bool subtype_impl(const Type &source,
             }
             return solver.solve(
                 TypeRelationKind::Subtype, *s->value, *t->value, join_path(path, "map.value"));
+        }
+    }
+
+    // Fn type subtyping: contravariant params, covariant return, covariant effect
+    // (weaker effect = subtype of stronger effect).
+    if (source.holds<types::FnT>() && target.holds<types::FnT>()) {
+        const auto *s = source.get_if<types::FnT>();
+        const auto *t = target.get_if<types::FnT>();
+        if (s != nullptr && t != nullptr && s->params.size() == t->params.size()) {
+            FrameGuard guard(ctx, TypeConstraintNode::Kind::And, path, source, target);
+            // Parameters: contravariant — target.param <: source.param
+            for (std::size_t i = 0; i < s->params.size(); ++i) {
+                if (s->params[i] == nullptr || t->params[i] == nullptr) {
+                    return subtype_leaf(
+                        source, target, ctx, join_path(path, "fn.param[" + std::to_string(i) + "]"), false);
+                }
+                if (!solver.solve(TypeRelationKind::Subtype,
+                                  *t->params[i],
+                                  *s->params[i],
+                                  join_path(path, "fn.param[" + std::to_string(i) + "]"))) {
+                    return false;
+                }
+            }
+            // Return type: covariant — source.return <: target.return
+            if (s->return_type == nullptr || t->return_type == nullptr) {
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "fn.return-null"), false);
+            }
+            if (!solver.solve(TypeRelationKind::Subtype,
+                              *s->return_type,
+                              *t->return_type,
+                              join_path(path, "fn.return"))) {
+                return false;
+            }
+            // Effect: covariant — source.effect ⊑ target.effect (source is no
+            // stronger than target, so it's acceptable where target is expected).
+            if (!judgement_le(s->effect, t->effect)) {
+                return subtype_leaf(
+                    source, target, ctx, join_path(path, "fn.effect"), false);
+            }
+            return true;
         }
     }
 

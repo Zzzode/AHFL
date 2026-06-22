@@ -820,6 +820,7 @@ TypeCheckResult TypeCheckPass::run() {
     ContractSema(*this).run();
     FlowSema(*this).run();
     WorkflowSema(*this).run();
+    FnSema(*this).run();
     result_.relation_trace = relations_.trace();
     return std::move(result_);
 }
@@ -893,7 +894,27 @@ MaybeCRef<ast::TypeAliasDecl> TypeCheckPass::alias_decl_of(SymbolId id) const {
 }
 
 TypeResolver TypeCheckPass::make_type_resolver() {
-    return TypeResolver{
+    auto type_param_info = [this](SymbolId id) -> std::optional<std::vector<std::string>> {
+        if (const auto s = environment().get_struct(id); s.has_value()) {
+            return s->get().type_param_names;
+        }
+        if (const auto e = environment().get_enum(id); e.has_value()) {
+            return e->get().type_param_names;
+        }
+        // Type aliases are resolved lazily via alias body resolution; their
+        // type params are stored on the declaration.
+        if (const auto alias = alias_decl_of(id); alias.has_value()) {
+            std::vector<std::string> names;
+            names.reserve(alias->get().type_params.size());
+            for (const auto &tp : alias->get().type_params) {
+                names.push_back(tp->name);
+            }
+            return names;
+        }
+        return std::nullopt;
+    };
+
+    auto resolver = TypeResolver{
         resolve_result_,
         *types_,
         alias_resolution_,
@@ -904,7 +925,10 @@ TypeResolver TypeCheckPass::make_type_resolver() {
         [this](SymbolId id) { return alias_decl_of(id); },
         [this](SymbolId id, const ast::TypeSyntax &aliased_type) {
             return with_symbol_context(id, [&]() { return resolve_type(aliased_type); });
-        }};
+        },
+        std::move(type_param_info)};
+    resolver.set_type_param_names(current_type_param_names_);
+    return resolver;
 }
 
 TypePtr TypeCheckPass::resolve_type(const ast::TypeSyntax &type) {
@@ -1613,6 +1637,15 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
                 ValueContext context;
                 context.bindings.emplace(
                     "input", driver_->clone_or_any(std::cref(*agent_info->get().input_type)));
+                // P4a: temporal formulas in contracts live in the verified
+                // subset. Invariant clauses get the stricter
+                // InvariantSafetyLiveness context (Nondet is disallowed).
+                if (clause->kind == ast::ContractClauseKind::Invariant) {
+                    context.verification_context =
+                        VerificationContext::InvariantSafetyLiveness;
+                } else {
+                    context.verification_context = VerificationContext::Contract;
+                }
                 driver_->check_temporal_embedded_exprs(*clause->temporal_expr, context);
                 continue;
             }
@@ -1624,6 +1657,14 @@ void ContractSema::check_contracts_in_program(const ast::Program &program) {
             if (clause->kind == ast::ContractClauseKind::Ensures) {
                 context.bindings.emplace(
                     "output", driver_->clone_or_any(std::cref(*agent_info->get().output_type)));
+            }
+            // P4a: all contract clauses live in the verified subset.
+            // Invariant clauses additionally disallow Nondet (RFC §4.2).
+            if (clause->kind == ast::ContractClauseKind::Invariant) {
+                context.verification_context =
+                    VerificationContext::InvariantSafetyLiveness;
+            } else {
+                context.verification_context = VerificationContext::Contract;
             }
 
             const auto value = driver_->check_expr(*clause->expr, context, std::cref(*bool_type));
@@ -1929,11 +1970,17 @@ void WorkflowSema::check_workflows_in_program(const ast::Program &program) {
         }
 
         for (const auto &formula : decl.safety) {
-            driver_->check_temporal_embedded_exprs(*formula, return_context);
+            ValueContext formula_context = return_context;
+            formula_context.verification_context =
+                VerificationContext::InvariantSafetyLiveness;
+            driver_->check_temporal_embedded_exprs(*formula, formula_context);
         }
 
         for (const auto &formula : decl.liveness) {
-            driver_->check_temporal_embedded_exprs(*formula, return_context);
+            ValueContext formula_context = return_context;
+            formula_context.verification_context =
+                VerificationContext::InvariantSafetyLiveness;
+            driver_->check_temporal_embedded_exprs(*formula, formula_context);
         }
 
         const auto return_value = driver_->check_expr(
@@ -1958,6 +2005,165 @@ void WorkflowSema::check_workflows() {
     }
 
     check_workflows_in_program(require(driver_->program_, "typecheck program must exist"));
+}
+
+// ----------------------------------------------------------------------------
+// FnSema: function body type-check pass
+// ----------------------------------------------------------------------------
+
+namespace {
+
+/// Compute the overall ExprEffect of a typed block by joining the effects of
+/// all expressions reachable from its statements. Used by FnSema to derive the
+/// body's effect for the effect-underdeclared check.
+ExprEffect block_body_effect(const TypedBlock &block, const TypedProgram &program) {
+    ExprEffect result = ExprEffect::Pure;
+    for (auto stmt_idx : block.statement_indexes) {
+        if (stmt_idx >= program.statements.size()) {
+            continue;
+        }
+        const auto &stmt = program.statements[stmt_idx];
+        for (auto expr_idx : stmt.children_expr_index) {
+            if (expr_idx >= program.expressions.size()) {
+                continue;
+            }
+            result = join_effects(result, program.expressions[expr_idx].effect);
+        }
+        // Recurse into nested blocks (if statements have then/else blocks).
+        if (stmt.then_block_index != UINT32_MAX &&
+            stmt.then_block_index < program.blocks.size()) {
+            result = join_effects(
+                result, block_body_effect(program.blocks[stmt.then_block_index], program));
+        }
+        if (stmt.else_block_index != UINT32_MAX &&
+            stmt.else_block_index < program.blocks.size()) {
+            result = join_effects(
+                result, block_body_effect(program.blocks[stmt.else_block_index], program));
+        }
+    }
+    return result;
+}
+
+} // namespace
+
+void FnSema::run() {
+    check_fns();
+}
+
+void FnSema::check_fns() {
+    if (driver_->graph_ != nullptr) {
+        for (const auto &source : driver_->graph_->sources) {
+            driver_->enter_source(source);
+            check_fns_in_program(
+                require(source.program.get(), "source graph program must exist before typecheck"));
+            driver_->leave_source();
+        }
+        return;
+    }
+
+    check_fns_in_program(require(driver_->program_, "typecheck program must exist"));
+}
+
+void FnSema::check_fns_in_program(const ast::Program &program) {
+    for (const auto &declaration : program.declarations) {
+        if (declaration->kind != ast::NodeKind::FnDecl) {
+            continue;
+        }
+
+        const auto &decl = static_cast<const ast::FnDecl &>(*declaration);
+
+        // Skip prototype declarations (no body).
+        if (!decl.body) {
+            continue;
+        }
+
+        const auto fn_symbol =
+            driver_->find_local_here(SymbolNamespace::Functions, decl.name);
+        if (!fn_symbol.has_value()) {
+            continue;
+        }
+
+        driver_->with_symbol_context(fn_symbol->get().id, [&] {
+            check_fn_body(fn_symbol->get().id, decl);
+        });
+    }
+}
+
+void FnSema::check_fn_body(SymbolId fn_symbol, const ast::FnDecl &decl) {
+    const auto fn_info = driver_->environment().get_fn(fn_symbol);
+    if (!fn_info.has_value()) {
+        return;
+    }
+    const auto &info = fn_info->get();
+
+    // Activate the type parameter scope so type annotations inside the body
+    // (e.g. `let x: T = ...`) resolve T as a TypeVar instead of producing
+    // "unknown type" errors.
+    const auto *prev_type_params = driver_->current_type_param_names_;
+    if (!info.type_param_names.empty()) {
+        driver_->current_type_param_names_ = &info.type_param_names;
+    }
+
+    // Build the function-body context: parameter bindings + Flow call context
+    // (which allows capability calls, matching ordinary fn semantics).
+    ValueContext context;
+    context.call_context = CallContext::Flow;
+    context.verification_context = VerificationContext::None;
+
+    for (const auto &param : info.params) {
+        context.bindings.emplace(
+            param.name,
+            param.type != nullptr ? param.type->clone() : driver_->make_error_type());
+    }
+
+    // Type-check the body block.
+    // Note: no expected_return_origin so the return statement uses
+    // assignability check (not schema boundary check — that's for agent output).
+    if (info.return_type != nullptr) {
+        driver_->check_block(*decl.body,
+                             context,
+                             std::cref(*info.return_type),
+                             /*state_name=*/"",
+                             /*expected_return_origin=*/std::nullopt);
+    } else {
+        driver_->check_block(*decl.body, context, std::nullopt);
+    }
+
+    // Restore previous type param scope.
+    driver_->current_type_param_names_ = prev_type_params;
+
+    // Derive the body's overall effect and check against the declared effect.
+    const auto body_block_idx = driver_->find_block_index_by_range(*decl.body);
+    const auto &tp = driver_->result_.typed_program;
+    ExprEffect body_effect = ExprEffect::Pure;
+    if (body_block_idx < tp.blocks.size()) {
+        body_effect = block_body_effect(tp.blocks[body_block_idx], tp);
+    }
+    driver_->check_fn_effect_underdeclared(fn_symbol, body_effect, decl.body->range);
+
+    // Record the body block index on the function's type info.
+    // The environment is logically const after EnvironmentBuilder, but we
+    // extend it here with the body block index (discovered during FnSema).
+    if (body_block_idx < tp.blocks.size()) {
+        auto &fn_map = const_cast<std::unordered_map<std::size_t, FnTypeInfo> &>(
+            driver_->environment().functions());
+        auto it = fn_map.find(fn_symbol.value);
+        if (it != fn_map.end()) {
+            it->second.body_block_index = body_block_idx;
+        }
+
+        // Also sync the body_block_index into the TypedProgram's FnTypeInfo
+        // payload so downstream passes (e.g. monomorphization) that only
+        // consume TypedProgram can find it without reaching into TypeEnvironment.
+        auto &decls = driver_->result_.typed_program.declarations;
+        for (auto &typed_decl : decls) {
+            if (typed_decl.symbol == fn_symbol &&
+                std::holds_alternative<FnTypeInfo>(typed_decl.payload)) {
+                std::get<FnTypeInfo>(typed_decl.payload).body_block_index = body_block_idx;
+                break;
+            }
+        }
+    }
 }
 
 std::uint32_t
@@ -2294,6 +2500,7 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
         if (statement.return_stmt && statement.return_stmt->value) {
             if (expected_return_type.has_value()) {
                 if (expected_return_origin.has_value()) {
+                    // Agent / workflow return: enforce exact schema boundary.
                     const auto expectation = TypeExpectation{
                         .expected = expected_return_type->get().clone(),
                         .origin_kind = TypeExpectationOriginKind::ReturnType,
@@ -2308,13 +2515,13 @@ void TypeCheckPass::check_statement(const ast::StatementSyntax &statement,
                                                       statement.return_stmt->value->range,
                                                       expectation);
                 } else {
+                    // Ordinary function return: check assignability.
                     const auto value =
                         check_expr(*statement.return_stmt->value, context, expected_return_type);
-                    (void)check_exact_schema_boundary(*value.type,
-                                                      expected_return_type->get(),
-                                                      SchemaBoundaryKind::AgentOutput,
-                                                      statement.return_stmt->value->range,
-                                                      expected_return_origin);
+                    (void)check_assignable(*value.type,
+                                           expected_return_type->get(),
+                                           statement.return_stmt->value->range,
+                                           "return value");
                 }
             } else {
                 // Still walk the return value so nested expressions are recorded

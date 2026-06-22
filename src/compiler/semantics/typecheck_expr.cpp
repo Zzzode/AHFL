@@ -1,5 +1,6 @@
 #include "compiler/semantics/typecheck_internal.hpp"
 
+#include "ahfl/compiler/semantics/monomorphization.hpp"
 #include "ahfl/compiler/semantics/name_suggestions.hpp"
 
 #include <algorithm>
@@ -47,6 +48,121 @@ template <typename... Ts> overloaded(Ts...) -> overloaded<Ts...>;
     }
 
     return scale;
+}
+
+// P2d (RFC §3.5): unification for generic fn call-site type-argument inference.
+//
+// Walks a declared parameter type (which may contain TypeVars bound to the
+// callee's own type parameters) alongside the concrete argument type, recording
+// TypeVar -> Type bindings into `subst` (indexed by TypeVarT::index, matching
+// FnTypeInfo::type_param_names order). The traversal is structural: it recurses
+// through nominal type applications (Enum/Struct) and the container/Fn type
+// constructors so TypeVars nested in `Option<T>`, `Map<K,V>`, or `Fn(T)->U`
+// are bound from the corresponding argument sub-types.
+//
+// Unification's job is inference, not diagnosis. A structural mismatch
+// (different constructor, different nominal symbol, or mismatched arity) simply
+// stops binding for that sub-tree — the subsequent check_assignable against the
+// instantiated param type reports any real mismatch with a proper diagnostic.
+// First occurrence of a TypeVar wins; a later inconsistent use is likewise left
+// to check_assignable.
+void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMap &subst) {
+    if (param.holds<types::ErrorT>() || arg.holds<types::ErrorT>()) {
+        return;
+    }
+    // TypeVar on the param side: bind it.
+    if (const auto *tv = param.get_if<types::TypeVarT>(); tv != nullptr) {
+        if (tv->index < subst.size() && subst[tv->index] == nullptr) {
+            subst[tv->index] = &arg;
+        }
+        return;
+    }
+    // EnumT: same symbol, recurse type_args.
+    if (const auto *pe = param.get_if<types::EnumT>(); pe != nullptr) {
+        const auto *ae = arg.get_if<types::EnumT>();
+        if (ae == nullptr || pe->type_args.size() != ae->type_args.size()) {
+            return;
+        }
+        const bool same = (pe->symbol.has_value() && ae->symbol.has_value())
+                              ? (*pe->symbol == *ae->symbol)
+                              : (pe->canonical_name == ae->canonical_name);
+        if (!same) {
+            return;
+        }
+        for (std::size_t i = 0; i < pe->type_args.size(); ++i) {
+            if (pe->type_args[i] != nullptr && ae->type_args[i] != nullptr) {
+                unify_param_with_arg(*pe->type_args[i], *ae->type_args[i], subst);
+            }
+        }
+        return;
+    }
+    // StructT: same symbol, recurse type_args.
+    if (const auto *ps = param.get_if<types::StructT>(); ps != nullptr) {
+        const auto *as = arg.get_if<types::StructT>();
+        if (as == nullptr || ps->type_args.size() != as->type_args.size()) {
+            return;
+        }
+        const bool same = (ps->symbol.has_value() && as->symbol.has_value())
+                              ? (*ps->symbol == *as->symbol)
+                              : (ps->canonical_name == as->canonical_name);
+        if (!same) {
+            return;
+        }
+        for (std::size_t i = 0; i < ps->type_args.size(); ++i) {
+            if (ps->type_args[i] != nullptr && as->type_args[i] != nullptr) {
+                unify_param_with_arg(*ps->type_args[i], *as->type_args[i], subst);
+            }
+        }
+        return;
+    }
+    if (const auto *po = param.get_if<types::OptionalT>(); po != nullptr) {
+        const auto *ao = arg.get_if<types::OptionalT>();
+        if (ao != nullptr && po->inner != nullptr && ao->inner != nullptr) {
+            unify_param_with_arg(*po->inner, *ao->inner, subst);
+        }
+        return;
+    }
+    if (const auto *pl = param.get_if<types::ListT>(); pl != nullptr) {
+        const auto *al = arg.get_if<types::ListT>();
+        if (al != nullptr && pl->element != nullptr && al->element != nullptr) {
+            unify_param_with_arg(*pl->element, *al->element, subst);
+        }
+        return;
+    }
+    if (const auto *pset = param.get_if<types::SetT>(); pset != nullptr) {
+        const auto *aset = arg.get_if<types::SetT>();
+        if (aset != nullptr && pset->element != nullptr && aset->element != nullptr) {
+            unify_param_with_arg(*pset->element, *aset->element, subst);
+        }
+        return;
+    }
+    if (const auto *pm = param.get_if<types::MapT>(); pm != nullptr) {
+        const auto *am = arg.get_if<types::MapT>();
+        if (am != nullptr) {
+            if (pm->key != nullptr && am->key != nullptr) {
+                unify_param_with_arg(*pm->key, *am->key, subst);
+            }
+            if (pm->value != nullptr && am->value != nullptr) {
+                unify_param_with_arg(*pm->value, *am->value, subst);
+            }
+        }
+        return;
+    }
+    if (const auto *pf = param.get_if<types::FnT>(); pf != nullptr) {
+        const auto *af = arg.get_if<types::FnT>();
+        if (af != nullptr && pf->params.size() == af->params.size()) {
+            for (std::size_t i = 0; i < pf->params.size(); ++i) {
+                if (pf->params[i] != nullptr && af->params[i] != nullptr) {
+                    unify_param_with_arg(*pf->params[i], *af->params[i], subst);
+                }
+            }
+            if (pf->return_type != nullptr && af->return_type != nullptr) {
+                unify_param_with_arg(*pf->return_type, *af->return_type, subst);
+            }
+        }
+        return;
+    }
+    // Leaf types (Bool/Int/String/...): no TypeVars to bind.
 }
 
 [[nodiscard]] std::optional<TypeExpectation> derive_expectation(const TypeExpectation *parent,
@@ -223,6 +339,15 @@ class ExpressionCheckerServices final {
     // P2 (RFC §3.2.2): fn signature lookup for fn-call typecheck.
     [[nodiscard]] MaybeCRef<FnTypeInfo> get_fn(SymbolId id) const {
         return environment_.get_fn(id);
+    }
+
+    // P2d (RFC §3.5): TypeContext access for generic fn call-site type-argument
+    // inference — unify param types against argument types, then substitute the
+    // inferred TypeSubstitutionMap into the declared return type so the call
+    // yields a concrete (instantiated) type and the monomorphization pass
+    // receives the type_args it needs to instantiate the body.
+    [[nodiscard]] TypeContext &types() const noexcept {
+        return types_;
     }
 
     [[nodiscard]] TypePtr
@@ -528,6 +653,13 @@ class ExpressionChecker final {
             MaybeCRef<Type> arm_expected = std::nullopt;
             if (unified_body_type.has_value()) {
                 arm_expected = std::cref(**unified_body_type);
+            } else if (expected_type_.has_value()) {
+                // Propagate the match's expected type to the first arm so a
+                // generic enum unit variant used as an arm body (e.g.
+                // `Some(_) => Option::None`) can infer its type arguments from
+                // context via bidirectional inference, instead of falling back
+                // to the un-instantiated enum type.
+                arm_expected = expected_type_;
             }
             const auto body =
                 services_.check_expr(*arm->body, arm_context, arm_expected);
@@ -833,6 +965,28 @@ class ExpressionChecker final {
             services_.typecheck_error_here(
                 error_codes::typecheck::UnknownEnumVariant, std::move(message), expr.range);
             return values_.error_typed();
+        }
+
+        // Bidirectional inference for generic enum unit variants. A bare
+        // `Option::None` (or any payload-less variant of a generic enum)
+        // carries no type arguments, so its type is ambiguous on its own.
+        // When the surrounding context expects a particular instantiation —
+        // e.g. `Option<T>` from a generic fn's return type, or `Option<Int>`
+        // from a let annotation, or the arm-expected type of a match — adopt
+        // that instantiation. Without this, every `Option::None` in a generic
+        // context would need explicit type arguments the grammar does not
+        // surface. Monomorphic enums have empty type_args and are unaffected
+        // (the expected instantiation check below requires non-empty args).
+        if (expected_type_.has_value()) {
+            const auto *expected_enum = expected_type_->get().get_if<types::EnumT>();
+            const auto *owner_enum = owner_type->get_if<types::EnumT>();
+            if (expected_enum != nullptr && owner_enum != nullptr &&
+                !expected_enum->type_args.empty() &&
+                expected_enum->symbol.has_value() && owner_enum->symbol.has_value() &&
+                *expected_enum->symbol == *owner_enum->symbol) {
+                return values_.typed_effect(expected_type_->get().clone(),
+                                            ExprEffect::ConstOnly);
+            }
         }
 
         return values_.typed_effect(std::move(owner_type), ExprEffect::ConstOnly);
@@ -1161,6 +1315,17 @@ class ExpressionChecker final {
             return check_fn_call(expr, fn_reference->get().target);
         }
 
+        // M3 (RFC §1.5): an enum variant constructor `EnumName::Variant(args)`.
+        // The resolver registered an EnumVariantConstructor reference pointing
+        // at the enum symbol; validate the variant name and payload arity here
+        // and build the variant value type (inferring type_args for generic
+        // enums from the argument types, mirroring generic fn call inference).
+        if (const auto variant_reference = services_.find_reference(
+                ReferenceKind::EnumVariantConstructor, call.callee->range);
+            variant_reference.has_value()) {
+            return check_enum_variant_constructor(expr, variant_reference->get().target);
+        }
+
         const auto reference =
             services_.find_reference(ReferenceKind::CallTarget, call.callee->range);
         if (!reference.has_value()) {
@@ -1216,13 +1381,46 @@ class ExpressionChecker final {
             return values_.error_typed();
         }
 
-        // P2c (RFC §3.5): record the resolved fn call site so the
-        // monomorphization pass has stable input without re-walking the
-        // typed tree. Explicit type arguments are empty today (the grammar's
-        // call surface does not carry `foo<T>(...)` syntax); generic
-        // instantiation from inferred argument types lands with the
-        // generic-body typecheck work.
-        services_.record_fn_call_site(target, expr.range, {});
+        // P2d (RFC §3.5): the fn call site is recorded after generic
+        // type-argument inference so the monomorphization pass receives the
+        // inferred type_args (empty for non-generic fns). See below.
+        // Explicit type arguments are empty today (the grammar's call surface
+        // does not carry `foo<T>(...)` syntax); instantiation is inferred from
+        // argument types.
+
+        // P4a (RFC corelib-effect-system.zh.md §4.5): verified-subset effect
+        // check. When the expression context is a contract clause, an
+        // invariant, or a safety/liveness formula, function calls must be
+        // effect Pure. If the declared effect is not Pure, emit the specific
+        // EffectNotPure diagnostic plus the umbrella NotInVerifiedSubset
+        // code. For invariant/safety/liveness contexts, Nondet functions
+        // additionally get a NondetInInvariant diagnostic (§4.2).
+        if (context_.verification_context != VerificationContext::None) {
+            const auto &judgement = fn->get().effect.judgement;
+            if (!judgement.is_pure()) {
+                const auto callee_name = call.callee->spelling();
+                services_.typecheck_error_here(
+                    error_codes::typecheck::EffectNotPure,
+                    messages::typecheck::EffectNotPure.format_with(
+                        callee_name, to_string(judgement)),
+                    expr.range);
+                services_.typecheck_error_here(
+                    error_codes::typecheck::NotInVerifiedSubset,
+                    messages::typecheck::NotInVerifiedSubset.format_with(
+                        callee_name, "declared effect is not Pure"),
+                    expr.range);
+
+                if (context_.verification_context ==
+                        VerificationContext::InvariantSafetyLiveness &&
+                    judgement.kind == EffectJudgement::Kind::Nondet) {
+                    services_.typecheck_error_here(
+                        error_codes::typecheck::NondetInInvariant,
+                        messages::typecheck::NondetInInvariant.format_with(
+                            callee_name),
+                        expr.range);
+                }
+            }
+        }
 
         if (call.arguments.size() != fn->get().params.size()) {
             services_.typecheck_error_here(
@@ -1235,24 +1433,43 @@ class ExpressionChecker final {
         }
 
         // RFC §2.6.1: the call-site effect is the join of the declared fn
-        // effect and each argument's effect. Map the declared effect clause
-        // (Pure/Nondet/Capability) to the existing ExprEffect lattice: Pure
-        // contributes Pure; Nondet and Capability widen to External-effect,
-        // mirroring how the existing capability-call path surfaces non-pure
-        // effects through ExprEffect::CapabilityCall.
+        // effect and each argument's effect. P4a derives the declared
+        // contribution from the signature-level EffectJudgement (RFC §2.2 /
+        // §6.1): Pure projects to ExprEffect::Pure; Nondet and CapabilitySet
+        // widen to ExternalEffect (capability-identity is captured on the
+        // judgement; ExprEffect only needs the rank for the call-site join and
+        // the Pure-only gate). Bottom (recovery) is treated as Pure so a
+        // previously-recovered fn does not spuriously taint callers.
         ExprEffect declared_effect = ExprEffect::Pure;
-        switch (static_cast<ast::EffectClauseKind>(fn->get().effect.kind)) {
-        case ast::EffectClauseKind::Pure:
+        switch (fn->get().effect.judgement.kind) {
+        case EffectJudgement::Kind::Pure:
+        case EffectJudgement::Kind::Bottom:
             declared_effect = ExprEffect::Pure;
             break;
-        case ast::EffectClauseKind::Nondet:
-        case ast::EffectClauseKind::Capability:
+        case EffectJudgement::Kind::Nondet:
+            // P2 (RFC §2.2): keep Nondet distinct from CapabilitySet so the
+            // body-effect projection recovers a Nondet judgement rather than
+            // collapsing to CapabilitySet (which is incomparable with Nondet
+            // and would spuriously flag a Nondet fn calling another Nondet fn
+            // as under-declared).
+            declared_effect = ExprEffect::Nondet;
+            break;
+        case EffectJudgement::Kind::CapabilitySet:
             declared_effect = ExprEffect::ExternalEffect;
             break;
         }
 
         ExprEffect effect = declared_effect;
         const auto limit = std::min(call.arguments.size(), fn->get().params.size());
+        const bool is_generic = !fn->get().type_param_names.empty();
+
+        // Type-check every argument carrying the declared param as the expected
+        // type so bidirectional inference still applies (e.g. an `Option::None`
+        // argument adopts the param's `Option<T>`). Argument types are
+        // collected first; assignability is checked after generic type-argument
+        // inference so the check runs against the instantiated param type
+        // (`Option<Int>`) rather than the raw `Option<T>` signature.
+        std::vector<TypePtr> arg_types(limit, nullptr);
         for (std::size_t index = 0; index < limit; ++index) {
             const auto &param = fn->get().params[index];
             const auto expectation = TypeExpectation{
@@ -1264,16 +1481,178 @@ class ExpressionChecker final {
             const auto argument =
                 services_.check_expr(*call.arguments[index], context_, expectation);
             effect = join_effects(effect, argument.effect);
-            (void)services_.check_assignable(*argument.type,
-                                             *param.type,
+            arg_types[index] = argument.type;
+        }
+
+        // P2d (RFC §3.5): for a generic fn, infer the type arguments by
+        // unifying each declared param type with the corresponding argument
+        // type, then substitute them into the param types (for the
+        // assignability check) and the return type (for the call's result).
+        TypeSubstitutionMap subst;
+        if (is_generic) {
+            subst.assign(fn->get().type_param_names.size(), nullptr);
+            for (std::size_t index = 0; index < limit; ++index) {
+                const auto &param = fn->get().params[index];
+                if (param.type != nullptr && arg_types[index] != nullptr) {
+                    unify_param_with_arg(*param.type, *arg_types[index], subst);
+                }
+            }
+        }
+
+        // Record the call site exactly once with the inferred type_args (empty
+        // for non-generic fns) so monomorphization can instantiate the body.
+        services_.record_fn_call_site(target, expr.range, subst);
+
+        // Assignability check against the (instantiated, for generic fns) param.
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto &param = fn->get().params[index];
+            if (param.type == nullptr || arg_types[index] == nullptr) {
+                continue;
+            }
+            const auto expectation = TypeExpectation{
+                .expected = param.type,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = param.declaration_range,
+                .description = "parameter '" + param.name + "'",
+            };
+            if (is_generic) {
+                const auto instantiated_param =
+                    substitute_type(param.type, subst, services_.types());
+                (void)services_.check_assignable(*arg_types[index],
+                                                 *instantiated_param,
+                                                 call.arguments[index]->range,
+                                                 "function argument",
+                                                 expectation);
+            } else {
+                (void)services_.check_assignable(*arg_types[index],
+                                                 *param.type,
+                                                 call.arguments[index]->range,
+                                                 "function argument",
+                                                 expectation);
+            }
+        }
+
+        // Result type: instantiate the return type for generic fns.
+        TypePtr result_type = nullptr;
+        if (fn->get().return_type != nullptr) {
+            result_type = is_generic
+                              ? substitute_type(fn->get().return_type, subst, services_.types())
+                              : fn->get().return_type;
+        }
+        return values_.typed_effect(
+            result_type != nullptr ? result_type->clone() : values_.make_error_type(),
+            effect);
+    }
+
+    // M3 (RFC §1.5): typecheck an enum variant constructor call
+    // `EnumName::Variant(arg0, arg1, ...)`. The resolver already confirmed the
+    // callee's owner is an enum and registered an EnumVariantConstructor
+    // reference pointing at the enum symbol; here we validate the variant
+    // name, check the payload arity and argument types, infer type_args for a
+    // generic enum (mirroring generic fn call inference), and build the
+    // variant value type (EnumVariantT), which is a subtype of the enum
+    // instantiation (EnumT) so it flows into let bindings and match scrutinees.
+    [[nodiscard]] TypedValue check_enum_variant_constructor(const ast::ExprSyntax &expr,
+                                                            SymbolId enum_symbol) const {
+        const auto &call = expr.as<ast::CallExpr>();
+        auto owner_type = services_.resolve_type_symbol(enum_symbol, expr.range);
+        if (!owner_type || !owner_type->holds<types::EnumT>()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::InvalidCallableReference,
+                messages::typecheck::CallTargetSymbolMissing.format_with(),
+                expr.range);
+            return values_.error_typed(false);
+        }
+        const auto enum_info = services_.get_enum(*owner_type);
+        if (!enum_info.has_value()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::MissingTypeMetadata,
+                messages::typecheck::EnumTypeInfoMissing.format_with(owner_type->describe()),
+                expr.range);
+            return values_.error_typed(false);
+        }
+
+        const auto &segments = call.callee->segments;
+        const auto variant = enum_info->get().find_variant(segments.back());
+        if (!variant.has_value()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::UnknownEnumVariant,
+                messages::typecheck::UnknownEnumVariant.format_with(call.callee->spelling()),
+                expr.range);
+            return values_.error_typed(false);
+        }
+
+        if (call.arguments.size() != variant->get().payload.size()) {
+            services_.typecheck_error_here(
+                error_codes::typecheck::WrongArity,
+                messages::typecheck::WrongArity.format_with("enum variant",
+                                                            call.callee->spelling(),
+                                                            std::to_string(variant->get().payload.size()),
+                                                            std::to_string(call.arguments.size())),
+                expr.range);
+        }
+
+        const bool is_generic = !enum_info->get().type_param_names.empty();
+        const auto limit = std::min(call.arguments.size(), variant->get().payload.size());
+
+        // Type-check arguments against the declared payload types (carrying
+        // each payload type as the expected type so bidirectional inference
+        // applies to payload arguments too).
+        ExprEffect effect = ExprEffect::Pure;
+        std::vector<TypePtr> arg_types(limit, nullptr);
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto &payload_type = variant->get().payload[index];
+            const auto expectation = TypeExpectation{
+                .expected = payload_type,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = variant->get().declaration_range,
+                .description = "enum variant payload",
+            };
+            const auto argument =
+                services_.check_expr(*call.arguments[index], context_, expectation);
+            effect = join_effects(effect, argument.effect);
+            arg_types[index] = argument.type;
+        }
+
+        // For a generic enum, infer type_args by unifying payload types with
+        // argument types, then check assignability against the instantiated
+        // payload types (same pattern as generic fn call inference).
+        TypeSubstitutionMap subst;
+        if (is_generic) {
+            subst.assign(enum_info->get().type_param_names.size(), nullptr);
+            for (std::size_t index = 0; index < limit; ++index) {
+                const auto &payload_type = variant->get().payload[index];
+                if (payload_type != nullptr && arg_types[index] != nullptr) {
+                    unify_param_with_arg(*payload_type, *arg_types[index], subst);
+                }
+            }
+        }
+        for (std::size_t index = 0; index < limit; ++index) {
+            const auto &payload_type = variant->get().payload[index];
+            if (payload_type == nullptr || arg_types[index] == nullptr) {
+                continue;
+            }
+            const auto expectation = TypeExpectation{
+                .expected = payload_type,
+                .origin_kind = TypeExpectationOriginKind::FunctionParameter,
+                .origin_range = variant->get().declaration_range,
+                .description = "enum variant payload",
+            };
+            const auto effective_payload =
+                is_generic ? substitute_type(payload_type, subst, services_.types()) : payload_type;
+            (void)services_.check_assignable(*arg_types[index],
+                                             *effective_payload,
                                              call.arguments[index]->range,
-                                             "function argument",
+                                             "enum variant payload",
                                              expectation);
         }
 
-        return values_.typed_effect(
-            fn->get().return_type ? fn->get().return_type->clone() : values_.make_error_type(),
-            effect);
+        const auto *owner_enum = owner_type->get_if<types::EnumT>();
+        const auto canonical_name =
+            owner_enum != nullptr ? owner_enum->canonical_name : std::string{};
+        const auto result_type = services_.types().enum_variant_type(
+            canonical_name, std::string(segments.back()), enum_symbol, subst);
+        return values_.typed_effect(result_type->clone(), effect);
     }
 
     [[nodiscard]] TypedValue check_capability_call(const ast::ExprSyntax &expr,

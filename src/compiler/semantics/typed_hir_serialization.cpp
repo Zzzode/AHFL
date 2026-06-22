@@ -205,6 +205,25 @@ using Json = json::JsonValue;
             object->set("value", j_type(value.value));
             return object;
         },
+        [](const types::FnT &value) {
+            auto object = Json::make_object();
+            object->set("kind", Json::make_string("Fn"));
+            auto params_array = Json::make_array();
+            for (const auto &param : value.params) {
+                params_array->push(j_type(param));
+            }
+            object->set("params", std::move(params_array));
+            object->set("return", j_type(value.return_type));
+            object->set("effect", Json::make_string(std::string(to_string(value.effect))));
+            return object;
+        },
+        [](const types::TypeVarT &value) {
+            auto object = Json::make_object();
+            object->set("kind", Json::make_string("TypeVar"));
+            object->set("index", Json::make_int(static_cast<std::int64_t>(value.index)));
+            object->set("name", Json::make_string(value.name));
+            return object;
+        },
     });
 }
 
@@ -900,6 +919,9 @@ class Reader {
             return types.set(type_field(*value, "element"));
         if (kind == "Map")
             return types.map(type_field(*value, "key"), type_field(*value, "value"));
+        if (kind == "TypeVar")
+            return types.type_var(u32_field(*value, "index"),
+                                  string_field(*value, "name"));
 
         ok_ = false;
         return nullptr;

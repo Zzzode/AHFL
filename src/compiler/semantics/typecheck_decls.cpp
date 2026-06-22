@@ -357,13 +357,29 @@ EnvironmentBuildResult EnvironmentBuilder::run() {
             if (const auto ast_decl = driver_->alias_decl_of(decl.symbol); ast_decl.has_value()) {
                 const auto &alias = ast_decl->get();
                 const auto symbol = driver_->symbol_of(decl.symbol);
+
+                // Collect type param names and push scope so the aliased type
+                // can resolve type variables.
+                std::vector<std::string> type_param_names;
+                for (const auto &tp : alias.type_params) {
+                    type_param_names.push_back(tp->name);
+                }
+                const auto *prev_alias_type_params = driver_->current_type_param_names_;
+                driver_->current_type_param_names_ = &type_param_names;
+
+                TypePtr aliased_type = alias.aliased_type
+                                           ? driver_->resolve_type(*alias.aliased_type)
+                                           : driver_->make_error_type();
+
+                driver_->current_type_param_names_ = prev_alias_type_params;
+
                 update.payload = TypeAliasDeclInfo{
                     .symbol = decl.symbol,
                     .canonical_name =
                         symbol.has_value() ? symbol->get().canonical_name : std::string(alias.name),
                     .local_name = alias.name,
-                    .aliased_type = alias.aliased_type ? driver_->resolve_type(*alias.aliased_type)
-                                                       : driver_->make_error_type(),
+                    .type_param_names = std::move(type_param_names),
+                    .aliased_type = aliased_type,
                     .aliased_type_range =
                         alias.aliased_type ? alias.aliased_type->range : SourceRange{},
                     .declaration_range = alias.range,
@@ -473,10 +489,18 @@ void TypeCheckPass::build_struct_types() {
             StructTypeInfo info{
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
+                .type_param_names = {},
                 .fields = {},
                 .declaration_range = decl.get().range,
                 .field_index_ = {},
             };
+
+            // Push type-parameter scope so field types can reference them.
+            for (const auto &tp : decl.get().type_params) {
+                info.type_param_names.push_back(tp->name);
+            }
+            const auto *prev_type_params = current_type_param_names_;
+            current_type_param_names_ = &info.type_param_names;
 
             std::unordered_set<std::string> seen_fields;
             for (const auto &field : decl.get().fields) {
@@ -497,6 +521,8 @@ void TypeCheckPass::build_struct_types() {
                 });
             }
 
+            current_type_param_names_ = prev_type_params;
+
             environment().index_struct(id, std::move(info));
         });
     }
@@ -513,10 +539,18 @@ void TypeCheckPass::build_enum_types() {
             EnumTypeInfo info{
                 .symbol = SymbolId{id},
                 .canonical_name = symbol->get().canonical_name,
+                .type_param_names = {},
                 .variants = {},
                 .declaration_range = decl.get().range,
                 .variant_set_ = {},
             };
+
+            // Push type-parameter scope so variant payload types can reference them.
+            for (const auto &tp : decl.get().type_params) {
+                info.type_param_names.push_back(tp->name);
+            }
+            const auto *prev_enum_type_params = current_type_param_names_;
+            current_type_param_names_ = &info.type_param_names;
 
             std::unordered_set<std::string> seen_variants;
             for (const auto &variant : decl.get().variants) {
@@ -540,6 +574,8 @@ void TypeCheckPass::build_enum_types() {
 
                 info.variants.push_back(std::move(variant_info));
             }
+
+            current_type_param_names_ = prev_enum_type_params;
 
             environment().index_enum(id, std::move(info));
         });
@@ -620,6 +656,19 @@ void TypeCheckPass::build_predicate_types() {
                     .type = resolve_type(*param->type),
                     .declaration_range = param->range,
                 });
+            }
+
+            // P4a (RFC corelib-effect-system.zh.md §2.4): predicates are
+            // implicitly effect Pure and may not carry an explicit effect
+            // clause. The grammar does not currently permit one, but the
+            // semantic check is in place as a defense-in-depth measure: if
+            // the grammar is ever extended, this diagnostic fires instead
+            // of silently accepting an effectful predicate.
+            if (decl.get().effect_clause) {
+                typecheck_error_here(
+                    error_codes::typecheck::EffectOnPredicate,
+                    messages::typecheck::EffectOnPredicate.format_with(),
+                    decl.get().effect_clause->range);
             }
 
             environment().predicates_.emplace(id, std::move(info));
@@ -821,11 +870,18 @@ void TypeCheckPass::build_fn_types() {
                 .effect = {},
                 .has_body = static_cast<bool>(decl.get().body),
                 .declaration_range = decl.get().range,
+                .builtin_name = decl.get().builtin_name, // P5: propagate @builtin name
             };
 
             for (const auto &type_param : decl.get().type_params) {
                 info.type_param_names.push_back(type_param->name);
             }
+
+            // P2: activate the type parameter scope so resolve_type produces
+            // TypeVar for names matching a type parameter (instead of treating
+            // them as unknown types).
+            const auto *prev_type_params = current_type_param_names_;
+            current_type_param_names_ = &info.type_param_names;
 
             for (const auto &param : decl.get().params) {
                 info.params.push_back(ParamTypeInfo{
@@ -838,6 +894,9 @@ void TypeCheckPass::build_fn_types() {
             info.return_type =
                 decl.get().return_type ? resolve_type(*decl.get().return_type) : make_error_type();
 
+            // Restore previous type param scope.
+            current_type_param_names_ = prev_type_params;
+
             // Resolve the effect clause: Pure/Nondet pass through as the
             // canonical kind; Capability resolves each named capability to its
             // symbol id (the resolver already emitted a diagnostic for any
@@ -847,6 +906,7 @@ void TypeCheckPass::build_fn_types() {
                 const auto &clause = *decl.get().effect_clause;
                 info.effect.kind = static_cast<int>(clause.kind);
                 info.effect.source_range = clause.range;
+                info.effect.has_decreases = static_cast<bool>(clause.decreases_expr);
                 if (clause.kind == ast::EffectClauseKind::Capability) {
                     for (const auto &capability_name : clause.capabilities) {
                         const auto reference = find_reference_here(
@@ -855,6 +915,24 @@ void TypeCheckPass::build_fn_types() {
                             info.effect.capabilities.push_back(reference->get().target);
                         }
                     }
+                }
+                // P4a (RFC corelib-effect-system.zh.md §2.2 / §6.1): project
+                // the declared clause to the signature-level EffectJudgement.
+                // Capability clauses become CapabilitySet over the resolved
+                // capability symbols; Pure/Nondet pass through directly.
+                info.effect.judgement = build_effect_judgement(clause);
+
+                // P4a (RFC §3.4 / §4.5 V2): effect Pure functions must declare
+                // a `decreases` termination measure (unless the function has no
+                // body — i.e. it's a declaration only, like an extern or trait
+                // method signature — in which case the measure is supplied by
+                // the implementation).
+                if (clause.kind == ast::EffectClauseKind::Pure &&
+                    !info.effect.has_decreases && info.has_body) {
+                    typecheck_error_here(
+                        error_codes::typecheck::NoDecreases,
+                        messages::typecheck::NoDecreases.format_with(decl.get().name),
+                        clause.range);
                 }
             }
 
@@ -887,6 +965,7 @@ TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &
     }
     info.kind = static_cast<int>(clause->kind);
     info.source_range = clause->range;
+    info.has_decreases = static_cast<bool>(clause->decreases_expr);
     if (clause->kind == ast::EffectClauseKind::Capability) {
         for (const auto &capability_name : clause->capabilities) {
             const auto reference =
@@ -896,7 +975,73 @@ TypeCheckPass::resolve_effect_clause_info(const Owned<ast::EffectClauseSyntax> &
             }
         }
     }
+    info.judgement = build_effect_judgement(*clause);
     return info;
+}
+
+// P4a (RFC corelib-effect-system.zh.md §2.2 / §6.1): project an
+// ast::EffectClauseSyntax to the signature-level EffectJudgement. Pure/Nondet
+// pass through; Capability becomes a CapabilitySet over the resolved
+// capability symbols (missing references are dropped — the resolver already
+// diagnosed them).
+EffectJudgement
+TypeCheckPass::build_effect_judgement(const ast::EffectClauseSyntax &clause) {
+    switch (clause.kind) {
+    case ast::EffectClauseKind::Pure:
+        return EffectJudgement::make_pure();
+    case ast::EffectClauseKind::Nondet:
+        return EffectJudgement::make_nondet();
+    case ast::EffectClauseKind::Capability: {
+        CapabilitySymbolSet caps;
+        for (const auto &capability_name : clause.capabilities) {
+            const auto reference =
+                find_reference_here(ReferenceKind::AgentCapability, capability_name->range);
+            if (reference.has_value()) {
+                caps.insert(reference->get().target);
+            }
+        }
+        return EffectJudgement::make_capability_set(std::move(caps));
+    }
+    }
+    return EffectJudgement::make_pure();
+}
+
+// P4a (RFC corelib-effect-system.zh.md §2.6.4 / §4.5 V2): check that a
+// function's inferred body effect is covered by its declared effect. The
+// declared effect must be an upper bound of the body effect (body ⊑ declared).
+// If the body effect is stronger (i.e. not covered by the declared effect),
+// emit E::effect_underdeclared.
+//
+// The body effect is passed as an ExprEffect (the expression-level inference
+// lattice, produced by check_expr / check_block) and projected to the
+// signature-level EffectJudgement via `project()` before comparison.
+//
+// TODO(FnSema): call this from the FnSema pass after type-checking the
+// function body. The body's overall ExprEffect is the join of all
+// statement/expression effects in the body (see check_block / check_expr).
+// For now, this function is unused but ready for the FnSema integration.
+void TypeCheckPass::check_fn_effect_underdeclared(SymbolId fn_symbol,
+                                                  ExprEffect body_effect,
+                                                  SourceRange body_range) {
+    const auto fn = environment().get_fn(fn_symbol);
+    if (!fn.has_value()) {
+        return;
+    }
+
+    const auto &declared = fn->get().effect.judgement;
+    const auto body_judgement = project(body_effect);
+
+    // The declared effect must be an upper bound: body ⊑ declared.
+    // If not, the function under-declares its effect.
+    if (!judgement_le(body_judgement, declared)) {
+        typecheck_error_here(
+            error_codes::typecheck::EffectUnderdeclared,
+            messages::typecheck::EffectUnderdeclared.format_with(
+                fn->get().canonical_name,
+                std::string(to_string(declared)),
+                std::string(to_string(body_judgement))),
+            body_range);
+    }
 }
 
 // P3 (RFC §3.2.2 / type-system §1.3): turn one trait-item method signature

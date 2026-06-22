@@ -45,6 +45,14 @@ std::size_t TypeContext::TypeKeyHash::operator()(const TypeKey &key) const noexc
     if (key.nominal_symbol.has_value()) {
         seed = hash_mix(seed, std::hash<std::size_t>{}(key.nominal_symbol->value));
     }
+    seed = hash_mix(seed, std::hash<bool>{}(key.type_var_index.has_value()));
+    if (key.type_var_index.has_value()) {
+        seed = hash_mix(seed, std::hash<std::uint32_t>{}(*key.type_var_index));
+    }
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.type_args.size()));
+    for (const auto *arg : key.type_args) {
+        seed = hash_mix(seed, std::hash<const void *>{}(arg));
+    }
     return seed;
 }
 
@@ -100,14 +108,23 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
     case TypeKind::Decimal:
         return types::DecimalT{.scale = key.decimal_scale.value_or(0)};
     case TypeKind::Struct:
-        return types::StructT{.canonical_name = key.name, .symbol = key.nominal_symbol};
+        return types::StructT{
+            .canonical_name = key.name,
+            .symbol = key.nominal_symbol,
+            .type_args = key.type_args,
+        };
     case TypeKind::Enum:
-        return types::EnumT{.canonical_name = key.name, .symbol = key.nominal_symbol};
+        return types::EnumT{
+            .canonical_name = key.name,
+            .symbol = key.nominal_symbol,
+            .type_args = key.type_args,
+        };
     case TypeKind::EnumVariant:
         return types::EnumVariantT{
             .canonical_name = key.name,
             .symbol = key.nominal_symbol,
             .variant_name = key.variant_name,
+            .type_args = key.type_args,
         };
     case TypeKind::Optional:
         return types::OptionalT{.inner = key.first};
@@ -117,6 +134,15 @@ types::Payload TypeContext::build_payload(const TypeKey &key) {
         return types::SetT{.element = key.first};
     case TypeKind::Map:
         return types::MapT{.key = key.first, .value = key.second};
+    case TypeKind::Fn:
+        // Fn types use the dedicated fn_pool_; build_payload should not be
+        // called with TypeKind::Fn. Fall back defensively.
+        return types::FnT{};
+    case TypeKind::TypeVar:
+        return types::TypeVarT{
+            .index = key.type_var_index.value_or(0),
+            .name = key.name,
+        };
     }
 
     return types::AnyT{};
@@ -178,6 +204,19 @@ TypePtr TypeContext::struct_type(std::string canonical_name, SymbolId symbol) {
 }
 
 TypePtr TypeContext::struct_type(std::string canonical_name, std::optional<SymbolId> symbol) {
+    return struct_type(std::move(canonical_name), std::move(symbol), {});
+}
+
+TypePtr TypeContext::struct_type(std::string canonical_name,
+                                 SymbolId symbol,
+                                 std::vector<TypePtr> type_args) {
+    return struct_type(
+        std::move(canonical_name), std::optional<SymbolId>{symbol}, std::move(type_args));
+}
+
+TypePtr TypeContext::struct_type(std::string canonical_name,
+                                 std::optional<SymbolId> symbol,
+                                 std::vector<TypePtr> type_args) {
     return intern(TypeKey{
         .kind = TypeKind::Struct,
         .name = std::move(canonical_name),
@@ -187,6 +226,8 @@ TypePtr TypeContext::struct_type(std::string canonical_name, std::optional<Symbo
         .first = nullptr,
         .second = nullptr,
         .nominal_symbol = symbol,
+        .type_var_index = std::nullopt,
+        .type_args = std::move(type_args),
     });
 }
 
@@ -199,6 +240,19 @@ TypePtr TypeContext::enum_type(std::string canonical_name, SymbolId symbol) {
 }
 
 TypePtr TypeContext::enum_type(std::string canonical_name, std::optional<SymbolId> symbol) {
+    return enum_type(std::move(canonical_name), std::move(symbol), {});
+}
+
+TypePtr TypeContext::enum_type(std::string canonical_name,
+                               SymbolId symbol,
+                               std::vector<TypePtr> type_args) {
+    return enum_type(
+        std::move(canonical_name), std::optional<SymbolId>{symbol}, std::move(type_args));
+}
+
+TypePtr TypeContext::enum_type(std::string canonical_name,
+                               std::optional<SymbolId> symbol,
+                               std::vector<TypePtr> type_args) {
     return intern(TypeKey{
         .kind = TypeKind::Enum,
         .name = std::move(canonical_name),
@@ -208,6 +262,8 @@ TypePtr TypeContext::enum_type(std::string canonical_name, std::optional<SymbolI
         .first = nullptr,
         .second = nullptr,
         .nominal_symbol = symbol,
+        .type_var_index = std::nullopt,
+        .type_args = std::move(type_args),
     });
 }
 
@@ -225,6 +281,24 @@ TypePtr TypeContext::enum_variant_type(std::string canonical_name,
 TypePtr TypeContext::enum_variant_type(std::string canonical_name,
                                        std::string variant_name,
                                        std::optional<SymbolId> symbol) {
+    return enum_variant_type(
+        std::move(canonical_name), std::move(variant_name), std::move(symbol), {});
+}
+
+TypePtr TypeContext::enum_variant_type(std::string canonical_name,
+                                       std::string variant_name,
+                                       SymbolId symbol,
+                                       std::vector<TypePtr> type_args) {
+    return enum_variant_type(std::move(canonical_name),
+                             std::move(variant_name),
+                             std::optional<SymbolId>{symbol},
+                             std::move(type_args));
+}
+
+TypePtr TypeContext::enum_variant_type(std::string canonical_name,
+                                       std::string variant_name,
+                                       std::optional<SymbolId> symbol,
+                                       std::vector<TypePtr> type_args) {
     return intern(TypeKey{
         .kind = TypeKind::EnumVariant,
         .name = std::move(canonical_name),
@@ -234,6 +308,8 @@ TypePtr TypeContext::enum_variant_type(std::string canonical_name,
         .first = nullptr,
         .second = nullptr,
         .nominal_symbol = symbol,
+        .type_var_index = std::nullopt,
+        .type_args = std::move(type_args),
     });
 }
 
@@ -286,6 +362,72 @@ TypePtr TypeContext::map(TypePtr key_type, TypePtr value_type) {
         .first = key_type,
         .second = value_type,
         .nominal_symbol = std::nullopt,
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Fn type interning (separate pool: variable child count + effect)
+// ---------------------------------------------------------------------------
+
+std::size_t TypeContext::FnKeyHash::operator()(const FnKey &key) const noexcept {
+    auto seed = std::hash<std::size_t>{}(key.params.size());
+    for (const auto *param : key.params) {
+        seed = hash_mix(seed, std::hash<const void *>{}(param));
+    }
+    seed = hash_mix(seed, std::hash<const void *>{}(key.return_type));
+    // Hash effect kind + capability count + set of values.
+    seed = hash_mix(seed, std::hash<int>{}(static_cast<int>(key.effect.kind)));
+    seed = hash_mix(seed, std::hash<std::size_t>{}(key.effect.capabilities.values.size()));
+    for (const auto &cap : key.effect.capabilities.values) {
+        seed = hash_mix(seed, std::hash<std::size_t>{}(cap));
+    }
+    return seed;
+}
+
+const Type *TypeContext::intern_fn(FnKey key) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (const auto iter = fn_pool_.find(key); iter != fn_pool_.end()) {
+        return iter->second;
+    }
+
+    auto owned = std::make_unique<Type>();
+    owned->payload = build_fn_payload(key);
+
+    const Type *raw = owned.get();
+    storage_.push_back(std::move(owned));
+    fn_pool_.emplace(std::move(key), raw);
+    return raw;
+}
+
+types::Payload TypeContext::build_fn_payload(const FnKey &key) {
+    types::FnT fn;
+    fn.params = key.params;
+    fn.return_type = key.return_type;
+    fn.effect = key.effect;
+    return fn;
+}
+
+TypePtr TypeContext::fn(std::vector<TypePtr> param_types,
+                        TypePtr return_type,
+                        EffectJudgement effect) {
+    return intern_fn(FnKey{
+        .params = std::move(param_types),
+        .return_type = return_type,
+        .effect = std::move(effect),
+    });
+}
+
+TypePtr TypeContext::type_var(std::uint32_t index, std::string name) {
+    return intern(TypeKey{
+        .kind = TypeKind::TypeVar,
+        .name = std::move(name),
+        .variant_name = {},
+        .string_bounds = std::nullopt,
+        .decimal_scale = std::nullopt,
+        .first = nullptr,
+        .second = nullptr,
+        .nominal_symbol = std::nullopt,
+        .type_var_index = index,
     });
 }
 

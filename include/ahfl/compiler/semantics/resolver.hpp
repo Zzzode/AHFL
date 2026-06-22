@@ -67,6 +67,12 @@ enum class ReferenceKind {
     // can disambiguate a fn call from a capability/predicate call without
     // re-walking both namespaces.
     FnCallTarget,
+    // M3 (RFC §1.5): an enum variant constructor call `EnumName::Variant(args)`
+    // resolves its callee owner to the Enum symbol. The variant name (last
+    // path segment) and payload arity are validated by the typecheck pass,
+    // which has the EnumTypeInfo; the resolver only registers the owner so
+    // the call site can be recognised without re-walking the Types namespace.
+    EnumVariantConstructor,
 };
 
 struct SymbolId {

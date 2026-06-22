@@ -8,6 +8,12 @@ enum class ExprEffect {
     Pure,
     ConstOnly,
     PredicateCall,
+    // P2 (RFC §2.2): a call to a Nondet-declared fn. Distinct from
+    // CapabilityCall/ExternalEffect so the body-effect projection can recover
+    // a Nondet judgement (rather than collapsing every non-Pure call to
+    // CapabilitySet, which would make a Nondet fn calling another Nondet fn
+    // spuriously under-declared).
+    Nondet,
     CapabilityCall,
     ExternalEffect,
     Unknown,

@@ -971,6 +971,33 @@ class ResolverPass final {
             return function;
         }
 
+        // M3 (RFC §1.5): an enum variant constructor `EnumName::Variant(args)`.
+        // When the callee is a multi-segment path whose owner names an Enum
+        // type, register an EnumVariantConstructor reference (target = the enum
+        // symbol) so the typecheck pass can validate the variant name and
+        // payload arity, and build the variant value type. The variant itself
+        // is not a standalone symbol (only the enum is), so this owner-only
+        // reference is all the typecheck pass needs to recover the full
+        // EnumTypeInfo.
+        if (name.segments.size() > 1) {
+            const auto owner = owner_name_of(name);
+            if (const auto owner_id = lookup(SymbolNamespace::Types, owner);
+                owner_id.has_value()) {
+                const auto owner_symbol = result_.symbol_table.get(*owner_id);
+                if (owner_symbol.has_value() &&
+                    owner_symbol->get().kind == SymbolKind::Enum) {
+                    result_.add_reference(ResolvedReference{
+                        .kind = ReferenceKind::EnumVariantConstructor,
+                        .text = name.spelling(),
+                        .source_id = current_source_id_,
+                        .range = name.range,
+                        .target = *owner_id,
+                    });
+                    return owner_id;
+                }
+            }
+        }
+
         emit_error("unknown callable '" + name.spelling() + "'", current_source_, name.range);
         return std::nullopt;
     }
@@ -1059,6 +1086,37 @@ class ResolverPass final {
                            resolve_type(*t.key_type);
                            resolve_type(*t.value_type);
                        },
+                       [&](const ast::FnType &t) {
+                           // P2 (RFC §3.3): first-class Fn type. Recurse into
+                           // parameter types and the return type so named/App
+                           // types inside a Fn signature (e.g. the Option<U> in
+                           // `Fn(T) -> Option<U>`) are resolved like any other
+                           // type position. The effect clause capabilities are
+                           // resolved separately by resolve_effect_clause.
+                           for (const auto &param : t.params) {
+                               if (param) {
+                                   resolve_type(*param);
+                               }
+                           }
+                           if (t.return_type) {
+                               resolve_type(*t.return_type);
+                           }
+                       },
+                       [&](const ast::AppType &t) {
+                           // Resolve the base name (same as NamedType).
+                           // P2: if this name is a generic type param in scope,
+                           // skip resolution — it's an opaque type variable.
+                           if (generic_type_params_.count(t.name->spelling()) == 0) {
+                               (void)resolve_reference(
+                                   SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
+                           }
+                           // Recurse into type arguments.
+                           for (const auto &arg : t.arguments) {
+                               if (arg) {
+                                   resolve_type(*arg);
+                               }
+                           }
+                       },
                        [](const auto &) { /* leaf types: nothing to resolve */ },
                    },
                    type.node);
@@ -1109,6 +1167,23 @@ class ResolverPass final {
                            }
                        },
                        [&](const ast::MemberAccessExpr &e) { resolve_declaration_expr(*e.base); },
+                       [&](const ast::MatchExpr &e) {
+                           // P1b (RFC §1.6): match is a regular expression,
+                           // so the scrutinee and each arm's guard/body must be
+                           // resolved too — otherwise qualified enum variants
+                           // used as an arm body (e.g. `Some(_) => Option::None`)
+                           // never get a QualifiedValueOwnerType reference and
+                           // the typecheck pass reports UNKNOWN_QUALIFIED_VALUE.
+                           resolve_declaration_expr(*e.scrutinee);
+                           for (const auto &arm : e.arms) {
+                               if (arm->guard) {
+                                   resolve_declaration_expr(*arm->guard);
+                               }
+                               if (arm->body) {
+                                   resolve_declaration_expr(*arm->body);
+                               }
+                           }
+                       },
                        [&](const ast::LambdaExpr &e) {
                            // P2 (RFC §6): a closure body is an expression;
                            // resolve it so free-variable references inside the

@@ -8,6 +8,7 @@ bool is_effect_pure(ExprEffect effect) noexcept {
     case ExprEffect::ConstOnly:
     case ExprEffect::PredicateCall:
         return true;
+    case ExprEffect::Nondet:
     case ExprEffect::CapabilityCall:
     case ExprEffect::ExternalEffect:
     case ExprEffect::Unknown:
@@ -26,15 +27,17 @@ ExprEffect join_effects(ExprEffect lhs, ExprEffect rhs) noexcept {
             return 1;
         case ExprEffect::PredicateCall:
             return 2;
-        case ExprEffect::CapabilityCall:
+        case ExprEffect::Nondet:
             return 3;
-        case ExprEffect::ExternalEffect:
+        case ExprEffect::CapabilityCall:
             return 4;
-        case ExprEffect::Unknown:
+        case ExprEffect::ExternalEffect:
             return 5;
+        case ExprEffect::Unknown:
+            return 6;
         }
 
-        return 5;
+        return 6;
     };
 
     return rank(lhs) >= rank(rhs) ? lhs : rhs;
@@ -48,6 +51,8 @@ std::string_view to_string(ExprEffect effect) noexcept {
         return "const-only";
     case ExprEffect::PredicateCall:
         return "predicate call";
+    case ExprEffect::Nondet:
+        return "nondet";
     case ExprEffect::CapabilityCall:
         return "capability call";
     case ExprEffect::ExternalEffect:
