@@ -2034,10 +2034,12 @@ class ExpressionChecker final {
             }
             const auto owner_type =
                 services_.resolve_type_symbol(owner_reference->get().target, candidate.range);
-            const auto *owner_enum = owner_type != nullptr ? owner_type->get_if<types::EnumT>()
-                                                           : nullptr;
-            return owner_enum != nullptr &&
-                   std::string_view{owner_enum->canonical_name} == stdlib_bridge::kOptionType;
+            if (owner_type == nullptr) {
+                return false;
+            }
+            const auto view = stdlib_bridge::std_container_type_view(*owner_type);
+            return view.has_value() &&
+                   view->kind == stdlib_bridge::StdContainerKind::Option && view->nominal;
         };
         if ((binary.op == ast::ExprBinaryOp::Equal || binary.op == ast::ExprBinaryOp::NotEqual) &&
             binary.lhs && binary.rhs &&
