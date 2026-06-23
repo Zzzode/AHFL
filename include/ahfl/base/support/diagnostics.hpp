@@ -265,6 +265,29 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InherentTraitConflict{
     "INHERENT_TRAIT_CONFLICT"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // diagnostics. Surfaced by the P4a effect-judgement + verified-subset checks.
+//   effect_not_pure          — pure-context call resolved to a non-Pure effect
+//   no_decreases             — Pure fn missing a decreases measure (RFC §3.4)
+//   not_in_verified_subset   — umbrella code: call entering a verified-subset
+//                              context fails one of the subset conditions
+//                              (§4.5), always accompanied by a specific code.
+//   effect_underdeclared     — declared effect does not cover the inferred
+//                              body effect (§2.6.4)
+//   effect_incompatible      — Nondet and capability effect coexist in the
+//                              same judgement (§2.6.4)
+//   effect_on_predicate      — predicate declaration carries an explicit
+//                              effect clause (§2.4; predicates are implicitly
+//                              Pure, users may not override)
+//   nondet_in_invariant      — Nondet fn or now appears in an invariant /
+//                              safety / liveness formula (§4.2)
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectNotPure{"EFFECT_NOT_PURE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoDecreases{"NO_DECREASES"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NotInVerifiedSubset{
+    "NOT_IN_VERIFIED_SUBSET"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectUnderdeclared{
+    "EFFECT_UNDERDECLARED"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectIncompatible{"EFFECT_INCOMPATIBLE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectOnPredicate{"EFFECT_ON_PREDICATE"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{"NONDET_IN_INVARIANT"};
 } // namespace typecheck
 
 namespace resolve {
