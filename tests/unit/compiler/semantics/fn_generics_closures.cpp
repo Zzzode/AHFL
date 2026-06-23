@@ -900,3 +900,653 @@ fn caller2() -> Int effect Pure decreases 0 {
     REQUIRE(it != mono.instances_per_decl.end());
     CHECK(it->second == 1);
 }
+
+// ---------------------------------------------------------------------------
+// P2d.S2: where-bound validation at call sites (RFC §3.5 / §2).
+//
+// Grammar note (AHFL.g4 fnDecl):
+//   fn ID typeParams? params? ('->' type_)? effectClause? whereClause? body
+// So the correct source order is: `fn name<T>(args) -> Ret effect ... where T:Bound { }`
+// (where-clause FOLLOWS the effect clause).
+//
+// Struct field separator is SEMICOLON (last field also requires trailing `;`).
+// Enum variant separator is COMMA (trailing comma allowed).
+// Identifiers may NOT begin with `_`.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// True when at least one diagnostic carries TRAIT_BOUND_NOT_SATISFIED.
+bool has_bound_not_satisfied(const ahfl::TypeCheckResult &result) {
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() &&
+            entry.code->find("TRAIT_BOUND_NOT_SATISFIED") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Count TRAIT_BOUND_NOT_SATISFIED diagnostics.
+std::size_t count_bound_not_satisfied(const ahfl::TypeCheckResult &result) {
+    std::size_t count = 0;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() &&
+            entry.code->find("TRAIT_BOUND_NOT_SATISFIED") != std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+// A diagnostic is "anchored" when its optional SourceRange covers a non-empty
+// byte-offset range at a non-zero offset in the source file — i.e. it pinpoints
+// the actual call expression instead of falling back to the file-origin
+// sentinel. All failing test programs locate call expressions at non-zero
+// offsets, so this predicate confirms column-precise anchoring.
+bool has_anchored_bound_violation(const ahfl::TypeCheckResult &result) {
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (!(entry.code.has_value() &&
+              entry.code->find("TRAIT_BOUND_NOT_SATISFIED") != std::string::npos)) {
+            continue;
+        }
+        if (entry.range.has_value() &&
+            entry.range->begin_offset > 0 &&
+            entry.range->end_offset > entry.range->begin_offset) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Convenience: run parse + resolve + typecheck without asserting parse/resolve
+// cleanliness. Used by the negative tests that deliberately construct source
+// that may trigger unrelated diagnostics; we only care that the where-bound
+// checker reports TRAIT_BOUND_NOT_SATISFIED for the call-site violations.
+ahfl::TypeCheckResult typecheck_loose(std::string_view filename,
+                                      const std::string &source) {
+    const ahfl::Frontend frontend;
+    const auto parse_result = frontend.parse_text(std::string(filename), source);
+    if (parse_result.program == nullptr) {
+        return ahfl::TypeCheckResult{};
+    }
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse_result.program);
+    const ahfl::TypeChecker type_checker;
+    return type_checker.check(*parse_result.program, resolve_result);
+}
+
+} // namespace
+
+// ===========================================================================
+// POSITIVE cases — where-bounds are satisfied; no TRAIT_BOUND_NOT_SATISFIED.
+// ===========================================================================
+
+TEST_CASE("where-bound positive: Ord bound satisfied by impl on struct") {
+    const std::string source = R"AHFL(
+module wpos1;
+struct Box {
+    value: Int;
+}
+trait Ord {
+    fn cmp(self: Box, other: Box) -> Int;
+}
+impl Ord for Box {
+    fn cmp(self: Box, other: Box) -> Int {
+        return self.value - other.value;
+    }
+}
+fn pick<T>(a: T, b: T) -> T effect Pure decreases 0 where T: Ord {
+    return a;
+}
+fn run() -> Box effect Pure decreases 0 {
+    let x = Box { value: 1 };
+    let y = Box { value: 2 };
+    return pick(x, y);
+}
+)AHFL";
+    const auto result = typecheck_source("wpos1.ahfl", source);
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+TEST_CASE("where-bound positive: Show bound on user struct, call through generic passes") {
+    const std::string source = R"AHFL(
+module wpos2;
+struct Item {
+    id: Int;
+}
+trait Show {
+    fn render(self: Item) -> Int;
+}
+impl Show for Item {
+    fn render(self: Item) -> Int {
+        return self.id;
+    }
+}
+fn display<T>(x: T) -> T effect Pure decreases 0 where T: Show {
+    return x;
+}
+fn run() -> Item effect Pure decreases 0 {
+    let it = Item { id: 42 };
+    return display(it);
+}
+)AHFL";
+    const auto result = typecheck_source("wpos2.ahfl", source);
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+TEST_CASE("where-bound positive: multi-bound (Eq + Hash) both implemented") {
+    const std::string source = R"AHFL(
+module wpos3;
+struct Key {
+    h: Int;
+}
+trait Eq {
+    fn eq(self: Key, other: Key) -> Int;
+}
+trait Hash {
+    fn hash(self: Key) -> Int;
+}
+impl Eq for Key {
+    fn eq(self: Key, other: Key) -> Int {
+        return self.h - other.h;
+    }
+}
+impl Hash for Key {
+    fn hash(self: Key) -> Int {
+        return self.h;
+    }
+}
+fn insert<K, V>(k: K, v: V) -> V effect Pure decreases 0 where K: Eq + Hash {
+    return v;
+}
+fn run() -> Int effect Pure decreases 0 {
+    let k = Key { h: 123 };
+    return insert(k, 99);
+}
+)AHFL";
+    const auto result = typecheck_source("wpos3.ahfl", source);
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+TEST_CASE("where-bound positive: super-trait chain — bound on Eq satisfied by Ord impl that also covers Eq") {
+    const std::string source = R"AHFL(
+module wpos4;
+struct Pt {
+    x: Int;
+    y: Int;
+}
+trait Eq {
+    fn eq(self: Pt, other: Pt) -> Int;
+}
+trait Ord: Eq {
+    fn cmp(self: Pt, other: Pt) -> Int;
+}
+impl Eq for Pt {
+    fn eq(self: Pt, other: Pt) -> Int {
+        return self.x - other.x;
+    }
+}
+impl Ord for Pt {
+    fn cmp(self: Pt, other: Pt) -> Int {
+        return self.x - other.x;
+    }
+}
+fn same<T>(a: T, b: T) -> T effect Pure decreases 0 where T: Eq {
+    return a;
+}
+fn run() -> Pt effect Pure decreases 0 {
+    let p1 = Pt { x: 1, y: 2 };
+    let p2 = Pt { x: 3, y: 4 };
+    return same(p1, p2);
+}
+)AHFL";
+    const auto result = typecheck_source("wpos4.ahfl", source);
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+TEST_CASE("where-bound positive: two type params with independent bounds, both satisfied") {
+    const std::string source = R"AHFL(
+module wpos5;
+struct Alpha {
+    v: Int;
+}
+struct Beta {
+    v: Int;
+}
+trait ShowAlpha {
+    fn sa(self: Alpha) -> Int;
+}
+trait ShowBeta {
+    fn sb(self: Beta) -> Int;
+}
+impl ShowAlpha for Alpha {
+    fn sa(self: Alpha) -> Int { return self.v; }
+}
+impl ShowBeta for Beta {
+    fn sb(self: Beta) -> Int { return self.v; }
+}
+fn combine<X, Y>(x: X, y: Y) -> Y effect Pure decreases 0 where X: ShowAlpha, Y: ShowBeta {
+    return y;
+}
+fn run() -> Beta effect Pure decreases 0 {
+    let a = Alpha { v: 10 };
+    let b = Beta { v: 20 };
+    return combine(a, b);
+}
+)AHFL";
+    const auto result = typecheck_source("wpos5.ahfl", source);
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+TEST_CASE("where-bound positive: non-generic fn has no where clause — no diagnostics") {
+    const std::string source = R"AHFL(
+module wpos6;
+fn inc(n: Int) -> Int effect Pure decreases 0 {
+    return n + 1;
+}
+fn run() -> Int effect Pure decreases 0 {
+    return inc(41);
+}
+)AHFL";
+    const auto result = typecheck_source("wpos6.ahfl", source);
+    CHECK_FALSE(has_bound_not_satisfied(result));
+}
+
+// ===========================================================================
+// NEGATIVE cases — call-site where-bounds are violated; each must produce one
+// or more anchored TRAIT_BOUND_NOT_SATISFIED diagnostics. Totals ≥ 12 unique
+// violation sites across the suite.
+// ===========================================================================
+
+// V1: struct carries no Show impl, where T: Show is violated at call.
+TEST_CASE("where-bound negative V1: struct missing Show impl reports TRAIT_BOUND_NOT_SATISFIED") {
+    const std::string source = R"AHFL(
+module wneg1;
+struct Data {
+    payload: Int;
+}
+trait Show {
+    fn render(self: Data) -> Int;
+}
+fn display<T>(x: T) -> T effect Pure decreases 0 where T: Show {
+    return x;
+}
+fn run() -> Data effect Pure decreases 0 {
+    let d = Data { payload: 7 };
+    return display(d);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg1.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V2: where T: Ord bound but no Ord impl exists for the argument type.
+TEST_CASE("where-bound negative V2: missing Ord impl for call argument type") {
+    const std::string source = R"AHFL(
+module wneg2;
+struct Wrap {
+    n: Int;
+}
+trait Ord {
+    fn cmp(self: Wrap, other: Wrap) -> Int;
+}
+fn max<T>(a: T, b: T) -> T effect Pure decreases 0 where T: Ord {
+    return a;
+}
+fn run() -> Wrap effect Pure decreases 0 {
+    let x = Wrap { n: 5 };
+    let y = Wrap { n: 6 };
+    return max(x, y);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg2.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V3: multi-bound K: Eq + Hash — Hash impl missing, Eq impl present → 1 violation.
+TEST_CASE("where-bound negative V3: one of two multi-bounds missing reports exactly 1") {
+    const std::string source = R"AHFL(
+module wneg3;
+struct Key {
+    id: Int;
+}
+trait Eq {
+    fn eq(self: Key, other: Key) -> Int;
+}
+trait Hash {
+    fn hash(self: Key) -> Int;
+}
+impl Eq for Key {
+    fn eq(self: Key, other: Key) -> Int {
+        return self.id - other.id;
+    }
+}
+fn lookup<K, V>(k: K, v: V) -> V effect Pure decreases 0 where K: Eq + Hash {
+    return v;
+}
+fn run() -> Int effect Pure decreases 0 {
+    let k = Key { id: 1 };
+    return lookup(k, 42);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg3.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) == 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V4: multi-bound Eq + Hash — neither impl present → 2 violations.
+TEST_CASE("where-bound negative V4: both multi-bounds missing reports 2 violations") {
+    const std::string source = R"AHFL(
+module wneg4;
+struct Key {
+    id: Int;
+}
+trait Eq {
+    fn eq(self: Key, other: Key) -> Int;
+}
+trait Hash {
+    fn hash(self: Key) -> Int;
+}
+fn cache<K, V>(k: K, v: V) -> V effect Pure decreases 0 where K: Eq + Hash {
+    return v;
+}
+fn run() -> Int effect Pure decreases 0 {
+    let k = Key { id: 5 };
+    return cache(k, 7);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg4.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) == 2);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V5: super-trait chain — where T: Ord but only Eq impl exists (Ord not covered).
+TEST_CASE("where-bound negative V5: super-trait Ord bound not covered by Eq-only impl") {
+    const std::string source = R"AHFL(
+module wneg5;
+struct Pt {
+    x: Int;
+}
+trait Eq {
+    fn eq(self: Pt, other: Pt) -> Int;
+}
+trait Ord: Eq {
+    fn cmp(self: Pt, other: Pt) -> Int;
+}
+impl Eq for Pt {
+    fn eq(self: Pt, other: Pt) -> Int {
+        return self.x - other.x;
+    }
+}
+fn sort<T>(a: T, b: T) -> T effect Pure decreases 0 where T: Ord {
+    return a;
+}
+fn run() -> Pt effect Pure decreases 0 {
+    let p1 = Pt { x: 1 };
+    let p2 = Pt { x: 2 };
+    return sort(p1, p2);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg5.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V6: three type params with three bounds — first param's bound missing.
+TEST_CASE("where-bound negative V6: 3 of 3 params bounded, only first missing impl") {
+    const std::string source = R"AHFL(
+module wneg6;
+struct Aa {
+    v: Int;
+}
+struct Bb {
+    v: Int;
+}
+struct Cc {
+    v: Int;
+}
+trait Sa {
+    fn a(self: Aa) -> Int;
+}
+trait Sb {
+    fn b(self: Bb) -> Int;
+}
+trait Sc {
+    fn c(self: Cc) -> Int;
+}
+impl Sb for Bb {
+    fn b(self: Bb) -> Int { return self.v; }
+}
+impl Sc for Cc {
+    fn c(self: Cc) -> Int { return self.v; }
+}
+fn three<X, Y, Z>(x: X, y: Y, z: Z) -> Z effect Pure decreases 0 where X: Sa, Y: Sb, Z: Sc {
+    return z;
+}
+fn run() -> Cc effect Pure decreases 0 {
+    let a = Aa { v: 1 };
+    let b = Bb { v: 2 };
+    let c = Cc { v: 3 };
+    return three(a, b, c);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg6.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) == 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V7: three type params — two of three bounds missing → 2 violations.
+TEST_CASE("where-bound negative V7: 2 of 3 per-param bounds missing reports 2") {
+    const std::string source = R"AHFL(
+module wneg7;
+struct Aa {
+    v: Int;
+}
+struct Bb {
+    v: Int;
+}
+struct Cc {
+    v: Int;
+}
+trait Sa {
+    fn a(self: Aa) -> Int;
+}
+trait Sb {
+    fn b(self: Bb) -> Int;
+}
+trait Sc {
+    fn c(self: Cc) -> Int;
+}
+impl Sa for Aa {
+    fn a(self: Aa) -> Int { return self.v; }
+}
+fn three<X, Y, Z>(x: X, y: Y, z: Z) -> Z effect Pure decreases 0 where X: Sa, Y: Sb, Z: Sc {
+    return z;
+}
+fn run() -> Cc effect Pure decreases 0 {
+    let a = Aa { v: 10 };
+    let b = Bb { v: 20 };
+    let c = Cc { v: 30 };
+    return three(a, b, c);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg7.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) == 2);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V8: two call sites of the same generic fn — one passes, one fails → 1 violation.
+TEST_CASE("where-bound negative V8: one call passes, one fails reports exactly 1") {
+    const std::string source = R"AHFL(
+module wneg8;
+struct Good {
+    v: Int;
+}
+struct Bad {
+    v: Int;
+}
+trait Show {
+    fn render(self: Good) -> Int;
+}
+impl Show for Good {
+    fn render(self: Good) -> Int { return self.v; }
+}
+fn show<T>(x: T) -> T effect Pure decreases 0 where T: Show {
+    return x;
+}
+fn run() -> Bad effect Pure decreases 0 {
+    let g = Good { v: 1 };
+    let keep = show(g);
+    let b = Bad { v: 2 };
+    return show(b);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg8.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) == 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V9: bound target type is an enum without impl.
+TEST_CASE("where-bound negative V9: enum target without impl reports violation") {
+    const std::string source = R"AHFL(
+module wneg9;
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+trait Paint {
+    fn mix(self: Color) -> Int;
+}
+fn blend<T>(c: T) -> T effect Pure decreases 0 where T: Paint {
+    return c;
+}
+fn run() -> Color effect Pure decreases 0 {
+    return blend(Color::Red);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg9.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V10: two distinct fns called, three total bound violations across both.
+//   entry1(k) → K:Eq + Hash missing → 2
+//   entry2(k) → K:Show missing     → 1    (total = 3)
+TEST_CASE("where-bound negative V10: two-call aggregate reports 3 violations") {
+    const std::string source = R"AHFL(
+module wneg10;
+struct Pair {
+    a: Int;
+    b: Int;
+}
+trait Eq {
+    fn eq(self: Pair, other: Pair) -> Int;
+}
+trait Hash {
+    fn hash(self: Pair) -> Int;
+}
+trait Show {
+    fn render(self: Pair) -> Int;
+}
+fn e1<K>(k: K) -> K effect Pure decreases 0 where K: Eq + Hash {
+    return k;
+}
+fn e2<K>(k: K) -> K effect Pure decreases 0 where K: Show {
+    return k;
+}
+fn run() -> Pair effect Pure decreases 0 {
+    let p = Pair { a: 1, b: 2 };
+    let q = e1(p);
+    return e2(p);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg10.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) == 3);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V11: primitive Float argument has no Numeric impl → compound/primitive rejected.
+TEST_CASE("where-bound negative V11: Float primitive used where Numeric bound required") {
+    const std::string source = R"AHFL(
+module wneg11;
+trait Numeric {
+    fn toint(self: Float) -> Int;
+}
+fn to_int<T>(x: T) -> T effect Pure decreases 0 where T: Numeric {
+    return x;
+}
+fn run() -> Float effect Pure decreases 0 {
+    return to_int(3.14);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg11.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V12: String argument has no Json impl → confirms String (type) path too.
+TEST_CASE("where-bound negative V12: String used where Json trait bound required") {
+    const std::string source = R"AHFL(
+module wneg12;
+trait Json {
+    fn encode(self: String) -> String;
+}
+fn serialise<T>(x: T) -> T effect Pure decreases 0 where T: Json {
+    return x;
+}
+fn run() -> String effect Pure decreases 0 {
+    return serialise("hello");
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg12.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}
+
+// V13: deep call-chain — the call inside fn body still triggers bound check.
+TEST_CASE("where-bound negative V13: nested call inside body still reports bound violation") {
+    const std::string source = R"AHFL(
+module wneg13;
+struct Node {
+    val: Int;
+}
+trait Debug {
+    fn dbg(self: Node) -> Int;
+}
+fn debug_print<T>(x: T) -> T effect Pure decreases 0 where T: Debug {
+    return x;
+}
+fn wrapper<T>(y: T) -> T effect Pure decreases 0 where T: Debug {
+    return debug_print(y);
+}
+fn call() -> Node effect Pure decreases 0 {
+    let n = Node { val: 99 };
+    return wrapper(n);
+}
+)AHFL";
+    const auto result = typecheck_loose("wneg13.ahfl", source);
+    CHECK(has_bound_not_satisfied(result));
+    // debug_print(y) inside wrapper violates Debug (wrapper passes T through
+    // via its own where clause so its body call resolves; the outer call(n) in
+    // call() where Node has no Debug impl triggers the violation. With
+    // non-monomorphized bodies today, at minimum the call() call site reports
+    // ≥ 1 anchored violation.
+    CHECK(count_bound_not_satisfied(result) >= 1);
+    CHECK(has_anchored_bound_violation(result));
+}

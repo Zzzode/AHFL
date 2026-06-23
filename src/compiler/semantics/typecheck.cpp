@@ -1233,6 +1233,14 @@ bool TypeCheckPass::impl_target_implements(SymbolId target_id, SymbolId trait_id
 // P2d.S2 (RFC §3.5 / §2): resolve a trait reference by its canonical-name
 // index and recursively check super-trait coverage so a `trait B: A { ... }`
 // declaration means B satisfiability also satisfies the A bound.
+// P2d.S2 (RFC §3.5 / §2): super-trait chain closure for bound checking.
+//
+// The direction matters: given a bound `where T: B` and a concrete type with
+// `impl A for T` where `A: B` (i.e. B is a super-trait of A), the bound is
+// satisfied because impl of a sub-trait transitively satisfies all super-trait
+// bounds. So the closure walks DOWN the super-trait DAG — from the bound trait
+// to every trait that lists it as a super-trait (its sub-traits / children).
+// Cycles are prevented by marking each trait visited on entry.
 namespace {
 bool trait_chain_implements(SymbolId target_id,
                             SymbolId trait_id,
@@ -1242,6 +1250,7 @@ bool trait_chain_implements(SymbolId target_id,
     if (!inserted) {
         return false; // break cycles in the super-trait DAG
     }
+    // (1) Direct impl of trait_id for the target type.
     for (const auto &[index, impl] : env.impls()) {
         (void)index;
         if (impl.is_inherent) {
@@ -1254,15 +1263,18 @@ bool trait_chain_implements(SymbolId target_id,
             return true;
         }
     }
-    // Walk super-traits: if any super-trait X of `trait_id` has an impl for
-    // target_id, then `trait_id` is also satisfied via the super-trait chain.
-    const auto trait = env.get_trait(trait_id);
-    if (!trait.has_value()) {
-        return false;
-    }
-    for (const auto super_id : trait->get().super_traits) {
-        if (trait_chain_implements(target_id, super_id, env, visited)) {
-            return true;
+    // (2) Walk sub-traits: every trait X that has `trait_id` listed in its
+    // super_traits is a sub-trait. If `target_id` implements any such X, the
+    // bound for `trait_id` is transitively satisfied.
+    for (const auto &[x_id, x_info] : env.traits()) {
+        (void)x_info;
+        for (const auto super_id : x_info.super_traits) {
+            if (super_id == trait_id) {
+                if (trait_chain_implements(target_id, SymbolId{x_id}, env, visited)) {
+                    return true;
+                }
+                break; // each child trait is recursed into at most once
+            }
         }
     }
     return false;
@@ -1272,10 +1284,21 @@ bool trait_chain_implements(SymbolId target_id,
 bool TypeCheckPass::check_bound(const Type &subject_type,
                                 std::string_view trait_name,
                                 SourceRange range) {
-    const auto trait_info = environment().find_trait(trait_name);
+    // Resolve the (possibly unqualified) trait name via the symbol table. The
+    // where-clause bound parser stores raw spellings ("Show", "Ord") but the
+    // environment indexes traits by SymbolId; the symbol table applies the
+    // current module prefix so same-module trait references resolve correctly
+    // without explicit qualification. Imported traits would also resolve here
+    // once the resolver merges the import graph.
+    const auto trait_symbol = find_local_here(SymbolNamespace::Types, trait_name);
+    if (!trait_symbol.has_value()) {
+        // Unknown trait: the resolver would already have flagged an undeclared
+        // trait reference at the where-clause declaration site. To avoid
+        // double-reporting (once per call site), silently decline the check.
+        return false;
+    }
+    const auto trait_info = environment().get_trait(trait_symbol->get().id);
     if (!trait_info.has_value()) {
-        // Unknown trait: resolution already emitted a diagnostic during the
-        // resolver pass, so silently decline so we do not double-report.
         return false;
     }
     const auto target_symbol = nominal_symbol_of(subject_type);
