@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_cli_command_catalog.a CMakeFiles/ahfl_cli_command_catalog.dir/command_registry.cpp.o CMakeFiles/ahfl_cli_command_catalog.dir/command_help.cpp.o CMakeFiles/ahfl_cli_command_catalog.dir/provider/provider_artifact_catalog.cpp.o
+/usr/bin/ranlib libahfl_cli_command_catalog.a

@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_tooling_incremental.a CMakeFiles/ahfl_tooling_incremental.dir/dependency_graph.cpp.o CMakeFiles/ahfl_tooling_incremental.dir/ir_cache.cpp.o CMakeFiles/ahfl_tooling_incremental.dir/incremental_compiler.cpp.o
+/usr/bin/ranlib libahfl_tooling_incremental.a

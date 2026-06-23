@@ -1,0 +1,2 @@
+/usr/bin/ar qc libahfl_compiler_handoff.a CMakeFiles/ahfl_compiler_handoff.dir/package.cpp.o
+/usr/bin/ranlib libahfl_compiler_handoff.a

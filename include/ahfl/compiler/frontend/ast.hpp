@@ -1038,6 +1038,7 @@ struct DecreasesClauseSyntax {
     std::vector<Owned<ExprSyntax>> terms;
     /// True for the wildcard / "don't verify" form.
     bool is_wildcard{false};
+};
 
 /// State policy item (execution policy within a flow handler)
 struct StatePolicyItemSyntax {

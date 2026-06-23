@@ -2442,15 +2442,6 @@ class TypedIrLowerer final {
             info.declaration_range);
         lowered.clauses.reserve(info.clauses.size());
         for (const auto &clause : info.clauses) {
-            ir::ContractClause lowered_clause{
-                .kind = lower_contract_clause_kind(
-                    static_cast<ast::ContractClauseKind>(clause.clause_kind)),
-                .value = clause.is_temporal
-                             ? std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_temporal_range(
-                                   clause.expr_range)}
-                             : std::variant<ir::ExprRef, ir::TemporalExprPtr>{lower_expr_range(
-                                   clause.expr_range)},
-                .source_range = clause.source_range,
             auto lowered_clause = ir::ContractClause{
                 .kind = static_cast<ir::ContractClauseKind>(clause.clause_kind),
                 .value = clause.is_temporal

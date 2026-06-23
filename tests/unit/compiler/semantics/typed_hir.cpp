@@ -3658,10 +3658,27 @@ flow for Worker {
     // carries at least one.
     const auto ratio = static_cast<double>(valid_slots) / static_cast<double>(total_slots);
     CHECK(ratio >= 0.60);
+    CHECK(ratio >= 0.60);
 }
 
-// 
+// ----------------------------------------------------------------------------
+// P4.S6: Decreases fields propagated from ContractClauseInfo through typed HIR
+// serialization round-trip and lowered into IR ContractClause with symmetric
+// ir_json envelope.
+// ----------------------------------------------------------------------------
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "P4.S6 decreases fields round-trip through typed HIR and IR") {
+    const auto root = make_temp_project("p4_s6_decreases_project");
+    const auto source_path = module_source_path(root, "p4::s6::decreases");
+    const std::string source = R"AHFL(
+module p4::s6::decreases;
 
+struct Req { v: Int = 0; }
+struct Ctx { v: String = ""; }
+struct Resp { v: Int = 0; }
+
+capability Nop(x: String) -> Resp;
+predicate Safe(n: Int) -> Bool;
 
 agent Worker {
     input: Req;
@@ -3842,6 +3859,3 @@ flow for Worker {
     INFO("P4.S3: ValidationPass walk_typed_contract_clauses entry verified at compile time.");
 }
 
-// 
-
-}
