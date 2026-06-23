@@ -451,16 +451,12 @@ class TypedIrLowerer final {
 
         return std::visit(
             Overloaded{
-                [](const ast::NoneLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::BoolLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::IntegerLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::FloatLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::DecimalLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::StringLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::DurationLiteralExpr &) -> const ast::ExprSyntax * { return nullptr; },
-                [&](const ast::SomeExpr &value) -> const ast::ExprSyntax * {
-                    return value.value ? find_match_expr_in_expr(*value.value, typed) : nullptr;
-                },
                 [](const ast::PathExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [](const ast::QualifiedValueExpr &) -> const ast::ExprSyntax * { return nullptr; },
                 [&](const ast::CallExpr &value) -> const ast::ExprSyntax * {
@@ -495,45 +491,6 @@ class TypedIrLowerer final {
                     for (const auto &field : value.fields) {
                         if (field && field->value) {
                             if (const auto *found = find_match_expr_in_expr(*field->value, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                    }
-                    return nullptr;
-                },
-                [&](const ast::ListLiteralExpr &value) -> const ast::ExprSyntax * {
-                    for (const auto &item : value.items) {
-                        if (item) {
-                            if (const auto *found = find_match_expr_in_expr(*item, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                    }
-                    return nullptr;
-                },
-                [&](const ast::SetLiteralExpr &value) -> const ast::ExprSyntax * {
-                    for (const auto &item : value.items) {
-                        if (item) {
-                            if (const auto *found = find_match_expr_in_expr(*item, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                    }
-                    return nullptr;
-                },
-                [&](const ast::MapLiteralExpr &value) -> const ast::ExprSyntax * {
-                    for (const auto &entry : value.entries) {
-                        if (entry && entry->key) {
-                            if (const auto *found = find_match_expr_in_expr(*entry->key, typed);
-                                found != nullptr) {
-                                return found;
-                            }
-                        }
-                        if (entry && entry->value) {
-                            if (const auto *found = find_match_expr_in_expr(*entry->value, typed);
                                 found != nullptr) {
                                 return found;
                             }
