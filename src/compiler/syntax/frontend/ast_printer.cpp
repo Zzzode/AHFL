@@ -1084,8 +1084,12 @@ void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
 void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
                             std::ostream &out,
                             int base_indent) {
+    // base_indent is consumed by AstPrinter's line() helper so callers get
+    // predictable column alignment when embedding clause output inside a
+    // larger debug dump.  indent_level=0 lets the header start at
+    // `base_indent * 2` spaces.
     AstPrinter printer(out, base_indent);
-    printer.print_decreases_clause(clause, 1);
+    printer.print_decreases_clause(clause, 0);
 }
 
 } // namespace ahfl

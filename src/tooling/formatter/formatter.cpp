@@ -85,6 +85,35 @@ class AstFormatter {
   public:
     explicit AstFormatter(const FormatOptions &opts) : opts_(opts) {}
 
+    // ---- standalone clause helpers (R-09: NOT routed through Decl/Node) ----
+
+    /// Drain the internal buffer.  Used by standalone clause formatters that
+    /// build output without routing through format(Program).
+    [[nodiscard]] std::string take_output() {
+        return out_.str();
+    }
+
+    /// Public entry point for expression formatting (used by
+    /// format_decreases_clause_impl; kept as a thin wrap so expression
+    /// formatting stays co-located with the rest of AstFormatter).
+    void format_expr_public(const ahfl::ast::ExprSyntax &expr) {
+        format_expr(expr);
+    }
+
+    /// Raw write – mirrors write(), named separately so callers from outside
+    /// the normal statement/decl pipeline don't accidentally pick up trailing
+    /// whitespace semantics we may add in the future.
+    void write_raw(const std::string &text) {
+        out_ << text;
+    }
+
+    /// Public string writer.  Equivalent to write_raw() for now; exposed with
+    /// a distinct name so standalone clause formatters don't depend on the
+    /// private legacy helper used only by the AST-walking path.
+    void append(const std::string &text) {
+        out_ << text;
+    }
+
     std::string format(const ahfl::ast::Program &program) {
         // Separate imports from other declarations
         std::vector<const ahfl::ast::ImportDecl *> imports;
@@ -1166,25 +1195,8 @@ class AstFormatter {
     void write(const std::string &text) {
         out_ << text;
     }
-    /// Raw write – mirrors write(), named separately so callers from outside
-    /// the normal statement/decl pipeline don't accidentally pick up trailing
-    /// whitespace semantics we may add in the future.
-    void write_raw(const std::string &text) {
-        out_ << text;
-    }
     void newline() {
         out_ << "\n";
-    }
-    /// Drain the internal buffer.  Used by standalone clause formatters that
-    /// build output without routing through format(Program).
-    [[nodiscard]] std::string take_output() {
-        return out_.str();
-    }
-    /// Public entry point for expression formatting (used by
-    /// format_decreases_clause_impl; kept as a thin wrap so expression
-    /// formatting stays co-located with the rest of AstFormatter).
-    void format_expr_public(const ahfl::ast::ExprSyntax &expr) {
-        format_expr(expr);
     }
 
     const FormatOptions &opts_;
@@ -1267,15 +1279,15 @@ namespace {
 /// namespace lets us reuse the same AstFormatter helpers without leaking them
 /// as part of the public formatter API.
 std::string format_decreases_clause_impl(const ahfl::ast::DecreasesClauseSyntax &clause) {
-    FormatOptions opts = default_options();
+    FormatOptions opts;
     AstFormatter formatter(opts);
 
     if (clause.is_wildcard) {
-        formatter.write("decreases *;");
+        formatter.append("decreases *;");
         return formatter.take_output();
     }
 
-    formatter.write("decreases (");
+    formatter.append("decreases (");
     for (std::size_t i = 0; i < clause.terms.size(); ++i) {
         if (i != 0) {
             formatter.write_raw(", ");
@@ -1285,10 +1297,10 @@ std::string format_decreases_clause_impl(const ahfl::ast::DecreasesClauseSyntax 
         } else {
             // Defensive: null entries shouldn't survive desugar, but produce
             // stable output anyway so diagnostics never crash.
-            formatter.write("/* null */");
+            formatter.append("/* null */");
         }
     }
-    formatter.write(");");
+    formatter.append(");");
     return formatter.take_output();
 }
 
