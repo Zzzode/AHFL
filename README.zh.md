@@ -219,6 +219,18 @@ ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh
 ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --check
 ```
 
+### Golden 文件测试
+
+测试套件在 `tests/golden/**` 下附带已提交的参考（golden）文件，用于固定编译器各产物输出的逐字内容。
+
+- 运行完整的 golden-lock 基线：
+  ```bash
+  ctest --preset test-dev --output-on-failure -R '^p5_smv_golden_lock$'
+  ```
+- 通过时所有 SMV formal 用例应保持 **0 diff**；失败时脚本会打印可直接粘贴执行的 `diff -u` 命令以及内联 unified diff，方便评审人员即时核查。
+
+**PR 强制要求。** 如果你的改动是有意更新 golden 输出（例如编译器 pass、后端或诊断格式变更），你 **必须** 在 PR 描述中附上失败测试打印的 `diff` 输出，并且把更新后的 golden 文件与源码改动放在 **同一个 patch** 中提交。评审者应能确认源码 diff 与 golden diff 是同一枚硬币的两面。
+
 ## 贡献
 
 1. 行为变化先开 focused issue 或 discussion。

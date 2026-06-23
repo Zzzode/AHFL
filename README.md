@@ -219,6 +219,26 @@ ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh
 ANTLR_JAR=/path/to/antlr-4.13.1-complete.jar ./scripts/regenerate-parser.sh --check
 ```
 
+### Golden-file tests
+
+The test suite ships with checked-in reference (golden) files under
+`tests/golden/**` that pin the exact output of compiler artifact emitters.
+
+- Run the full golden-lock baseline:
+  ```bash
+  ctest --preset test-dev --output-on-failure -R '^p5_smv_golden_lock$'
+  ```
+- A passing run reports **0 diffs** across all SMV formal cases; on
+  failure, the harness prints a copy-pasteable `diff -u` command plus a
+  unified diff inline so the change is immediately reviewable.
+
+**PR requirement.** If your change intentionally updates any golden
+output -- e.g. a compiler pass, backend, or diagnostic format change --
+you **must** attach the `diff` output produced by the failing test to
+the PR description and commit the updated golden files in the **same
+patch** as the source change. Reviewers should be able to verify that
+the source diff and the golden diff are two sides of the same coin.
+
 ## Contributing
 
 1. Open a focused issue or discussion for behavior changes.
