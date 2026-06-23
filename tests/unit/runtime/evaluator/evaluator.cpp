@@ -393,7 +393,7 @@ void test_list_literal() {
     auto expr = make_expr(ListLiteralExpr{std::move(items)});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "list_literal.no_error");
-    auto *lv = std::get_if<ListValue>(&result.value.node);
+    auto *lv = get_list_if(result.value);
     check(lv != nullptr, "list_literal.is_list");
     check(lv != nullptr && lv->items.size() == 3, "list_literal.size");
 }
@@ -479,12 +479,9 @@ void test_some_expr() {
     auto expr = make_expr(SomeExpr{make_expr_ptr(IntegerLiteralExpr{"42"})});
     auto result = eval_expr(expr, ctx);
     check(!result.has_errors(), "some_expr.no_error");
-    auto *ev = std::get_if<EnumValue>(&result.value.node);
-    check(ev != nullptr && ev->enum_name == "std::option::Option" && ev->variant == "Some",
-          "some_expr.is_option_some");
-    check(ev != nullptr && ev->associated != nullptr, "some_expr.has_inner");
-    if (ev && ev->associated) {
-        auto *iv = std::get_if<IntValue>(&ev->associated->node);
+    check(is_some(result.value), "some_expr.has_inner");
+    if (const auto *inner = optional_inner(result.value)) {
+        auto *iv = std::get_if<IntValue>(&inner->node);
         check(iv != nullptr && iv->value == 42, "some_expr.inner_value");
     }
 }

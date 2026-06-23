@@ -1063,17 +1063,11 @@ void test_eval_with_capability_call() {
     auto optional_result =
         eval_expr_with_capabilities(optional_expr, eval_ctx, registry.as_invoker());
     check(!optional_result.has_errors(), "eval_cap.optional_call_no_errors");
-    // P5.11a transition: accept both legacy OptionalValue and nominal EnumValue Option
-    const Value *optional_inner_ptr = nullptr;
-    if (auto *ov = std::get_if<OptionalValue>(&optional_result.value.node)) {
-        optional_inner_ptr = ov->inner.get();
-    } else if (auto *ev = std::get_if<EnumValue>(&optional_result.value.node)) {
-        if (ev->enum_name == "std::option::Option" && ev->variant == "Some") {
-            optional_inner_ptr = ev->associated.get();
-        }
-    }
-    auto *optional_inner = optional_inner_ptr != nullptr
-                               ? std::get_if<StringValue>(&optional_inner_ptr->node)
+    // P5.11a + P5.11b dual-aware: nominal accessor optional_inner() covers
+    // both legacy OptionalValue and nominal EnumValue Option.
+    const auto *optional_result_inner = ahfl::evaluator::optional_inner(optional_result.value);
+    auto *optional_inner = optional_result_inner != nullptr
+                               ? std::get_if<StringValue>(&optional_result_inner->node)
                                : nullptr;
     check(optional_inner != nullptr && optional_inner->value == "inner",
           "eval_cap.optional_call_value");
