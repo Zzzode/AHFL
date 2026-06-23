@@ -1106,28 +1106,33 @@ class ResolverPass final {
                     // P2: if this name is a generic type param in scope,
                     // skip resolution — it's an opaque type variable.
                     if (generic_type_params_.count(t.name->spelling()) > 0) {
+                        // Still recurse into type args (they may reference
+                        // outer scope types like T or U used inside a Fn).
+                        for (const auto &arg : t.type_args) {
+                            if (arg) {
+                                resolve_type(*arg);
+                            }
+                        }
                         return;
                     }
-                    // Parameterised built-ins (Optional, List, Set, Map) are
-                    // handled directly by the type resolver; they have no
-                    // user-declared symbol, so skip reference lookup.
-                    const bool is_parameterised_builtin = !t.type_args.empty() &&
-                        t.name && t.name->segments.size() == 1 &&
-                        (t.name->segments.front() == "Optional" ||
-                         t.name->segments.front() == "List" ||
-                         t.name->segments.front() == "Set" ||
-                         t.name->segments.front() == "Map");
+                    // P5.5 (TypeSyntax desugaring): a bare single-segment
+                    // name with generic arguments used to be handled by a
+                    // dedicated AST node (OptionalType / ListType / etc.).
+                    // Those nodes have been removed; the bare name now
+                    // resolves like any other nominal type. When the stdlib
+                    // is loaded, Optional/List/Set/Map are real enum/struct
+                    // declarations in the symbol table and must produce a
+                    // TypeName reference. resolve_std_container_type in
+                    // type_resolver.cpp handles the fallback case where no
+                    // such declaration exists (stdlib-less pipelines).
+                    const auto resolved = resolve_reference(
+                        SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
 
-                    if (!is_parameterised_builtin) {
-                        const auto resolved = resolve_reference(
-                            SymbolNamespace::Types, *t.name, ReferenceKind::TypeName, "type");
-
-                        if (resolved.has_value() && current_type_alias_.has_value()) {
-                            const auto symbol = result_.symbol_table.get(*resolved);
-                            if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
-                                type_alias_dependencies_[current_type_alias_->value].push_back(
-                                    *resolved);
-                            }
+                    if (resolved.has_value() && current_type_alias_.has_value()) {
+                        const auto symbol = result_.symbol_table.get(*resolved);
+                        if (symbol.has_value() && symbol->get().kind == SymbolKind::TypeAlias) {
+                            type_alias_dependencies_[current_type_alias_->value].push_back(
+                                *resolved);
                         }
                     }
                     for (const auto &arg : t.type_args) {
