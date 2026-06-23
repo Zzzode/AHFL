@@ -19,7 +19,6 @@
 // dependency can stay one-way.
 namespace ahfl::ast {
 struct WhereClauseSyntax;
-struct WhereBoundSyntax;
 } // namespace ahfl::ast
 
 namespace ahfl {

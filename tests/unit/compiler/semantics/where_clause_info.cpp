@@ -52,11 +52,12 @@ Owned<WhereClauseSyntax> make_single_bound_where(std::string_view subject_name,
                                                   std::string_view trait_name) {
     auto clause = make_owned<WhereClauseSyntax>();
 
-    auto bound = make_owned<WhereBoundSyntax>();
-    bound->subject = make_named_type(subject_name);
-    bound->traits.push_back(make_qname({std::string(trait_name)}));
+    auto constraint = make_owned<WhereConstraintSyntax>();
+    constraint->subject = make_named_type(subject_name);
+    constraint->is_predicate = false;
+    constraint->bounds.push_back(make_named_type(trait_name));
 
-    clause->bounds.push_back(std::move(bound));
+    clause->constraints.push_back(std::move(constraint));
     return clause;
 }
 
@@ -258,18 +259,20 @@ TEST_CASE("Multi-trait multi-bound where clause plumbing") {
     auto s = make_owned<StructDecl>("HashMap");
     auto clause = make_owned<WhereClauseSyntax>();
 
-    // T:Eq + Hash
-    auto b1 = make_owned<WhereBoundSyntax>();
-    b1->subject = make_named_type("K");
-    b1->traits.push_back(make_qname({"Eq"}));
-    b1->traits.push_back(make_qname({"Hash"}));
-    clause->bounds.push_back(std::move(b1));
+    // K:Eq + Hash
+    auto c1 = make_owned<WhereConstraintSyntax>();
+    c1->subject = make_named_type("K");
+    c1->is_predicate = false;
+    c1->bounds.push_back(make_named_type("Eq"));
+    c1->bounds.push_back(make_named_type("Hash"));
+    clause->constraints.push_back(std::move(c1));
 
-    // U:Clone
-    auto b2 = make_owned<WhereBoundSyntax>();
-    b2->subject = make_named_type("V");
-    b2->traits.push_back(make_qname({"Clone"}));
-    clause->bounds.push_back(std::move(b2));
+    // V:Clone
+    auto c2 = make_owned<WhereConstraintSyntax>();
+    c2->subject = make_named_type("V");
+    c2->is_predicate = false;
+    c2->bounds.push_back(make_named_type("Clone"));
+    clause->constraints.push_back(std::move(c2));
 
     s->where_clause = std::move(clause);
     decls.push_back(std::move(s));

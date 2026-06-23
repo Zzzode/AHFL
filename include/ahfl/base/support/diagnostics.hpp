@@ -288,6 +288,8 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectUnderdeclared{
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectIncompatible{"EFFECT_INCOMPATIBLE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectOnPredicate{"EFFECT_ON_PREDICATE"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{"NONDET_IN_INVARIANT"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MonomorphizationBudgetExceeded{
+    "MONOMORPHIZATION_BUDGET_EXCEEDED"};
 } // namespace typecheck
 
 namespace resolve {
@@ -543,6 +545,8 @@ inline constexpr MessageTemplate EffectOnPredicate{
     "effect Pure"};
 inline constexpr MessageTemplate NondetInInvariant{
     "non-deterministic expression in invariant/safety/liveness formula: {}"};
+inline constexpr MessageTemplate MonomorphizationBudgetExceeded{
+    "too many distinct instances for {}: {} instances exceed budget {} ({} largest contributors: {})"};
 } // namespace typecheck
 
 namespace validation {

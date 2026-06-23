@@ -42,20 +42,34 @@ WhereClauseInfo build_where_clause_info(const Owned<ast::WhereClauseSyntax> &syn
     if (!syntax) {
         return info;
     }
-    info.bounds.reserve(syntax->bounds.size());
-    for (const auto &bound : syntax->bounds) {
+    info.bounds.reserve(syntax->constraints.size());
+    for (const auto &constraint : syntax->constraints) {
         WhereBoundInfo bound_info;
-        bound_info.source_range = bound->range;
-        if (bound->subject && bound->subject->is<ast::NamedType>()) {
-            const auto &named = bound->subject->as<ast::NamedType>();
+        bound_info.source_range = constraint->range;
+        if (constraint->subject && constraint->subject->is<ast::NamedType>()) {
+            const auto &named = constraint->subject->as<ast::NamedType>();
             if (named.name) {
                 bound_info.subject_name = named.name->spelling();
             }
         }
-        bound_info.trait_names.reserve(bound->traits.size());
-        for (const auto &trait : bound->traits) {
-            if (trait) {
-                bound_info.trait_names.push_back(trait->spelling());
+        if (constraint->is_predicate) {
+            // Predicate constraint (e.g. `T::Eq(Int)`) → treat the trait name as
+            // the single bound.
+            if (!constraint->trait_name.empty()) {
+                bound_info.trait_names.push_back(constraint->trait_name);
+            }
+        } else {
+            // Bound-list constraint (e.g. `T: Eq + Show`) → each bound is a
+            // NamedType whose qualified name spelling is the trait.
+            bound_info.trait_names.reserve(constraint->bounds.size());
+            for (const auto &bound : constraint->bounds) {
+                if (!bound) continue;
+                if (bound->is<ast::NamedType>()) {
+                    const auto &named = bound->as<ast::NamedType>();
+                    if (named.name) {
+                        bound_info.trait_names.push_back(named.name->spelling());
+                    }
+                }
             }
         }
         info.bounds.push_back(std::move(bound_info));

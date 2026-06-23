@@ -42,12 +42,34 @@
 namespace ahfl {
 
 class TypeContext;
+class DiagnosticBag;
 
 // Monomorphization budget ceilings (RFC §5.3). The user budget applies to all
 // instances triggered by non-`std::` modules; the stdlib budget is the larger
 // ceiling reserved for `std::`-originated instantiations.
 inline constexpr std::uint32_t kMonomorphizationUserBudget{32};
 inline constexpr std::uint32_t kMonomorphizationStdlibBudget{256};
+
+// Old-style macro aliases preserved for spec/plan alignment; new code should
+// prefer the typed constants above.
+#define MONO_BUDGET_USER   32U
+#define MONO_BUDGET_STDLIB 256U
+
+// P2d.S3: a caller-supplied fn call site. Distinct from TypedProgram's
+// FnCallSiteRecord (which stores concrete TypePtrs) — this lightweight form
+// stores pre-canonicalised strings so it can be assembled by test harnesses
+// and pre-typed pipelines without pulling in a TypeContext.
+struct FnCallSite {
+    // SymbolId of the originating fn declaration.
+    SymbolId fn_symbol{0};
+    // Canonical name of the originating fn declaration (e.g. `app::sum` or
+    // `std::collections::List::push`). Used for the cache key and for
+    // routing the site to the user vs. stdlib budget.
+    std::string decl_canonical_name;
+    // Canonical stringification of the explicit type arguments supplied at
+    // the call site (RFC §5.2). Empty when no type arguments are present.
+    std::string type_args_canonical;
+};
 
 // Result classification for a single instantiation attempt.
 enum class MonomorphizationStatus : std::uint8_t {
@@ -93,14 +115,17 @@ struct MonomorphizationResult {
     // Budget counters actually consumed (Created instances).
     std::uint32_t user_instance_count{0};
     std::uint32_t stdlib_instance_count{0};
+    // Set when a budget ceiling was observed (either by enforcement or by
+    // counter crossing), regardless of whether diagnostics were emitted.
+    bool user_budget_exceeded{false};
+    bool stdlib_budget_exceeded{false};
 
     [[nodiscard]] std::uint32_t total_instance_count() const noexcept {
         return user_instance_count + stdlib_instance_count;
     }
 
     [[nodiscard]] bool budget_exceeded() const noexcept {
-        return user_instance_count > kMonomorphizationUserBudget ||
-               stdlib_instance_count > kMonomorphizationStdlibBudget;
+        return user_budget_exceeded || stdlib_budget_exceeded;
     }
 };
 
@@ -145,6 +170,15 @@ run_monomorphization(const TypedProgram &program, MonomorphizationOptions option
 // instantiation; their `body_block_index` stays UINT32_MAX.
 [[nodiscard]] MonomorphizationResult
 run_monomorphization(TypedProgram &program, TypeContext &types, MonomorphizationOptions options = {});
+
+// P2d.S3 standalone overload: consumes a flat vector of caller-provided
+// FnCallSite records and emits diagnostics directly into the supplied
+// DiagnosticBag. Useful for unit tests and for pipelines that collect call
+// sites before a TypedProgram is assembled.
+[[nodiscard]] MonomorphizationResult
+run_monomorphization(const std::vector<FnCallSite> &call_sites,
+                     DiagnosticBag &diag_bag,
+                     MonomorphizationOptions options = {});
 
 // ---------------------------------------------------------------------------
 // Type substitution helper (P2d)

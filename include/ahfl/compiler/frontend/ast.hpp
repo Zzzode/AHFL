@@ -1045,23 +1045,6 @@ struct WorkflowNodeDeclSyntax {
     std::vector<std::string> after; // DAG dependencies (predecessor node names)
 };
 
-/// Single bound entry within a where clause: Type: Capability1 + Capability2
-/// (placeholder structure — detailed parsing & semantic checking lives in later tasks).
-struct WhereBoundSyntax {
-    ahfl::SourceRange range;
-    Owned<TypeSyntax> subject;      // the type parameter being constrained
-    std::vector<Owned<QualifiedName>> traits; // required capability / trait names
-};
-
-/// Where-clause syntax: where T:Eq, U:Show+Serialize
-/// Attached to generic struct / enum / capability / function declarations.
-/// Currently a pure plumbing node — the parser and bound verification will be
-/// added in a follow-up; tests construct it manually.
-struct WhereClauseSyntax {
-    ahfl::SourceRange range;
-    std::vector<Owned<WhereBoundSyntax>> bounds;
-};
-
 // ----------------------------------------------------------------------------
 // Core AST node class hierarchy
 // ----------------------------------------------------------------------------
