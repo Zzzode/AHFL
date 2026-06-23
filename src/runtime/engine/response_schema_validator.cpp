@@ -35,7 +35,11 @@ namespace {
             else if constexpr (std::is_same_v<T, ListValue>)
                 return "List";
             else if constexpr (std::is_same_v<T, EnumValue>)
-                return "Enum";
+                // P5.11a transition: recognise nominal Option enum
+                if (inner.enum_name == "std::option::Option")
+                    return "Optional";
+                else
+                    return "Enum";
             else if constexpr (std::is_same_v<T, OptionalValue>)
                 return "Optional";
             else if constexpr (std::is_same_v<T, SetValue>)
@@ -172,6 +176,24 @@ namespace {
 
     if (expected.kind == Kind::Optional || is_nominal_std_option(expected)) {
         if (is_none(value)) {
+            return SchemaValidationResult::ok();
+        }
+        // P5.11a transition: check nominal EnumValue Option first, then legacy OptionalValue
+        if (auto *ev = std::get_if<EnumValue>(&value.node);
+            ev != nullptr && ev->enum_name == "std::option::Option") {
+            if (ev->variant == "None") {
+                return SchemaValidationResult::ok();
+            }
+            if (ev->variant == "Some" && ev->associated) {
+                if (expected.first) {
+                    return check(*ev->associated, *expected.first, index, path);
+                }
+                return SchemaValidationResult::ok();
+            }
+            // Unknown Option variant: treat as transparent validation
+            if (expected.first) {
+                return check(value, *expected.first, index, path);
+            }
             return SchemaValidationResult::ok();
         }
         if (auto *opt = std::get_if<OptionalValue>(&value.node)) {
