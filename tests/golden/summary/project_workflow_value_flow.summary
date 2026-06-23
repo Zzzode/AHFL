@@ -1,7 +1,7 @@
 ahfl.summary.v1
 ir_format ahfl.ir.v1
 project_aware true
-declarations 16
+declarations 17
 declarations_with_provenance 16
 declaration_kinds {
   module 3
@@ -16,6 +16,7 @@ declaration_kinds {
   contract 0
   flow 1
   workflow 1
+  instance 1
 }
 formal_observations {
   total 1

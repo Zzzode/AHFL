@@ -109,3 +109,14 @@ workflow formal::flow_workflow::ReviewWorkflow {
   }
   return: second
 }
+
+instance agent _inst_0000000000000003_formal_flow_X5fworkflow_ReviewAgent_formal_flow_X5fworkflow_Request_formal_flow_X5fworkflow_Context_formal_flow_X5fworkflow_Response {
+  symbol: formal::flow_workflow::ReviewAgent
+  type_args: [formal::flow_workflow::Request, formal::flow_workflow::Context, formal::flow_workflow::Response]
+  return: Any
+  agent_input: formal::flow_workflow::Request
+  agent_context: formal::flow_workflow::Context
+  agent_output: formal::flow_workflow::Response
+  workflow_input: Any
+  workflow_output: Any
+}

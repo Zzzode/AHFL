@@ -530,6 +530,85 @@
           }
         ]
       }
+    },
+    {
+      "kind": "instance",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 595,
+          "end_offset": 624
+        }
+      },
+      "name": "_inst_0000000000000003_ir_workflow_X5fvalue_X5fflow_EchoAgent_ir_workflow_X5fvalue_X5fflow_Request_ir_workflow_X5fvalue_X5fflow_Context_ir_workflow_X5fvalue_X5fflow_Response",
+      "instance_kind": "agent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::workflow_value_flow::EchoAgent",
+        "local_name": "EchoAgent",
+        "module_name": "ir::workflow_value_flow",
+        "id": 3
+      },
+      "type_args": [
+        {
+          "kind": "struct",
+          "display_name": "ir::workflow_value_flow::Request",
+          "canonical_name": "ir::workflow_value_flow::Request",
+          "source_range": {
+            "begin_offset": 595,
+            "end_offset": 624
+          }
+        },
+        {
+          "kind": "struct",
+          "display_name": "ir::workflow_value_flow::Context",
+          "canonical_name": "ir::workflow_value_flow::Context",
+          "source_range": {
+            "begin_offset": 595,
+            "end_offset": 624
+          }
+        },
+        {
+          "kind": "struct",
+          "display_name": "ir::workflow_value_flow::Response",
+          "canonical_name": "ir::workflow_value_flow::Response",
+          "source_range": {
+            "begin_offset": 595,
+            "end_offset": 624
+          }
+        }
+      ],
+      "agent_input_type": "ir::workflow_value_flow::Request",
+      "agent_input_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Request",
+        "canonical_name": "ir::workflow_value_flow::Request",
+        "source_range": {
+          "begin_offset": 189,
+          "end_offset": 196
+        }
+      },
+      "agent_context_type": "ir::workflow_value_flow::Context",
+      "agent_context_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Context",
+        "canonical_name": "ir::workflow_value_flow::Context",
+        "source_range": {
+          "begin_offset": 211,
+          "end_offset": 218
+        }
+      },
+      "agent_output_type": "ir::workflow_value_flow::Response",
+      "agent_output_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::workflow_value_flow::Response",
+        "canonical_name": "ir::workflow_value_flow::Response",
+        "source_range": {
+          "begin_offset": 232,
+          "end_offset": 240
+        }
+      }
     }
   ]
 }

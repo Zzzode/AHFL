@@ -746,6 +746,85 @@
           "to_state": "Done"
         }
       ]
+    },
+    {
+      "kind": "instance",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 357,
+          "end_offset": 395
+        }
+      },
+      "name": "_inst_0000000000000008_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response",
+      "instance_kind": "agent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "lib::agents::AliasAgent",
+        "local_name": "AliasAgent",
+        "module_name": "lib::agents",
+        "id": 8
+      },
+      "type_args": [
+        {
+          "kind": "struct",
+          "display_name": "lib::types::Request",
+          "canonical_name": "lib::types::Request",
+          "source_range": {
+            "begin_offset": 357,
+            "end_offset": 395
+          }
+        },
+        {
+          "kind": "struct",
+          "display_name": "lib::types::Context",
+          "canonical_name": "lib::types::Context",
+          "source_range": {
+            "begin_offset": 357,
+            "end_offset": 395
+          }
+        },
+        {
+          "kind": "struct",
+          "display_name": "lib::types::Response",
+          "canonical_name": "lib::types::Response",
+          "source_range": {
+            "begin_offset": 357,
+            "end_offset": 395
+          }
+        }
+      ],
+      "agent_input_type": "lib::types::Request",
+      "agent_input_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Request",
+        "canonical_name": "lib::types::Request",
+        "source_range": {
+          "begin_offset": 151,
+          "end_offset": 170
+        }
+      },
+      "agent_context_type": "lib::types::Context",
+      "agent_context_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Context",
+        "canonical_name": "lib::types::Context",
+        "source_range": {
+          "begin_offset": 185,
+          "end_offset": 204
+        }
+      },
+      "agent_output_type": "lib::types::Response",
+      "agent_output_type_ref": {
+        "kind": "struct",
+        "display_name": "lib::types::Response",
+        "canonical_name": "lib::types::Response",
+        "source_range": {
+          "begin_offset": 218,
+          "end_offset": 238
+        }
+      }
     }
   ]
 }

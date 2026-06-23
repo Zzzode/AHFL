@@ -97,3 +97,38 @@ workflow ir::alias_const::EchoWorkflow {
   }
   return: run
 }
+
+instance capability _inst_0000000000000005_ir_alias_X5fconst_Echo_ir_alias_X5fconst_Request {
+  symbol: ir::alias_const::Echo
+  type_args: [ir::alias_const::Request]
+  params: (request: ir::alias_const::Request)
+  return: ir::alias_const::Response
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance predicate _inst_0000000000000006_ir_alias_X5fconst_non_X5fempty_String {
+  symbol: ir::alias_const::non_empty
+  type_args: [String]
+  params: (value: String)
+  return: Any
+  agent_input: Any
+  agent_context: Any
+  agent_output: Any
+  workflow_input: Any
+  workflow_output: Any
+}
+
+instance agent _inst_0000000000000007_ir_alias_X5fconst_EchoAgent_ir_alias_X5fconst_Request_ir_alias_X5fconst_Context_ir_alias_X5fconst_Response {
+  symbol: ir::alias_const::EchoAgent
+  type_args: [ir::alias_const::Request, ir::alias_const::Context, ir::alias_const::Response]
+  return: Any
+  agent_input: ir::alias_const::Request
+  agent_context: ir::alias_const::Context
+  agent_output: ir::alias_const::Response
+  workflow_input: Any
+  workflow_output: Any
+}

@@ -2029,6 +2029,193 @@
           "members": []
         }
       }
+    },
+    {
+      "kind": "instance",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 1284,
+          "end_offset": 1303
+        }
+      },
+      "name": "_inst_0000000000000005_ir_expr_X5ftemporal_Decide_ir_expr_X5ftemporal_Request",
+      "instance_kind": "capability",
+      "symbol_ref": {
+        "kind": "capability",
+        "canonical_name": "ir::expr_temporal::Decide",
+        "local_name": "Decide",
+        "module_name": "ir::expr_temporal",
+        "id": 5
+      },
+      "type_args": [
+        {
+          "kind": "struct",
+          "display_name": "ir::expr_temporal::Request",
+          "canonical_name": "ir::expr_temporal::Request",
+          "source_range": {
+            "begin_offset": 1284,
+            "end_offset": 1303
+          }
+        }
+      ],
+      "params": [
+        {
+          "name": "request",
+          "type": "ir::expr_temporal::Request",
+          "type_ref": {
+            "kind": "struct",
+            "display_name": "ir::expr_temporal::Request",
+            "canonical_name": "ir::expr_temporal::Request",
+            "source_range": {
+              "begin_offset": 792,
+              "end_offset": 808
+            }
+          },
+          "source_range": {
+            "begin_offset": 792,
+            "end_offset": 808
+          }
+        }
+      ],
+      "return_type": "ir::expr_temporal::Response",
+      "return_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Response",
+        "canonical_name": "ir::expr_temporal::Response",
+        "source_range": {
+          "begin_offset": 774,
+          "end_offset": 822
+        }
+      }
+    },
+    {
+      "kind": "instance",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 1115,
+          "end_offset": 1141
+        }
+      },
+      "name": "_inst_0000000000000006_ir_expr_X5ftemporal_ready_String",
+      "instance_kind": "predicate",
+      "symbol_ref": {
+        "kind": "predicate",
+        "canonical_name": "ir::expr_temporal::ready",
+        "local_name": "ready",
+        "module_name": "ir::expr_temporal",
+        "id": 6
+      },
+      "type_args": [
+        {
+          "kind": "string",
+          "display_name": "String",
+          "source_range": {
+            "begin_offset": 1115,
+            "end_offset": 1141
+          }
+        }
+      ],
+      "params": [
+        {
+          "name": "value",
+          "type": "String",
+          "type_ref": {
+            "kind": "string",
+            "display_name": "String",
+            "source_range": {
+              "begin_offset": 839,
+              "end_offset": 852
+            }
+          },
+          "source_range": {
+            "begin_offset": 839,
+            "end_offset": 852
+          }
+        }
+      ]
+    },
+    {
+      "kind": "instance",
+      "provenance": {
+        "module_name": "",
+        "source_path": "",
+        "source_range": {
+          "begin_offset": 1976,
+          "end_offset": 2009
+        }
+      },
+      "name": "_inst_0000000000000007_ir_expr_X5ftemporal_ExprAgent_ir_expr_X5ftemporal_Request_ir_expr_X5ftemporal_Context_ir_expr_X5ftemporal_Response",
+      "instance_kind": "agent",
+      "symbol_ref": {
+        "kind": "agent",
+        "canonical_name": "ir::expr_temporal::ExprAgent",
+        "local_name": "ExprAgent",
+        "module_name": "ir::expr_temporal",
+        "id": 7
+      },
+      "type_args": [
+        {
+          "kind": "struct",
+          "display_name": "ir::expr_temporal::Request",
+          "canonical_name": "ir::expr_temporal::Request",
+          "source_range": {
+            "begin_offset": 1976,
+            "end_offset": 2009
+          }
+        },
+        {
+          "kind": "struct",
+          "display_name": "ir::expr_temporal::Context",
+          "canonical_name": "ir::expr_temporal::Context",
+          "source_range": {
+            "begin_offset": 1976,
+            "end_offset": 2009
+          }
+        },
+        {
+          "kind": "struct",
+          "display_name": "ir::expr_temporal::Response",
+          "canonical_name": "ir::expr_temporal::Response",
+          "source_range": {
+            "begin_offset": 1976,
+            "end_offset": 2009
+          }
+        }
+      ],
+      "agent_input_type": "ir::expr_temporal::Request",
+      "agent_input_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Request",
+        "canonical_name": "ir::expr_temporal::Request",
+        "source_range": {
+          "begin_offset": 893,
+          "end_offset": 900
+        }
+      },
+      "agent_context_type": "ir::expr_temporal::Context",
+      "agent_context_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Context",
+        "canonical_name": "ir::expr_temporal::Context",
+        "source_range": {
+          "begin_offset": 915,
+          "end_offset": 922
+        }
+      },
+      "agent_output_type": "ir::expr_temporal::Response",
+      "agent_output_type_ref": {
+        "kind": "struct",
+        "display_name": "ir::expr_temporal::Response",
+        "canonical_name": "ir::expr_temporal::Response",
+        "source_range": {
+          "begin_offset": 936,
+          "end_offset": 944
+        }
+      }
     }
   ]
 }
