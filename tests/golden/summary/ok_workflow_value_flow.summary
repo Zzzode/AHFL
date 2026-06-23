@@ -2,7 +2,7 @@ ahfl.summary.v1
 ir_format ahfl.ir.v1
 project_aware true
 declarations 8
-declarations_with_provenance 8
+declarations_with_provenance 7
 declaration_kinds {
   module 1
   import 0

@@ -757,14 +757,14 @@
           "end_offset": 395
         }
       },
-      "name": "_inst_0000000000000008_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response",
+      "name": "_inst_000000000000004e_lib_agents_AliasAgent_lib_types_Request_lib_types_Context_lib_types_Response",
       "instance_kind": "agent",
       "symbol_ref": {
         "kind": "agent",
         "canonical_name": "lib::agents::AliasAgent",
         "local_name": "AliasAgent",
         "module_name": "lib::agents",
-        "id": 8
+        "id": 78
       },
       "type_args": [
         {

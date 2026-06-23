@@ -2621,7 +2621,13 @@ class TypedIrLowerer final {
         for (const auto &expr : typed_program_->expressions) {
             if (expr.kind != ast::ExprSyntaxKind::Call) continue;
             if (!expr.resolved_symbol.has_value()) continue;
-            if (expr.call_target_kind == TypedCallTargetKind::None) continue;
+            // Only instantiate nominal call targets (Capability / Predicate).
+            // Function targets (top-level `fn` declarations) are emitted via
+            // the nominal FnDecl loop and do not produce a separate InstanceDecl.
+            if (expr.call_target_kind != TypedCallTargetKind::Capability &&
+                expr.call_target_kind != TypedCallTargetKind::Predicate) {
+                continue;
+            }
 
             std::vector<TypePtr> type_args;
             type_args.reserve(expr.children.size());
@@ -2649,7 +2655,7 @@ class TypedIrLowerer final {
             if (expr.call_target_kind == TypedCallTargetKind::Capability) {
                 info.kind = InstanceBuildKind::Capability;
                 info.capability = find_capability_info(*expr.resolved_symbol);
-            } else { // Predicate
+            } else {
                 info.kind = InstanceBuildKind::Predicate;
                 info.predicate = find_predicate_info(*expr.resolved_symbol);
             }

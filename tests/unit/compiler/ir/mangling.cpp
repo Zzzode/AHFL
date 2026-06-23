@@ -51,7 +51,9 @@ struct TypeArena {
     TypePtr make_struct(std::string canonical) {
         return ctx.struct_type(std::move(canonical));
     }
-    TypePtr make_list(TypePtr element) { return ctx.list(element); }
+    TypePtr make_list(TypePtr element) {
+        return ctx.struct_type("List", std::nullopt, std::vector<TypePtr>{element});
+    }
 };
 
 } // namespace
