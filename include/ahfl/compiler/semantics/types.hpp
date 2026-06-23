@@ -4,6 +4,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -126,6 +127,17 @@ struct TypeVarT {
     std::string name;
 };
 
+// Forward declarations of legacy composite sugar types (RFC §3.2 migration).
+// Kept intentionally UNDEFINED: they exist *solely* so the SFINAE trait
+// `detail::IsForbiddenSugar` can recognise the names by type identity even
+// though the real definitions were removed. Any attempt to materialise one of
+// these (sizeof, data members, allocation) is a separate hard stop. They must
+// never appear as Payload alternatives (see architectural gates below).
+struct OptionalT;
+struct ListT;
+struct SetT;
+struct MapT;
+
 using Payload = std::variant<AnyT,
                              NeverT,
                              ErrorT,
@@ -144,6 +156,82 @@ using Payload = std::variant<AnyT,
                              EnumVariantT,
                              FnT,
                              TypeVarT>;
+
+// --- Architectural gates (P5.4 / R-01) ---------------------------------------
+//
+// The Payload variant has a fixed cardinality of 18. Adding, removing, or
+// reordering alternatives is a cross-cutting change: every visitor switch,
+// every typed HIR lowering branch, and every serialization round-trip must be
+// kept in sync. Update the number below AND the architecture Python gate
+// (scripts/check-architecture.py) together.
+//
+// Historical composite "sugar" types (OptionalT / ListT / SetT / MapT) are
+// intentionally *not* Payload alternatives. Composites are now encoded through
+// nominal generics on StructT/EnumT (RFC §3.2) rather than ad-hoc union
+// branches. The two compile-time gates below + the Python script gate keep
+// this invariant from regressing.
+
+namespace detail {
+
+// True iff T is one of the forbidden legacy sugar payloads. The trait matches
+// by type identity against the forward declarations above (which intentionally
+// have no body anywhere in the project).
+template <typename T> struct IsForbiddenSugar : std::false_type {};
+template <> struct IsForbiddenSugar<OptionalT> : std::true_type {};
+template <> struct IsForbiddenSugar<ListT> : std::true_type {};
+template <> struct IsForbiddenSugar<SetT> : std::true_type {};
+template <> struct IsForbiddenSugar<MapT> : std::true_type {};
+
+// Fold a pack: any alternative is a forbidden sugar?
+template <typename... Ts>
+constexpr bool AnyForbiddenSugarV = (IsForbiddenSugar<Ts>::value || ...);
+
+} // namespace detail
+
+// 1) Cardinality gate. Spelled `== 18` so a +1/-1 change breaks compilation
+//    immediately. Hand-test: change to 17 and confirm a hard error.
+static_assert(std::variant_size_v<Payload> == 18,
+              "ahfl::types::Payload cardinality drift. Update this static_assert "
+              "along with every visitor/lowering/serialization site, and keep "
+              "scripts/check-architecture.py aligned.");
+
+// 2) Forbidden-sugar gate. OptionalT / ListT / SetT / MapT must never appear
+//    as a Payload alternative. Composites live on nominal generics only.
+//    Implementation note: we enumerate every slot via std::variant_alternative
+//    because C++ does not (yet) expose the pack of alternatives directly. If
+//    arity grows, the cardinality static_assert fires first and this list is
+//    updated alongside it.
+static_assert(!detail::AnyForbiddenSugarV<
+                  std::variant_alternative_t<0, Payload>,
+                  std::variant_alternative_t<1, Payload>,
+                  std::variant_alternative_t<2, Payload>,
+                  std::variant_alternative_t<3, Payload>,
+                  std::variant_alternative_t<4, Payload>,
+                  std::variant_alternative_t<5, Payload>,
+                  std::variant_alternative_t<6, Payload>,
+                  std::variant_alternative_t<7, Payload>,
+                  std::variant_alternative_t<8, Payload>,
+                  std::variant_alternative_t<9, Payload>,
+                  std::variant_alternative_t<10, Payload>,
+                  std::variant_alternative_t<11, Payload>,
+                  std::variant_alternative_t<12, Payload>,
+                  std::variant_alternative_t<13, Payload>,
+                  std::variant_alternative_t<14, Payload>,
+                  std::variant_alternative_t<15, Payload>,
+                  std::variant_alternative_t<16, Payload>,
+                  std::variant_alternative_t<17, Payload>>,
+              "OptionalT / ListT / SetT / MapT are forbidden as ahfl::types::Payload "
+              "alternatives. Composites are encoded via nominal generics on "
+              "StructT/EnumT. See scripts/check-architecture.py.");
+
+// 3) SFINAE helper for factory sites (e.g. TypeContext::build_payload and any
+//    future Payload materializers). Using it on a sugar type produces a
+//    substitution failure rather than a late linker/visitor error:
+//
+//      template <typename T, typename = PayloadAllowed<T>>
+//      void make_payload(T &&) { ... }
+template <typename T>
+using PayloadAllowed = std::enable_if_t<!detail::IsForbiddenSugar<std::decay_t<T>>::value, int>;
 
 // Helper for ad-hoc visitors using the overload pattern, e.g.
 //
