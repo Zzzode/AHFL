@@ -864,6 +864,7 @@ class IrProgramPrinter final {
         case ir::InstanceKind::Predicate: kind_name = "predicate"; break;
         case ir::InstanceKind::Agent: kind_name = "agent"; break;
         case ir::InstanceKind::Workflow: kind_name = "workflow"; break;
+        case ir::InstanceKind::Fn: kind_name = "fn"; break;
         case ir::InstanceKind::Unknown: kind_name = "unknown"; break;
         }
         line(0, std::string("instance ") + std::string(kind_name) + " " + declaration.name + " {");

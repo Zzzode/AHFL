@@ -1724,6 +1724,9 @@ class IrJsonPrinter final {
                             case ir::InstanceKind::Workflow:
                                 write_string("workflow");
                                 break;
+                            case ir::InstanceKind::Fn:
+                                write_string("fn");
+                                break;
                             case ir::InstanceKind::Unknown:
                                 write_string("unknown");
                                 break;

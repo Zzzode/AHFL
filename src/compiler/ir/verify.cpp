@@ -386,6 +386,10 @@ class ProgramVerifier {
             verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
                               SymbolRefKind::Workflow);
             break;
+        case InstanceKind::Fn:
+            verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
+                              SymbolRefKind::Function);
+            break;
         case InstanceKind::Unknown:
             if (decl.symbol_ref.id.has_value() || !decl.symbol_ref.canonical_name.empty()) {
                 verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
@@ -413,6 +417,9 @@ class ProgramVerifier {
         case InstanceKind::Workflow:
             verify_type_ref(decl.workflow_input_type_ref, path + ".workflow_input_type_ref");
             verify_type_ref(decl.workflow_output_type_ref, path + ".workflow_output_type_ref");
+            break;
+        case InstanceKind::Fn:
+            verify_type_ref(decl.return_type_ref, path + ".return_type_ref");
             break;
         case InstanceKind::Unknown:
             break;

@@ -325,6 +325,10 @@ enum class InstanceKind {
     Predicate,
     Agent,
     Workflow,
+    /// P2d.S5: a top-level `fn` declaration instantiated at concrete type
+    /// arguments. Mangled dispatch key is identical to the Capability shape
+    /// so execution backends treat it uniformly.
+    Fn,
 };
 
 /// A concrete, monomorphized instance of a nominal declaration produced by
