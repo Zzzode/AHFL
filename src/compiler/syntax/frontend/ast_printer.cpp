@@ -104,6 +104,27 @@ class AstPrinter final {
         visit(node);
     }
 
+    // Standalone hook for DecreasesClauseSyntax.  Public so the free-function
+    // wrapper and future consumers (debug printers, LSP hover) can reuse the
+    // same indent + expr formatting helpers without duplicating them.  This is
+    // a deliberately narrow entry point: DecreasesClauseSyntax is NOT a Node
+    // and MUST NOT be dispatched through visit_declaration / NodeKind (R-09).
+    void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
+                                int indent_level) {
+        line(indent_level, "decreases");
+        line(indent_level + 1,
+             clause.is_wildcard ? "wildcard: true" : "wildcard: false");
+        for (std::size_t i = 0; i < clause.terms.size(); ++i) {
+            const auto *term = clause.terms[i].get();
+            line(indent_level + 1, "term " + std::to_string(i));
+            if (term != nullptr) {
+                print_expr(*term, indent_level + 2);
+            } else {
+                line(indent_level + 2, "<null>");
+            }
+        }
+    }
+
     void visit(const ast::Program &node) {
         line(0, "program " + node.source_name);
 
@@ -1054,6 +1075,17 @@ void dump_project_ast_outline(const SourceGraph &graph, std::ostream &out) {
         AstPrinter printer(out, 2);
         printer.print(*source.program);
     }
+}
+
+// ---------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone printer (R-09: no DeclKind dispatch).
+// ---------------------------------------------------------------------------
+
+void print_decreases_clause(const ast::DecreasesClauseSyntax &clause,
+                            std::ostream &out,
+                            int base_indent) {
+    AstPrinter printer(out, base_indent);
+    printer.print_decreases_clause(clause, 1);
 }
 
 } // namespace ahfl

@@ -1166,8 +1166,25 @@ class AstFormatter {
     void write(const std::string &text) {
         out_ << text;
     }
+    /// Raw write – mirrors write(), named separately so callers from outside
+    /// the normal statement/decl pipeline don't accidentally pick up trailing
+    /// whitespace semantics we may add in the future.
+    void write_raw(const std::string &text) {
+        out_ << text;
+    }
     void newline() {
         out_ << "\n";
+    }
+    /// Drain the internal buffer.  Used by standalone clause formatters that
+    /// build output without routing through format(Program).
+    [[nodiscard]] std::string take_output() {
+        return out_.str();
+    }
+    /// Public entry point for expression formatting (used by
+    /// format_decreases_clause_impl; kept as a thin wrap so expression
+    /// formatting stays co-located with the rest of AstFormatter).
+    void format_expr_public(const ahfl::ast::ExprSyntax &expr) {
+        format_expr(expr);
     }
 
     const FormatOptions &opts_;
@@ -1237,6 +1254,48 @@ std::vector<FormatDiff> compute_diff(const std::string &original, const std::str
     }
 
     return diffs;
+}
+
+// ---------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone formatter (R-09: no DeclKind dispatch).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// Reconstruct surface source text for a single decreases clause.  Exposed as
+/// `format_decreases_clause` below.  Keeping the worker inside an anonymous
+/// namespace lets us reuse the same AstFormatter helpers without leaking them
+/// as part of the public formatter API.
+std::string format_decreases_clause_impl(const ahfl::ast::DecreasesClauseSyntax &clause) {
+    FormatOptions opts = default_options();
+    AstFormatter formatter(opts);
+
+    if (clause.is_wildcard) {
+        formatter.write("decreases *;");
+        return formatter.take_output();
+    }
+
+    formatter.write("decreases (");
+    for (std::size_t i = 0; i < clause.terms.size(); ++i) {
+        if (i != 0) {
+            formatter.write_raw(", ");
+        }
+        if (clause.terms[i]) {
+            formatter.format_expr_public(*clause.terms[i]);
+        } else {
+            // Defensive: null entries shouldn't survive desugar, but produce
+            // stable output anyway so diagnostics never crash.
+            formatter.write("/* null */");
+        }
+    }
+    formatter.write(");");
+    return formatter.take_output();
+}
+
+} // namespace
+
+std::string format_decreases_clause(const ahfl::ast::DecreasesClauseSyntax &clause) {
+    return format_decreases_clause_impl(clause);
 }
 
 } // namespace ahfl::formatter

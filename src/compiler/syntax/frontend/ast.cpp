@@ -1688,3 +1688,80 @@ void RecursiveVisitor::visit(FlowDecl &) {}
 void RecursiveVisitor::visit(WorkflowDecl &) {}
 
 } // namespace ahfl::ast
+
+namespace ahfl {
+
+// ---------------------------------------------------------------------------
+// DecreasesClauseSyntax – standalone canonicaliser (R-09: no DeclKind dispatch).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::string expr_spelling_for_dedup(const ast::ExprSyntax &expr) {
+    if (!expr.text.empty()) {
+        return expr.text;
+    }
+
+    // Fallback spelling: use the node kind index so two expressions built the
+    // same way produce the same key.  We don't pull in the full AST printer
+    // here to keep the desugar pass cheap.
+    return std::to_string(static_cast<std::uint32_t>(ast::expr_syntax_kind(expr)));
+}
+
+} // namespace
+
+bool desugar_decreases_clause(ast::DecreasesClauseSyntax &clause) {
+    bool changed = false;
+
+    if (clause.is_wildcard) {
+        // Wildcard form is canonical on its own.  We still drop any nullptr
+        // / stray entries in `terms` so downstream consumers don't have to
+        // defensive-check around an "unused" vector.
+        if (!clause.terms.empty()) {
+            clause.terms.clear();
+            changed = true;
+        }
+        return changed;
+    }
+
+    // Pass 1: drop nullptr entries (parser or programmatic builder corner
+    // case).  We walk in place; size can only shrink so an out-of-place
+    // rebuild is both simpler and cache-friendlier for the typical sizes
+    // (1..4 terms).
+    {
+        std::vector<ahfl::Owned<ast::ExprSyntax>> compact;
+        compact.reserve(clause.terms.size());
+        for (auto &term : clause.terms) {
+            if (term) {
+                compact.push_back(std::move(term));
+            } else {
+                changed = true;
+            }
+        }
+        clause.terms.swap(compact);
+    }
+
+    // Pass 2: drop *consecutive* duplicate spellings.  We only collapse
+    // consecutive duplicates because the tuple is lexicographically ordered
+    // by definition, and non-adjacent duplicates (e.g. x, y, x) are
+    // meaningful: they represent a genuine two-step measure.
+    {
+        std::vector<ahfl::Owned<ast::ExprSyntax>> dedup;
+        dedup.reserve(clause.terms.size());
+        std::string last_spelling;
+        for (auto &term : clause.terms) {
+            const auto spelling = expr_spelling_for_dedup(*term);
+            if (!dedup.empty() && spelling == last_spelling) {
+                changed = true;
+                continue;
+            }
+            last_spelling = spelling;
+            dedup.push_back(std::move(term));
+        }
+        clause.terms.swap(dedup);
+    }
+
+    return changed;
+}
+
+} // namespace ahfl

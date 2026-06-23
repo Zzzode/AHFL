@@ -1001,6 +1001,25 @@ struct ContractClauseSyntax {
     Owned<TemporalExprSyntax> temporal_expr; // temporal logic condition
 };
 
+/// Decreases / termination-measure clause.
+///
+/// Plain syntax fragment (does NOT inherit from Decl / Node; not carried by
+/// DeclKind / NodeKind).  Consumers dispatch on the concrete type directly.
+///
+/// Either:
+///   * is_wildcard == true  → the clause is the wildcard form `decreases *;`
+///   * is_wildcard == false → `terms` is the lexicographic tuple of
+///     expressions that form the termination measure.
+struct DecreasesClauseSyntax {
+    ahfl::SourceRange range;
+    /// Lexicographic tuple of measure expressions.  When `is_wildcard` is true
+    /// this is typically empty, but both fields are independent so a consumer
+    /// can always iterate `terms` without checking the flag first.
+    std::vector<Owned<ExprSyntax>> terms;
+    /// True for the wildcard / "don't verify" form.
+    bool is_wildcard{false};
+};
+
 /// State policy item (execution policy within a flow handler)
 struct StatePolicyItemSyntax {
     ahfl::SourceRange range;
