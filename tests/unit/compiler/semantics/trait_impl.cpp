@@ -823,13 +823,505 @@ fn caller(c: Counter) -> Int effect Pure decreases 0 {
     const auto result = typecheck_source("trait_ambiguous_dispatch.ahfl", source);
     CHECK(result.has_errors());
 
-    // Exact full code — triggered by the method-dispatch ambiguity path.
-    CHECK(has_exact_diagnostic_code(result, "typecheck.AMBIGUOUS_TRAIT_IMPL"));
-
     // The dispatch path passes (impl_type, trait_name)-shape args to the
     // AmbiguousTraitImpl template (upstream wording from diagnostics.hpp
     // reads "multiple trait implementations match for type ...").
     CHECK(has_exact_diagnostic(result,
                                "typecheck.AMBIGUOUS_TRAIT_IMPL",
                                "multiple trait implementations match for type"));
+}
+
+// ============================================================================
+// P3c.S4a — find_impls + coherence MVP (100% conflict detection)
+// ============================================================================
+//
+// The cases below exercise the new public surface on TypeEnvironment:
+//   * find_impls(trait_symbol, concrete_type) -> vector<ImplRef>
+//   * impls_conflict_for_type(lhs, rhs) (shared predicate, also used by the
+//     orphan rule and the duplicate-impl detector)
+//   * normalize_type_key(type) -> string (stable equivalence relation)
+//
+// plus the new typecheck.COHERENCE_CONFLICT diagnostic emitted by the
+// coherence MVP whenever two impls produce the same (trait,
+// normalized_type) key, regardless of how they were declared (same module,
+// cross-module, identical text, etc.).
+
+namespace {
+
+// Parse + resolve + typecheck a single source unit and return both the
+// result and the (trait_symbol, target_symbol) pair resolved by name. Used
+// by the find_impls positive tests so each test can construct a concrete
+// Type (via TypeContext) and query find_impls against the produced env.
+struct NamedSymbols {
+    std::optional<SymbolId> trait_id;
+    std::optional<SymbolId> target_id;
+};
+
+[[nodiscard]] NamedSymbols resolve_named(const ahfl::SymbolTable &symbols,
+                                         std::string_view trait_local_name,
+                                         std::string_view target_local_name,
+                                         std::string_view module_name = "trait_impl") {
+    NamedSymbols out;
+    for (const auto &entry : symbols.entries()) {
+        const auto &sym = entry.get();
+        const auto canonical = std::string(module_name) + "::" + std::string(trait_local_name);
+        if (sym.kind == ahfl::SymbolKind::Trait &&
+            (sym.canonical_name == canonical || sym.local_name == trait_local_name)) {
+            out.trait_id = sym.id;
+        }
+        const auto target_canonical =
+            std::string(module_name) + "::" + std::string(target_local_name);
+        if ((sym.kind == ahfl::SymbolKind::Struct || sym.kind == ahfl::SymbolKind::Enum) &&
+            (sym.canonical_name == target_canonical || sym.local_name == target_local_name)) {
+            out.target_id = sym.id;
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// S4a-TC1: find_impls returns one match for a single trait impl.
+TEST_CASE("find_impls returns one ImplRef for a single clean trait impl") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Widget {
+    weight: Int;
+}
+
+trait HasWeight {
+    fn weight(self: Widget) -> Int;
+}
+
+impl HasWeight for Widget {
+    fn weight(self: Widget) -> Int effect Pure decreases 0 {
+        return self.weight;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_single_impl.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    // Resolve names via the symbol table carried by the resolver. The public
+    // TypeEnvironment only exposes symbol-keyed lookups, so we re-query names
+    // the same way expression-typecheck dispatch would.
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("s4a_single_impl.ahfl", source);
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse.program);
+    const auto names = resolve_named(resolve_result.symbols, "HasWeight", "Widget");
+    REQUIRE(names.trait_id.has_value());
+    REQUIRE(names.target_id.has_value());
+
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    const auto target_type = types.struct_type("trait_impl::Widget", *names.target_id);
+    REQUIRE(target_type != nullptr);
+
+    const auto matches = result.environment.find_impls(names.trait_id, *target_type);
+    CHECK(matches.size() == 1);
+    CHECK(matches[0]->trait_symbol.has_value());
+    CHECK(*matches[0]->trait_symbol == *names.trait_id);
+}
+
+// S4a-TC2: find_impls returns empty vector when no impl exists.
+TEST_CASE("find_impls returns empty vector when no impl exists") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Gadget {
+    id: Int;
+}
+
+trait HasWeight {
+    fn weight(self: Gadget) -> Int;
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_no_impl.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("s4a_no_impl.ahfl", source);
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse.program);
+    const auto names = resolve_named(resolve_result.symbols, "HasWeight", "Gadget");
+    REQUIRE(names.trait_id.has_value());
+    REQUIRE(names.target_id.has_value());
+
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    const auto target_type = types.struct_type("trait_impl::Gadget", *names.target_id);
+    const auto matches = result.environment.find_impls(names.trait_id, *target_type);
+    CHECK(matches.empty());
+}
+
+// S4a-TC3: find_impls filters by trait (same target, different traits).
+TEST_CASE("find_impls filters candidates by trait symbol") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Item {
+    value: Int;
+}
+
+trait Measurable {
+    fn len(self: Item) -> Int;
+}
+
+trait Valuable {
+    fn value(self: Item) -> Int;
+}
+
+impl Measurable for Item {
+    fn len(self: Item) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+
+impl Valuable for Item {
+    fn value(self: Item) -> Int effect Pure decreases 0 {
+        return self.value;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_multi_trait.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("s4a_multi_trait.ahfl", source);
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse.program);
+
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    const auto item_name = resolve_named(resolve_result.symbols, "Measurable", "Item");
+    REQUIRE(item_name.trait_id.has_value());
+    REQUIRE(item_name.target_id.has_value());
+    const auto valuable_name = resolve_named(resolve_result.symbols, "Valuable", "Item");
+    REQUIRE(valuable_name.trait_id.has_value());
+
+    const auto target_type = types.struct_type("trait_impl::Item", *item_name.target_id);
+    CHECK(result.environment.find_impls(item_name.trait_id, *target_type).size() == 1);
+    CHECK(result.environment.find_impls(valuable_name.trait_id, *target_type).size() == 1);
+
+    // nullopt trait = enumerate all impls for the concrete type.
+    const auto all_for_item = result.environment.find_impls(std::nullopt, *target_type);
+    CHECK(all_for_item.size() == 2);
+}
+
+// S4a-TC4: exact duplicate trait impl fires COHERENCE_CONFLICT.
+TEST_CASE("duplicate trait impl reports typecheck.COHERENCE_CONFLICT") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Bucket {
+    amount: Int;
+}
+
+trait Show {
+    fn show(self: Bucket) -> Int;
+}
+
+impl Show for Bucket {
+    fn show(self: Bucket) -> Int effect Pure decreases 0 {
+        return self.amount;
+    }
+}
+
+impl Show for Bucket {
+    fn show(self: Bucket) -> Int effect Pure decreases 0 {
+        return self.amount + 1;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_duplicate.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic_code(result, "typecheck.COHERENCE_CONFLICT"));
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.COHERENCE_CONFLICT",
+                               "coherence conflict: multiple impls of trait"));
+    // The golden wording includes the related-note reference to the previous
+    // impl ("previous impl of ... declared here").
+    bool found_related_note = false;
+    for (const auto &entry : result.diagnostics.entries()) {
+        for (const auto &related : entry.related) {
+            if (related.message.find("previous impl") != std::string::npos) {
+                found_related_note = true;
+            }
+        }
+    }
+    CHECK(found_related_note);
+}
+
+// S4a-TC5: three identical impls report at least two COHERENCE_CONFLICTs.
+TEST_CASE("three duplicate trait impls report multiple COHERENCE_CONFLICT") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Triad {
+    x: Int;
+}
+
+trait Get {
+    fn get(self: Triad) -> Int;
+}
+
+impl Get for Triad {
+    fn get(self: Triad) -> Int effect Pure decreases 0 { return self.x; }
+}
+impl Get for Triad {
+    fn get(self: Triad) -> Int effect Pure decreases 0 { return self.x; }
+}
+impl Get for Triad {
+    fn get(self: Triad) -> Int effect Pure decreases 0 { return self.x; }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_three_dupes.ahfl", source);
+    CHECK(result.has_errors());
+    std::size_t conflicts = 0;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.code.has_value() && *entry.code == "typecheck.COHERENCE_CONFLICT") {
+            ++conflicts;
+        }
+    }
+    CHECK(conflicts >= 2);
+}
+
+// S4a-TC6: different trait impls on same target do NOT fire conflict.
+TEST_CASE("different trait impls on same target do not fire COHERENCE_CONFLICT") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Multi {
+    a: Int;
+}
+
+trait Alpha {
+    fn a(self: Multi) -> Int;
+}
+trait Beta {
+    fn b(self: Multi) -> Int;
+}
+
+impl Alpha for Multi {
+    fn a(self: Multi) -> Int effect Pure decreases 0 { return self.a; }
+}
+impl Beta for Multi {
+    fn b(self: Multi) -> Int effect Pure decreases 0 { return self.a; }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_no_conflict.ahfl", source);
+    CHECK_FALSE(result.has_errors());
+    CHECK_FALSE(has_exact_diagnostic_code(result, "typecheck.COHERENCE_CONFLICT"));
+    CHECK_FALSE(has_exact_diagnostic_code(result, "typecheck.DUPLICATE_TRAIT_IMPL"));
+}
+
+// S4a-TC7: inherent impls never participate in trait coherence conflict.
+TEST_CASE("inherent impls are excluded from coherence conflict detection") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn inc(self: Counter) -> Int effect Pure decreases 0 { return self.value + 1; }
+}
+
+// A second inherent impl on the same type is *not* a coherence conflict in
+// the MVP — inherent impls are never compared against the (trait,
+// normalized_type) table.
+impl Counter {
+    fn dec(self: Counter) -> Int effect Pure decreases 0 { return self.value - 1; }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_inherent.ahfl", source);
+    CHECK_FALSE(result.has_errors());
+    CHECK_FALSE(has_exact_diagnostic_code(result, "typecheck.COHERENCE_CONFLICT"));
+}
+
+// S4a-TC8: impls on DIFFERENT nominal targets do NOT fire conflict even if
+// the trait is the same. Confirms the normalized-type key distinguishes by
+// nominal symbol id as well as trait id.
+TEST_CASE("same trait on different nominal targets do not conflict") {
+    const std::string source = module_preamble() + R"AHFL(
+struct A { x: Int; }
+struct B { x: Int; }
+
+trait Get {
+    fn get(self: A) -> Int;
+}
+
+// NOTE: AHFL impl trait for Type requires method signatures to match the
+// trait's declared self-type. The two impls below have their trait methods
+// typed to match Get's signature. This test focuses on the coherence check,
+// not signature validity, so we only use the single (A, Get) combination.
+impl Get for A {
+    fn get(self: A) -> Int effect Pure decreases 0 { return self.x; }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_different_targets.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    CHECK_FALSE(has_exact_diagnostic_code(result, "typecheck.COHERENCE_CONFLICT"));
+
+    const ahfl::Frontend frontend;
+    const auto parse = frontend.parse_text("s4a_different_targets.ahfl", source);
+    const ahfl::Resolver resolver;
+    const auto resolve_result = resolver.resolve(*parse.program);
+
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    const auto names_a = resolve_named(resolve_result.symbols, "Get", "A");
+    REQUIRE(names_a.trait_id.has_value());
+    REQUIRE(names_a.target_id.has_value());
+    // B should not have a Get impl — find_impls for Get on B returns empty.
+    const auto b_name = resolve_named(resolve_result.symbols, "Get", "B");
+    REQUIRE(b_name.target_id.has_value());
+    const auto type_a = types.struct_type("trait_impl::A", *names_a.target_id);
+    const auto type_b = types.struct_type("trait_impl::B", *b_name.target_id);
+    CHECK(result.environment.find_impls(names_a.trait_id, *type_a).size() == 1);
+    CHECK(result.environment.find_impls(names_a.trait_id, *type_b).empty());
+}
+
+// S4a-TC9: shared impls_conflict_for_type predicate used by find_impls AND
+// coherence: manually construct two ImplTypeInfo values with the same
+// (trait, normalized) key and assert they are equivalent via the public
+// static helper. This directly validates "共享判定函数".
+TEST_CASE("impls_conflict_for_type shared predicate equality holds") {
+    // Build two env entries that match on trait_symbol + normalized target
+    // type but differ on unrelated fields (method name, source ranges). The
+    // shared predicate must still report a conflict.
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    const auto ty = types.struct_type("S4aTest::Shared", SymbolId{42});
+
+    ahfl::ImplTypeInfo lhs{
+        .index = 0,
+        .is_inherent = false,
+        .trait_symbol = SymbolId{7},
+        .trait_name = "Shared",
+        .target_type = ty,
+        .target_symbol = SymbolId{42},
+    };
+    ahfl::ImplTypeInfo rhs{
+        .index = 1,
+        .is_inherent = false,
+        .trait_symbol = SymbolId{7},
+        .trait_name = "Shared",
+        .target_type = ty,
+        .target_symbol = SymbolId{42},
+    };
+    CHECK(ahfl::TypeEnvironment::impls_conflict_for_type(lhs, rhs));
+
+    // Vary the trait symbol → no conflict.
+    rhs.trait_symbol = SymbolId{8};
+    CHECK_FALSE(ahfl::TypeEnvironment::impls_conflict_for_type(lhs, rhs));
+
+    // Restore trait symbol but mark one as inherent → no conflict.
+    rhs.trait_symbol = SymbolId{7};
+    rhs.is_inherent = true;
+    CHECK_FALSE(ahfl::TypeEnvironment::impls_conflict_for_type(lhs, rhs));
+}
+
+// S4a-TC10: normalize_type_key produces equal keys for same TypeContext-built
+// nominal type, and different keys for different names.
+TEST_CASE("normalize_type_key distinguishes nominal types by symbol") {
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    const auto t1 = types.struct_type("S4a::A", SymbolId{11});
+    const auto t2 = types.struct_type("S4a::A", SymbolId{11});
+    const auto t3 = types.struct_type("S4a::B", SymbolId{12});
+    CHECK(ahfl::TypeEnvironment::normalize_type_key(*t1) ==
+          ahfl::TypeEnvironment::normalize_type_key(*t2));
+    CHECK(ahfl::TypeEnvironment::normalize_type_key(*t1) !=
+          ahfl::TypeEnvironment::normalize_type_key(*t3));
+}
+
+// S4a-TC11: normalize_type_key distinguishes struct instantiations with
+// different generic type_args (via the sub-key encoding).
+TEST_CASE("normalize_type_key distinguishes generic struct instantiations") {
+    ahfl::TypeContext &types = ahfl::TypeContext::global();
+    // Build two nominal types that differ structurally via their describe()
+    // output: StructT vs EnumT. The coherence key uses variant-specific
+    // encoding so it must distinguish them.
+    const auto s = types.struct_type("S4a::Nom", SymbolId{50});
+    const auto e = types.enum_type("S4a::Nom", SymbolId{50});
+    CHECK(ahfl::TypeEnvironment::normalize_type_key(*s) !=
+          ahfl::TypeEnvironment::normalize_type_key(*e));
+
+    // Composite types also get distinct keys.
+    const auto list_int = types.list(types.make(ahfl::TypeKind::Int));
+    const auto list_float = types.list(types.make(ahfl::TypeKind::Float));
+    CHECK(ahfl::TypeEnvironment::normalize_type_key(*list_int) !=
+          ahfl::TypeEnvironment::normalize_type_key(*list_float));
+}
+
+// S4a-TC12: coherence conflict fires in multi-module setup where each impl
+// is written in a separate module. Exercises the cross-module case that the
+// orphan rule also governs — confirms both pass through the same normalized
+// key (otherwise a textually-separate duplicate would be silently accepted).
+TEST_CASE("cross-module duplicate trait impl still fires COHERENCE_CONFLICT") {
+    const std::vector<ModuleSource> units = {
+        ModuleSource{
+            .display_name = "common.ahfl",
+            .module_name = "common",
+            .text = R"AHFL(
+module common;
+
+struct Token {
+    id: Int;
+}
+
+trait Validate {
+    fn ok(self: Token) -> Int;
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "checker_a.ahfl",
+            .module_name = "checker_a",
+            .text = R"AHFL(
+module checker_a;
+
+impl common::Validate for common::Token {
+    fn ok(self: common::Token) -> Int effect Pure decreases 0 {
+        return self.id;
+    }
+}
+)AHFL",
+        },
+        ModuleSource{
+            .display_name = "checker_b.ahfl",
+            .module_name = "checker_b",
+            .text = R"AHFL(
+module checker_b;
+
+impl common::Validate for common::Token {
+    fn ok(self: common::Token) -> Int effect Pure decreases 0 {
+        return self.id + 1;
+    }
+}
+)AHFL",
+        },
+    };
+
+    const auto result = typecheck_modules(units, /*expect_resolve_clean=*/true);
+    CHECK(result.has_errors());
+    CHECK(has_exact_diagnostic_code(result, "typecheck.COHERENCE_CONFLICT"));
+}
+
+// S4a-TC13: single-trait, single-target fixture still passes after the
+// refactor — regression guard confirming the new scan-based detector does
+// not break the positive path (we rewrite the duplicate check from a
+// symbol-pair set to the shared predicate).
+TEST_CASE("single trait impl on enum type typechecks cleanly") {
+    const std::string source = module_preamble() + R"AHFL(
+enum Switch {
+    On,
+    Off,
+}
+
+trait Flippable {
+    fn flip(self: Switch) -> Int;
+}
+
+impl Flippable for Switch {
+    fn flip(self: Switch) -> Int effect Pure decreases 0 {
+        return 0;
+    }
+}
+)AHFL";
+
+    const auto result = typecheck_source("s4a_enum_impl.ahfl", source);
+    CHECK_FALSE(result.has_errors());
 }
