@@ -1183,7 +1183,7 @@ flow for MetadataCallAgent {
     REQUIRE(call != nullptr);
     call->resolved_symbol = redirected_symbol->get().id;
     call->semantic_name = "Redirected";
-    call->call_target_kind = ahfl::TypedCallTargetKind::Capability;
+    call->call_target_kind = ahfl::TypedCallTargetKind::InherentMethod;
 
     const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 

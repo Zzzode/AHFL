@@ -517,7 +517,7 @@ flow for A {
         REQUIRE(e != nullptr);
         CHECK_FALSE(e->is_pure);
         CHECK(e->effect == ahfl::ExprEffect::CapabilityCall);
-        CHECK(e->call_target_kind == ahfl::TypedCallTargetKind::Capability);
+        CHECK(e->call_target_kind == ahfl::TypedCallTargetKind::InherentMethod);
     }
     // Struct literal: resolved_symbol points to struct decl.
     {

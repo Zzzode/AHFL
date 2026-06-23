@@ -1090,7 +1090,7 @@ class TypedIrLowerer final {
     [[nodiscard]] const TypedProgram::FnCallSiteRecord *
     find_fn_call_site(const TypedExpr &call_expr) const noexcept {
         if (!call_expr.resolved_symbol.has_value()) return nullptr;
-        if (call_expr.call_target_kind != TypedCallTargetKind::Function) return nullptr;
+        if (call_expr.call_target_kind != TypedCallTargetKind::Builtin) return nullptr;
         const SymbolId target = *call_expr.resolved_symbol;
         const auto &want_source = call_expr.source_id;
         const auto &want_range = call_expr.range;
@@ -1139,7 +1139,7 @@ class TypedIrLowerer final {
                 // evaluator runtime) or mapped to C++ builtin hooks, neither
                 // of which participates in the user-side mangled fn-instance
                 // runtime table.
-                if (expr.call_target_kind == TypedCallTargetKind::Function) {
+                if (expr.call_target_kind == TypedCallTargetKind::Builtin) {
                     if (!symbol->get().canonical_name.starts_with("std::")) {
                         if (const auto *site = find_fn_call_site(expr);
                             site != nullptr && !site->type_args.empty()) {
@@ -2671,8 +2671,8 @@ class TypedIrLowerer final {
             // Only instantiate nominal call targets (Capability / Predicate).
             // Function targets (top-level `fn` declarations) are emitted via
             // the nominal FnDecl loop and do not produce a separate InstanceDecl.
-            if (expr.call_target_kind != TypedCallTargetKind::Capability &&
-                expr.call_target_kind != TypedCallTargetKind::Predicate) {
+            if (expr.call_target_kind != TypedCallTargetKind::InherentMethod &&
+                expr.call_target_kind != TypedCallTargetKind::TraitMethod) {
                 continue;
             }
 
@@ -2699,7 +2699,7 @@ class TypedIrLowerer final {
             info.type_args = key.type_args;
             info.provenance_range = expr.range;
 
-            if (expr.call_target_kind == TypedCallTargetKind::Capability) {
+            if (expr.call_target_kind == TypedCallTargetKind::InherentMethod) {
                 info.kind = InstanceBuildKind::Capability;
                 info.capability = find_capability_info(*expr.resolved_symbol);
             } else {

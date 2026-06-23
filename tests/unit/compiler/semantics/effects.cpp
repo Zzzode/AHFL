@@ -2641,7 +2641,8 @@ flow for HirAgent {
     REQUIRE(call != tp.expressions.end());
     REQUIRE(call->resolved_symbol.has_value());
     CHECK(*call->resolved_symbol == do_symbol->get().id);
-    CHECK(call->call_target_kind == ahfl::TypedCallTargetKind::Capability);
+    CHECK(call->call_target_kind.has_value());
+    CHECK(*call->call_target_kind == ahfl::TypedCallTargetKind::InherentMethod);
     CHECK(call->semantic_name == "Do");
     REQUIRE(call->children.size() == 1);
     CHECK(call->children.front().role == ahfl::TypedExprChildRole::Argument);
@@ -2660,7 +2661,8 @@ flow for HirAgent {
     REQUIRE(predicate_call != tp.expressions.end());
     REQUIRE(predicate_call->resolved_symbol.has_value());
     CHECK(*predicate_call->resolved_symbol == ready_symbol->get().id);
-    CHECK(predicate_call->call_target_kind == ahfl::TypedCallTargetKind::Predicate);
+    CHECK(predicate_call->call_target_kind.has_value());
+    CHECK(*predicate_call->call_target_kind == ahfl::TypedCallTargetKind::TraitMethod);
     REQUIRE(predicate_call->children.size() == 1);
     CHECK(predicate_call->children.front().role == ahfl::TypedExprChildRole::Argument);
     CHECK(predicate_call->children.front().name == "value");

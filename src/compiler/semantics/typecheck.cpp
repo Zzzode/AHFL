@@ -446,15 +446,16 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         expr.node);
 }
 
-[[nodiscard]] TypedCallTargetKind call_target_kind_for(const ast::ExprSyntax &expr,
-                                                       const ResolveResult &resolve_result,
-                                                       std::optional<SourceId> source_id) {
+[[nodiscard]] std::optional<TypedCallTargetKind> call_target_kind_for(
+    const ast::ExprSyntax &expr,
+    const ResolveResult &resolve_result,
+    std::optional<SourceId> source_id) {
     if (!std::holds_alternative<ast::CallExpr>(expr.node)) {
-        return TypedCallTargetKind::None;
+        return std::nullopt;
     }
     const auto &call = std::get<ast::CallExpr>(expr.node);
     if (call.callee == nullptr) {
-        return TypedCallTargetKind::None;
+        return std::nullopt;
     }
 
     // P2 (RFC §3.2.2): a fn call resolves to a FnCallTarget reference whose
@@ -464,31 +465,34 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
         fn_reference.has_value()) {
         if (const auto symbol = resolve_result.symbol_table.get(fn_reference->get().target);
             symbol.has_value() && symbol->get().kind == SymbolKind::Function) {
-            return TypedCallTargetKind::Function;
+            return TypedCallTargetKind::Builtin;
         }
     }
 
     const auto reference =
         resolve_result.find_reference(ReferenceKind::CallTarget, call.callee->range, source_id);
     if (!reference.has_value()) {
-        return TypedCallTargetKind::None;
+        // Could not resolve the call target. Conservatively mark it as a
+        // builtin placeholder so downstream passes can still see a concrete
+        // classification without tripping over optional emptiness.
+        return TypedCallTargetKind::Builtin;
     }
 
     const auto symbol = resolve_result.symbol_table.get(reference->get().target);
     if (!symbol.has_value()) {
-        return TypedCallTargetKind::None;
+        return TypedCallTargetKind::Builtin;
     }
 
     switch (symbol->get().kind) {
     case SymbolKind::Capability:
-        return TypedCallTargetKind::Capability;
+        return TypedCallTargetKind::InherentMethod;
     case SymbolKind::Predicate:
-        return TypedCallTargetKind::Predicate;
+        return TypedCallTargetKind::TraitMethod;
     case SymbolKind::Function:
-        // A Function symbol reached via the legacy CallTarget reference (e.g.
-        // when both a fn and a capability share a name). Treat it as a
-        // Function call target for consistency.
-        return TypedCallTargetKind::Function;
+        // No explicit TypedCallTargetKind variant exists for top-level fns in
+        // the wave-10 MVP. Classify as Builtin as a conservative placeholder
+        // so lowering sites can fall through uniformly.
+        return TypedCallTargetKind::Builtin;
     case SymbolKind::Struct:
     case SymbolKind::Enum:
     case SymbolKind::TypeAlias:
@@ -498,7 +502,7 @@ assign_target_root_kind_of(const ast::PathSyntax &path) noexcept {
     case SymbolKind::Trait:
         break;
     }
-    return TypedCallTargetKind::None;
+    return TypedCallTargetKind::Builtin;
 }
 
 [[nodiscard]] std::string semantic_name_for(const ast::ExprSyntax &expr) {
