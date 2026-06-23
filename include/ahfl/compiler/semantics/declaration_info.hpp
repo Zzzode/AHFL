@@ -14,7 +14,36 @@
 #include <unordered_set>
 #include <vector>
 
+// Forward declarations for AST where-clause nodes. Full definitions live in
+// ahfl/compiler/frontend/ast.hpp. We only need a raw pointer here so the
+// dependency can stay one-way.
+namespace ahfl::ast {
+struct WhereClauseSyntax;
+struct WhereBoundSyntax;
+} // namespace ahfl::ast
+
 namespace ahfl {
+
+/// Placeholder for a single resolved where-bound entry. Currently only mirrors
+/// the raw AST bound identity (subject + trait names). Real semantic resolution
+/// (symbol lookup for the type subject and trait references, subtype checking,
+/// trait inheritance, etc.) happens in a later task. This struct exists purely
+/// so downstream code can iterate over a where clause's bounds without poking
+/// back into the AST.
+struct WhereBoundInfo {
+    std::string subject_name;   // raw spelling of the subject type parameter
+    std::vector<std::string> trait_names; // raw trait / capability spellings
+    SourceRange source_range;
+};
+
+/// Bundled where-clause info attached to nominal declarations that may carry
+/// generic constraints. Holds both a back-pointer to the raw AST (for
+/// diagnostic ranges during checking) and a lightweight semantic-side bound
+/// list that downstream consumers can read without AST linkage.
+struct WhereClauseInfo {
+    const ast::WhereClauseSyntax* syntax{nullptr}; // raw AST pointer (non-owning)
+    std::vector<WhereBoundInfo> bounds;            // resolved bound placeholder
+};
 
 struct ModuleDeclInfo {
     std::string name;
@@ -67,6 +96,7 @@ struct StructTypeInfo {
     // variables inside field types and by monomorphization to align arguments.
     std::vector<std::string> type_param_names;
     std::vector<StructFieldInfo> fields;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
 
     [[nodiscard]] MaybeCRef<StructFieldInfo> find_field(std::string_view name) const;
@@ -94,6 +124,7 @@ struct EnumTypeInfo {
     // variable resolution inside variant payload types and by monomorphization.
     std::vector<std::string> type_param_names;
     std::vector<EnumVariantInfo> variants;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
 
     [[nodiscard]] bool has_variant(std::string_view name) const noexcept;
@@ -130,6 +161,7 @@ struct CapabilityTypeInfo {
     std::string canonical_name;
     std::vector<ParamTypeInfo> params;
     TypePtr return_type;
+    WhereClauseInfo where_clause;
     SourceRange declaration_range;
     CapabilityEffectTypeInfo effect;
 };
