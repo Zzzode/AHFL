@@ -79,18 +79,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     }
                 }
                 out << '}';
-            } else if constexpr (std::is_same_v<T, ListValue>) {
-                out << '[';
-                for (std::size_t i = 0; i < inner.items.size(); ++i) {
-                    if (i > 0)
-                        out << ',';
-                    if (inner.items[i]) {
-                        write_json_impl(*inner.items[i], out);
-                    } else {
-                        out << "null";
-                    }
-                }
-                out << ']';
             } else if constexpr (std::is_same_v<T, EnumValue>) {
                 out << '{';
                 ahfl::write_escaped_json_string(out, "_enum");
@@ -117,12 +105,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
                     out << ']';
                 }
                 out << '}';
-            } else if constexpr (std::is_same_v<T, OptionalValue>) {
-                if (inner.inner) {
-                    write_json_impl(*inner.inner, out);
-                } else {
-                    out << "null";
-                }
             } else if constexpr (std::is_same_v<T, CallableValue>) {
                 out << '{';
                 ahfl::write_escaped_json_string(out, "_callable");
@@ -178,8 +160,37 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 out << inner.unix_ms;
                 out << '}';
             }
+            }
         },
         v.node);
+
+    // Emit list / optional via nominal accessors so the serialization never
+    // spells the variant tag names directly. Output uses the "new key" shape:
+    // lists serialize as JSON arrays and optional values as the inner value
+    // (or null when empty). See value_from_json_value for the dual-key parse
+    // that also accepts the explicit {"list":[...]} / {"some":...} /
+    // {"none":null} wrapper forms.
+    if (const auto *items = list_items(v)) {
+        out << '[';
+        for (std::size_t i = 0; i < items->size(); ++i) {
+            if (i > 0)
+                out << ',';
+            if ((*items)[i]) {
+                write_json_impl(*(*items)[i], out);
+            } else {
+                out << "null";
+            }
+        }
+        out << ']';
+        return;
+    }
+    if (is_optional(v)) {
+        if (const auto *inner = optional_inner(v)) {
+            write_json_impl(*inner, out);
+        } else {
+            out << "null";
+        }
+    }
 }
 
 } // namespace
@@ -212,8 +223,82 @@ namespace {
     return nullptr;
 }
 
+// ----------------------------------------------------------------------------
+// Dual-key object helpers: accept either "legacy" positional keys or the
+// newer nominal keys for list / optional containers.
+// ----------------------------------------------------------------------------
+
+[[nodiscard]] const ahfl::json::JsonValue *
+find_field_any(const ahfl::json::JsonValue &object,
+               std::initializer_list<std::string_view> candidates) {
+    for (auto key : candidates) {
+        if (const auto *field = object.get(key)) {
+            return field;
+        }
+    }
+    return nullptr;
+}
+
+// Try to parse a JSON object as an explicit nominal list / optional wrapper.
+// Returns a disengaged optional if the object does not look like such a
+// wrapper; returns an engaged nullopt if it matched the wrapper shape but
+// failed to deserialize the contents.
+[[nodiscard]] std::optional<std::optional<Value>>
+try_parse_nominal_wrapper_object(const ahfl::json::JsonValue &object) {
+    // {"list":[...]}  |  {"_list":[...]}
+    if (const auto *items_field = find_field_any(object, {"list", "_list"})) {
+        if (items_field->kind != ahfl::json::Kind::Array) {
+            return std::make_optional(std::nullopt);
+        }
+        Value list = make_list(std::vector<Value>{});
+        auto *lv = get_list_if(list);
+        for (const auto &json_item : items_field->array_items) {
+            if (!json_item) {
+                return std::make_optional(std::nullopt);
+            }
+            auto item_value = value_from_json_value(*json_item);
+            if (!item_value.has_value()) {
+                return std::make_optional(std::nullopt);
+            }
+            lv->items.push_back(std::make_unique<Value>(std::move(*item_value)));
+        }
+        return std::make_optional(std::move(list));
+    }
+
+    // {"some":X}  |  {"_some":X}  -> optional with inner X
+    if (const auto *some_field = find_field_any(object, {"some", "_some"})) {
+        auto inner = value_from_json_value(*some_field);
+        if (!inner.has_value()) {
+            return std::make_optional(std::nullopt);
+        }
+        return std::make_optional(make_optional_some(std::move(*inner)));
+    }
+
+    // {"none":null}  |  {"_none":null}  |  {"optional":null}
+    if (find_field_any(object, {"none", "_none"}) != nullptr) {
+        return std::make_optional(make_optional_none());
+    }
+    if (const auto *opt_field = find_field_any(object, {"optional", "_optional"})) {
+        if (opt_field->kind == ahfl::json::Kind::Null) {
+            return std::make_optional(make_optional_none());
+        }
+        auto inner = value_from_json_value(*opt_field);
+        if (!inner.has_value()) {
+            return std::make_optional(std::nullopt);
+        }
+        return std::make_optional(make_optional_some(std::move(*inner)));
+    }
+
+    return std::nullopt; // not a nominal wrapper
+}
+
 [[nodiscard]] std::optional<Value>
 struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
+    // Nominal wrappers take priority when the object shape matches.
+    if (auto wrapper = try_parse_nominal_wrapper_object(object); wrapper.has_value()) {
+        return std::move(*wrapper);
+    }
+
     const auto *enum_name = string_field_value(object, "_enum");
     const auto *variant_name = string_field_value(object, "_variant");
     if (enum_name != nullptr && variant_name != nullptr) {
@@ -288,7 +373,9 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     case ahfl::json::Kind::String:
         return Value{StringValue{json_value.string_val}};
     case ahfl::json::Kind::Array: {
-        ListValue list_value;
+        // Legacy shape: a bare JSON array is an AHFL list.
+        Value list = make_list(std::vector<Value>{});
+        auto *lv = get_list_if(list);
         for (const auto &json_item : json_value.array_items) {
             if (!json_item) {
                 return std::nullopt;
@@ -297,9 +384,9 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
             if (!item_value.has_value()) {
                 return std::nullopt;
             }
-            list_value.items.push_back(std::make_unique<Value>(std::move(*item_value)));
+            lv->items.push_back(std::make_unique<Value>(std::move(*item_value)));
         }
-        return Value{std::move(list_value)};
+        return std::move(list);
     }
     case ahfl::json::Kind::Object:
         return struct_or_enum_from_json_object(json_value);
