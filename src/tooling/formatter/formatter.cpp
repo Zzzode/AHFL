@@ -198,6 +198,29 @@ class AstFormatter {
         return out.str();
     }
 
+    // Render a single parameter. Handles both named parameters (`name: Type`)
+    // and the four `self` variants (`self`, `mut self`, `self: Type`,
+    // `mut self: Type`). Bare self receivers have a null type annotation; the
+    // formatter omits the `: Type` suffix in that case.
+    std::string format_param(const ahfl::ast::ParamDeclSyntax &param) {
+        std::ostringstream out;
+        if (param.is_self) {
+            if (param.is_self_mut) {
+                out << "mut ";
+            }
+            out << "self";
+            if (param.type) {
+                out << ": " << param.type->spelling();
+            }
+        } else {
+            out << param.name << ": ";
+            if (param.type) {
+                out << param.type->spelling();
+            }
+        }
+        return out.str();
+    }
+
     void format_trait(const ahfl::ast::TraitDecl &t) {
         write("trait " + t.name + format_type_params(t.type_params));
         if (!t.super_traits.empty()) {
@@ -223,7 +246,7 @@ class AstFormatter {
                     if (!first) {
                         out_ << ", ";
                     }
-                    out_ << param->name << ": " << param->type->spelling();
+                    out_ << format_param(*param);
                     first = false;
                 }
                 out_ << ")";
@@ -231,8 +254,8 @@ class AstFormatter {
                     out_ << " -> " << item->return_type->spelling();
                 }
                 out_ << ";";
-            } else {
-                const auto &assoc = *item->assoc;
+            } else if (item->kind == ahfl::ast::TraitItemKind::AssocType) {
+                const auto &assoc = *item->assoc_type;
                 out_ << "type " << assoc.name;
                 if (!assoc.bounds.empty()) {
                     out_ << ": ";
@@ -247,6 +270,13 @@ class AstFormatter {
                 }
                 if (assoc.default_type) {
                     out_ << " = " << assoc.default_type->spelling();
+                }
+                out_ << ";";
+            } else if (item->kind == ahfl::ast::TraitItemKind::AssocConst) {
+                const auto &ac = *item->assoc_const;
+                out_ << "const " << ac.name << ": " << ac.type->spelling();
+                if (ac.default_value) {
+                    out_ << " = " << ac.default_value->text;
                 }
                 out_ << ";";
             }
@@ -276,7 +306,7 @@ class AstFormatter {
                 if (!first) {
                     out_ << ", ";
                 }
-                out_ << param->name << ": " << param->type->spelling();
+                out_ << format_param(*param);
                 first = false;
             }
             out_ << ")";
@@ -298,6 +328,15 @@ class AstFormatter {
         for (const auto &assoc : i.assoc_items) {
             write(make_indent(indent_, opts_));
             out_ << "type " << assoc->name << " = " << assoc->type->spelling() << ";";
+            newline();
+        }
+        for (const auto &ac : i.const_items) {
+            write(make_indent(indent_, opts_));
+            out_ << "const " << ac->name << ": " << ac->type->spelling();
+            if (ac->value) {
+                out_ << " = " << ac->value->text;
+            }
+            out_ << ";";
             newline();
         }
         indent_--;
@@ -335,11 +374,7 @@ class AstFormatter {
             if (index != 0) {
                 write(", ");
             }
-            const auto &param = *f.params[index];
-            write(param.name + ": ");
-            if (param.type) {
-                write(param.type->spelling());
-            }
+            write(format_param(*f.params[index]));
         }
         write(")");
         if (f.return_type) {

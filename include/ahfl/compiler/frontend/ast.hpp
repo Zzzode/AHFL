@@ -1371,29 +1371,79 @@ struct TraitDecl final : Decl {
     [[nodiscard]] std::string headline() const override;
 };
 
-/// A single associated type definition inside an impl block
-/// (`type Name = Type;`, RFC §1.4 AssocItemDef).
-struct AssocItemDefSyntax {
-    ahfl::SourceRange range;
-    std::string name;
-    Owned<TypeSyntax> type;
+/// Impl item kind discriminator. Parallels `TraitItemKind`; together the two
+/// enums cover the six syntactic item kinds that can appear inside a trait or
+/// impl body (3 trait + 3 impl = 6 kinds required by P3c.S1).
+enum class ImplItemKind {
+    Fn,         // method definition (body mandatory)
+    AssocType,  // associated type assignment (`type Name = Type;`)
+    AssocConst, // associated constant definition (`const N: T = value;`)
 };
+
+[[nodiscard]] std::string_view to_string(ImplItemKind kind) noexcept;
+
+/// A single item inside an impl block. Three shapes share the same tagged
+/// struct (mirrors TraitItemSyntax):
+///   - Fn         — a function definition, points into `methods` bucket
+///   - AssocType  — `type Name = Type;`, points into `assoc_items` bucket
+///   - AssocConst — `const N: T = value;`, points into `const_items` bucket
+///
+/// Pointer semantics: the per-kind buckets (`methods` / `assoc_items` /
+/// `const_items` on `ImplDecl`) are the unique owners. `ImplItemSyntax` stores
+/// non-owning pointers so that the same data can be traversed either via the
+/// flat per-kind lists (stable surface for legacy semantic passes) or via the
+/// unified `items` vector (visit-style dispatching). No manual deallocation is
+/// needed — the buckets outlive any reference through `items`.
+struct ImplItemSyntax {
+    ahfl::SourceRange range;
+    ImplItemKind kind{ImplItemKind::Fn};
+
+    FnDecl* fn_def{nullptr};
+
+    struct AssocTypeDef {
+        ahfl::SourceRange range;
+        std::string name;
+        Owned<TypeSyntax> type;
+    };
+    AssocTypeDef* assoc_type{nullptr};
+
+    struct AssocConstDef {
+        ahfl::SourceRange range;
+        std::string name;
+        Owned<TypeSyntax> type;
+        Owned<ExprSyntax> value;
+    };
+    AssocConstDef* assoc_const{nullptr};
+};
+
+// Compatibility alias: historical consumer sites use `AssocItemDefSyntax`
+// for associated-type definitions inside impl blocks. Name is preserved so
+// existing semantic passes continue to compile unchanged.
+using AssocItemDefSyntax = ImplItemSyntax::AssocTypeDef;
 
 /// Impl block (RFC §3.2.2 / type-system §1.4):
 ///
 ///   impl<T> TraitRef for TargetType [where ...] { fn method(...) { ... } type A = T; }
 ///   impl TargetType { ... }   // inherent impl (trait_ref empty)
 ///
-/// `trait_ref` is empty for an inherent impl (no `TraitRef "for"`). `methods`
-/// are the function definitions (each carries a mandatory body). `assoc_items`
-/// are the associated-type assignments.
+/// `trait_ref` is empty for an inherent impl (no `TraitRef "for"`). The three
+/// per-item fields mirror the three `ImplItemKind` variants so that existing
+/// semantic passes (P3b/P3c) that expect flat `methods`/`assoc_items` continue
+/// to work without churn; P3c.S1 only adds the previously-missing
+/// `const_items` bucket plus the `ImplItemSyntax` tagged struct for consumers
+/// that prefer a single dispatcher.
 struct ImplDecl final : Decl {
     std::vector<Owned<TypeParamSyntax>> type_params;
     Owned<TypeSyntax> trait_ref; // optional (empty for inherent impl)
     Owned<TypeSyntax> target_type;
     Owned<WhereClauseSyntax> where_clause;
-    std::vector<Owned<FnDecl>> methods;
-    std::vector<Owned<AssocItemDefSyntax>> assoc_items;
+    // Per-kind buckets (stable surface, semantic passes read these directly).
+    std::vector<Owned<FnDecl>> methods;            // ImplItemKind::Fn
+    std::vector<Owned<ImplItemSyntax::AssocTypeDef>> assoc_items; // ImplItemKind::AssocType
+    std::vector<Owned<ImplItemSyntax::AssocConstDef>> const_items; // ImplItemKind::AssocConst (P3c.S1)
+    // Unified dispatcher (parallel of items; populated alongside buckets so
+    // consumers can iterate a single list when they prefer visit-style dispatch)
+    std::vector<Owned<ImplItemSyntax>> items;
 
     ImplDecl(ahfl::SourceRange range = {});
     void accept(Visitor &visitor) override;

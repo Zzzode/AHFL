@@ -566,7 +566,15 @@ class AstInvariantValidator final {
                 continue;
             }
             require(!param->name.empty(), param->range, "ParamDeclSyntax is missing name");
-            require(param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
+            // Self param (`self` / `mut self`) omits the type annotation at the
+            // grammar level; the receiver type is inferred from the enclosing
+            // impl/trait target during semantic analysis (P3b). Other
+            // parameters must carry an explicit type.
+            if (!param->is_self) {
+                require(param->type != nullptr,
+                        param->range,
+                        "ParamDeclSyntax is missing type");
+            }
             if (param->type) {
                 validate_type(*param->type);
             }
@@ -889,8 +897,15 @@ class AstInvariantValidator final {
                 require(param != nullptr, node.range, "FnDecl.params contains null");
                 if (param) {
                     require(!param->name.empty(), param->range, "ParamDeclSyntax is missing name");
-                    require(
-                        param->type != nullptr, param->range, "ParamDeclSyntax is missing type");
+                    // Bare `self` / `mut self` params carry no explicit type at the
+                    // grammar level; the receiver type is inferred from the enclosing
+                    // impl/trait target during semantic analysis (P3b). Other
+                    // parameters must carry an explicit type.
+                    if (!param->is_self) {
+                        require(param->type != nullptr,
+                                param->range,
+                                "ParamDeclSyntax is missing type");
+                    }
                     if (param->type) {
                         validate_type(*param->type);
                     }
@@ -946,9 +961,13 @@ class AstInvariantValidator final {
                             require(!param->name.empty(),
                                     param->range,
                                     "ParamDeclSyntax is missing name");
-                            require(param->type != nullptr,
-                                    param->range,
-                                    "ParamDeclSyntax is missing type");
+                            // Bare `self` / `mut self` params carry no explicit type at the
+                            // grammar level; defer to P3b for receiver inference.
+                            if (!param->is_self) {
+                                require(param->type != nullptr,
+                                        param->range,
+                                        "ParamDeclSyntax is missing type");
+                            }
                             if (param->type) {
                                 validate_type(*param->type);
                             }
@@ -964,20 +983,38 @@ class AstInvariantValidator final {
                         validate_where_clause(*item->where_clause);
                     }
                 } else if (item->kind == TraitItemKind::AssocType) {
-                    require(item->assoc != nullptr,
+                    require(item->assoc_type != nullptr,
                             item->range,
                             "TraitItemSyntax assoc type is missing");
-                    if (item->assoc) {
-                        require(!item->assoc->name.empty(),
-                                item->assoc->range,
+                    if (item->assoc_type) {
+                        require(!item->assoc_type->name.empty(),
+                                item->assoc_type->range,
                                 "assoc type is missing name");
-                        for (const auto &bound : item->assoc->bounds) {
+                        for (const auto &bound : item->assoc_type->bounds) {
                             if (bound) {
                                 validate_type(*bound);
                             }
                         }
-                        if (item->assoc->default_type) {
-                            validate_type(*item->assoc->default_type);
+                        if (item->assoc_type->default_type) {
+                            validate_type(*item->assoc_type->default_type);
+                        }
+                    }
+                } else if (item->kind == TraitItemKind::AssocConst) {
+                    require(item->assoc_const != nullptr,
+                            item->range,
+                            "TraitItemSyntax assoc const is missing");
+                    if (item->assoc_const) {
+                        require(!item->assoc_const->name.empty(),
+                                item->assoc_const->range,
+                                "assoc const is missing name");
+                        require(item->assoc_const->type != nullptr,
+                                item->assoc_const->range,
+                                "assoc const is missing type");
+                        if (item->assoc_const->type) {
+                            validate_type(*item->assoc_const->type);
+                        }
+                        if (item->assoc_const->default_value) {
+                            validate_expr(*item->assoc_const->default_value);
                         }
                     }
                 }
@@ -1031,6 +1068,28 @@ class AstInvariantValidator final {
                     require(assoc->type != nullptr, assoc->range, "assoc item is missing type");
                     if (assoc->type) {
                         validate_type(*assoc->type);
+                    }
+                }
+            }
+            for (const auto &assoc_const : node.const_items) {
+                require(assoc_const != nullptr,
+                        node.range,
+                        "ImplDecl.const_items contains null");
+                if (assoc_const) {
+                    require(!assoc_const->name.empty(),
+                            assoc_const->range,
+                            "impl assoc const is missing name");
+                    require(assoc_const->type != nullptr,
+                            assoc_const->range,
+                            "impl assoc const is missing type");
+                    if (assoc_const->type) {
+                        validate_type(*assoc_const->type);
+                    }
+                    require(assoc_const->value != nullptr,
+                            assoc_const->range,
+                            "impl assoc const is missing value");
+                    if (assoc_const->value) {
+                        validate_expr(*assoc_const->value);
                     }
                 }
             }
@@ -1120,6 +1179,19 @@ std::string_view to_string(NodeKind kind) noexcept {
         return "TraitDecl";
     case NodeKind::ImplDecl:
         return "ImplDecl";
+    }
+
+    return "Unknown";
+}
+
+std::string_view to_string(ImplItemKind kind) noexcept {
+    switch (kind) {
+    case ImplItemKind::Fn:
+        return "Fn";
+    case ImplItemKind::AssocType:
+        return "AssocType";
+    case ImplItemKind::AssocConst:
+        return "AssocConst";
     }
 
     return "Unknown";
@@ -1561,6 +1633,10 @@ std::string ImplDecl::headline() const {
     if (!assoc_items.empty()) {
         builder << ", " << assoc_items.size() << " assoc type"
                 << (assoc_items.size() == 1 ? "" : "s");
+    }
+    if (!const_items.empty()) {
+        builder << ", " << const_items.size() << " assoc const"
+                << (const_items.size() == 1 ? "" : "s");
     }
     builder << ")";
     return builder.str();

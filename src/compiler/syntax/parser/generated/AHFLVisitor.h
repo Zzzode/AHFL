@@ -1,5 +1,5 @@
 
-// Generated from AHFL.g4 by ANTLR 4.13.2
+// Generated from grammar/AHFL.g4 by ANTLR 4.13.1
 
 #pragma once
 
@@ -173,13 +173,19 @@ public:
 
     virtual std::any visitAssocTypeItem(AHFLParser::AssocTypeItemContext *context) = 0;
 
+    virtual std::any visitAssocConstItem(AHFLParser::AssocConstItemContext *context) = 0;
+
     virtual std::any visitImplDecl(AHFLParser::ImplDeclContext *context) = 0;
 
     virtual std::any visitTraitRef(AHFLParser::TraitRefContext *context) = 0;
 
-    virtual std::any visitFnDef(AHFLParser::FnDefContext *context) = 0;
+    virtual std::any visitImplItem(AHFLParser::ImplItemContext *context) = 0;
 
-    virtual std::any visitAssocItemDef(AHFLParser::AssocItemDefContext *context) = 0;
+    virtual std::any visitImplFnItem(AHFLParser::ImplFnItemContext *context) = 0;
+
+    virtual std::any visitAssocTypeDef(AHFLParser::AssocTypeDefContext *context) = 0;
+
+    virtual std::any visitAssocConstDef(AHFLParser::AssocConstDefContext *context) = 0;
 
     virtual std::any visitBlock(AHFLParser::BlockContext *context) = 0;
 
@@ -267,6 +273,8 @@ public:
 
     virtual std::any visitDurationLiteral(AHFLParser::DurationLiteralContext *context) = 0;
 
+    virtual std::any visitStructLiteral(AHFLParser::StructLiteralContext *context) = 0;
+
     virtual std::any visitListLiteral(AHFLParser::ListLiteralContext *context) = 0;
 
     virtual std::any visitSetLiteral(AHFLParser::SetLiteralContext *context) = 0;
@@ -276,8 +284,6 @@ public:
     virtual std::any visitMapEntryList(AHFLParser::MapEntryListContext *context) = 0;
 
     virtual std::any visitMapEntry(AHFLParser::MapEntryContext *context) = 0;
-
-    virtual std::any visitStructLiteral(AHFLParser::StructLiteralContext *context) = 0;
 
     virtual std::any visitStructInitList(AHFLParser::StructInitListContext *context) = 0;
 

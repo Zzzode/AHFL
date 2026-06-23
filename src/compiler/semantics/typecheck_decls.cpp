@@ -1220,19 +1220,29 @@ void TypeCheckPass::build_trait_types() {
                     info.methods.push_back(resolve_trait_method_info(*item));
                     continue;
                 }
-                if (item->kind == ast::TraitItemKind::AssocType && item->assoc) {
+                if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
                     TraitAssocTypeInfo assoc{
-                        .name = item->assoc->name,
+                        .name = item->assoc_type->name,
                         .type_param_names = {},
-                        .default_type = item->assoc->default_type
-                                            ? resolve_type(*item->assoc->default_type)
+                        .default_type = item->assoc_type->default_type
+                                            ? resolve_type(*item->assoc_type->default_type)
                                             : nullptr,
-                        .declaration_range = item->assoc->range,
+                        .declaration_range = item->assoc_type->range,
                     };
-                    for (const auto &type_param : item->assoc->type_params) {
+                    for (const auto &type_param : item->assoc_type->type_params) {
                         assoc.type_param_names.push_back(type_param->name);
                     }
                     info.assoc_types.push_back(std::move(assoc));
+                    continue;
+                }
+
+                // P3c.S1: associated constant trait items are accepted by the
+                // syntactic boundary; semantic handling (default-value typing +
+                // impl-side signature matching) is deferred to P3b (trait/impl
+                // signature matching pass). We record them here as syntactically
+                // present so downstream passes can iterate trait items uniformly.
+                if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
+                    continue;
                 }
             }
 
@@ -1375,6 +1385,14 @@ void TypeCheckPass::build_impl_types() {
                     .type = assoc->type ? resolve_type(*assoc->type) : make_error_type(),
                     .declaration_range = assoc->range,
                 });
+            }
+
+            // P3c.S1: impl associated constants are accepted at the syntactic
+            // boundary; full semantics (typing the default value against the
+            // trait's assoc-const signature + value evaluation) are deferred to
+            // the P3b trait/impl unified pass.
+            for (const auto &ac : decl.const_items) {
+                (void)ac; // no-op placeholder: full typing comes in P3b
             }
 
             // Coherence (orphan rule) — RFC §2.2. Only enforced when both the

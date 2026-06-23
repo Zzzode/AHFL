@@ -498,18 +498,30 @@ class ResolverPass final {
             return;
         }
 
-        if (item.kind == ast::TraitItemKind::AssocType && item.assoc) {
-            for (const auto &type_param : item.assoc->type_params) {
+        if (item.kind == ast::TraitItemKind::AssocType && item.assoc_type) {
+            for (const auto &type_param : item.assoc_type->type_params) {
                 for (const auto &bound : type_param->bounds) {
                     resolve_type(*bound);
                 }
             }
-            for (const auto &bound : item.assoc->bounds) {
+            for (const auto &bound : item.assoc_type->bounds) {
                 resolve_type(*bound);
             }
-            if (item.assoc->default_type) {
-                resolve_type(*item.assoc->default_type);
+            if (item.assoc_type->default_type) {
+                resolve_type(*item.assoc_type->default_type);
             }
+            return;
+        }
+
+        // P3c.S1: resolve references inside associated-constant trait items
+        // (type annotation + optional default value expression).
+        if (item.kind == ast::TraitItemKind::AssocConst && item.assoc_const) {
+            if (item.assoc_const->type) {
+                resolve_type(*item.assoc_const->type);
+            }
+            // Expression-level resolution for assoc-const default values is
+            // deferred to semantic analysis phase P3b.
+            (void)item.assoc_const->default_value;
         }
     }
 
@@ -611,6 +623,16 @@ class ResolverPass final {
             if (assoc->type) {
                 resolve_type(*assoc->type);
             }
+        }
+
+        // P3c.S1: resolve associated constants inside impl blocks.
+        for (const auto &assoc_const : node.const_items) {
+            if (assoc_const->type) {
+                resolve_type(*assoc_const->type);
+            }
+            // Expression-level resolution for impl assoc-const initializers
+            // is deferred to semantic analysis phase P3b.
+            (void)assoc_const->value;
         }
 
         generic_type_params_.clear();

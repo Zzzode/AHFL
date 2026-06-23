@@ -458,8 +458,8 @@ class AstPrinter final {
                 if (item->where_clause) {
                     print_where_clause(*item->where_clause, 3);
                 }
-            } else {
-                const auto &assoc = *item->assoc;
+            } else if (item->kind == ast::TraitItemKind::AssocType) {
+                const auto &assoc = *item->assoc_type;
                 line(2, "type " + assoc.name);
                 if (!assoc.bounds.empty()) {
                     std::string entry;
@@ -474,6 +474,13 @@ class AstPrinter final {
                     line(3, "bounds: " + entry);
                 }
                 print_type_field("default", assoc.default_type.get(), 3);
+            } else if (item->kind == ast::TraitItemKind::AssocConst) {
+                const auto &assoc = *item->assoc_const;
+                line(2, "const " + assoc.name);
+                print_type_field("type", assoc.type.get(), 3);
+                if (assoc.default_value) {
+                    print_expr_field("default", assoc.default_value.get(), 3);
+                }
             }
         }
     }
@@ -529,6 +536,14 @@ class AstPrinter final {
         for (const auto &assoc : node.assoc_items) {
             line(2, "type " + assoc->name);
             print_type_field("value", assoc->type.get(), 3);
+        }
+
+        for (const auto &assoc_const : node.const_items) {
+            line(2, "const " + assoc_const->name);
+            print_type_field("type", assoc_const->type.get(), 3);
+            if (assoc_const->value) {
+                print_expr_field("value", assoc_const->value.get(), 3);
+            }
         }
     }
 

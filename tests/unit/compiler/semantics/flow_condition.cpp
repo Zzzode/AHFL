@@ -1127,8 +1127,8 @@ trait Ord: Eq {
     CHECK(trait->items[0]->return_type->spelling() == "Int");
 
     CHECK(trait->items[1]->kind == ahfl::ast::TraitItemKind::AssocType);
-    REQUIRE(trait->items[1]->assoc != nullptr);
-    CHECK(trait->items[1]->assoc->name == "Item");
+    REQUIRE(trait->items[1]->assoc_type != nullptr);
+    CHECK(trait->items[1]->assoc_type->name == "Item");
 }
 
 TEST_CASE("Generic trait parses type params and default assoc type") {
@@ -1153,9 +1153,9 @@ trait Foldable<T> {
     CHECK(trait->items[0]->type_params[0]->name == "U");
 
     CHECK(trait->items[1]->kind == ahfl::ast::TraitItemKind::AssocType);
-    REQUIRE(trait->items[1]->assoc != nullptr);
-    CHECK(trait->items[1]->assoc->name == "Element");
-    CHECK(trait->items[1]->assoc->default_type->spelling() == "T");
+    REQUIRE(trait->items[1]->assoc_type != nullptr);
+    CHECK(trait->items[1]->assoc_type->name == "Element");
+    CHECK(trait->items[1]->assoc_type->default_type->spelling() == "T");
 }
 
 TEST_CASE("Inherent impl and trait impl parse with methods and assoc items") {

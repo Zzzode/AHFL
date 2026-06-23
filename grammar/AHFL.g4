@@ -29,7 +29,7 @@ moduleDecl: 'module' qualifiedIdent ';';
 
 importDecl: 'import' qualifiedIdent ('as' IDENT)? ';';
 
-identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set';
+identifier: IDENT | 'Optional' | 'List' | 'Set' | 'Map' | 'Fn' | 'map' | 'set' | 'self';
 
 qualifiedIdent: identifier ('::' identifier)*;
 
@@ -363,7 +363,7 @@ postfixExpr:
 	)*;
 
 primaryExpr:
-	literal
+	  literal
 	| callExpr
 	| structLiteral
 	| qualifiedValueExpr
@@ -430,7 +430,7 @@ patternList: pattern (',' pattern)* ','?;
 
 pathExpr: pathRoot ('.' IDENT)*;
 
-pathRoot: IDENT | 'input' | 'output';
+pathRoot: IDENT | 'input' | 'output' | 'self';
 
 qualifiedValueExpr: identifier '::' identifier ('::' identifier)*;
 
@@ -458,6 +458,16 @@ stringLiteral: STRING_LITERAL;
 durationLiteral: DURATION_LITERAL;
 
 structLiteral: qualifiedIdent '{' structInitList? '}';
+
+listLiteral: '[' exprList? ']';
+
+setLiteral: '#[' exprList? ']';
+
+mapLiteral: '#{' mapEntryList? '}';
+
+mapEntryList: mapEntry (',' mapEntry)* ','?;
+
+mapEntry: expr ':' expr;
 
 structInitList: structInit (',' structInit)* ','?;
 

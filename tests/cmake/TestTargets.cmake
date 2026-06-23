@@ -593,6 +593,16 @@ target_link_libraries(ahfl_error_recovery_tests
 )
 ahfl_apply_project_warnings(ahfl_error_recovery_tests)
 
+add_executable(ahfl_syntax_trait_impl_tests
+    unit/compiler/syntax/trait_impl.cpp
+)
+target_link_libraries(ahfl_syntax_trait_impl_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_syntax_trait_impl_tests)
+
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
 )
@@ -859,6 +869,7 @@ foreach(_tgt
     ahfl_tooling_lsp_handler_tests
     ahfl_connection_pool_tests
     ahfl_error_recovery_tests
+    ahfl_syntax_trait_impl_tests
     ahfl_compiler_handoff_package_tests
     ahfl_thread_pool_tests
     ahfl_version_tests

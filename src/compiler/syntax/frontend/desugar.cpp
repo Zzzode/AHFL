@@ -320,6 +320,25 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
                 if (item->return_type) {
                     item->return_type = desugar_type_node(std::move(item->return_type));
                 }
+            } else if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
+                for (auto &bound : item->assoc_type->bounds) {
+                    if (bound) {
+                        bound = desugar_type_node(std::move(bound));
+                    }
+                }
+                if (item->assoc_type->default_type) {
+                    item->assoc_type->default_type =
+                        desugar_type_node(std::move(item->assoc_type->default_type));
+                }
+            } else if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
+                if (item->assoc_const->type) {
+                    item->assoc_const->type =
+                        desugar_type_node(std::move(item->assoc_const->type));
+                }
+                if (item->assoc_const->default_value) {
+                    item->assoc_const->default_value =
+                        desugar_expr_node(std::move(item->assoc_const->default_value));
+                }
             }
         }
         return;
@@ -331,6 +350,20 @@ void DesugarPass::desugar_decl(ast::Decl &decl) {
             d->trait_ref = desugar_type_node(std::move(d->trait_ref));
         for (auto &method : d->methods) {
             desugar_fn_decl_body(*method);
+        }
+        for (auto &assoc : d->assoc_items) {
+            if (assoc && assoc->type) {
+                assoc->type = desugar_type_node(std::move(assoc->type));
+            }
+        }
+        for (auto &assoc_const : d->const_items) {
+            if (!assoc_const) continue;
+            if (assoc_const->type) {
+                assoc_const->type = desugar_type_node(std::move(assoc_const->type));
+            }
+            if (assoc_const->value) {
+                assoc_const->value = desugar_expr_node(std::move(assoc_const->value));
+            }
         }
         return;
     }
@@ -407,6 +440,23 @@ void DesugarPass::desugar_trait_decl(ast::TraitDecl &decl) {
             if (item->return_type) {
                 item->return_type = desugar_type_node(std::move(item->return_type));
             }
+        } else if (item->kind == ast::TraitItemKind::AssocType && item->assoc_type) {
+            for (auto &bound : item->assoc_type->bounds) {
+                if (bound) bound = desugar_type_node(std::move(bound));
+            }
+            if (item->assoc_type->default_type) {
+                item->assoc_type->default_type =
+                    desugar_type_node(std::move(item->assoc_type->default_type));
+            }
+        } else if (item->kind == ast::TraitItemKind::AssocConst && item->assoc_const) {
+            if (item->assoc_const->type) {
+                item->assoc_const->type =
+                    desugar_type_node(std::move(item->assoc_const->type));
+            }
+            if (item->assoc_const->default_value) {
+                item->assoc_const->default_value =
+                    desugar_expr_node(std::move(item->assoc_const->default_value));
+            }
         }
     }
 }
@@ -418,6 +468,20 @@ void DesugarPass::desugar_impl_decl(ast::ImplDecl &decl) {
         decl.trait_ref = desugar_type_node(std::move(decl.trait_ref));
     for (auto &method : decl.methods) {
         desugar_fn_decl_body(*method);
+    }
+    for (auto &assoc : decl.assoc_items) {
+        if (assoc && assoc->type) {
+            assoc->type = desugar_type_node(std::move(assoc->type));
+        }
+    }
+    for (auto &assoc_const : decl.const_items) {
+        if (!assoc_const) continue;
+        if (assoc_const->type) {
+            assoc_const->type = desugar_type_node(std::move(assoc_const->type));
+        }
+        if (assoc_const->value) {
+            assoc_const->value = desugar_expr_node(std::move(assoc_const->value));
+        }
     }
 }
 

@@ -3987,6 +3987,10 @@ add_test(NAME ahfl.semantics.flow_condition_all
     COMMAND $<TARGET_FILE:ahfl_semantics_flow_condition_tests>
 )
 
+add_test(NAME ahfl.syntax.trait_impl_all
+    COMMAND $<TARGET_FILE:ahfl_syntax_trait_impl_tests>
+)
+
 add_test(NAME ahfl.semantics.adt_match_all
     COMMAND $<TARGET_FILE:ahfl_semantics_adt_match_tests>
 )
