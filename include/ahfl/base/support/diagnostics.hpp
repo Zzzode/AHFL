@@ -255,32 +255,25 @@ inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AmbiguousTraitImpl{
     "AMBIGUOUS_TRAIT_IMPL"};
 inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> TraitBoundNotSatisfied{
     "TRAIT_BOUND_NOT_SATISFIED"};
+// P3c.S6 Trait/Impl additional codes: method-lookup, inherent-vs-trait conflict
+// and signature-mismatch diagnostics used by the Trait/Impl resolver smoke suite.
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MethodNotFound{"METHOD_NOT_FOUND"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> MethodSignatureMismatch{
+    "METHOD_SIGNATURE_MISMATCH"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> AssocTypeNotFound{"ASSOC_TYPE_NOT_FOUND"};
+inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> InherentTraitConflict{
+    "INHERENT_TRAIT_CONFLICT"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // diagnostics. Surfaced by the P4a effect-judgement + verified-subset checks.
-//   effect_not_pure          — pure-context call resolved to a non-Pure effect
-//   no_decreases             — Pure fn missing a decreases measure (RFC §3.4)
-//   not_in_verified_subset   — umbrella code: call entering a verified-subset
-//                              context fails one of the subset conditions
-//                              (§4.5), always accompanied by a specific code.
-//   effect_underdeclared     — declared effect does not cover the inferred
-//                              body effect (§2.6.4)
-//   effect_incompatible      — Nondet and capability effect coexist in the
-//                              same judgement (§2.6.4)
-//   effect_on_predicate      — predicate declaration carries an explicit
-//                              effect clause (§2.4; predicates are implicitly
-//                              Pure, users may not override)
-//   nondet_in_invariant      — Nondet fn or now appears in an invariant /
-//                              safety / liveness formula (§4.2)
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectNotPure{"EFFECT_NOT_PURE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NoDecreases{"NO_DECREASES"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NotInVerifiedSubset{
-    "NOT_IN_VERIFIED_SUBSET"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectUnderdeclared{
-    "EFFECT_UNDERDECLARED"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectIncompatible{"EFFECT_INCOMPATIBLE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> EffectOnPredicate{"EFFECT_ON_PREDICATE"};
-inline constexpr ErrorCode<DiagnosticCategory::TypeCheck> NondetInInvariant{"NONDET_IN_INVARIANT"};
 } // namespace typecheck
+
+namespace resolve {
+// Deduplicated, single-source-of-truth orphan-rule error code. Trait/Impl
+// orphan-reject diagnostics are surfaced during resolution and re-used by
+// downstream passes via the same identifier.
+inline constexpr ErrorCode<DiagnosticCategory::Resolve> TraitOrphanImpl{
+    "TRAIT_ORPHAN_IMPL"};
+} // namespace resolve
 
 namespace validation {
 inline constexpr ErrorCode<DiagnosticCategory::Validation> SemanticInvariant{"SEMANTIC_INVARIANT"};
@@ -348,8 +341,9 @@ inline constexpr MessageTemplate CyclicTypeAlias{"type alias cycle detected: {}"
 inline constexpr MessageTemplate DuplicateImport{"duplicate import alias '{}'"};
 inline constexpr MessageTemplate ModuleBoundaryMismatch{
     "source unit module boundary does not match graph owner"};
-inline constexpr MessageTemplate MultipleModuleDeclarations{
-    "multiple module declarations are not supported in one source file"};
+// ---- Trait / Impl messages ----
+inline constexpr MessageTemplate TraitOrphanImpl{
+    "impl for trait '{}' on type '{}' violates the orphan rule: neither the trait nor the type is local to this module"};
 } // namespace resolve
 
 namespace typecheck {
@@ -490,6 +484,17 @@ inline constexpr MessageTemplate TraitBoundNotSatisfied{
 inline constexpr MessageTemplate TraitSelfNotYetSupported{
     "'Self' type in trait bounds is not yet supported (P3b only resolves named trait/type "
     "references)"};
+// P3c.S6 additional Trait/Impl diagnostic messages: extended signature
+// mismatch (named impl/trait context), inherent-vs-trait conflict and the
+// method/assoc lookup variants used by the Trait/Impl smoke suite.
+inline constexpr MessageTemplate MethodNotFound{
+    "method '{}' not found on type '{}'"};
+inline constexpr MessageTemplate MethodSignatureMismatch{
+    "method '{}' signature mismatch on impl '{}' of trait '{}': expected '{}', got '{}'"};
+inline constexpr MessageTemplate AssocTypeNotFound{
+    "associated type '{}' not found on trait '{}'"};
+inline constexpr MessageTemplate InherentTraitConflict{
+    "member '{}' on '{}' conflicts between inherent impl and trait impl of '{}'"};
 // P4a (RFC corelib-effect-system.zh.md §2.6.4 / §3.4 / §4.5): effect-system
 // messages. Mirror the §4.5 diagnostic catalogue.
 inline constexpr MessageTemplate EffectNotPure{
