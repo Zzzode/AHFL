@@ -313,6 +313,7 @@ struct FnTypeInfo {
     // substitute type_args into a known parameter-name list without
     // re-parsing the AST.
     std::vector<std::string> type_param_names;
+    WhereClauseInfo where_clause;
     FnEffectClauseInfo effect;
     bool has_body{false};
     SourceRange declaration_range;

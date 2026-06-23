@@ -160,7 +160,6 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 out << inner.unix_ms;
                 out << '}';
             }
-            }
         },
         v.node);
 

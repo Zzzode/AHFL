@@ -924,6 +924,7 @@ void TypeCheckPass::build_fn_types() {
                 .return_type_range =
                     decl.get().return_type ? decl.get().return_type->range : SourceRange{},
                 .type_param_names = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .effect = {},
                 .has_body = static_cast<bool>(decl.get().body),
                 .declaration_range = decl.get().range,
