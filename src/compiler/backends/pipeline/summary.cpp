@@ -30,6 +30,7 @@ struct SummaryStats {
     std::size_t contracts{0};
     std::size_t flows{0};
     std::size_t workflows{0};
+    std::size_t instances{0};
     std::size_t called_observations{0};
     std::size_t embedded_observations{0};
     std::size_t flow_handlers{0};
@@ -159,6 +160,10 @@ void accumulate_workflow_reads(const ir::WorkflowExprSummary &summary,
                 [&](const ir::FnDecl &) {
                     // P2 (fn/closures): fn declarations have no dedicated stat.
                 },
+                [&](const ir::InstanceDecl &value) {
+                    stats.instances += 1;
+                    stats.declarations_with_provenance += has_provenance(value.provenance) ? 1 : 0;
+                },
             },
             declaration);
     }
@@ -205,6 +210,7 @@ void print_program_summary(const ir::Program &program, std::ostream &out) {
     line(out, 1, "contract " + std::to_string(stats.contracts));
     line(out, 1, "flow " + std::to_string(stats.flows));
     line(out, 1, "workflow " + std::to_string(stats.workflows));
+    line(out, 1, "instance " + std::to_string(stats.instances));
     line(out, 0, "}");
 
     line(out, 0, "formal_observations {");

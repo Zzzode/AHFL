@@ -181,6 +181,10 @@ class ProgramVerifier {
         collect_symbol_identity(decl.symbol_ref, "fn " + decl.name);
     }
 
+    void collect_decl_symbol_identity(const InstanceDecl &decl) {
+        collect_symbol_identity(decl.symbol_ref, "instance " + decl.name);
+    }
+
     void collect_symbol_identity(const SymbolRef &symbol, const std::string &path) {
         if (!symbol.id.has_value()) {
             return;
@@ -358,6 +362,60 @@ class ProgramVerifier {
             }
         } else if (decl.body) {
             add_error(path + ".body", "function body is present but has_body is false");
+        }
+    }
+
+    void verify_decl(const InstanceDecl &decl, const std::string &path) {
+        // InstanceDecl is a concrete instance copy of a nominal declaration.
+        // symbol_ref.kind must match InstanceKind; type_ref fields that are
+        // irrelevant for the given kind may be Unresolved and are skipped.
+        switch (decl.kind) {
+        case InstanceKind::Capability:
+            verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
+                              SymbolRefKind::Capability);
+            break;
+        case InstanceKind::Predicate:
+            verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
+                              SymbolRefKind::Predicate);
+            break;
+        case InstanceKind::Agent:
+            verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
+                              SymbolRefKind::Agent);
+            break;
+        case InstanceKind::Workflow:
+            verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
+                              SymbolRefKind::Workflow);
+            break;
+        case InstanceKind::Unknown:
+            if (decl.symbol_ref.id.has_value() || !decl.symbol_ref.canonical_name.empty()) {
+                verify_symbol_ref(decl.symbol_ref, path + ".symbol_ref",
+                                  SymbolRefKind::Unknown);
+            }
+            break;
+        }
+        for (std::uint32_t index = 0; index < decl.type_args.size(); ++index) {
+            verify_type_ref(decl.type_args[index],
+                            path + ".type_args[" + std::to_string(index) + "]");
+        }
+        verify_params(decl.params, path + ".params");
+        // Only validate kind-relevant type-ref fields.
+        switch (decl.kind) {
+        case InstanceKind::Capability:
+            verify_type_ref(decl.return_type_ref, path + ".return_type_ref");
+            break;
+        case InstanceKind::Predicate:
+            break;
+        case InstanceKind::Agent:
+            verify_type_ref(decl.agent_input_type_ref, path + ".agent_input_type_ref");
+            verify_type_ref(decl.agent_context_type_ref, path + ".agent_context_type_ref");
+            verify_type_ref(decl.agent_output_type_ref, path + ".agent_output_type_ref");
+            break;
+        case InstanceKind::Workflow:
+            verify_type_ref(decl.workflow_input_type_ref, path + ".workflow_input_type_ref");
+            verify_type_ref(decl.workflow_output_type_ref, path + ".workflow_output_type_ref");
+            break;
+        case InstanceKind::Unknown:
+            break;
         }
     }
 

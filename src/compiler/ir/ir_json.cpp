@@ -1702,6 +1702,98 @@ class IrJsonPrinter final {
                         }
                     });
                 },
+                [&](const ir::InstanceDecl &value) {
+                    print_object(indent_level, [&](const auto &field) {
+                        field("kind", [&]() { write_string("instance"); });
+                        if (has_provenance(value.provenance)) {
+                            field("provenance",
+                                  [&]() { print_provenance(value.provenance, indent_level + 1); });
+                        }
+                        field("name", [&]() { write_string(value.name); });
+                        field("instance_kind", [&]() {
+                            switch (value.kind) {
+                            case ir::InstanceKind::Capability:
+                                write_string("capability");
+                                break;
+                            case ir::InstanceKind::Predicate:
+                                write_string("predicate");
+                                break;
+                            case ir::InstanceKind::Agent:
+                                write_string("agent");
+                                break;
+                            case ir::InstanceKind::Workflow:
+                                write_string("workflow");
+                                break;
+                            case ir::InstanceKind::Unknown:
+                                write_string("unknown");
+                                break;
+                            }
+                        });
+                        if (has_symbol_ref(value.symbol_ref)) {
+                            field("symbol_ref",
+                                  [&]() { print_symbol_ref(value.symbol_ref, indent_level + 1); });
+                        }
+                        if (!value.type_args.empty()) {
+                            field("type_args", [&]() {
+                                print_array(indent_level + 1, [&](const auto &item) {
+                                    for (const auto &tref : value.type_args) {
+                                        item([&]() { print_type_ref(tref, indent_level + 2); });
+                                    }
+                                });
+                            });
+                        }
+                        if (!value.params.empty()) {
+                            field("params", [&]() { print_params(value.params, indent_level + 1); });
+                        }
+                        if (has_type_ref(value.return_type_ref)) {
+                            field("return_type",
+                                  [&]() { write_string(type_name(value.return_type_ref)); });
+                            field("return_type_ref", [&]() {
+                                print_type_ref(value.return_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.agent_input_type_ref)) {
+                            field("agent_input_type", [&]() {
+                                write_string(type_name(value.agent_input_type_ref));
+                            });
+                            field("agent_input_type_ref", [&]() {
+                                print_type_ref(value.agent_input_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.agent_context_type_ref)) {
+                            field("agent_context_type", [&]() {
+                                write_string(type_name(value.agent_context_type_ref));
+                            });
+                            field("agent_context_type_ref", [&]() {
+                                print_type_ref(value.agent_context_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.agent_output_type_ref)) {
+                            field("agent_output_type", [&]() {
+                                write_string(type_name(value.agent_output_type_ref));
+                            });
+                            field("agent_output_type_ref", [&]() {
+                                print_type_ref(value.agent_output_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.workflow_input_type_ref)) {
+                            field("workflow_input_type", [&]() {
+                                write_string(type_name(value.workflow_input_type_ref));
+                            });
+                            field("workflow_input_type_ref", [&]() {
+                                print_type_ref(value.workflow_input_type_ref, indent_level + 1);
+                            });
+                        }
+                        if (has_type_ref(value.workflow_output_type_ref)) {
+                            field("workflow_output_type", [&]() {
+                                write_string(type_name(value.workflow_output_type_ref));
+                            });
+                            field("workflow_output_type_ref", [&]() {
+                                print_type_ref(value.workflow_output_type_ref, indent_level + 1);
+                            });
+                        }
+                    });
+                },
             },
             declaration);
     }
