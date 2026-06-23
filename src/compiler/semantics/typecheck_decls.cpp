@@ -32,6 +32,37 @@ namespace {
     return module_name == "std" || module_name.starts_with("std::");
 }
 
+// Build a WhereClauseInfo from an AST-owned WhereClauseSyntax. Per-task, this
+// is pure plumbing: we copy out the raw bound spellings so downstream code can
+// read them without an AST back-pointer, plus we retain the raw syntax pointer
+// for diagnostic ranges. No symbol lookup or bound validation is performed.
+WhereClauseInfo build_where_clause_info(const Owned<ast::WhereClauseSyntax> &syntax) {
+    WhereClauseInfo info;
+    info.syntax = syntax.get();
+    if (!syntax) {
+        return info;
+    }
+    info.bounds.reserve(syntax->bounds.size());
+    for (const auto &bound : syntax->bounds) {
+        WhereBoundInfo bound_info;
+        bound_info.source_range = bound->range;
+        if (bound->subject && bound->subject->is<ast::NamedType>()) {
+            const auto &named = bound->subject->as<ast::NamedType>();
+            if (named.name) {
+                bound_info.subject_name = named.name->spelling();
+            }
+        }
+        bound_info.trait_names.reserve(bound->traits.size());
+        for (const auto &trait : bound->traits) {
+            if (trait) {
+                bound_info.trait_names.push_back(trait->spelling());
+            }
+        }
+        info.bounds.push_back(std::move(bound_info));
+    }
+    return info;
+}
+
 } // namespace
 
 MaybeCRef<Symbol> DeclarationIndexBuilder::find_local(SymbolNamespace name_space,
@@ -501,6 +532,7 @@ void TypeCheckPass::build_struct_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .type_param_names = {},
                 .fields = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
                 .field_index_ = {},
             };
@@ -551,6 +583,7 @@ void TypeCheckPass::build_enum_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .type_param_names = {},
                 .variants = {},
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
                 .variant_set_ = {},
             };
@@ -605,6 +638,7 @@ void TypeCheckPass::build_capability_types() {
                 .canonical_name = symbol->get().canonical_name,
                 .params = {},
                 .return_type = nullptr,
+                .where_clause = build_where_clause_info(decl.get().where_clause),
                 .declaration_range = decl.get().range,
                 .effect = {},
             };
