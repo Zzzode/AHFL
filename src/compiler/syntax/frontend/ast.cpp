@@ -158,9 +158,6 @@ class AstInvariantValidator final {
     void validate_expr(const ExprSyntax &expr) {
         std::visit(
             Overloaded{
-                [&](const NoneLiteralExpr &) {
-                    // No payload fields — presence guaranteed by variant
-                },
                 [&](const BoolLiteralExpr &) {
                     // Value type — presence guaranteed by variant
                 },
@@ -180,12 +177,6 @@ class AstInvariantValidator final {
                 [&](const DurationLiteralExpr &e) {
                     require(
                         e.literal != nullptr, expr.range, "DurationLiteralExpr is missing literal");
-                },
-                [&](const SomeExpr &e) {
-                    require(e.value != nullptr, expr.range, "SomeExpr is missing value");
-                    if (e.value) {
-                        validate_expr(*e.value);
-                    }
                 },
                 [&](const PathExpr &e) {
                     require(e.path != nullptr, expr.range, "PathExpr is missing path");
@@ -254,42 +245,6 @@ class AstInvariantValidator final {
                                 "StructInitSyntax is missing value");
                         if (field->value) {
                             validate_expr(*field->value);
-                        }
-                    }
-                },
-                [&](const ListLiteralExpr &e) {
-                    for (const auto &item : e.items) {
-                        require(item != nullptr, expr.range, "ListLiteralExpr.items contains null");
-                        if (item) {
-                            validate_expr(*item);
-                        }
-                    }
-                },
-                [&](const SetLiteralExpr &e) {
-                    for (const auto &item : e.items) {
-                        require(item != nullptr, expr.range, "SetLiteralExpr.items contains null");
-                        if (item) {
-                            validate_expr(*item);
-                        }
-                    }
-                },
-                [&](const MapLiteralExpr &e) {
-                    for (const auto &entry : e.entries) {
-                        require(
-                            entry != nullptr, expr.range, "MapLiteralExpr.entries contains null");
-                        if (!entry) {
-                            continue;
-                        }
-                        require(
-                            entry->key != nullptr, entry->range, "MapEntrySyntax is missing key");
-                        require(entry->value != nullptr,
-                                entry->range,
-                                "MapEntrySyntax is missing value");
-                        if (entry->key) {
-                            validate_expr(*entry->key);
-                        }
-                        if (entry->value) {
-                            validate_expr(*entry->value);
                         }
                     }
                 },

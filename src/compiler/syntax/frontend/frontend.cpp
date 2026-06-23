@@ -960,9 +960,6 @@ class ProgramBuilder {
 
         // Initialize node variant with the correct default-constructed alternative
         switch (kind) {
-        case ast::ExprSyntaxKind::NoneLiteral:
-            expr->node = ast::NoneLiteralExpr{};
-            break;
         case ast::ExprSyntaxKind::BoolLiteral:
             expr->node = ast::BoolLiteralExpr{};
             break;
@@ -981,9 +978,6 @@ class ProgramBuilder {
         case ast::ExprSyntaxKind::DurationLiteral:
             expr->node = ast::DurationLiteralExpr{};
             break;
-        case ast::ExprSyntaxKind::Some:
-            expr->node = ast::SomeExpr{};
-            break;
         case ast::ExprSyntaxKind::Path:
             expr->node = ast::PathExpr{};
             break;
@@ -998,15 +992,6 @@ class ProgramBuilder {
             break;
         case ast::ExprSyntaxKind::StructLiteral:
             expr->node = ast::StructLiteralExpr{};
-            break;
-        case ast::ExprSyntaxKind::ListLiteral:
-            expr->node = ast::ListLiteralExpr{};
-            break;
-        case ast::ExprSyntaxKind::SetLiteral:
-            expr->node = ast::SetLiteralExpr{};
-            break;
-        case ast::ExprSyntaxKind::MapLiteral:
-            expr->node = ast::MapLiteralExpr{};
             break;
         case ast::ExprSyntaxKind::Unary:
             expr->node = ast::UnaryExpr{};
@@ -1375,18 +1360,6 @@ class ProgramBuilder {
             return expr;
         }
 
-        if (const auto list = borrow(context.listLiteral())) {
-            return build_list_literal_expr(list->get());
-        }
-
-        if (const auto set = borrow(context.setLiteral())) {
-            return build_set_literal_expr(set->get());
-        }
-
-        if (const auto map = borrow(context.mapLiteral())) {
-            return build_map_literal_expr(map->get());
-        }
-
         if (const auto match = borrow(context.matchExpr())) {
             return build_match_expr(match->get());
         }
@@ -1396,26 +1369,10 @@ class ProgramBuilder {
         }
 
         if (const auto inner_expr = borrow(context.expr())) {
-            if (!context.children.empty() &&
-                require(context.children[0], "primary expression child is missing").getText() ==
-                    "some") {
-                auto expr =
-                    make_expr_syntax(ast::ExprSyntaxKind::Some, context_range(context, source_));
-                std::get<ast::SomeExpr>(expr->node).value = build_expr_syntax(inner_expr->get());
-                return expr;
-            }
-
             auto expr =
                 make_expr_syntax(ast::ExprSyntaxKind::Group, context_range(context, source_));
             std::get<ast::GroupExpr>(expr->node).inner = build_expr_syntax(inner_expr->get());
             return expr;
-        }
-
-        if (context.children.size() == 1 &&
-            require(context.children[0], "primary expression child is missing").getText() ==
-                "none") {
-            return make_expr_syntax(ast::ExprSyntaxKind::NoneLiteral,
-                                    context_range(context, source_));
         }
 
         throw std::logic_error("primary expression did not match any supported AHFL kind");
@@ -1509,45 +1466,6 @@ class ProgramBuilder {
         auto expr =
             make_expr_syntax(ast::ExprSyntaxKind::QualifiedValue, context_range(context, source_));
         std::get<ast::QualifiedValueExpr>(expr->node).name = build_qualified_name(context);
-        return expr;
-    }
-
-    [[nodiscard]] Owned<ast::ExprSyntax>
-    build_list_literal_expr(AHFLParser::ListLiteralContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::ListLiteral, context_range(context, source_));
-
-        if (const auto expr_list = borrow(context.exprList())) {
-            std::get<ast::ListLiteralExpr>(expr->node).items = build_expr_list(expr_list->get());
-        }
-
-        return expr;
-    }
-
-    [[nodiscard]] Owned<ast::ExprSyntax>
-    build_set_literal_expr(AHFLParser::SetLiteralContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::SetLiteral, context_range(context, source_));
-
-        if (const auto expr_list = borrow(context.exprList())) {
-            std::get<ast::SetLiteralExpr>(expr->node).items = build_expr_list(expr_list->get());
-        }
-
-        return expr;
-    }
-
-    [[nodiscard]] Owned<ast::ExprSyntax>
-    build_map_literal_expr(AHFLParser::MapLiteralContext &context) const {
-        auto expr =
-            make_expr_syntax(ast::ExprSyntaxKind::MapLiteral, context_range(context, source_));
-        auto &entries = std::get<ast::MapLiteralExpr>(expr->node).entries;
-
-        if (const auto entry_list = borrow(context.mapEntryList())) {
-            for (auto *entry_context : entry_list->get().mapEntry()) {
-                entries.push_back(build_map_entry(require(entry_context, "map entry is missing")));
-            }
-        }
-
         return expr;
     }
 
@@ -1759,7 +1677,6 @@ class ProgramBuilder {
         }
         return pattern;
     }
-
     [[nodiscard]] std::vector<Owned<ast::ExprSyntax>>
     build_expr_list(AHFLParser::ExprListContext &context) const {
         std::vector<Owned<ast::ExprSyntax>> expressions;

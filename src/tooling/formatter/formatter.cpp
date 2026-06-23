@@ -739,7 +739,6 @@ class AstFormatter {
     void format_expr(const ahfl::ast::ExprSyntax &expr) {
         std::visit(
             Overloaded{
-                [&](const ahfl::ast::NoneLiteralExpr &) { write("none"); },
                 [&](const ahfl::ast::BoolLiteralExpr &e) { write(e.value ? "true" : "false"); },
                 [&](const ahfl::ast::IntegerLiteralExpr &e) {
                     if (e.literal) {
@@ -757,13 +756,6 @@ class AstFormatter {
                     } else {
                         write(expr.text);
                     }
-                },
-                [&](const ahfl::ast::SomeExpr &e) {
-                    write("some(");
-                    if (e.value) {
-                        format_expr(*e.value);
-                    }
-                    write(")");
                 },
                 [&](const ahfl::ast::PathExpr &e) {
                     if (e.path) {
@@ -841,44 +833,6 @@ class AstFormatter {
                         }
                     }
                     write(" }");
-                },
-                [&](const ahfl::ast::ListLiteralExpr &e) {
-                    write("[");
-                    for (std::size_t i = 0; i < e.items.size(); ++i) {
-                        if (i > 0)
-                            out_ << ", ";
-                        if (e.items[i]) {
-                            format_expr(*e.items[i]);
-                        }
-                    }
-                    write("]");
-                },
-                [&](const ahfl::ast::SetLiteralExpr &e) {
-                    write("{");
-                    for (std::size_t i = 0; i < e.items.size(); ++i) {
-                        if (i > 0)
-                            out_ << ", ";
-                        if (e.items[i]) {
-                            format_expr(*e.items[i]);
-                        }
-                    }
-                    write("}");
-                },
-                [&](const ahfl::ast::MapLiteralExpr &e) {
-                    write("{");
-                    for (std::size_t i = 0; i < e.entries.size(); ++i) {
-                        if (i > 0)
-                            out_ << ", ";
-                        const auto &entry = e.entries[i];
-                        if (entry->key) {
-                            format_expr(*entry->key);
-                        }
-                        out_ << ": ";
-                        if (entry->value) {
-                            format_expr(*entry->value);
-                        }
-                    }
-                    write("}");
                 },
                 [&](const ahfl::ast::UnaryExpr &e) {
                     format_unary_op(e.op);

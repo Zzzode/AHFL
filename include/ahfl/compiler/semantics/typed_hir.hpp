@@ -516,10 +516,6 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_string_literal(expr);
     case ast::ExprSyntaxKind::DurationLiteral:
         return std::forward<Visitor>(visitor).visit_duration_literal(expr);
-    case ast::ExprSyntaxKind::NoneLiteral:
-        return std::forward<Visitor>(visitor).visit_none_literal(expr);
-    case ast::ExprSyntaxKind::Some:
-        return std::forward<Visitor>(visitor).visit_some(expr);
     case ast::ExprSyntaxKind::Path:
         return std::forward<Visitor>(visitor).visit_path(expr);
     case ast::ExprSyntaxKind::QualifiedValue:
@@ -530,12 +526,6 @@ template <typename Visitor> decltype(auto) typed_visit(const TypedExpr &expr, Vi
         return std::forward<Visitor>(visitor).visit_method_call(expr);
     case ast::ExprSyntaxKind::StructLiteral:
         return std::forward<Visitor>(visitor).visit_struct_literal(expr);
-    case ast::ExprSyntaxKind::ListLiteral:
-        return std::forward<Visitor>(visitor).visit_list_literal(expr);
-    case ast::ExprSyntaxKind::SetLiteral:
-        return std::forward<Visitor>(visitor).visit_set_literal(expr);
-    case ast::ExprSyntaxKind::MapLiteral:
-        return std::forward<Visitor>(visitor).visit_map_literal(expr);
     case ast::ExprSyntaxKind::Unary:
         return std::forward<Visitor>(visitor).visit_unary(expr);
     case ast::ExprSyntaxKind::Binary:

@@ -150,7 +150,7 @@ enum class EffectClauseKind {
 
 [[nodiscard]] std::string_view to_string(EffectClauseKind kind) noexcept;
 
-/// Expression syntax kinds
+/// Expression syntax kinds (sugar variants removed — 18 kinds)
 enum class ExprSyntaxKind {
     BoolLiteral,     // true / false
     IntegerLiteral,  // 42, -1
@@ -158,16 +158,11 @@ enum class ExprSyntaxKind {
     DecimalLiteral,  // 3.14d
     StringLiteral,   // "hello"
     DurationLiteral, // 30s, 5m
-    NoneLiteral,     // none
-    Some,            // some(expr)
     Path,            // input.field, ctx.field, node_name.field
     QualifiedValue,  // Priority::High (fully qualified enum value)
     Call,            // capability_name(args...)
     MethodCall,      // receiver.method(args...)
     StructLiteral,   // TypeName { field: value, ... }
-    ListLiteral,     // [a, b, c]
-    SetLiteral,      // {a, b, c}
-    MapLiteral,      // {k1: v1, k2: v2}
     Unary,           // !expr, -expr
     Binary,          // a + b, a == b, a && b
     MemberAccess,    // expr.member
@@ -398,7 +393,6 @@ struct StructInitSyntax {
 // ExprSyntax (first/second/name/text, etc.).
 
 /// none literal
-struct NoneLiteralExpr {};
 
 /// bool literal: true / false
 struct BoolLiteralExpr {
@@ -431,9 +425,6 @@ struct DurationLiteralExpr {
 };
 
 /// some expression: some(expr)
-struct SomeExpr {
-    Owned<ExprSyntax> value;
-};
 
 /// Path expression: input.field, ctx.field
 struct PathExpr {
@@ -467,19 +458,10 @@ struct StructLiteralExpr {
 };
 
 /// List literal: [a, b, c]
-struct ListLiteralExpr {
-    std::vector<Owned<ExprSyntax>> items;
-};
 
 /// Set literal: {a, b, c}
-struct SetLiteralExpr {
-    std::vector<Owned<ExprSyntax>> items;
-};
 
 /// Map literal: {k1: v1, k2: v2}
-struct MapLiteralExpr {
-    std::vector<Owned<MapEntrySyntax>> entries;
-};
 
 /// Unary expression: !expr, -expr
 struct UnaryExpr {
@@ -723,22 +705,17 @@ struct LambdaExpr {
 };
 
 /// Variant alias for the expression syntax node
-using ExprSyntaxNode = std::variant<NoneLiteralExpr,
-                                    BoolLiteralExpr,
+using ExprSyntaxNode = std::variant<BoolLiteralExpr,
                                     IntegerLiteralExpr,
                                     FloatLiteralExpr,
                                     DecimalLiteralExpr,
                                     StringLiteralExpr,
                                     DurationLiteralExpr,
-                                    SomeExpr,
                                     PathExpr,
                                     QualifiedValueExpr,
                                     CallExpr,
                                     MethodCallExpr,
                                     StructLiteralExpr,
-                                    ListLiteralExpr,
-                                    SetLiteralExpr,
-                                    MapLiteralExpr,
                                     UnaryExpr,
                                     BinaryExpr,
                                     MemberAccessExpr,
@@ -1487,9 +1464,6 @@ template <typename Visitor>
 decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
     return std::visit(
         Overloaded{
-            [&](const NoneLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_none_literal(expr);
-            },
             [&](const BoolLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_bool_literal(expr);
             },
@@ -1508,7 +1482,6 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             [&](const DurationLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_duration_literal(expr);
             },
-            [&](const SomeExpr &) { return std::forward<Visitor>(visitor).visit_some(expr); },
             [&](const PathExpr &) { return std::forward<Visitor>(visitor).visit_path(expr); },
             [&](const QualifiedValueExpr &) {
                 return std::forward<Visitor>(visitor).visit_qualified_value(expr);
@@ -1519,15 +1492,6 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
             },
             [&](const StructLiteralExpr &) {
                 return std::forward<Visitor>(visitor).visit_struct_literal(expr);
-            },
-            [&](const ListLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_list_literal(expr);
-            },
-            [&](const SetLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_set_literal(expr);
-            },
-            [&](const MapLiteralExpr &) {
-                return std::forward<Visitor>(visitor).visit_map_literal(expr);
             },
             [&](const UnaryExpr &) { return std::forward<Visitor>(visitor).visit_unary(expr); },
             [&](const BinaryExpr &) { return std::forward<Visitor>(visitor).visit_binary(expr); },
@@ -1555,22 +1519,17 @@ decltype(auto) visit_expr_syntax(const ExprSyntax &expr, Visitor &&visitor) {
 [[nodiscard]] inline ExprSyntaxKind expr_syntax_kind(const ExprSyntax &expr) {
     return std::visit(
         Overloaded{
-            [](const NoneLiteralExpr &) { return ExprSyntaxKind::NoneLiteral; },
             [](const BoolLiteralExpr &) { return ExprSyntaxKind::BoolLiteral; },
             [](const IntegerLiteralExpr &) { return ExprSyntaxKind::IntegerLiteral; },
             [](const FloatLiteralExpr &) { return ExprSyntaxKind::FloatLiteral; },
             [](const DecimalLiteralExpr &) { return ExprSyntaxKind::DecimalLiteral; },
             [](const StringLiteralExpr &) { return ExprSyntaxKind::StringLiteral; },
             [](const DurationLiteralExpr &) { return ExprSyntaxKind::DurationLiteral; },
-            [](const SomeExpr &) { return ExprSyntaxKind::Some; },
             [](const PathExpr &) { return ExprSyntaxKind::Path; },
             [](const QualifiedValueExpr &) { return ExprSyntaxKind::QualifiedValue; },
             [](const CallExpr &) { return ExprSyntaxKind::Call; },
             [](const MethodCallExpr &) { return ExprSyntaxKind::MethodCall; },
             [](const StructLiteralExpr &) { return ExprSyntaxKind::StructLiteral; },
-            [](const ListLiteralExpr &) { return ExprSyntaxKind::ListLiteral; },
-            [](const SetLiteralExpr &) { return ExprSyntaxKind::SetLiteral; },
-            [](const MapLiteralExpr &) { return ExprSyntaxKind::MapLiteral; },
             [](const UnaryExpr &) { return ExprSyntaxKind::Unary; },
             [](const BinaryExpr &) { return ExprSyntaxKind::Binary; },
             [](const MemberAccessExpr &) { return ExprSyntaxKind::MemberAccess; },

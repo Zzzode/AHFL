@@ -744,7 +744,6 @@ class AstPrinter final {
     void print_expr(const ast::ExprSyntax &expr, int indent_level) {
         std::visit(
             Overloaded{
-                [&](const ast::NoneLiteralExpr &) { line(indent_level, "none"); },
                 [&](const ast::BoolLiteralExpr &e) {
                     line(indent_level, std::string("bool ") + (e.value ? "true" : "false"));
                 },
@@ -760,10 +759,6 @@ class AstPrinter final {
                 },
                 [&](const ast::DurationLiteralExpr &e) {
                     line(indent_level, "duration " + e.literal->spelling);
-                },
-                [&](const ast::SomeExpr &e) {
-                    line(indent_level, "some");
-                    print_expr(*e.value, indent_level + 1);
                 },
                 [&](const ast::PathExpr &e) { line(indent_level, "path " + e.path->spelling()); },
                 [&](const ast::QualifiedValueExpr &e) {
@@ -798,30 +793,6 @@ class AstPrinter final {
                     for (const auto &field : e.fields) {
                         line(indent_level + 1, "field " + field->field_name);
                         print_expr(*field->value, indent_level + 2);
-                    }
-                },
-                [&](const ast::ListLiteralExpr &e) {
-                    line(indent_level, "list_literal");
-                    for (std::size_t index = 0; index < e.items.size(); ++index) {
-                        line(indent_level + 1, "item " + std::to_string(index));
-                        print_expr(*e.items[index], indent_level + 2);
-                    }
-                },
-                [&](const ast::SetLiteralExpr &e) {
-                    line(indent_level, "set_literal");
-                    for (std::size_t index = 0; index < e.items.size(); ++index) {
-                        line(indent_level + 1, "item " + std::to_string(index));
-                        print_expr(*e.items[index], indent_level + 2);
-                    }
-                },
-                [&](const ast::MapLiteralExpr &e) {
-                    line(indent_level, "map_literal");
-                    for (std::size_t index = 0; index < e.entries.size(); ++index) {
-                        line(indent_level + 1, "entry " + std::to_string(index));
-                        line(indent_level + 2, "key");
-                        print_expr(*e.entries[index]->key, indent_level + 3);
-                        line(indent_level + 2, "value");
-                        print_expr(*e.entries[index]->value, indent_level + 3);
                     }
                 },
                 [&](const ast::UnaryExpr &e) {
