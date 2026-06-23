@@ -27,6 +27,16 @@
 
 namespace {
 
+template <typename DeclT, typename ProgramT>
+[[nodiscard]] const DeclT *find_last_decl(const ProgramT &program) {
+    for (auto iter = program.declarations.rbegin(); iter != program.declarations.rend(); ++iter) {
+        if (const auto *p = std::get_if<DeclT>(&*iter); p != nullptr) {
+            return p;
+        }
+    }
+    return nullptr;
+}
+
 [[nodiscard]] ahfl::ir::ExprRef make_call_expr(ahfl::ir::ExprArena &arena, std::string callee) {
     return arena.make(ahfl::ir::CallExpr{
         .callee = std::move(callee),
@@ -434,7 +444,7 @@ flow for HirAgent {
         ++expected_decl_id;
     }
 
-    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&typed_ir.declarations.back());
+    const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(typed_ir);
     REQUIRE(flow != nullptr);
     REQUIRE(flow->state_handlers.size() == 1);
     const auto &statements = flow->state_handlers.front().body.statements;
@@ -641,7 +651,7 @@ flow for HirAgent {
 
     const auto lowered = ahfl::lower_program_ir(*parse_result.program, resolve_result, type_result);
 
-    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
     REQUIRE(flow != nullptr);
     REQUIRE(flow->state_handlers.size() == 1);
     REQUIRE(flow->state_handlers.front().body.statements.size() >= 1);
@@ -717,7 +727,13 @@ flow for DetachedHirAgent {
 
     const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
-    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
+    if (flow == nullptr) {
+        for (auto iter = lowered.declarations.rbegin();
+             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+            flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
+        }
+    }
     REQUIRE(flow != nullptr);
     REQUIRE(flow->state_handlers.size() == 1);
     REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
@@ -1171,7 +1187,13 @@ flow for MetadataCallAgent {
 
     const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
-    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
+    if (flow == nullptr) {
+        for (auto iter = lowered.declarations.rbegin();
+             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+            flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
+        }
+    }
     REQUIRE(flow != nullptr);
     REQUIRE(flow->state_handlers.size() == 1);
     REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
@@ -1332,7 +1354,13 @@ flow for MetadataStructAgent {
 
     const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
-    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
+    if (flow == nullptr) {
+        for (auto iter = lowered.declarations.rbegin();
+             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+            flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
+        }
+    }
     REQUIRE(flow != nullptr);
     REQUIRE(flow->state_handlers.size() == 1);
     REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
@@ -1421,7 +1449,13 @@ flow for MetadataQualifiedValueAgent {
 
     const auto lowered = ahfl::lower_typed_program(detached, *parse_result.program);
 
-    const auto *flow = std::get_if<ahfl::ir::FlowDecl>(&lowered.declarations.back());
+    const auto *flow = find_last_decl<ahfl::ir::FlowDecl>(lowered);
+    if (flow == nullptr) {
+        for (auto iter = lowered.declarations.rbegin();
+             iter != lowered.declarations.rend() && flow == nullptr; ++iter) {
+            flow = std::get_if<ahfl::ir::FlowDecl>(&*iter);
+        }
+    }
     REQUIRE(flow != nullptr);
     REQUIRE(flow->state_handlers.size() == 1);
     REQUIRE_FALSE(flow->state_handlers.front().body.statements.empty());
