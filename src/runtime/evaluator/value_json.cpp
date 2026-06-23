@@ -240,53 +240,55 @@ find_field_any(const ahfl::json::JsonValue &object,
 }
 
 // Try to parse a JSON object as an explicit nominal list / optional wrapper.
-// Returns a disengaged optional if the object does not look like such a
-// wrapper; returns an engaged nullopt if it matched the wrapper shape but
-// failed to deserialize the contents.
-[[nodiscard]] std::optional<std::optional<Value>>
+// Returns a disengaged outer optional if the object does not look like such a
+// wrapper; returns an engaged outer optional with a disengaged inner optional
+// if it matched the wrapper shape but failed to deserialize the contents.
+using WrapperParse = std::optional<std::optional<Value>>;
+
+[[nodiscard]] WrapperParse
 try_parse_nominal_wrapper_object(const ahfl::json::JsonValue &object) {
     // {"list":[...]}  |  {"_list":[...]}
     if (const auto *items_field = find_field_any(object, {"list", "_list"})) {
         if (items_field->kind != ahfl::json::Kind::Array) {
-            return std::make_optional(std::nullopt);
+            return WrapperParse{std::optional<Value>{std::nullopt}};
         }
         Value list = make_list(std::vector<Value>{});
         auto *lv = get_list_if(list);
         for (const auto &json_item : items_field->array_items) {
             if (!json_item) {
-                return std::make_optional(std::nullopt);
+                return WrapperParse{std::optional<Value>{std::nullopt}};
             }
             auto item_value = value_from_json_value(*json_item);
             if (!item_value.has_value()) {
-                return std::make_optional(std::nullopt);
+                return WrapperParse{std::optional<Value>{std::nullopt}};
             }
             lv->items.push_back(std::make_unique<Value>(std::move(*item_value)));
         }
-        return std::make_optional(std::move(list));
+        return WrapperParse{std::optional<Value>{std::move(list)}};
     }
 
     // {"some":X}  |  {"_some":X}  -> optional with inner X
     if (const auto *some_field = find_field_any(object, {"some", "_some"})) {
         auto inner = value_from_json_value(*some_field);
         if (!inner.has_value()) {
-            return std::make_optional(std::nullopt);
+            return WrapperParse{std::optional<Value>{std::nullopt}};
         }
-        return std::make_optional(make_optional_some(std::move(*inner)));
+        return WrapperParse{std::optional<Value>{make_optional_some(std::move(*inner))}};
     }
 
     // {"none":null}  |  {"_none":null}  |  {"optional":null}
     if (find_field_any(object, {"none", "_none"}) != nullptr) {
-        return std::make_optional(make_optional_none());
+        return WrapperParse{std::optional<Value>{make_optional_none()}};
     }
     if (const auto *opt_field = find_field_any(object, {"optional", "_optional"})) {
         if (opt_field->kind == ahfl::json::Kind::Null) {
-            return std::make_optional(make_optional_none());
+            return WrapperParse{std::optional<Value>{make_optional_none()}};
         }
         auto inner = value_from_json_value(*opt_field);
         if (!inner.has_value()) {
-            return std::make_optional(std::nullopt);
+            return WrapperParse{std::optional<Value>{std::nullopt}};
         }
-        return std::make_optional(make_optional_some(std::move(*inner)));
+        return WrapperParse{std::optional<Value>{make_optional_some(std::move(*inner))}};
     }
 
     return std::nullopt; // not a nominal wrapper
