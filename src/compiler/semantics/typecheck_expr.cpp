@@ -194,30 +194,6 @@ void unify_param_with_arg(const Type &param, const Type &arg, TypeSubstitutionMa
     // Leaf types (Bool/Int/String/...): no TypeVars to bind.
 }
 
-[[nodiscard]] std::optional<TypeExpectation> derive_expectation(const TypeExpectation *parent,
-                                                                TypePtr expected) {
-    if (parent == nullptr || expected == nullptr) {
-        return std::nullopt;
-    }
-    return TypeExpectation{
-        .expected = expected,
-        .origin_kind = parent->origin_kind,
-        .origin_range = parent->origin_range,
-        .description = parent->description,
-    };
-}
-
-[[nodiscard]] TypeExpectation inferred_collection_expectation(const Type &expected,
-                                                              SourceRange origin_range,
-                                                              std::string description) {
-    return TypeExpectation{
-        .expected = expected.clone(),
-        .origin_kind = TypeExpectationOriginKind::Annotation,
-        .origin_range = origin_range,
-        .description = std::move(description),
-    };
-}
-
 } // namespace
 
 class ExpressionCheckerServices final {
@@ -355,6 +331,14 @@ class ExpressionCheckerServices final {
         return delegate_->check_bound(subject_type, trait_name, range);
     }
 
+    // P3c.S5b: emit a non-error informational note at `range`. Used by the
+    // three-stage method-dispatch path to leave an auditable trace so
+    // consumers (tests, developer logs) can see which resolution stage
+    // produced the final candidate.
+    void note_here(std::string message, SourceRange range) const {
+        delegate_->note(std::move(message), range);
+    }
+
     // P2d.S2 helper: resolve a nominal type by its canonical (short) name.
     // Looks up the name in the Struct and Enum symbol tables via the
     // ResolveResult and returns a TypePtr with the nominal symbol set, or
@@ -400,23 +384,139 @@ class ExpressionCheckerServices final {
     }
 
     // P3c: collect impl methods that match a receiver nominal type and method
-    // name. The caller applies inherent-before-trait priority and ambiguity
-    // diagnostics.
+    // name. Impl selection uses normalize_type_key equality (the same
+    // equivalence relation the coherence/orphan-rule and impl_index use) so
+    // primitive targets like `impl Eq for Int` and compound nominal targets
+    // like `impl Show for Widget` both resolve uniformly.
+    //
+    // P3c.S5b: in addition to concrete impl-block methods, we also collect
+    // trait-declared method signatures as *synthetic* candidates. This lets
+    // a method call on a type `T` resolve to the unique trait method shape
+    // (stage2) even when no concrete `impl Trait for T` exists yet — the
+    // stage3 bound gate then emits TRAIT_BOUND_NOT_SATISFIED because no
+    // concrete impl was found, giving the user a precise "missing impl"
+    // diagnostic instead of the generic UNKNOWN_CALLABLE fallback.
+    //
+    // Synthetic entries live in `trait_method_candidate_storage_` (mutable
+    // because method_candidates is const-queried) and pointers remain valid
+    // for the duration of the surrounding check_method_call.
     [[nodiscard]] std::vector<MethodCandidate>
     method_candidates(const Type &receiver_type, std::string_view method_name) const {
         std::vector<MethodCandidate> candidates;
-        const auto target_symbol = nominal_symbol_of_type(receiver_type);
-        if (!target_symbol.has_value()) {
+        const std::string receiver_key = TypeEnvironment::normalize_type_key(receiver_type);
+        if (receiver_key.empty()) {
             return candidates;
         }
 
+        // (1) Concrete impls registered in the environment (P3 base surface).
         for (const auto &[impl_index, impl] : environment_.impls()) {
             (void)impl_index;
-            if (!impl.target_symbol.has_value() || *impl.target_symbol != *target_symbol) {
+            if (impl.target_type == nullptr) {
+                continue;
+            }
+            if (TypeEnvironment::normalize_type_key(*impl.target_type) != receiver_key) {
                 continue;
             }
             if (const auto *method = find_method_ptr(impl, method_name); method != nullptr) {
                 candidates.push_back(MethodCandidate{.impl = &impl, .method = method});
+            }
+        }
+
+        // (2) Trait-declared methods (P3c.S5b stage2 + stage3 gate).
+        //     Contribute a synthetic candidate ONLY when no concrete impl in
+        //     the environment already matches (trait, receiver_type). This
+        //     prevents a duplicate candidate for programs that have both a
+        //     trait declaration *and* a matching `impl Trait for Type` (the
+        //     far more common case). The bound gate still fires on the
+        //     concrete impl, so we lose no coverage there.
+        //
+        //     Synthetic entries live in `trait_method_candidate_storage_`
+        //     (mutable because method_candidates is const-queried) and
+        //     pointers remain valid for the duration of the surrounding
+        //     check_method_call.
+        trait_method_candidate_storage_.impls.clear();
+        trait_method_candidate_storage_.methods.clear();
+        for (const auto &[trait_id, trait] : environment_.traits()) {
+            (void)trait_id;
+            const auto maybe_method = trait.find_method(method_name);
+            if (!maybe_method.has_value()) {
+                continue;
+            }
+            const auto &trait_method = maybe_method->get();
+            if (trait_method.params.empty()) {
+                continue; // no self param → never a method call target
+            }
+            const auto &self_param = trait_method.params.front();
+            if (self_param.type == nullptr) {
+                continue;
+            }
+            if (TypeEnvironment::normalize_type_key(*self_param.type) != receiver_key) {
+                continue;
+            }
+            // Skip: a concrete impl of this trait for the receiver type
+            // already contributed a candidate via pass (1).
+            bool concrete_impl_exists = false;
+            for (const auto &[impl_index, impl] : environment_.impls()) {
+                (void)impl_index;
+                if (impl.is_inherent) {
+                    continue;
+                }
+                if (!impl.trait_symbol.has_value() || *impl.trait_symbol != trait.symbol) {
+                    continue;
+                }
+                if (impl.target_type == nullptr) {
+                    continue;
+                }
+                if (TypeEnvironment::normalize_type_key(*impl.target_type) == receiver_key) {
+                    concrete_impl_exists = true;
+                    break;
+                }
+            }
+            if (concrete_impl_exists) {
+                continue;
+            }
+            // Build an ImplMethodInfo mirror of the trait-declared signature
+            // so check_impl_method_call can use the existing arity/type/
+            // effect/return-type flow verbatim. Only the fields that
+            // check_impl_method_call actually reads are populated; fields
+            // like `body_block_index` retain their no-body default.
+            ImplMethodInfo method_info{
+                .name = trait_method.name,
+                .symbol = SymbolId{0},
+                .params = trait_method.params,
+                .return_type = trait_method.return_type,
+                .return_type_range = trait_method.return_type_range,
+                .type_param_names = trait_method.type_param_names,
+                .effect = trait_method.effect,
+                .has_body = false,
+                .declaration_range = trait_method.declaration_range,
+                .body_block_index = UINT32_MAX,
+            };
+            ImplTypeInfo impl_info{
+                .index = 0,
+                .is_inherent = false,
+                .trait_symbol = trait.symbol,
+                .trait_name = trait.canonical_name,
+                .target_type = self_param.type,
+                .target_symbol = nominal_symbol_of_type(*self_param.type),
+                .type_param_names = trait.type_param_names,
+                .methods = {},
+                .assoc_items = {},
+                .declaration_range = trait.declaration_range,
+                .trait_ref_range = trait.declaration_range,
+                .target_type_range = self_param.declaration_range,
+                .source_id = std::nullopt,
+                .module_name = {},
+            };
+            trait_method_candidate_storage_.methods.push_back(std::move(method_info));
+            impl_info.methods.push_back(trait_method_candidate_storage_.methods.back());
+            trait_method_candidate_storage_.impls.push_back(std::move(impl_info));
+
+            const auto &stored_impl = trait_method_candidate_storage_.impls.back();
+            const auto *stored_method = find_method_ptr(stored_impl, method_name);
+            if (stored_method != nullptr) {
+                candidates.push_back(MethodCandidate{.impl = &stored_impl,
+                                                     .method = stored_method});
             }
         }
         return candidates;
@@ -492,6 +592,19 @@ class ExpressionCheckerServices final {
     TypeRelationContext &relations_;
     ExpressionSemaDelegate *delegate_{nullptr};
     ExpressionValueFactory values_;
+
+    // P3c.S5b: persistent backing store for trait-declared method candidates
+    // synthesized by method_candidates(). Mutable because method_candidates()
+    // is logically const (it never mutates the environment / symbol table)
+    // even though it allocates temporary ImplTypeInfo / ImplMethodInfo
+    // copies. Callers consume the returned pointers before the next
+    // method_candidates() call; the storage is cleared at the top of each
+    // invocation to prevent stale-pointer reuse.
+    struct TraitCandidateStorage {
+        std::vector<ImplTypeInfo> impls;
+        std::vector<ImplMethodInfo> methods;
+    };
+    mutable TraitCandidateStorage trait_method_candidate_storage_{};
 };
 
 class ExpressionChecker final {
@@ -1227,6 +1340,20 @@ class ExpressionChecker final {
             return values_.error_typed_effect(receiver.effect);
         }
 
+        // P3c.S5b: three-stage method dispatch with explicit audit-trace notes
+        // emitted at every decision point. Ordering matches the RFC §3.2.2
+        // resolution priority: inherent impls shadow trait impls, a unique
+        // trait candidate resolves only when no inherent impl matches, and
+        // every final trait selection must also pass the bound-verification
+        // gate (so callers that explicitly name `T : Trait` through a where
+        // clause additionally prove the (receiver, trait) pair at the use
+        // site rather than trusting candidate-count alone).
+        //
+        //   Stage 1 — inherent unique: 1 candidate → select; >1 → ambiguous.
+        //   Stage 2 — trait unique:     1 candidate → proceed to bound check;
+        //                               >1 → ambiguous; 0 → unknown callable.
+        //   Stage 3 — bound check:      for the trait-selected candidate,
+        //                               verify `receiver.type : candidate.trait`.
         const auto candidates = services_.method_candidates(*receiver.type, call.method);
         std::vector<MethodCandidate> inherent_candidates;
         std::vector<MethodCandidate> trait_candidates;
@@ -1242,22 +1369,62 @@ class ExpressionChecker final {
         }
 
         const MethodCandidate *selected = nullptr;
+        bool selected_from_trait = false;
+
+        // ---- Stage 1: inherent unique ----------------------------------------
+        services_.note_here(
+            "[dispatch.stage1.inherent] " + method_call_name(*receiver.type, call.method) +
+                ": inherent candidates=" + std::to_string(inherent_candidates.size()),
+            expr.range);
         if (inherent_candidates.size() == 1) {
             selected = &inherent_candidates.front();
+            selected_from_trait = false;
+            services_.note_here(
+                "[dispatch.stage1.inherent] selected unique inherent method '" +
+                    inherent_candidates.front().method->name + "'",
+                expr.range);
         } else if (inherent_candidates.size() > 1) {
+            services_.note_here("[dispatch.stage1.inherent] multiple inherent candidates → "
+                                "AMBIGUOUS_TRAIT_IMPL",
+                                expr.range);
             services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
                                            messages::typecheck::AmbiguousTraitImpl.format_with(
                                                call.method, receiver.type->describe()),
                                            expr.range);
             return values_.error_typed_effect(receiver.effect);
-        } else if (trait_candidates.size() == 1) {
-            selected = &trait_candidates.front();
-        } else if (trait_candidates.size() > 1) {
-            services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
-                                           messages::typecheck::AmbiguousTraitImpl.format_with(
-                                               call.method, receiver.type->describe()),
-                                           expr.range);
-            return values_.error_typed_effect(receiver.effect);
+        } else {
+            services_.note_here("[dispatch.stage1.inherent] no inherent candidates → fall "
+                                "through to trait lookup",
+                                expr.range);
+        }
+
+        // ---- Stage 2: trait unique (only if stage 1 produced no match) -------
+        if (selected == nullptr) {
+            services_.note_here(
+                "[dispatch.stage2.trait] " + method_call_name(*receiver.type, call.method) +
+                    ": trait candidates=" + std::to_string(trait_candidates.size()),
+                expr.range);
+            if (trait_candidates.size() == 1) {
+                selected = &trait_candidates.front();
+                selected_from_trait = true;
+                services_.note_here("[dispatch.stage2.trait] selected unique trait method '" +
+                                        trait_candidates.front().method->name + "' from trait '" +
+                                        trait_candidates.front().impl->trait_name + "'",
+                                    expr.range);
+            } else if (trait_candidates.size() > 1) {
+                services_.note_here("[dispatch.stage2.trait] multiple trait candidates → "
+                                    "AMBIGUOUS_TRAIT_IMPL",
+                                    expr.range);
+                services_.typecheck_error_here(error_codes::typecheck::AmbiguousTraitImpl,
+                                               messages::typecheck::AmbiguousTraitImpl.format_with(
+                                                   call.method, receiver.type->describe()),
+                                               expr.range);
+                return values_.error_typed_effect(receiver.effect);
+            } else {
+                services_.note_here("[dispatch.stage2.trait] no trait candidates → dispatch "
+                                    "fails with UNKNOWN_CALLABLE",
+                                    expr.range);
+            }
         }
 
         if (selected == nullptr || selected->method == nullptr) {
@@ -1266,6 +1433,34 @@ class ExpressionChecker final {
                                                method_call_name(*receiver.type, call.method)),
                                            expr.range);
             return values_.error_typed_effect(receiver.effect);
+        }
+
+        // ---- Stage 3: bound check (trait selections only) --------------------
+        if (selected_from_trait && selected->impl != nullptr) {
+            const std::string_view trait_name = selected->impl->trait_name;
+            services_.note_here("[dispatch.stage3.bound] verifying bound '" +
+                                    receiver.type->describe() + " : " + std::string(trait_name) +
+                                    "' for trait dispatch target",
+                                expr.range);
+            const bool bound_ok = services_.check_bound(*receiver.type, trait_name, expr.range);
+            if (bound_ok) {
+                services_.note_here(
+                    "[dispatch.stage3.bound] bound satisfied for trait '" + std::string(trait_name) +
+                        "'",
+                    expr.range);
+            } else {
+                services_.note_here("[dispatch.stage3.bound] bound NOT satisfied → "
+                                    "TRAIT_BOUND_NOT_SATISFIED already emitted",
+                                    expr.range);
+                // check_bound() already emitted the primary diagnostic with
+                // the exact (type, trait) pair. Return an error-typed value so
+                // downstream passes don't treat the call as well-typed even if
+                // error-recovery fills in a method body elsewhere.
+                return values_.error_typed_effect(receiver.effect);
+            }
+        } else {
+            services_.note_here("[dispatch.stage3.bound] inherent dispatch skips bound check",
+                                expr.range);
         }
 
         return check_impl_method_call(expr, receiver, *selected);
@@ -2365,6 +2560,13 @@ TypedValue TypeCheckPass::check_expr_impl(const ast::ExprSyntax &expr,
             return pass_->check_bound(subject_type, trait_name, range);
         }
 
+        // P3c.S5b: forward informational notes to the TypeCheckPass reporter
+        // so three-stage method-dispatch audit lines appear in the diagnostic
+        // bag alongside real errors.
+        void note(std::string message, SourceRange range) override {
+            pass_->note_here(std::move(message), range);
+        }
+
       private:
         TypeCheckPass *pass_{nullptr};
         TypeResolver *type_resolver_{nullptr};
@@ -2449,6 +2651,10 @@ TypedValue TypeCheckPass::check_path(const ast::PathSyntax &path, const ValueCon
                          SourceRange /*range*/) override {
             return false;
         }
+
+        // P3c.S5b: path resolution never selects a method call, so the note
+        // sink is a no-op.
+        void note(std::string /*message*/, SourceRange /*range*/) override {}
 
       private:
         TypeCheckPass *pass_{nullptr};
