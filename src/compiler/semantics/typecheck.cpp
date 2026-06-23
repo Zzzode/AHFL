@@ -1230,6 +1230,79 @@ bool TypeCheckPass::impl_target_implements(SymbolId target_id, SymbolId trait_id
     return false;
 }
 
+// P2d.S2 (RFC §3.5 / §2): resolve a trait reference by its canonical-name
+// index and recursively check super-trait coverage so a `trait B: A { ... }`
+// declaration means B satisfiability also satisfies the A bound.
+namespace {
+bool trait_chain_implements(SymbolId target_id,
+                            SymbolId trait_id,
+                            const TypeEnvironment &env,
+                            std::unordered_set<std::size_t> &visited) {
+    const auto [_, inserted] = visited.insert(static_cast<std::size_t>(trait_id));
+    if (!inserted) {
+        return false; // break cycles in the super-trait DAG
+    }
+    for (const auto &[index, impl] : env.impls()) {
+        (void)index;
+        if (impl.is_inherent) {
+            continue;
+        }
+        if (!impl.trait_symbol.has_value() || !impl.target_symbol.has_value()) {
+            continue;
+        }
+        if (*impl.trait_symbol == trait_id && *impl.target_symbol == target_id) {
+            return true;
+        }
+    }
+    // Walk super-traits: if any super-trait X of `trait_id` has an impl for
+    // target_id, then `trait_id` is also satisfied via the super-trait chain.
+    const auto trait = env.get_trait(trait_id);
+    if (!trait.has_value()) {
+        return false;
+    }
+    for (const auto super_id : trait->get().super_traits) {
+        if (trait_chain_implements(target_id, super_id, env, visited)) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
+bool TypeCheckPass::check_bound(const Type &subject_type,
+                                std::string_view trait_name,
+                                SourceRange range) {
+    const auto trait_info = environment().find_trait(trait_name);
+    if (!trait_info.has_value()) {
+        // Unknown trait: resolution already emitted a diagnostic during the
+        // resolver pass, so silently decline so we do not double-report.
+        return false;
+    }
+    const auto target_symbol = nominal_symbol_of(subject_type);
+    if (!target_symbol.has_value()) {
+        // Primitive / compound / unresolved type: no impl can exist in the
+        // environment, so the bound is not satisfied.
+        typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
+                             messages::typecheck::TraitBoundNotSatisfied.format_with(
+                                 std::string{"<type>"},
+                                 std::string{trait_name},
+                                 subject_type.describe()),
+                             range);
+        return false;
+    }
+    std::unordered_set<std::size_t> visited;
+    if (trait_chain_implements(*target_symbol, trait_info->get().symbol, environment(), visited)) {
+        return true;
+    }
+    typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
+                         messages::typecheck::TraitBoundNotSatisfied.format_with(
+                             nominal_describe(subject_type),
+                             std::string{trait_name},
+                             subject_type.describe()),
+                         range);
+    return false;
+}
+
 void TypeCheckPass::remember_expression_type(const ast::ExprSyntax &expr, const TypedValue &typed) {
     const auto path_payload = path_payload_for(expr);
     if (auto *typed_expr = result_.typed_program.find_expr(expr.node_id, current_source_id_);

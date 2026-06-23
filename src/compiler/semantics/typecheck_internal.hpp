@@ -639,6 +639,18 @@ class TypeCheckPass final {
     // True iff some impl in the environment implements `trait_id` for nominal
     // `target_id`. Used by the super-trait coverage check (RFC §2.4).
     [[nodiscard]] bool impl_target_implements(SymbolId target_id, SymbolId trait_id) const;
+    // P2d.S2 (RFC §3.5 / §2): check whether a resolved type satisfies a
+    // referenced trait (i.e. there exists a trait impl in the environment for
+    // this type). Returns true for nominal types with a matching impl; returns
+    // false for compound / primitive types. Emits a TRAIT_BOUND_NOT_SATISFIED
+    // diagnostic with the caller-supplied `range` on failure.
+    //
+    // Super-trait coverage is applied transitively per the trait's super_traits
+    // list so a bound on a super-trait is satisfied when the target type
+    // implements any sub-trait in the environment (§2.4).
+    [[nodiscard]] bool check_bound(const Type &subject_type,
+                                   std::string_view trait_name,
+                                   SourceRange range);
 
     [[nodiscard]] MaybeCRef<ast::TypeAliasDecl> alias_decl_of(SymbolId id) const;
 
