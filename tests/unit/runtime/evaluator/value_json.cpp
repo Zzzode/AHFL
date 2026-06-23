@@ -299,111 +299,107 @@ void test_roundtrip_nested_list() {
 }
 
 // ============================================================================
-// Dual-key compatibility (parse legacy and nominal wrappers)
+// Nominal JSON shape: only the canonical forms are accepted on input.
+// Legacy wrapper keys (list/_list/some/_some/none/_none/optional/_optional)
+// are no longer parsed as container wrappers.
 // ============================================================================
 
-void test_parse_nominal_list_wrapper() {
-    // New key (nominal): {"list":[...]}
-    auto r1 = value_from_json(R"({"list":[1,2,3]})");
-    check(r1.has_value(), "nominal.list_has_value");
+void test_parse_canonical_list_shape() {
+    // The canonical shape for a list is a bare JSON array.
+    auto r1 = value_from_json(R"([1,2,3])");
+    check(r1.has_value(), "canonical.list_has_value");
     if (r1) {
         const auto *items = list_items(*r1);
-        check(items != nullptr && items->size() == 3, "nominal.list_size_3");
+        check(items != nullptr && items->size() == 3, "canonical.list_size_3");
     }
 
-    // Legacy: plain array
-    auto r2 = value_from_json(R"([4,5,6])");
-    check(r2.has_value(), "legacy.array_has_value");
+    auto r2 = value_from_json(R"([])");
+    check(r2.has_value(), "canonical.list_empty_has_value");
     if (r2) {
         const auto *items = list_items(*r2);
-        check(items != nullptr && items->size() == 3, "legacy.array_size_3");
+        check(items != nullptr && items->empty(), "canonical.list_empty_size_0");
     }
 
-    // Aliased key
-    auto r3 = value_from_json(R"({"_list":[7]})");
-    check(r3.has_value(), "aliased.list_has_value");
-    if (r3) {
-        const auto *items = list_items(*r3);
-        check(items != nullptr && items->size() == 1, "aliased.list_size_1");
-    }
-
-    // Roundtrip through nominal wrapper -> list still serializes to plain JSON array
+    // Roundtrip: list serializes to bare JSON array.
     if (r1) {
         auto s = value_to_json(*r1);
-        check(s == "[1,2,3]", "nominal.list_roundtrip_still_plain_array");
+        check(s == "[1,2,3]", "canonical.list_roundtrip");
     }
 }
 
-void test_parse_nominal_optional_wrapper() {
-    // New key (some): {"some":99}
-    auto some1 = value_from_json(R"({"some":99})");
-    check(some1.has_value(), "nominal.some_has_value");
-    if (some1) {
-        check(is_some(*some1), "nominal.some_is_some");
-        const auto *inner = optional_inner(*some1);
-        check(inner != nullptr && std::holds_alternative<IntValue>(inner->node),
-              "nominal.some_inner_int");
-        if (inner) {
-            auto *iv = std::get_if<IntValue>(&inner->node);
-            check(iv != nullptr && iv->value == 99, "nominal.some_inner_value");
-        }
+void test_parse_canonical_optional_shape() {
+    // Canonical present optional: the bare inner value (e.g. the int 99).
+    // The caller reconstructs Option around it via the typed HIR context;
+    // at the raw value layer a bare int is just an int, and "null" is None.
+    auto none = value_from_json("null");
+    check(none.has_value(), "canonical.none_has_value");
+    if (none) {
+        check(std::holds_alternative<NoneValue>(none->node), "canonical.none_is_none_value");
     }
 
-    // Legacy some form: just the bare value 99 (no wrapper)
-    auto some2 = value_from_json("99");
-    check(some2.has_value(), "legacy.plain_int_has_value");
-    if (some2) {
-        auto *iv = std::get_if<IntValue>(&some2->node);
-        check(iv != nullptr && iv->value == 99, "legacy.plain_int_value");
-    }
-
-    // New key (none): {"none":null}
-    auto none1 = value_from_json(R"({"none":null})");
-    check(none1.has_value(), "nominal.none_has_value");
-    if (none1) {
-        check(is_optional_none(*none1), "nominal.none_is_empty_optional");
-    }
-
-    // Aliased wrapper
-    auto none2 = value_from_json(R"({"_none":null})");
-    check(none2.has_value(), "nominal.aliased_none_has_value");
-    if (none2) {
-        check(is_optional_none(*none2), "nominal.aliased_none_is_empty_optional");
-    }
-
-    // Generic optional wrapper: present value
-    auto some3 = value_from_json(R"({"optional":"hi"})");
-    check(some3.has_value(), "nominal.optional_present_has_value");
-    if (some3) {
-        const auto *inner = optional_inner(*some3);
-        check(inner != nullptr && std::holds_alternative<StringValue>(inner->node),
-              "nominal.optional_present_inner_string");
-    }
-
-    // Generic optional wrapper: null inner
-    auto none3 = value_from_json(R"({"optional":null})");
-    check(none3.has_value(), "nominal.optional_null_has_value");
-    if (none3) {
-        check(is_optional_none(*none3), "nominal.optional_null_is_empty_optional");
-    }
-
-    // Serialization for optionals remains "new key" shape: bare inner or null.
-    if (some1) {
-        auto s = value_to_json(*some1);
-        check(s == "99", "nominal.some_roundtrip_bare_value");
-    }
-    if (none1) {
-        auto s = value_to_json(*none1);
-        check(s == "null", "nominal.none_roundtrip_null");
-    }
+    // Roundtrip of explicit nominal Option values matches canonical shape.
+    auto some_val = make_optional_some(make_int(99));
+    check(value_to_json(some_val) == "99", "canonical.some_serialize");
+    auto none_val = make_optional_none();
+    check(value_to_json(none_val) == "null", "canonical.none_serialize");
 }
 
-void test_nominal_wrapper_still_allows_struct() {
-    // A struct with _type still parses as a struct, not a wrapper.
-    auto r = value_from_json(R"({"_type":"P","list_alias":[]})");
-    check(r.has_value(), "struct.not_mistaken_for_wrapper");
-    if (r) {
-        check(std::holds_alternative<StructValue>(r->node), "struct.is_struct");
+void test_legacy_wrapper_keys_are_rejected() {
+    // Old wrapper key shapes must NOT parse as containers. Each input is an
+    // object with unknown fields only, which yields a StructValue at the
+    // raw-value layer (no semantic interpretation), or must be distinguishable
+    // from a list/optional container value.
+    auto r1 = value_from_json(R"({"list":[1,2,3]})");
+    check(r1.has_value(), "legacy.list_object_has_value");
+    if (r1) {
+        // Not a container list.
+        check(list_items(*r1) == nullptr, "legacy.list_object_not_a_list");
+        check(std::holds_alternative<StructValue>(r1->node), "legacy.list_object_is_struct");
+    }
+
+    auto r2 = value_from_json(R"({"_list":[7]})");
+    check(r2.has_value(), "legacy._list_object_has_value");
+    if (r2) {
+        check(list_items(*r2) == nullptr, "legacy._list_object_not_a_list");
+    }
+
+    auto r3 = value_from_json(R"({"some":99})");
+    check(r3.has_value(), "legacy.some_object_has_value");
+    if (r3) {
+        // A struct, not an optional.
+        check(!is_some(*r3), "legacy.some_object_not_some");
+        check(std::holds_alternative<StructValue>(r3->node), "legacy.some_object_is_struct");
+    }
+
+    auto r4 = value_from_json(R"({"_some":"x"})");
+    check(r4.has_value(), "legacy._some_object_has_value");
+    if (r4) {
+        check(!is_some(*r4), "legacy._some_object_not_some");
+    }
+
+    auto r5 = value_from_json(R"({"none":null})");
+    check(r5.has_value(), "legacy.none_object_has_value");
+    if (r5) {
+        check(!is_optional_none(*r5), "legacy.none_object_not_optional_none");
+        check(std::holds_alternative<StructValue>(r5->node), "legacy.none_object_is_struct");
+    }
+
+    auto r6 = value_from_json(R"({"_none":null})");
+    check(r6.has_value(), "legacy._none_object_has_value");
+    if (r6) {
+        check(!is_optional_none(*r6), "legacy._none_object_not_optional_none");
+    }
+
+    auto r7 = value_from_json(R"({"optional":null})");
+    check(r7.has_value(), "legacy.optional_null_object_has_value");
+    if (r7) {
+        check(!is_optional_none(*r7), "legacy.optional_null_object_not_optional_none");
+    }
+
+    auto r8 = value_from_json(R"({"optional":"hi"})");
+    check(r8.has_value(), "legacy.optional_value_object_has_value");
+    if (r8) {
+        check(!is_some(*r8), "legacy.optional_value_object_not_some");
     }
 }
 
@@ -448,9 +444,9 @@ int main() {
     test_roundtrip_struct();
     test_roundtrip_nested_list();
 
-    test_parse_nominal_list_wrapper();
-    test_parse_nominal_optional_wrapper();
-    test_nominal_wrapper_still_allows_struct();
+    test_parse_canonical_list_shape();
+    test_parse_canonical_optional_shape();
+    test_legacy_wrapper_keys_are_rejected();
 
     test_parse_errors();
 
