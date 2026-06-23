@@ -3657,3 +3657,280 @@ flow for Worker {
     const auto ratio = static_cast<double>(valid_slots) / static_cast<double>(total_slots);
     CHECK(ratio >= 0.60);
 }
+
+// ============================================================================
+// P2d.S4a: Monomorphization 1:1 FnDecl instances
+// ============================================================================
+//
+// Verifies the three acceptance signals:
+//   1. TypedProgram::monomorphized_instances is present and usable.
+//   2. Equal InstanceKeys produce exactly one registered instance (dedup).
+//   3. mono_budget totals increment by the P2d.S3 constant sums.
+
+namespace {
+
+[[nodiscard]] std::uint32_t find_first_decl_by_symbol(const ahfl::TypedProgram &program,
+                                                      ahfl::SymbolId id) noexcept {
+    for (std::uint32_t i = 0; i < program.declarations.size(); ++i) {
+        if (program.declarations[i].symbol == id) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+} // namespace
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P2d.S4a monomorphization table is present and empty at start") {
+    const std::string source = std::string(kSharedPrefix) + R"AHFL(
+agent MonoStart {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+)AHFL";
+    auto result = check(source);
+    auto &program = result.typed_program;
+
+    // Acceptance signal 1: monomorphized_instances is a real, default-
+    // constructed member with size 0 for a program that has not been
+    // monomorphized yet.
+    CHECK(program.monomorphized_instances.empty());
+    CHECK(program.instance_index_.empty());
+    CHECK(program.mono_budget.instances_created == 0);
+    CHECK(program.mono_budget.dedup_hits == 0);
+    CHECK(program.mono_budget.total_cost == 0);
+    CHECK(program.next_instance_node_id >= 0x8000'0000'0000'0000ULL);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P2d.S4a same key twice produces one entry (dedup)") {
+    const std::string source = std::string(kSharedPrefix) + R"AHFL(
+agent MonoDedup {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+)AHFL";
+    auto result = check(source);
+    auto &program = result.typed_program;
+    REQUIRE_FALSE(program.symbols.empty());
+
+    // Locate the CapabilityDecl for Echo via resolver (lookup via name).
+    const auto echo_symbol = program.find_local_symbol(
+        ahfl::SymbolNamespace::Capabilities, "Echo");
+    REQUIRE(echo_symbol.has_value());
+
+    const auto source_decl_idx =
+        find_first_decl_by_symbol(program, echo_symbol->get().id);
+    REQUIRE(source_decl_idx != UINT32_MAX);
+
+    // Concrete type args for the monomorphization.
+    auto &types = ahfl::TypeContext::global();
+    ahfl::InstanceKey key{
+        .decl_symbol = echo_symbol->get().id,
+        .type_args = {types.string(), types.struct_type("Response")},
+    };
+
+    const ahfl::InstanceKey copy = key; // deep copy, different std::vector
+    // operator== must treat identical type_args vectors as equal.
+    CHECK(copy == key);
+
+    const auto first = ahfl::monomorphize_decl(program, source_decl_idx, key);
+    REQUIRE(first.status == ahfl::MonomorphizeStatus::Created);
+    REQUIRE(first.instance_index != UINT32_MAX);
+    CHECK(program.mono_budget.instances_created == 1);
+    CHECK(program.mono_budget.dedup_hits == 0);
+    CHECK(program.monomorphized_instances.size() == 1);
+
+    // Second call with an equal-but-independent key MUST be a dedup hit.
+    const auto second = ahfl::monomorphize_decl(program, source_decl_idx, copy);
+    REQUIRE(second.status == ahfl::MonomorphizeStatus::DedupHit);
+    CHECK(second.instance_index == first.instance_index);
+    CHECK(program.mono_budget.instances_created == 1);
+    CHECK(program.mono_budget.dedup_hits == 1);
+    CHECK(program.monomorphized_instances.size() == 1);
+
+    // Third call with equal key should increment dedup_hits again, not
+    // instances_created.
+    const auto third = ahfl::monomorphize_decl(program, source_decl_idx, key);
+    CHECK(third.status == ahfl::MonomorphizeStatus::DedupHit);
+    CHECK(third.instance_index == first.instance_index);
+    CHECK(program.mono_budget.dedup_hits == 2);
+    CHECK(program.monomorphized_instances.size() == 1);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P2d.S4a different keys produce two distinct instances") {
+    const std::string source = std::string(kSharedPrefix) + R"AHFL(
+agent MonoTwo {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+)AHFL";
+    auto result = check(source);
+    auto &program = result.typed_program;
+
+    const auto echo_symbol = program.find_local_symbol(
+        ahfl::SymbolNamespace::Capabilities, "Echo");
+    REQUIRE(echo_symbol.has_value());
+    const auto source_decl_idx =
+        find_first_decl_by_symbol(program, echo_symbol->get().id);
+    REQUIRE(source_decl_idx != UINT32_MAX);
+
+    auto &types = ahfl::TypeContext::global();
+    const ahfl::InstanceKey k_string{
+        .decl_symbol = echo_symbol->get().id,
+        .type_args = {types.string(), types.struct_type("Response")},
+    };
+    const ahfl::InstanceKey k_int{
+        .decl_symbol = echo_symbol->get().id,
+        .type_args = {types.make(ahfl::TypeKind::Int), types.struct_type("Response")},
+    };
+    REQUIRE_FALSE(k_string == k_int);
+
+    const auto a = ahfl::monomorphize_decl(program, source_decl_idx, k_string);
+    const auto b = ahfl::monomorphize_decl(program, source_decl_idx, k_int);
+    REQUIRE(a.status == ahfl::MonomorphizeStatus::Created);
+    REQUIRE(b.status == ahfl::MonomorphizeStatus::Created);
+    REQUIRE(a.instance_index != b.instance_index);
+    CHECK(program.monomorphized_instances.size() == 2);
+    CHECK(program.mono_budget.instances_created == 2);
+    CHECK(program.mono_budget.dedup_hits == 0);
+    CHECK(program.instance_index_.size() == 2);
+
+    // 1:1 invariant: instance_index_ size always equals instances size.
+    CHECK(program.instance_index_.size() == program.monomorphized_instances.size());
+
+    // Each record must own its own decl clone; they must not alias.
+    const auto &inst_a = program.monomorphized_instances[a.instance_index];
+    const auto &inst_b = program.monomorphized_instances[b.instance_index];
+    REQUIRE(inst_a.decl_index != UINT32_MAX);
+    REQUIRE(inst_b.decl_index != UINT32_MAX);
+    CHECK(inst_a.decl_index != inst_b.decl_index);
+    CHECK(inst_a.decl_index < program.declarations.size());
+    CHECK(inst_b.decl_index < program.declarations.size());
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "P2d.S4a budget totals match P2d.S3 constant formulas") {
+    const std::string source = std::string(kSharedPrefix) + R"AHFL(
+agent MonoBudget {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+)AHFL";
+    auto result = check(source);
+    auto &program = result.typed_program;
+
+    const auto echo_symbol = program.find_local_symbol(
+        ahfl::SymbolNamespace::Capabilities, "Echo");
+    REQUIRE(echo_symbol.has_value());
+    const auto source_decl_idx =
+        find_first_decl_by_symbol(program, echo_symbol->get().id);
+    REQUIRE(source_decl_idx != UINT32_MAX);
+
+    const auto exprs_before = static_cast<std::uint64_t>(program.expressions.size());
+    const auto stmts_before = static_cast<std::uint64_t>(program.statements.size());
+    const auto blocks_before = static_cast<std::uint64_t>(program.blocks.size());
+    const auto temps_before = static_cast<std::uint64_t>(program.temporal_exprs.size());
+
+    auto &types = ahfl::TypeContext::global();
+    const ahfl::InstanceKey key{
+        .decl_symbol = echo_symbol->get().id,
+        .type_args = {types.string(), types.struct_type("Response")},
+    };
+    const auto r = ahfl::monomorphize_decl(program, source_decl_idx, key);
+    REQUIRE(r.status == ahfl::MonomorphizeStatus::Created);
+
+    // The implementation clones all flat stores (1:1), so expected deltas
+    // equal the sizes they had right before monomorphize_decl().
+    const std::uint64_t expected_expr_cost =
+        exprs_before * ahfl::kMonoBudgetPerExpr;
+    const std::uint64_t expected_stmt_cost =
+        stmts_before * ahfl::kMonoBudgetPerStmt;
+    const std::uint64_t expected_block_cost =
+        blocks_before * ahfl::kMonoBudgetPerBlock;
+    const std::uint64_t expected_temporal_cost =
+        temps_before * ahfl::kMonoBudgetPerTemporal;
+    const std::uint64_t expected_decl_cost = ahfl::kMonoBudgetPerDecl;
+    const std::uint64_t expected_total =
+        expected_expr_cost + expected_stmt_cost + expected_block_cost +
+        expected_temporal_cost + expected_decl_cost + ahfl::kMonoBudgetOverhead;
+
+    CHECK(program.monomorphized_instances[r.instance_index].budget_cost == expected_total);
+    CHECK(program.mono_budget.total_cost == expected_total);
+    CHECK(program.mono_budget.instances_created == 1);
+
+    // Flat stores grew by exactly the before-sizes (1:1 clone).
+    CHECK(program.expressions.size() == exprs_before * 2);
+    CHECK(program.statements.size() == stmts_before * 2);
+    CHECK(program.blocks.size() == blocks_before * 2);
+    CHECK(program.temporal_exprs.size() == temps_before * 2);
+
+    // Cloned records all got new disjoint node_ids; none collides with any
+    // pre-existing AST node_id.
+    std::uint64_t cloned_with_new_id = 0;
+    for (std::uint64_t i = exprs_before; i < program.expressions.size(); ++i) {
+        const auto &orig = program.expressions[i - exprs_before];
+        const auto &clone = program.expressions[i];
+        if (orig.node_id != 0) {
+            REQUIRE(clone.node_id != orig.node_id);
+            CHECK(clone.node_id >= 0x8000'0000'0000'0000ULL);
+            ++cloned_with_new_id;
+        } else {
+            CHECK(clone.node_id == 0);
+        }
+    }
+    // We should have re-id'd at least one expression (kMagic / kGreeting
+    // constant expressions are typechecked in kSharedPrefix).
+    CHECK(cloned_with_new_id > 0);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "P2d.S4a error path: out-of-range source_decl_index returns UINT32_MAX") {
+    const std::string source = std::string(kSharedPrefix) + R"AHFL(
+agent MonoError {
+    input: Request;
+    context: Context;
+    output: Response;
+    states: [Init, Done];
+    initial: Init;
+    final: [Done];
+    capabilities: [Echo];
+    transition Init -> Done;
+}
+)AHFL";
+    auto result = check(source);
+    auto &program = result.typed_program;
+    REQUIRE_FALSE(program.declarations.empty());
+
+    const auto bad = ahfl::monomorphize_decl(
+        program,
+        static_cast<std::uint32_t>(program.declarations.size() + 42),
+        ahfl::InstanceKey{.decl_symbol = ahfl::SymbolId{0}, .type_args = {}});
+    CHECK(bad.instance_index == UINT32_MAX);
+    // Error path must NOT allocate an instance or charge budget.
+    CHECK(program.monomorphized_instances.empty());
+    CHECK(program.mono_budget.total_cost == 0);
+    CHECK(program.mono_budget.instances_created == 0);
+}
