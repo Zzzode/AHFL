@@ -511,6 +511,16 @@ target_link_libraries(ahfl_semantics_concurrency_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_concurrency_tests)
 
+add_executable(ahfl_semantics_where_clause_info_tests
+    unit/compiler/semantics/where_clause_info.cpp
+)
+target_link_libraries(ahfl_semantics_where_clause_info_tests
+    PRIVATE
+        ahfl_compiler_ir
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_where_clause_info_tests)
+
 add_executable(ahfl_streaming_tests
     unit/runtime/providers/llm/streaming.cpp
 )
@@ -815,6 +825,7 @@ foreach(_tgt
     ahfl_semantics_fn_generics_closures_tests
     ahfl_semantics_trait_impl_tests
     ahfl_semantics_concurrency_tests
+    ahfl_semantics_where_clause_info_tests
     ahfl_streaming_tests
     ahfl_tooling_lsp_json_rpc_tests
     ahfl_tooling_lsp_handler_tests

@@ -3999,6 +3999,10 @@ add_test(NAME ahfl.semantics.trait_impl_all
     COMMAND $<TARGET_FILE:ahfl_semantics_trait_impl_tests>
 )
 
+add_test(NAME ahfl.semantics.where_clause_info_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_where_clause_info_tests>
+)
+
 add_test(NAME ahfl.llm_provider.streaming_all
     COMMAND $<TARGET_FILE:ahfl_streaming_tests>
 )
