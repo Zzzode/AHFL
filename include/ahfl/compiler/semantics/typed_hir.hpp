@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -59,15 +60,23 @@ enum class TypedExprChildRole {
     MatchArmBody,
 };
 
-enum class TypedCallTargetKind {
-    None,
-    Capability,
-    Predicate,
-    // P2 (RFC §3.2.2): a call resolving to a top-level `fn`. Mirrors the
-    // capability/predicate kinds so the existing switch sites (LSP hover,
-    // typed-tree lowering) treat a fn call uniformly.
-    Function,
+// Call-target classification for TypedExpr nodes whose kind == Call. Three
+// variants exactly: the trait/inherent split mirrors AHFL's semantic dispatch
+// model, while Builtin reserves a slot for compiler-intrinsics surfaced as
+// free functions. A compile-time count keeps future edits honest.
+enum class TypedCallTargetKind : std::uint8_t {
+    InherentMethod = 0,
+    TraitMethod,
+    Builtin,
+    // Internal sentinel for the N==3 static_assert below. Do NOT add values
+    // between Builtin and Sentinel without also updating the assertion count.
+    Sentinel_ForStaticAssert,
 };
+
+static_assert(
+    std::to_underlying(TypedCallTargetKind::Sentinel_ForStaticAssert) == 3,
+    "TypedCallTargetKind must expose exactly 3 public values: "
+    "InherentMethod, TraitMethod, Builtin");
 
 enum class ConstValueKind : std::uint8_t {
     NoneLiteral = 0,
@@ -313,7 +322,7 @@ struct TypedExpr {
     bool is_pure{true};
     std::optional<SymbolId> resolved_symbol;
     std::string semantic_name;
-    TypedCallTargetKind call_target_kind{TypedCallTargetKind::None};
+    std::optional<TypedCallTargetKind> call_target_kind;
     std::string path_root;
     AssignTargetRootKind path_root_kind{AssignTargetRootKind::Identifier};
     std::vector<std::string> member_path;

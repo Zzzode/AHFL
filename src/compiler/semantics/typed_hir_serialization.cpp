@@ -45,6 +45,14 @@ using Json = json::JsonValue;
     return j_symbol_id(*id);
 }
 
+template <typename E>
+[[nodiscard]] std::unique_ptr<Json> j_optional_enum(std::optional<E> value) {
+    if (!value.has_value()) {
+        return Json::make_null();
+    }
+    return j_enum(*value);
+}
+
 [[nodiscard]] std::unique_ptr<Json> j_range(SourceRange range) {
     auto object = Json::make_object();
     object->set("begin", j_int(range.begin_offset));
@@ -654,7 +662,7 @@ using Json = json::JsonValue;
     object->set("is_pure", Json::make_bool(expr.is_pure));
     object->set("resolved_symbol", j_optional_symbol_id(expr.resolved_symbol));
     object->set("semantic_name", Json::make_string(expr.semantic_name));
-    object->set("call_target_kind", j_enum(expr.call_target_kind));
+    object->set("call_target_kind", j_optional_enum(expr.call_target_kind));
     object->set("path_root", Json::make_string(expr.path_root));
     object->set("path_root_kind", j_enum(expr.path_root_kind));
     object->set("member_path", j_string_array(expr.member_path));
@@ -858,6 +866,15 @@ class Reader {
             return std::nullopt;
         }
         return symbol_id_value(value);
+    }
+
+    template <typename E>
+    [[nodiscard]] std::optional<E> optional_enum_field(const Json &object, std::string_view key) {
+        const auto *value = field(object, key);
+        if (value == nullptr || value->is_null()) {
+            return std::nullopt;
+        }
+        return static_cast<E>(uint_value(value));
     }
 
     [[nodiscard]] TypePtr type_field(const Json &object, std::string_view key) {
@@ -1566,7 +1583,7 @@ read_state_policies(Reader &reader, const Json &object, std::string_view key) {
         .resolved_symbol = reader.optional_symbol_id_field(object, "resolved_symbol"),
         .semantic_name = reader.string_field(object, "semantic_name"),
         .call_target_kind =
-            static_cast<TypedCallTargetKind>(reader.uint_field(object, "call_target_kind")),
+            reader.template optional_enum_field<TypedCallTargetKind>(object, "call_target_kind"),
         .path_root = reader.string_field(object, "path_root"),
         .path_root_kind =
             static_cast<AssignTargetRootKind>(reader.uint_field(object, "path_root_kind")),
