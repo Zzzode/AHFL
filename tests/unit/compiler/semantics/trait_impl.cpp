@@ -1505,3 +1505,428 @@ TEST_CASE("S5a two impl Eq for Int emits COHERENCE_CONFLICT and registers both i
         CHECK(*impl_info.trait_symbol == *names.trait_id);
     }
 }
+
+// ============================================================================
+// P3c.S5b — three-stage method dispatch: inherent → trait unique → bound
+// ============================================================================
+//
+// S5b reifies the implicit inherent-vs-trait candidate selection used by the
+// earlier P3c tests into three explicit stages, each of which emits an
+// audit-trace NOTE-level diagnostic. The acceptance contract for S5b is:
+//
+//   * Every method call emits a `[dispatch.stage1.inherent]` note describing
+//     how many inherent candidates were found (0/1/N).
+//   * If stage 1 produced 0 candidates, a `[dispatch.stage2.trait]` note is
+//     likewise emitted.
+//   * If the winning candidate comes from a trait impl, `[dispatch.stage3.bound]`
+//     notes are emitted: one announcing the check, one confirming the result.
+//   * The call still typechecks cleanly (no errors) when each stage resolves
+//     to a unique, well-formed candidate.
+//
+// In addition to the positive coverage each stage also carries a negative
+// test (2 positive + 1 negative per stage, 9 total) plus a minimal
+// end-to-end acceptance program:
+//
+//     impl Eq for Int { fn eq(self,o)->Bool=self==o }; assert(3.eq(3))
+//
+// A dedicated helper `has_dispatch_note` validates the audit-trace notes by
+// exact substring so any refactor that shuffles the dispatch order is caught
+// immediately (notes are severity=Note and therefore not captured by the
+// existing `has_errors()` / diagnostic-code checks).
+
+namespace {
+
+// Match a dispatch audit-trace NOTE whose message contains `substring`. The
+// search is intentionally restricted to Note-severity diagnostics so stray
+// error-message substrings can never satisfy a dispatch-stage assertion.
+[[nodiscard]] bool has_dispatch_note(const ahfl::TypeCheckResult &result,
+                                     std::string_view substring) {
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.severity != ahfl::DiagnosticSeverity::Note) {
+            continue;
+        }
+        if (entry.message.find(substring) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Count how many dispatch audit-trace NOTE entries contain `substring`. Used
+// by the Eq/Int end-to-end test so exactly one "stage3.bound] bound
+// satisfied" line is required (guards against duplicate note emission).
+[[nodiscard]] std::size_t count_dispatch_notes(const ahfl::TypeCheckResult &result,
+                                               std::string_view substring) {
+    std::size_t count = 0;
+    for (const auto &entry : result.diagnostics.entries()) {
+        if (entry.severity != ahfl::DiagnosticSeverity::Note) {
+            continue;
+        }
+        if (entry.message.find(substring) != std::string::npos) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// S5b-E2E: minimal end-to-end acceptance program from the task spec. The
+// program defines `impl Eq for Int` with a body-based `eq` method and
+// exercises `3.eq(3)` inside an `assert(...)`. Typecheck must be clean and
+// all three dispatch stages must emit their audit trace notes.
+// ---------------------------------------------------------------------------
+TEST_CASE("S5b Eq for Int minimal end-to-end assert(3.eq(3)) typechecks clean") {
+    const std::string source = module_preamble() + R"AHFL(
+trait Eq {
+    fn eq(self: Int, other: Int) -> Bool;
+}
+
+impl Eq for Int {
+    fn eq(self: Int, other: Int) -> Bool effect Pure decreases 0 {
+        return self == other;
+    }
+}
+
+fn run() -> Bool effect Pure decreases 0 {
+    assert(3.eq(3));
+    return true;
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_eq_int_end_to_end.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+
+    // Stage 1: inherent lookup runs and reports 0 candidates (fallthrough).
+    CHECK(has_dispatch_note(result, "[dispatch.stage1.inherent]"));
+    CHECK(has_dispatch_note(result, "inherent candidates=0"));
+    CHECK(has_dispatch_note(result, "no inherent candidates → fall through to trait lookup"));
+
+    // Stage 2: unique trait candidate is selected from the Eq impl.
+    CHECK(has_dispatch_note(result, "[dispatch.stage2.trait]"));
+    CHECK(has_dispatch_note(result, "trait candidates=1"));
+    CHECK(has_dispatch_note(result, "selected unique trait method 'eq'"));
+
+    // Stage 3: bound check is performed and satisfied exactly once.
+    CHECK(has_dispatch_note(result, "[dispatch.stage3.bound]"));
+    CHECK(has_dispatch_note(result, "verifying bound '"));
+    CHECK(count_dispatch_notes(result, "bound satisfied for trait 'trait_impl::Eq'") == 1);
+    CHECK_FALSE(has_dispatch_note(result, "bound NOT satisfied"));
+}
+
+// ===========================================================================
+// Stage 1 — inherent unique: 2 positive, 1 negative
+// ===========================================================================
+
+// Stage1-POS1: a single inherent impl with one method resolves cleanly and
+// records the exact 1-candidate audit trace; no trait/bound notes appear.
+TEST_CASE("S5b stage1 inherent single method dispatches cleanly") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Widget {
+    weight: Int;
+}
+
+impl Widget {
+    fn heavy(self: Widget) -> Bool effect Pure decreases 0 {
+        return self.weight > 10;
+    }
+}
+
+fn use_it(w: Widget) -> Bool effect Pure decreases 0 {
+    return w.heavy();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage1_pos1.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    CHECK(has_dispatch_note(result, "inherent candidates=1"));
+    CHECK(has_dispatch_note(result, "selected unique inherent method 'heavy'"));
+    // Inherent short-circuit means no stage2/stage3 notes should fire.
+    CHECK_FALSE(has_dispatch_note(result, "[dispatch.stage2.trait]"));
+    CHECK(has_dispatch_note(result, "[dispatch.stage3.bound] inherent dispatch skips bound check"));
+}
+
+// Stage1-POS2: two inherent methods on the same impl, different names — each
+// call site selects the unique method without ambiguity. Confirms the
+// candidate filter uses the *method name* rather than impl count.
+TEST_CASE("S5b stage1 inherent two-methods same impl each dispatches uniquely") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Pair {
+    a: Int;
+    b: Int;
+}
+
+impl Pair {
+    fn first(self: Pair) -> Int effect Pure decreases 0 { return self.a; }
+    fn second(self: Pair) -> Int effect Pure decreases 0 { return self.b; }
+}
+
+fn sum(p: Pair) -> Int effect Pure decreases 0 {
+    return p.first() + p.second();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage1_pos2.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    // Two method-call expressions → two inherent "candidates=1" notes.
+    CHECK(count_dispatch_notes(result, "inherent candidates=1") == 2);
+    CHECK(has_dispatch_note(result, "selected unique inherent method 'first'"));
+    CHECK(has_dispatch_note(result, "selected unique inherent method 'second'"));
+}
+
+// Stage1-NEG1: two SEPARATE inherent impls on the same nominal type each
+// define the same method name → dispatch sees 2 inherent candidates and
+// reports AMBIGUOUS_TRAIT_IMPL with the audit trace.
+TEST_CASE("S5b stage1 inherent two impls same method name reports AMBIGUOUS_TRAIT_IMPL") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Counter {
+    value: Int;
+}
+
+impl Counter {
+    fn bump(self: Counter) -> Int effect Pure decreases 0 { return self.value + 1; }
+}
+
+impl Counter {
+    fn bump(self: Counter) -> Int effect Pure decreases 0 { return self.value + 2; }
+}
+
+fn use_it(c: Counter) -> Int effect Pure decreases 0 {
+    return c.bump();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage1_neg1.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_dispatch_note(result, "inherent candidates=2"));
+    CHECK(has_dispatch_note(result, "multiple inherent candidates → AMBIGUOUS_TRAIT_IMPL"));
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.AMBIGUOUS_TRAIT_IMPL",
+                               "multiple trait implementations match for type"));
+}
+
+// ===========================================================================
+// Stage 2 — trait unique: 2 positive, 1 negative
+// ===========================================================================
+
+// Stage2-POS1: a single trait impl (no inherent match) dispatches through
+// the trait-unique branch. Audit trace must record inherent=0 fallthrough,
+// trait=1 selection, and the stage3 bound-check follow-up.
+TEST_CASE("S5b stage2 trait single impl dispatches with full trace") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Count {
+    n: Int;
+}
+
+trait Increment {
+    fn advance(self: Count) -> Count;
+}
+
+impl Increment for Count {
+    fn advance(self: Count) -> Count effect Pure decreases 0 {
+        return Count { n: self.n + 1 };
+    }
+}
+
+fn use_it(c: Count) -> Count effect Pure decreases 0 {
+    return c.advance();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage2_pos1.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    CHECK(has_dispatch_note(result, "no inherent candidates → fall through to trait lookup"));
+    CHECK(has_dispatch_note(result, "[dispatch.stage2.trait]"));
+    CHECK(has_dispatch_note(result, "trait candidates=1"));
+    CHECK(has_dispatch_note(result, "selected unique trait method 'advance'"));
+    CHECK(has_dispatch_note(result, "[dispatch.stage3.bound] verifying bound '"));
+    CHECK(has_dispatch_note(result, "bound satisfied for trait 'trait_impl::Increment'"));
+}
+
+// Stage2-POS2: two *different* traits on the same target, different method
+// names. Each call site must see trait_candidates=1 for its own method and
+// resolve independently (guards against a naive "total trait impl count"
+// implementation that would false-positive on ambiguity).
+TEST_CASE("S5b stage2 trait different-method two traits each resolve uniquely") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Item {
+    price: Int;
+}
+
+trait Priced {
+    fn cost(self: Item) -> Int;
+}
+
+trait Labeled {
+    fn tag(self: Item) -> Int;
+}
+
+impl Priced for Item {
+    fn cost(self: Item) -> Int effect Pure decreases 0 { return self.price; }
+}
+
+impl Labeled for Item {
+    fn tag(self: Item) -> Int effect Pure decreases 0 { return self.price * 2; }
+}
+
+fn use_it(i: Item) -> Int effect Pure decreases 0 {
+    return i.cost() + i.tag();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage2_pos2.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    // cost() and tag() each see trait_candidates=1.
+    CHECK(count_dispatch_notes(result, "trait candidates=1") == 2);
+    CHECK(has_dispatch_note(result, "selected unique trait method 'cost' from trait 'trait_impl::Priced'"));
+    CHECK(has_dispatch_note(result, "selected unique trait method 'tag' from trait 'trait_impl::Labeled'"));
+    CHECK_FALSE(has_dispatch_note(result, "multiple trait candidates → AMBIGUOUS_TRAIT_IMPL"));
+}
+
+// Stage2-NEG1: two different traits on the same target type each define a
+// method with the same spelling. The dispatch stage collects 2 trait
+// candidates and emits AMBIGUOUS_TRAIT_IMPL with the audit trace.
+TEST_CASE("S5b stage2 trait two impls same method name reports AMBIGUOUS_TRAIT_IMPL") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Widget {
+    size: Int;
+}
+
+trait Measurable {
+    fn len(self: Widget) -> Int;
+}
+
+trait Sized {
+    fn len(self: Widget) -> Int;
+}
+
+impl Measurable for Widget {
+    fn len(self: Widget) -> Int effect Pure decreases 0 { return self.size; }
+}
+
+impl Sized for Widget {
+    fn len(self: Widget) -> Int effect Pure decreases 0 { return self.size + 1; }
+}
+
+fn use_it(w: Widget) -> Int effect Pure decreases 0 {
+    return w.len();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage2_neg1.ahfl", source);
+    CHECK(result.has_errors());
+    CHECK(has_dispatch_note(result, "trait candidates=2"));
+    CHECK(has_dispatch_note(result, "multiple trait candidates → AMBIGUOUS_TRAIT_IMPL"));
+    CHECK(has_exact_diagnostic(result,
+                               "typecheck.AMBIGUOUS_TRAIT_IMPL",
+                               "multiple trait implementations match for type"));
+}
+
+// ===========================================================================
+// Stage 3 — bound check: 2 positive, 1 negative
+// ===========================================================================
+//
+// Stage 3 exercises the where-clause bound gate that runs *after* a trait
+// candidate has been uniquely selected. The subject is typically a generic
+// type parameter: the bound is declared on the wrapper function and the
+// dispatch path checks `instantiated_subject : Trait` at the call site.
+// A stage-3 failure surfaces as TRAIT_BOUND_NOT_SATISFIED.
+
+// Stage3-POS1: a concrete-type wrapper function declares `where Label: Printable`
+// and then calls `t.print()` on a `Label` receiver. The method resolves via
+// the trait (stage2) and the where-bound gate (stage3) fires and succeeds;
+// the bound-check note names the fully-qualified trait exactly once.
+TEST_CASE("S5b stage3 where-bound satisfied for concrete trait call") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Label {
+    text: Int;
+}
+
+trait Printable {
+    fn print(self: Label) -> Int;
+}
+
+impl Printable for Label {
+    fn print(self: Label) -> Int effect Pure decreases 0 { return self.text; }
+}
+
+fn run(t: Label) -> Int effect Pure decreases 0 where Label: Printable {
+    return t.print();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage3_pos1.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    // Stage2 selected the unique Printable method.
+    CHECK(has_dispatch_note(result, "[dispatch.stage2.trait]"));
+    CHECK(has_dispatch_note(result, "trait candidates=1"));
+    // Stage3 bound check ran and reported satisfied exactly once.
+    CHECK(has_dispatch_note(result, "[dispatch.stage3.bound] verifying bound '"));
+    CHECK(count_dispatch_notes(result, "bound satisfied for trait 'trait_impl::Printable'") == 1);
+}
+
+// Stage3-POS2: nominal (non-generic) where-bound `where Label: Printable` on
+// a non-generic function still triggers the bound check (S5b requires stage3
+// to fire regardless of whether dispatch was already unambiguous via the
+// impl table). Result must be clean with the satisfied-bound note present.
+TEST_CASE("S5b stage3 concrete where-bound on non-generic fn still passes bound check") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Token {
+    value: Int;
+}
+
+trait Display {
+    fn render(self: Token) -> Int;
+}
+
+impl Display for Token {
+    fn render(self: Token) -> Int effect Pure decreases 0 { return self.value; }
+}
+
+fn show(t: Token) -> Int effect Pure decreases 0 where Token: Display {
+    return t.render();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage3_pos2.ahfl", source);
+    REQUIRE_FALSE(result.has_errors());
+    CHECK(has_dispatch_note(result, "[dispatch.stage3.bound] verifying bound '"));
+    CHECK(count_dispatch_notes(result, "bound satisfied for trait 'trait_impl::Display'") >= 1);
+}
+
+// Stage3-NEG1: stage2 selects a unique trait method for `to_json(self: Label)`
+// (method is declared by trait `Json`), but there is NO `impl Json for Label`.
+// The bound gate (stage3) therefore fails and emits
+// TRAIT_BOUND_NOT_SATISFIED plus the "bound NOT satisfied" audit note.
+//
+// This exercises the precise scenario where candidate collection succeeds
+// (a trait declares a method with the right receiver shape) yet the
+// environment has no concrete impl — the exact failure the bound gate is
+// designed to catch independently of stage-2 ambiguity checks.
+TEST_CASE("S5b stage3 trait method exists but impl missing reports TRAIT_BOUND_NOT_SATISFIED") {
+    const std::string source = module_preamble() + R"AHFL(
+struct Label {
+    value: Int;
+}
+
+trait Json {
+    fn to_json(self: Label) -> Int;
+}
+
+fn save(l: Label) -> Int effect Pure decreases 0 where Label: Json {
+    return l.to_json();
+}
+)AHFL";
+
+    const auto result = typecheck_source("s5b_stage3_neg1.ahfl", source);
+    CHECK(result.has_errors());
+    // Stage2 selected the unique trait method from trait Json's declared
+    // method shape (there is 1 trait-level method, no impl-level method).
+    CHECK(has_dispatch_note(result, "[dispatch.stage2.trait]"));
+    CHECK(has_dispatch_note(result, "trait candidates="));
+    // Stage3 emitted the audit trace and the golden error code.
+    CHECK(has_dispatch_note(result, "[dispatch.stage3.bound]"));
+    CHECK(has_dispatch_note(result, "bound NOT satisfied → TRAIT_BOUND_NOT_SATISFIED already emitted"));
+    CHECK(has_exact_diagnostic_code(result, "typecheck.TRAIT_BOUND_NOT_SATISFIED"));
+}
