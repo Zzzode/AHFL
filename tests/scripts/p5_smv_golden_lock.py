@@ -161,14 +161,23 @@ def build_cases(tests_dir: Path) -> List[Case]:
 # Negative self-test
 # ---------------------------------------------------------------------------
 
-def run_negative_self_test(ahflc: str, tests_dir: Path, repo_root: Path) -> int:
+def run_negative_self_test(ahflc: str, tests_dir: Path, repo_root: Path,
+                           *, echo_markers: bool = False) -> int:
     """Verify the diff-lock itself reports mismatches.
 
     We write a deliberately corrupted expected file and assert the harness
     catches it and surfaces the "golden mismatch" / "diff cmd" markers.
+
+    If ``echo_markers`` is True, the key diagnostic lines are echoed verbatim
+    to stdout prefixed with ``[negative_diag_marker]`` so the standalone
+    negative-path CTest can assert the exact-string evidence chain via
+    PASS_REGULAR_EXPRESSION. When called as part of the aggregate positive
+    run we keep the output minimal to avoid false matches with the
+    aggregate's own FAIL_REGULAR_EXPRESSION.
     """
     formal = tests_dir / "golden" / "formal"
-    seed_src = formal / "ok_alias_const.ahfl"
+    ir = tests_dir / "golden" / "ir"
+    seed_src = ir / "ok_alias_const.ahfl"
     # Reuse ok_alias_const.ahfl but compare against an empty SMV file - this
     # guarantees mismatch without touching any in-repo golden file.
     with tempfile.TemporaryDirectory() as td:
@@ -202,6 +211,12 @@ def run_negative_self_test(ahflc: str, tests_dir: Path, repo_root: Path) -> int:
     print(f"[p5_smv_golden_lock] negative self-test passed: "
           f"detected {len(failures)} intentional mismatch(es) "
           f"with required diagnostic markers")
+    if echo_markers:
+        # Echo key marker lines to stdout so the exact-string PASS_REGEX in
+        # CTest has full evidence even with the harness wrapped.
+        for line in message.splitlines():
+            if any(m in line for m in required_markers):
+                print(f"[negative_diag_marker] {line.lstrip()}")
     return EXIT_OK
 
 
@@ -234,7 +249,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return EXIT_INFRA
 
     if args.negative_only:
-        return run_negative_self_test(ahflc, tests_dir, repo_root)
+        return run_negative_self_test(ahflc, tests_dir, repo_root,
+                                      echo_markers=True)
 
     cases = build_cases(tests_dir)
     failures: List[str] = []

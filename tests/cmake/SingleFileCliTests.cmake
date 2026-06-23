@@ -920,7 +920,7 @@ add_test(NAME p5_smv_golden_lock.negative_diag
             "--negative-only"
 )
 set_tests_properties(p5_smv_golden_lock.negative_diag PROPERTIES
-    PASS_REGULAR_EXPRESSION "negative self-test passed"
+    PASS_REGULAR_EXPRESSION "negative self-test passed.*golden mismatch.*diff cmd :.*diff -u"
     FAIL_REGULAR_EXPRESSION "negative case did not trigger|ERROR: negative"
     LABELS "p5;golden_lock;smv;formal;negative"
 )
