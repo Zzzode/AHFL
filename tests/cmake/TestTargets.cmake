@@ -610,6 +610,45 @@ target_link_libraries(ahfl_syntax_trait_impl_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_syntax_trait_impl_tests)
+# DecreasesClauseSyntax – standalone fragment tests (R-09: not in DeclKind).
+# Split into small translation units so each acceptance dimension has an
+# independently-failing ctest target.
+add_executable(ahfl_decreases_structure_tests
+    unit/compiler/syntax/frontend/decreases_structure.cpp
+)
+target_link_libraries(ahfl_decreases_structure_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_decreases_structure_tests)
+
+add_executable(ahfl_decreases_printer_tests
+    unit/compiler/syntax/frontend/decreases_printer.cpp
+)
+target_link_libraries(ahfl_decreases_printer_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_decreases_printer_tests)
+
+add_executable(ahfl_decreases_desugar_tests
+    unit/compiler/syntax/frontend/decreases_desugar.cpp
+)
+target_link_libraries(ahfl_decreases_desugar_tests
+    PRIVATE
+        ahfl_compiler_syntax
+)
+ahfl_apply_project_warnings(ahfl_decreases_desugar_tests)
+
+add_executable(ahfl_decreases_symmetry_tests
+    unit/compiler/syntax/frontend/decreases_symmetry.cpp
+)
+target_link_libraries(ahfl_decreases_symmetry_tests
+    PRIVATE
+        ahfl_compiler_syntax
+        ahfl_tooling_formatter
+)
+ahfl_apply_project_warnings(ahfl_decreases_symmetry_tests)
 
 add_executable(ahfl_thread_pool_tests
     unit/base/support/thread_pool.cpp
@@ -889,6 +928,10 @@ foreach(_tgt
     ahfl_sandbox_tests
     ahfl_distributed_tests
     ahfl_tooling_formatter_tests
+    ahfl_decreases_structure_tests
+    ahfl_decreases_printer_tests
+    ahfl_decreases_desugar_tests
+    ahfl_decreases_symmetry_tests
     ahfl_tooling_repl_tests
     ahfl_tooling_dap_tests
     ahfl_tooling_telemetry_tests

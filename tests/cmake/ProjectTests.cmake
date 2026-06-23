@@ -4039,6 +4039,20 @@ add_test(NAME ahfl.frontend.error_recovery_all
     COMMAND $<TARGET_FILE:ahfl_error_recovery_tests>
 )
 
+# DecreasesClauseSyntax (R-09: not dispatched through DeclKind).
+add_test(NAME ahfl.frontend.decreases_structure_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_structure_tests>
+)
+add_test(NAME ahfl.frontend.decreases_printer_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_printer_tests>
+)
+add_test(NAME ahfl.frontend.decreases_desugar_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_desugar_tests>
+)
+add_test(NAME ahfl.frontend.decreases_symmetry_all
+    COMMAND $<TARGET_FILE:ahfl_decreases_symmetry_tests>
+)
+
 add_test(NAME ahfl.support.thread_pool_all
     COMMAND $<TARGET_FILE:ahfl_thread_pool_tests>
 )
