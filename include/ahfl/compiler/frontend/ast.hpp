@@ -934,11 +934,22 @@ struct DurationSyntax {
     std::string spelling;
 };
 
-/// Parameter declaration (for capability parameters)
+/// Parameter declaration (for capability parameters / function parameters /
+/// trait method parameters / impl method parameters).
+///
+/// P3c.S1: when `is_self` is true the parameter is a `self` / `mut self` /
+/// `self: Type` / `mut self: Type` receiver used inside a trait or impl
+/// method. For a bare `self` / `mut self` (no explicit type), `type` is
+/// null and the type is inferred as the implementing type by the semantic
+/// layer (P3b). `is_self_mut` records whether the receiver was declared
+/// mutable. `name` is always "self" for self receivers (so downstream code
+/// that inspects param names still works uniformly).
 struct ParamDeclSyntax {
     ahfl::SourceRange range;
     std::string name;
-    Owned<TypeSyntax> type;
+    Owned<TypeSyntax> type;       // null for bare `self` / `mut self`
+    bool is_self{false};          // true for any self receiver shape
+    bool is_self_mut{false};      // true only when `mut self` was written
 };
 
 /// Struct field declaration
@@ -1318,18 +1329,24 @@ struct FnDecl final : Decl {
 // trait impls; the distinction is recorded via `ImplDeclSyntax::trait_ref`.
 
 /// Trait item kind discriminator (parallels StatementSyntaxKind).
+/// Three item kinds are modelled:
+///   - Fn         — trait method signature (`fn name(...) -> Ret;`)
+///   - AssocType  — associated type declaration (`type Name: Bound = Default;`)
+///   - AssocConst — associated constant declaration (`const N: T = value;`)
 enum class TraitItemKind {
-    Fn,        // trait method signature (`fn name(...) -> Ret;`)
-    AssocType, // associated type (`type Name;` / `type Name: Bound;` / `type Name = T;`)
+    Fn,         // trait method signature
+    AssocType,  // associated type
+    AssocConst, // associated constant (P3c.S1: RFC type-system §1.3)
 };
 
-/// A single trait item: either a method signature (carried as the same
-/// fragments as FnDecl — name, type params, params, return type, effect
-/// clause, where clause) or an associated type declaration.
+/// A single trait item: one of
+///   - a method signature (carried as the same fragments as FnDecl —
+///     name, type params, params, return type, effect clause, where clause)
+///   - an associated type declaration
+///   - an associated constant declaration (P3c.S1)
 ///
-/// `kind` discriminates the two shapes. For `Fn`, the signature fields are
-/// populated and `assoc` is empty. For `AssocType`, `assoc` carries the
-/// associated-type declaration and the signature fields are empty.
+/// `kind` discriminates the three shapes. Only the fields corresponding to
+/// the active `kind` are populated.
 struct TraitItemSyntax {
     ahfl::SourceRange range;
     TraitItemKind kind{TraitItemKind::Fn};
@@ -1350,7 +1367,18 @@ struct TraitItemSyntax {
         std::vector<Owned<TypeSyntax>> bounds; // optional super-bound list
         Owned<TypeSyntax> default_type;        // optional default (`= Type`)
     };
-    Owned<AssocTypeDecl> assoc;
+    Owned<AssocTypeDecl> assoc_type;
+
+    // Associated constant declaration (P3c.S1, RFC type-system §1.3 AssocConstItem).
+    // `default_value` is optional — when absent, the implementing impl must
+    // provide the constant.
+    struct AssocConstDecl {
+        ahfl::SourceRange range;
+        std::string name;
+        Owned<TypeSyntax> type;
+        Owned<ExprSyntax> default_value; // optional `= const_expr`
+    };
+    Owned<AssocConstDecl> assoc_const;
 };
 
 /// Trait declaration (RFC §3.2.2 / type-system §1.3):

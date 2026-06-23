@@ -365,7 +365,9 @@ class ProgramBuilder {
             source_,
             context,
             build_qualified_name(require(context.qualifiedIdent(), "import path is missing")),
-            text_or_empty(borrow(context.IDENT())));
+            context.identifier() != nullptr
+                ? text_of(*context.identifier())
+                : std::string{});
     }
 
     [[nodiscard]] Owned<ast::Decl>
