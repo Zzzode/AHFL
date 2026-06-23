@@ -38,6 +38,14 @@ namespace {
                 return "Enum";
             else if constexpr (std::is_same_v<T, OptionalValue>)
                 return "Optional";
+            else if constexpr (std::is_same_v<T, SetValue>)
+                return "Set";
+            else if constexpr (std::is_same_v<T, MapValue>)
+                return "Map";
+            else if constexpr (std::is_same_v<T, UuidValue>)
+                return "UUID";
+            else if constexpr (std::is_same_v<T, TimestampValue>)
+                return "Timestamp";
             else
                 return "Unknown";
         },
@@ -59,6 +67,36 @@ namespace {
         return true;
     }
     return expected.canonical_name.empty() && expected.display_name.empty();
+}
+
+[[nodiscard]] bool is_nominal_std_option(const ir::TypeRef &type) {
+    return type.kind == ir::TypeRefKind::Enum && type.canonical_name == "std::option::Option";
+}
+
+[[nodiscard]] bool is_nominal_std_list(const ir::TypeRef &type) {
+    return type.kind == ir::TypeRefKind::Struct && type.canonical_name == "std::collections::List";
+}
+
+[[nodiscard]] bool is_nominal_std_set(const ir::TypeRef &type) {
+    return type.kind == ir::TypeRefKind::Struct && type.canonical_name == "std::collections::Set";
+}
+
+[[nodiscard]] bool is_nominal_std_map(const ir::TypeRef &type) {
+    return type.kind == ir::TypeRefKind::Struct && type.canonical_name == "std::collections::Map";
+}
+
+[[nodiscard]] const ir::TypeRef *first_type_arg(const ir::TypeRef &type) {
+    if (!type.params.empty() && type.params.front()) {
+        return type.params.front().get();
+    }
+    return type.first.get();
+}
+
+[[nodiscard]] const ir::TypeRef *second_type_arg(const ir::TypeRef &type) {
+    if (type.params.size() > 1 && type.params[1]) {
+        return type.params[1].get();
+    }
+    return type.second.get();
 }
 
 [[nodiscard]] const ir::StructDecl *find_struct(const ir::ProgramIndex *index,
@@ -132,7 +170,7 @@ namespace {
         return SchemaValidationResult::fail(at_path(path, "expected Unit but got a value"));
     }
 
-    if (expected.kind == Kind::Optional) {
+    if (expected.kind == Kind::Optional || is_nominal_std_option(expected)) {
         if (is_none(value)) {
             return SchemaValidationResult::ok();
         }
@@ -140,13 +178,13 @@ namespace {
             if (!opt->inner) {
                 return SchemaValidationResult::ok();
             }
-            if (expected.first) {
-                return check(*opt->inner, *expected.first, index, path);
+            if (const auto *inner_type = first_type_arg(expected); inner_type != nullptr) {
+                return check(*opt->inner, *inner_type, index, path);
             }
             return SchemaValidationResult::ok();
         }
-        if (expected.first) {
-            return check(value, *expected.first, index, path);
+        if (const auto *inner_type = first_type_arg(expected); inner_type != nullptr) {
+            return check(value, *inner_type, index, path);
         }
         return SchemaValidationResult::ok();
     }
@@ -200,6 +238,89 @@ namespace {
         }
         return SchemaValidationResult::fail(
             at_path(path, "expected Duration but got " + std::string(kind_label(value))));
+    }
+
+    if (expected.kind == Kind::List || is_nominal_std_list(expected)) {
+        if (const auto *list = std::get_if<ListValue>(&value.node)) {
+            if (const auto *element_type = first_type_arg(expected); element_type != nullptr) {
+                for (std::size_t index_value = 0; index_value < list->items.size(); ++index_value) {
+                    if (!list->items[index_value]) {
+                        return SchemaValidationResult::fail(
+                            at_path(path, "list item " + std::to_string(index_value) + " is null"));
+                    }
+                    const auto item_path =
+                        std::string(path) + "[" + std::to_string(index_value) + "]";
+                    auto item_result =
+                        check(*list->items[index_value], *element_type, index, item_path);
+                    if (!item_result.valid) {
+                        return item_result;
+                    }
+                }
+            }
+            return SchemaValidationResult::ok();
+        }
+        return SchemaValidationResult::fail(
+            at_path(path, "expected List but got " + std::string(kind_label(value))));
+    }
+
+    if (expected.kind == Kind::Set || is_nominal_std_set(expected)) {
+        if (const auto *set = std::get_if<SetValue>(&value.node)) {
+            if (const auto *element_type = first_type_arg(expected); element_type != nullptr) {
+                for (std::size_t index_value = 0; index_value < set->items.size(); ++index_value) {
+                    if (!set->items[index_value]) {
+                        return SchemaValidationResult::fail(
+                            at_path(path, "set item " + std::to_string(index_value) + " is null"));
+                    }
+                    const auto item_path =
+                        std::string(path) + "[" + std::to_string(index_value) + "]";
+                    auto item_result =
+                        check(*set->items[index_value], *element_type, index, item_path);
+                    if (!item_result.valid) {
+                        return item_result;
+                    }
+                }
+            }
+            return SchemaValidationResult::ok();
+        }
+        return SchemaValidationResult::fail(
+            at_path(path, "expected Set but got " + std::string(kind_label(value))));
+    }
+
+    if (expected.kind == Kind::Map || is_nominal_std_map(expected)) {
+        if (const auto *map = std::get_if<MapValue>(&value.node)) {
+            const auto *key_type = first_type_arg(expected);
+            const auto *value_type = second_type_arg(expected);
+            for (std::size_t index_value = 0; index_value < map->entries.size(); ++index_value) {
+                const auto &entry = map->entries[index_value];
+                if (!entry.first || !entry.second) {
+                    return SchemaValidationResult::fail(
+                        at_path(path, "map entry " + std::to_string(index_value) + " is null"));
+                }
+                if (key_type != nullptr) {
+                    auto key_result =
+                        check(*entry.first,
+                              *key_type,
+                              index,
+                              std::string(path) + "[" + std::to_string(index_value) + "].key");
+                    if (!key_result.valid) {
+                        return key_result;
+                    }
+                }
+                if (value_type != nullptr) {
+                    auto value_result =
+                        check(*entry.second,
+                              *value_type,
+                              index,
+                              std::string(path) + "[" + std::to_string(index_value) + "].value");
+                    if (!value_result.valid) {
+                        return value_result;
+                    }
+                }
+            }
+            return SchemaValidationResult::ok();
+        }
+        return SchemaValidationResult::fail(
+            at_path(path, "expected Map but got " + std::string(kind_label(value))));
     }
 
     if (expected.kind == Kind::Struct) {
@@ -268,37 +389,6 @@ namespace {
         }
         return SchemaValidationResult::fail(
             at_path(path, "expected Enum but got " + std::string(kind_label(value))));
-    }
-
-    if (expected.kind == Kind::List || expected.kind == Kind::Set) {
-        if (const auto *list = std::get_if<ListValue>(&value.node)) {
-            if (expected.first) {
-                for (std::size_t index_value = 0; index_value < list->items.size(); ++index_value) {
-                    if (!list->items[index_value]) {
-                        return SchemaValidationResult::fail(
-                            at_path(path, "list item " + std::to_string(index_value) + " is null"));
-                    }
-                    const auto item_path =
-                        std::string(path) + "[" + std::to_string(index_value) + "]";
-                    auto item_result =
-                        check(*list->items[index_value], *expected.first, index, item_path);
-                    if (!item_result.valid) {
-                        return item_result;
-                    }
-                }
-            }
-            return SchemaValidationResult::ok();
-        }
-        return SchemaValidationResult::fail(
-            at_path(path, "expected List/Set but got " + std::string(kind_label(value))));
-    }
-
-    if (expected.kind == Kind::Map) {
-        if (std::holds_alternative<StructValue>(value.node)) {
-            return SchemaValidationResult::ok();
-        }
-        return SchemaValidationResult::fail(
-            at_path(path, "expected Map but got " + std::string(kind_label(value))));
     }
 
     return SchemaValidationResult::ok();

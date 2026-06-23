@@ -2,6 +2,47 @@
 
 namespace ahfl::evaluator {
 
+namespace {
+
+[[nodiscard]] std::unordered_map<std::string, Value>
+clone_scope(const std::unordered_map<std::string, Value> &scope) {
+    std::unordered_map<std::string, Value> cloned;
+    cloned.reserve(scope.size());
+    for (const auto &[name, value] : scope) {
+        cloned.emplace(name, clone_value(value));
+    }
+    return cloned;
+}
+
+[[nodiscard]] std::unordered_map<std::string, std::unordered_map<std::string, Value>>
+clone_node_output_scope(
+    const std::unordered_map<std::string, std::unordered_map<std::string, Value>> &scope) {
+    std::unordered_map<std::string, std::unordered_map<std::string, Value>> cloned;
+    cloned.reserve(scope.size());
+    for (const auto &[node, fields] : scope) {
+        cloned.emplace(node, clone_scope(fields));
+    }
+    return cloned;
+}
+
+} // namespace
+
+EvalContext::EvalContext(const EvalContext &other)
+    : input_scope_(clone_scope(other.input_scope_)), ctx_scope_(clone_scope(other.ctx_scope_)),
+      node_output_scope_(clone_node_output_scope(other.node_output_scope_)),
+      local_scope_(clone_scope(other.local_scope_)) {}
+
+EvalContext &EvalContext::operator=(const EvalContext &other) {
+    if (this == &other) {
+        return *this;
+    }
+    input_scope_ = clone_scope(other.input_scope_);
+    ctx_scope_ = clone_scope(other.ctx_scope_);
+    node_output_scope_ = clone_node_output_scope(other.node_output_scope_);
+    local_scope_ = clone_scope(other.local_scope_);
+    return *this;
+}
+
 // ============================================================================
 // Input scope
 // ============================================================================

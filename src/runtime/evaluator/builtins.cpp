@@ -1,11 +1,14 @@
 #include "runtime/evaluator/builtins.hpp"
 #include "runtime/evaluator/evaluator.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -25,8 +28,33 @@ EvalResult make_error(std::string message) {
 }
 
 EvalResult arg_count_error(size_t expected, size_t got) {
-    return make_error("builtin expected " + std::to_string(expected) +
-                      " arguments, got " + std::to_string(got));
+    return make_error("builtin expected " + std::to_string(expected) + " arguments, got " +
+                      std::to_string(got));
+}
+
+[[nodiscard]] std::optional<int64_t> duration_to_millis(const DurationValue &duration) {
+    std::string spelling = duration.spelling;
+    bool seconds = false;
+    if (spelling.size() >= 2 && spelling.substr(spelling.size() - 2) == "ms") {
+        spelling = spelling.substr(0, spelling.size() - 2);
+    } else if (!spelling.empty() && spelling.back() == 's') {
+        spelling = spelling.substr(0, spelling.size() - 1);
+        seconds = true;
+    }
+
+    try {
+        std::size_t consumed = 0;
+        auto millis = std::stoll(spelling, &consumed);
+        if (consumed != spelling.size()) {
+            return std::nullopt;
+        }
+        if (seconds) {
+            millis *= 1000;
+        }
+        return millis;
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -35,7 +63,8 @@ EvalResult arg_count_error(size_t expected, size_t got) {
 
 /// list_raw_length(xs: List<T>) -> Int
 EvalResult builtin_list_raw_length(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     if (auto *lv = std::get_if<ListValue>(&args[0].node)) {
         return EvalResult{make_int(static_cast<int64_t>(lv->items.size())), {}};
     }
@@ -44,11 +73,14 @@ EvalResult builtin_list_raw_length(const std::vector<Value> &args, const EvalCon
 
 /// list_raw_get(xs: List<T>, i: Int) -> T
 EvalResult builtin_list_raw_get(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 2) return arg_count_error(2, args.size());
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
     auto *lv = std::get_if<ListValue>(&args[0].node);
     auto *iv = std::get_if<IntValue>(&args[1].node);
-    if (!lv) return make_error("list_raw_get: first argument must be a List");
-    if (!iv) return make_error("list_raw_get: second argument must be an Int");
+    if (!lv)
+        return make_error("list_raw_get: first argument must be a List");
+    if (!iv)
+        return make_error("list_raw_get: second argument must be an Int");
     int64_t idx = iv->value;
     if (idx < 0 || static_cast<size_t>(idx) >= lv->items.size()) {
         return make_error("list_raw_get: index out of bounds");
@@ -58,11 +90,14 @@ EvalResult builtin_list_raw_get(const std::vector<Value> &args, const EvalContex
 
 /// list_raw_set(xs: List<T>, i: Int, x: T) -> List<T>
 EvalResult builtin_list_raw_set(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 3) return arg_count_error(3, args.size());
+    if (args.size() != 3)
+        return arg_count_error(3, args.size());
     auto *lv = std::get_if<ListValue>(&args[0].node);
     auto *iv = std::get_if<IntValue>(&args[1].node);
-    if (!lv) return make_error("list_raw_set: first argument must be a List");
-    if (!iv) return make_error("list_raw_set: second argument must be an Int");
+    if (!lv)
+        return make_error("list_raw_set: first argument must be a List");
+    if (!iv)
+        return make_error("list_raw_set: second argument must be an Int");
     int64_t idx = iv->value;
     if (idx < 0 || static_cast<size_t>(idx) >= lv->items.size()) {
         return make_error("list_raw_set: index out of bounds");
@@ -78,6 +113,23 @@ EvalResult builtin_list_raw_set(const std::vector<Value> &args, const EvalContex
         }
     }
     return EvalResult{Value{std::move(new_list)}, {}};
+}
+
+/// list_raw_alloc(n: Int) -> List<T>
+EvalResult builtin_list_raw_alloc(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    auto *iv = std::get_if<IntValue>(&args[0].node);
+    if (!iv)
+        return make_error("list_raw_alloc: argument must be an Int");
+    if (iv->value < 0)
+        return make_error("list_raw_alloc: size must be non-negative");
+    ListValue list;
+    list.items.reserve(static_cast<size_t>(iv->value));
+    for (int64_t i = 0; i < iv->value; ++i) {
+        list.items.push_back(std::make_unique<Value>(make_none()));
+    }
+    return EvalResult{Value{std::move(list)}, {}};
 }
 
 /// list_from_array(a, b, c, ...) -> List<T>
@@ -100,7 +152,8 @@ EvalResult builtin_list_from_array(const std::vector<Value> &args, const EvalCon
 
 /// set_raw_size(s: Set<T>) -> Int
 EvalResult builtin_set_raw_size(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     if (auto *sv = std::get_if<SetValue>(&args[0].node)) {
         return EvalResult{make_int(static_cast<int64_t>(sv->items.size())), {}};
     }
@@ -109,9 +162,11 @@ EvalResult builtin_set_raw_size(const std::vector<Value> &args, const EvalContex
 
 /// set_raw_contains(s: Set<T>, x: T) -> Bool
 EvalResult builtin_set_raw_contains(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 2) return arg_count_error(2, args.size());
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
     auto *sv = std::get_if<SetValue>(&args[0].node);
-    if (!sv) return make_error("set_raw_contains: first argument must be a Set");
+    if (!sv)
+        return make_error("set_raw_contains: first argument must be a Set");
     for (const auto &item : sv->items) {
         if (structurally_equal(*item, args[1])) {
             return EvalResult{make_bool(true), {}};
@@ -143,13 +198,26 @@ EvalResult builtin_set_from_array(const std::vector<Value> &args, const EvalCont
     return EvalResult{Value{std::move(set)}, {}};
 }
 
+EvalResult builtin_set_raw_empty(const std::vector<Value> &args, const EvalContext &ctx) {
+    if (!args.empty())
+        return arg_count_error(0, args.size());
+    return builtin_set_from_array(args, ctx);
+}
+
+EvalResult builtin_set_raw_singleton(const std::vector<Value> &args, const EvalContext &ctx) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    return builtin_set_from_array(args, ctx);
+}
+
 // ----------------------------------------------------------------------------
 // Container builtins (Map)
 // ----------------------------------------------------------------------------
 
 /// map_raw_size(m: Map<K, V>) -> Int
 EvalResult builtin_map_raw_size(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     if (auto *mv = std::get_if<MapValue>(&args[0].node)) {
         return EvalResult{make_int(static_cast<int64_t>(mv->entries.size())), {}};
     }
@@ -157,10 +225,13 @@ EvalResult builtin_map_raw_size(const std::vector<Value> &args, const EvalContex
 }
 
 /// map_raw_contains_key(m: Map<K, V>, k: K) -> Bool
-EvalResult builtin_map_raw_contains_key(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 2) return arg_count_error(2, args.size());
+EvalResult builtin_map_raw_contains_key(const std::vector<Value> &args,
+                                        const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
     auto *mv = std::get_if<MapValue>(&args[0].node);
-    if (!mv) return make_error("map_raw_contains_key: first argument must be a Map");
+    if (!mv)
+        return make_error("map_raw_contains_key: first argument must be a Map");
     for (const auto &entry : mv->entries) {
         if (structurally_equal(*entry.first, args[1])) {
             return EvalResult{make_bool(true), {}};
@@ -171,9 +242,11 @@ EvalResult builtin_map_raw_contains_key(const std::vector<Value> &args, const Ev
 
 /// map_raw_get(m: Map<K, V>, k: K) -> V
 EvalResult builtin_map_raw_get(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 2) return arg_count_error(2, args.size());
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
     auto *mv = std::get_if<MapValue>(&args[0].node);
-    if (!mv) return make_error("map_raw_get: first argument must be a Map");
+    if (!mv)
+        return make_error("map_raw_get: first argument must be a Map");
     for (const auto &entry : mv->entries) {
         if (structurally_equal(*entry.first, args[1])) {
             return EvalResult{clone_value(*entry.second), {}};
@@ -213,13 +286,26 @@ EvalResult builtin_map_from_entries(const std::vector<Value> &args, const EvalCo
     return EvalResult{Value{std::move(map)}, {}};
 }
 
+EvalResult builtin_map_raw_empty(const std::vector<Value> &args, const EvalContext &ctx) {
+    if (!args.empty())
+        return arg_count_error(0, args.size());
+    return builtin_map_from_entries(args, ctx);
+}
+
+EvalResult builtin_map_raw_singleton(const std::vector<Value> &args, const EvalContext &ctx) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    return builtin_map_from_entries(args, ctx);
+}
+
 // ----------------------------------------------------------------------------
 // String builtins
 // ----------------------------------------------------------------------------
 
 /// string_raw_length(s: String) -> Int
 EvalResult builtin_string_raw_length(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     if (auto *sv = std::get_if<StringValue>(&args[0].node)) {
         // P5 placeholder: returns byte count (codepoint handling deferred to
         // proper stdlib string implementation)
@@ -230,11 +316,55 @@ EvalResult builtin_string_raw_length(const std::vector<Value> &args, const EvalC
 
 /// string_raw_concat(a: String, b: String) -> String
 EvalResult builtin_string_raw_concat(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 2) return arg_count_error(2, args.size());
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
     auto *a = std::get_if<StringValue>(&args[0].node);
     auto *b = std::get_if<StringValue>(&args[1].node);
-    if (!a || !b) return make_error("string_raw_concat: both arguments must be Strings");
+    if (!a || !b)
+        return make_error("string_raw_concat: both arguments must be Strings");
     return EvalResult{make_string(a->value + b->value), {}};
+}
+
+EvalResult builtin_string_is_empty(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *value = std::get_if<StringValue>(&args[0].node);
+    if (value == nullptr)
+        return make_error("string_is_empty: argument must be a String");
+    return EvalResult{make_bool(value->value.empty()), {}};
+}
+
+EvalResult builtin_string_contains(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *haystack = std::get_if<StringValue>(&args[0].node);
+    const auto *needle = std::get_if<StringValue>(&args[1].node);
+    if (haystack == nullptr || needle == nullptr) {
+        return make_error("string_contains: both arguments must be Strings");
+    }
+    return EvalResult{make_bool(haystack->value.find(needle->value) != std::string::npos), {}};
+}
+
+EvalResult builtin_string_starts_with(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *value = std::get_if<StringValue>(&args[0].node);
+    const auto *prefix = std::get_if<StringValue>(&args[1].node);
+    if (value == nullptr || prefix == nullptr) {
+        return make_error("string_starts_with: both arguments must be Strings");
+    }
+    return EvalResult{make_bool(value->value.starts_with(prefix->value)), {}};
+}
+
+EvalResult builtin_string_ends_with(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *value = std::get_if<StringValue>(&args[0].node);
+    const auto *suffix = std::get_if<StringValue>(&args[1].node);
+    if (value == nullptr || suffix == nullptr) {
+        return make_error("string_ends_with: both arguments must be Strings");
+    }
+    return EvalResult{make_bool(value->value.ends_with(suffix->value)), {}};
 }
 
 // ----------------------------------------------------------------------------
@@ -243,7 +373,8 @@ EvalResult builtin_string_raw_concat(const std::vector<Value> &args, const EvalC
 
 /// int_to_string(n: Int) -> String
 EvalResult builtin_int_to_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     if (auto *iv = std::get_if<IntValue>(&args[0].node)) {
         return EvalResult{make_string(std::to_string(iv->value)), {}};
     }
@@ -256,46 +387,53 @@ EvalResult builtin_int_to_string(const std::vector<Value> &args, const EvalConte
 
 /// wall_clock_now() -> Timestamp  (effect: Nondet)
 EvalResult builtin_wall_clock_now(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (!args.empty()) return arg_count_error(0, args.size());
+    if (!args.empty())
+        return arg_count_error(0, args.size());
     auto now = std::chrono::system_clock::now();
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now.time_since_epoch())
-                  .count();
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     return EvalResult{make_timestamp(ms), {}};
 }
 
 /// timestamp_add(t: Timestamp, d: Duration) -> Timestamp
 EvalResult builtin_timestamp_add(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 2) return arg_count_error(2, args.size());
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
     auto *tv = std::get_if<TimestampValue>(&args[0].node);
     auto *dv = std::get_if<DurationValue>(&args[1].node);
-    if (!tv) return make_error("timestamp_add: first argument must be a Timestamp");
-    if (!dv) return make_error("timestamp_add: second argument must be a Duration");
-    // P5 placeholder: parse duration spelling for "s", "ms" suffixes
-    // For now, interpret numeric prefix as milliseconds (best-effort)
-    int64_t ms = 0;
-    try {
-        ms = std::stoll(dv->spelling);
-    } catch (...) {
-        // Try stripping common suffixes
-        std::string s = dv->spelling;
-        if (s.size() >= 2 && s.substr(s.size() - 2) == "ms") {
-            s = s.substr(0, s.size() - 2);
-        } else if (!s.empty() && s.back() == 's') {
-            s = s.substr(0, s.size() - 1);
-        }
-        try {
-            ms = std::stoll(s);
-            // If we stripped "s" (not "ms"), multiply by 1000
-            if (dv->spelling.size() >= 1 && dv->spelling.back() == 's' &&
-                (dv->spelling.size() < 2 || dv->spelling[dv->spelling.size() - 2] != 'm')) {
-                ms *= 1000;
-            }
-        } catch (...) {
-            return make_error("timestamp_add: cannot parse duration");
-        }
+    if (!tv)
+        return make_error("timestamp_add: first argument must be a Timestamp");
+    if (!dv)
+        return make_error("timestamp_add: second argument must be a Duration");
+    const auto ms = duration_to_millis(*dv);
+    if (!ms.has_value())
+        return make_error("timestamp_add: cannot parse duration");
+    return EvalResult{make_timestamp(tv->unix_ms + *ms), {}};
+}
+
+EvalResult builtin_timestamp_sub(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    auto *tv = std::get_if<TimestampValue>(&args[0].node);
+    auto *dv = std::get_if<DurationValue>(&args[1].node);
+    if (!tv)
+        return make_error("timestamp_sub: first argument must be a Timestamp");
+    if (!dv)
+        return make_error("timestamp_sub: second argument must be a Duration");
+    const auto ms = duration_to_millis(*dv);
+    if (!ms.has_value())
+        return make_error("timestamp_sub: cannot parse duration");
+    return EvalResult{make_timestamp(tv->unix_ms - *ms), {}};
+}
+
+EvalResult builtin_duration_between(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 2)
+        return arg_count_error(2, args.size());
+    const auto *start = std::get_if<TimestampValue>(&args[0].node);
+    const auto *end = std::get_if<TimestampValue>(&args[1].node);
+    if (start == nullptr || end == nullptr) {
+        return make_error("time_duration_between: both arguments must be Timestamps");
     }
-    return EvalResult{make_timestamp(tv->unix_ms + ms), {}};
+    return EvalResult{make_duration(std::to_string(end->unix_ms - start->unix_ms)), {}};
 }
 
 // ----------------------------------------------------------------------------
@@ -304,7 +442,8 @@ EvalResult builtin_timestamp_add(const std::vector<Value> &args, const EvalConte
 
 /// uuid_new() -> UUID  (effect: Nondet)
 EvalResult builtin_uuid_new(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (!args.empty()) return arg_count_error(0, args.size());
+    if (!args.empty())
+        return arg_count_error(0, args.size());
     // P5 placeholder: simple random v4-like UUID (not cryptographically secure)
     static thread_local std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<uint32_t> dist(0, 0xF);
@@ -328,13 +467,24 @@ EvalResult builtin_uuid_new(const std::vector<Value> &args, const EvalContext & 
 
 /// uuid_from_string(s: String) -> Option<UUID>
 EvalResult builtin_uuid_from_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     auto *sv = std::get_if<StringValue>(&args[0].node);
-    if (!sv) return make_error("uuid_from_string: argument must be a String");
+    if (!sv)
+        return make_error("uuid_from_string: argument must be a String");
     if (auto v = make_uuid(sv->value)) {
         return EvalResult{make_optional_some(std::move(*v)), {}};
     }
     return EvalResult{make_optional_none(), {}};
+}
+
+EvalResult builtin_uuid_to_string(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
+    const auto *uuid = std::get_if<UuidValue>(&args[0].node);
+    if (uuid == nullptr)
+        return make_error("uuid_to_string: argument must be a UUID");
+    return EvalResult{make_string(uuid->hex), {}};
 }
 
 // ----------------------------------------------------------------------------
@@ -343,14 +493,16 @@ EvalResult builtin_uuid_from_string(const std::vector<Value> &args, const EvalCo
 
 /// json_parse_raw(s: String) -> Option<JsonValue>
 EvalResult builtin_json_parse_raw(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     // P5 placeholder: return None for now (full JSON parser deferred)
     return EvalResult{make_optional_none(), {}};
 }
 
 /// json_emit_raw(v: JsonValue) -> String
 EvalResult builtin_json_emit_raw(const std::vector<Value> &args, const EvalContext & /*ctx*/) {
-    if (args.size() != 1) return arg_count_error(1, args.size());
+    if (args.size() != 1)
+        return arg_count_error(1, args.size());
     // P5 placeholder: return empty string (full JSON emitter deferred)
     return EvalResult{make_string(""), {}};
 }
@@ -372,8 +524,19 @@ const BuiltinTable &BuiltinTable::instance() {
 
 const BuiltinFn *BuiltinTable::find(std::string_view name) const {
     auto it = table_.find(std::string(name));
-    if (it == table_.end()) return nullptr;
+    if (it == table_.end())
+        return nullptr;
     return &it->second;
+}
+
+std::vector<std::string> BuiltinTable::names() const {
+    std::vector<std::string> result;
+    result.reserve(table_.size());
+    for (const auto &[name, _] : table_) {
+        result.push_back(name);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
 }
 
 void BuiltinTable::insert(std::string name, BuiltinFn fn) {
@@ -385,22 +548,33 @@ void BuiltinTable::populate() {
     insert("list_raw_length", builtin_list_raw_length);
     insert("list_raw_get", builtin_list_raw_get);
     insert("list_raw_set", builtin_list_raw_set);
+    insert("list_raw_alloc", builtin_list_raw_alloc);
     insert("list_from_array", builtin_list_from_array);
 
     // —— Set ——
     insert("set_raw_size", builtin_set_raw_size);
     insert("set_raw_contains", builtin_set_raw_contains);
     insert("set_from_array", builtin_set_from_array);
+    insert("set_raw_empty", builtin_set_raw_empty);
+    insert("set_raw_singleton", builtin_set_raw_singleton);
 
     // —— Map ——
     insert("map_raw_size", builtin_map_raw_size);
     insert("map_raw_contains_key", builtin_map_raw_contains_key);
     insert("map_raw_get", builtin_map_raw_get);
     insert("map_from_entries", builtin_map_from_entries);
+    insert("map_raw_empty", builtin_map_raw_empty);
+    insert("map_raw_singleton", builtin_map_raw_singleton);
 
     // —— String ——
     insert("string_raw_length", builtin_string_raw_length);
     insert("string_raw_concat", builtin_string_raw_concat);
+    insert("string_is_empty", builtin_string_is_empty);
+    insert("string_length", builtin_string_raw_length);
+    insert("string_contains", builtin_string_contains);
+    insert("string_starts_with", builtin_string_starts_with);
+    insert("string_ends_with", builtin_string_ends_with);
+    insert("string_concat", builtin_string_raw_concat);
 
     // —— Numeric ——
     insert("int_to_string", builtin_int_to_string);
@@ -408,10 +582,17 @@ void BuiltinTable::populate() {
     // —— Time ——
     insert("wall_clock_now", builtin_wall_clock_now);
     insert("timestamp_add", builtin_timestamp_add);
+    insert("time_now", builtin_wall_clock_now);
+    insert("time_add", builtin_timestamp_add);
+    insert("time_sub", builtin_timestamp_sub);
+    insert("time_duration_between", builtin_duration_between);
 
     // —— UUID ——
     insert("uuid_new", builtin_uuid_new);
     insert("uuid_from_string", builtin_uuid_from_string);
+    insert("uuid_new_v4", builtin_uuid_new);
+    insert("uuid_parse", builtin_uuid_from_string);
+    insert("uuid_to_string", builtin_uuid_to_string);
 
     // —— JSON (placeholders) ——
     insert("json_parse_raw", builtin_json_parse_raw);

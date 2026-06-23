@@ -100,6 +100,22 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 ahfl::write_escaped_json_string(out, "_variant");
                 out << ':';
                 ahfl::write_escaped_json_string(out, inner.variant);
+                if (!inner.payload.empty()) {
+                    out << ',';
+                    ahfl::write_escaped_json_string(out, "_payload");
+                    out << ':';
+                    out << '[';
+                    for (std::size_t i = 0; i < inner.payload.size(); ++i) {
+                        if (i > 0)
+                            out << ',';
+                        if (inner.payload[i]) {
+                            write_json_impl(*inner.payload[i], out);
+                        } else {
+                            out << "null";
+                        }
+                    }
+                    out << ']';
+                }
                 out << '}';
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 if (inner.inner) {
@@ -107,6 +123,12 @@ void write_json_impl(const Value &v, std::ostream &out) {
                 } else {
                     out << "null";
                 }
+            } else if constexpr (std::is_same_v<T, CallableValue>) {
+                out << '{';
+                ahfl::write_escaped_json_string(out, "_callable");
+                out << ':';
+                ahfl::write_escaped_json_string(out, "runtime");
+                out << '}';
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 // Serialize Set as a JSON array; canonical ordering is already
                 // baked into the storage, so equal sets serialize identically.
@@ -195,7 +217,26 @@ struct_or_enum_from_json_object(const ahfl::json::JsonValue &object) {
     const auto *enum_name = string_field_value(object, "_enum");
     const auto *variant_name = string_field_value(object, "_variant");
     if (enum_name != nullptr && variant_name != nullptr) {
-        return Value{EnumValue{*enum_name, *variant_name}};
+        EnumValue enum_value;
+        enum_value.enum_name = *enum_name;
+        enum_value.variant = *variant_name;
+        if (const auto *payload = object.get("_payload")) {
+            if (payload->kind != ahfl::json::Kind::Array) {
+                return std::nullopt;
+            }
+            enum_value.payload.reserve(payload->array_items.size());
+            for (const auto &json_item : payload->array_items) {
+                if (!json_item) {
+                    return std::nullopt;
+                }
+                auto item_value = value_from_json_value(*json_item);
+                if (!item_value.has_value()) {
+                    return std::nullopt;
+                }
+                enum_value.payload.push_back(std::make_unique<Value>(std::move(*item_value)));
+            }
+        }
+        return Value{std::move(enum_value)};
     }
 
     // RFC P7: UUID marker.

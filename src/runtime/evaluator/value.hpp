@@ -10,7 +10,13 @@
 #include <variant>
 #include <vector>
 
+namespace ahfl::ir {
+struct Expr;
+}
+
 namespace ahfl::evaluator {
+
+class EvalContext;
 
 // Forward declaration for recursive variant
 struct Value;
@@ -57,10 +63,17 @@ struct ListValue {
 struct EnumValue {
     std::string enum_name;
     std::string variant;
+    std::vector<std::unique_ptr<Value>> payload;
 };
 
 struct OptionalValue {
     std::unique_ptr<Value> inner; // nullptr means none
+};
+
+struct CallableValue {
+    std::vector<std::string> params;
+    const ir::Expr *body{nullptr};
+    std::shared_ptr<const EvalContext> captured_context;
 };
 
 // Set value: ordered + de-duplicated vector of items (RFC P7).
@@ -107,7 +120,8 @@ using ValueNode = std::variant<NoneValue,
                                SetValue,
                                MapValue,
                                UuidValue,
-                               TimestampValue>;
+                               TimestampValue,
+                               CallableValue>;
 
 struct Value {
     ValueNode node;
@@ -133,6 +147,7 @@ enum class ValueKind {
     Map,
     Uuid,
     Timestamp,
+    Callable,
 };
 
 // ============================================================================
@@ -183,12 +198,19 @@ void print_value(const Value &v, std::ostream &out);
 }
 
 [[nodiscard]] inline Value make_enum(std::string enum_name, std::string variant) {
-    return Value{EnumValue{std::move(enum_name), std::move(variant)}};
+    return Value{EnumValue{std::move(enum_name), std::move(variant), {}}};
 }
+
+[[nodiscard]] Value
+make_enum(std::string enum_name, std::string variant, std::vector<Value> payload);
 
 [[nodiscard]] Value make_optional_some(Value inner);
 
 [[nodiscard]] Value make_optional_none();
+
+[[nodiscard]] Value make_callable(std::vector<std::string> params,
+                                  const ir::Expr *body,
+                                  std::shared_ptr<const EvalContext> captured_context);
 
 [[nodiscard]] Value make_struct(std::string type_name,
                                 std::unordered_map<std::string, Value> fields);

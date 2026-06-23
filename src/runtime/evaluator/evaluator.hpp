@@ -32,4 +32,9 @@ using CallEvalFn = std::function<EvalResult(const ir::CallExpr &, const EvalCont
 [[nodiscard]] EvalResult
 eval_expr(const ir::Expr &expr, const EvalContext &ctx, const CallEvalFn &call_eval);
 
+/// Create a call evaluator that can execute top-level IR function bodies from
+/// a lowered program. Unknown calls fall back to constructor and builtin
+/// dispatch, matching the default evaluator behavior.
+[[nodiscard]] CallEvalFn make_program_call_eval(const ir::Program &program);
+
 } // namespace ahfl::evaluator

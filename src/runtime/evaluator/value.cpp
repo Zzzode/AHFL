@@ -76,7 +76,43 @@ int compare_values(const Value &lhs, const Value &rhs) {
                 const auto *r = std::get_if<EnumValue>(&rhs.node);
                 if (int c = inner.enum_name.compare(r->enum_name); c != 0)
                     return c;
-                return inner.variant.compare(r->variant);
+                if (int c = inner.variant.compare(r->variant); c != 0)
+                    return c;
+                if (inner.payload.size() != r->payload.size()) {
+                    return inner.payload.size() < r->payload.size() ? -1 : 1;
+                }
+                for (std::size_t i = 0; i < inner.payload.size(); ++i) {
+                    if (!inner.payload[i] && !r->payload[i]) {
+                        continue;
+                    }
+                    if (!inner.payload[i]) {
+                        return -1;
+                    }
+                    if (!r->payload[i]) {
+                        return 1;
+                    }
+                    if (int c = compare_values(*inner.payload[i], *r->payload[i]); c != 0) {
+                        return c;
+                    }
+                }
+                return 0;
+            } else if constexpr (std::is_same_v<T, CallableValue>) {
+                const auto *r = std::get_if<CallableValue>(&rhs.node);
+                if (inner.body != r->body) {
+                    return inner.body < r->body ? -1 : 1;
+                }
+                if (inner.captured_context.get() != r->captured_context.get()) {
+                    return inner.captured_context.get() < r->captured_context.get() ? -1 : 1;
+                }
+                if (inner.params.size() != r->params.size()) {
+                    return inner.params.size() < r->params.size() ? -1 : 1;
+                }
+                for (std::size_t i = 0; i < inner.params.size(); ++i) {
+                    if (int c = inner.params[i].compare(r->params[i]); c != 0) {
+                        return c;
+                    }
+                }
+                return 0;
             } else {
                 // Non-orderable composite kinds: compare by canonical spelling
                 // to keep a total order (used only for canonicalization).
@@ -97,7 +133,8 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
     // public equality function stays consistent with canonical ordering.
     const auto li = lhs.node.index();
     const auto ri = rhs.node.index();
-    if (li != ri) return false;
+    if (li != ri)
+        return false;
     return std::visit(
         [&](const auto &inner) -> bool {
             using T = std::decay_t<decltype(inner)>;
@@ -123,39 +160,70 @@ bool structurally_equal(const Value &lhs, const Value &rhs) {
                 return inner.spelling == r->spelling;
             } else if constexpr (std::is_same_v<T, StructValue>) {
                 const auto *r = std::get_if<StructValue>(&rhs.node);
-                if (inner.type_name != r->type_name) return false;
-                if (inner.fields.size() != r->fields.size()) return false;
+                if (inner.type_name != r->type_name)
+                    return false;
+                if (inner.fields.size() != r->fields.size())
+                    return false;
                 for (const auto &[name, val] : inner.fields) {
                     auto it = r->fields.find(name);
-                    if (it == r->fields.end()) return false;
-                    if (!structurally_equal(*val, *it->second)) return false;
+                    if (it == r->fields.end())
+                        return false;
+                    if (!structurally_equal(*val, *it->second))
+                        return false;
                 }
                 return true;
             } else if constexpr (std::is_same_v<T, ListValue>) {
                 const auto *r = std::get_if<ListValue>(&rhs.node);
-                if (inner.items.size() != r->items.size()) return false;
+                if (inner.items.size() != r->items.size())
+                    return false;
                 for (size_t i = 0; i < inner.items.size(); ++i) {
-                    if (!structurally_equal(*inner.items[i], *r->items[i])) return false;
+                    if (!structurally_equal(*inner.items[i], *r->items[i]))
+                        return false;
                 }
                 return true;
             } else if constexpr (std::is_same_v<T, EnumValue>) {
                 const auto *r = std::get_if<EnumValue>(&rhs.node);
-                return inner.enum_name == r->enum_name && inner.variant == r->variant;
+                if (inner.enum_name != r->enum_name || inner.variant != r->variant ||
+                    inner.payload.size() != r->payload.size()) {
+                    return false;
+                }
+                for (size_t i = 0; i < inner.payload.size(); ++i) {
+                    if (!inner.payload[i] && !r->payload[i]) {
+                        continue;
+                    }
+                    if (!inner.payload[i] || !r->payload[i]) {
+                        return false;
+                    }
+                    if (!structurally_equal(*inner.payload[i], *r->payload[i])) {
+                        return false;
+                    }
+                }
+                return true;
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 const auto *r = std::get_if<OptionalValue>(&rhs.node);
-                if (!inner.inner && !r->inner) return true;
-                if (!inner.inner || !r->inner) return false;
+                if (!inner.inner && !r->inner)
+                    return true;
+                if (!inner.inner || !r->inner)
+                    return false;
                 return structurally_equal(*inner.inner, *r->inner);
+            } else if constexpr (std::is_same_v<T, CallableValue>) {
+                const auto *r = std::get_if<CallableValue>(&rhs.node);
+                return inner.body == r->body &&
+                       inner.captured_context.get() == r->captured_context.get() &&
+                       inner.params == r->params;
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 const auto *r = std::get_if<SetValue>(&rhs.node);
-                if (inner.items.size() != r->items.size()) return false;
+                if (inner.items.size() != r->items.size())
+                    return false;
                 for (size_t i = 0; i < inner.items.size(); ++i) {
-                    if (!structurally_equal(*inner.items[i], *r->items[i])) return false;
+                    if (!structurally_equal(*inner.items[i], *r->items[i]))
+                        return false;
                 }
                 return true;
             } else if constexpr (std::is_same_v<T, MapValue>) {
                 const auto *r = std::get_if<MapValue>(&rhs.node);
-                if (inner.entries.size() != r->entries.size()) return false;
+                if (inner.entries.size() != r->entries.size())
+                    return false;
                 for (size_t i = 0; i < inner.entries.size(); ++i) {
                     if (!structurally_equal(*inner.entries[i].first, *r->entries[i].first))
                         return false;
@@ -205,6 +273,8 @@ ValueKind value_kind(const Value &v) {
                 return ValueKind::Enum;
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 return ValueKind::Optional;
+            } else if constexpr (std::is_same_v<T, CallableValue>) {
+                return ValueKind::Callable;
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 return ValueKind::Set;
             } else if constexpr (std::is_same_v<T, MapValue>) {
@@ -277,6 +347,19 @@ void print_value(const Value &v, std::ostream &out) {
                 out << "]";
             } else if constexpr (std::is_same_v<T, EnumValue>) {
                 out << inner.enum_name << "::" << inner.variant;
+                if (!inner.payload.empty()) {
+                    out << "(";
+                    for (size_t i = 0; i < inner.payload.size(); ++i) {
+                        if (i > 0)
+                            out << ", ";
+                        if (inner.payload[i]) {
+                            print_value(*inner.payload[i], out);
+                        } else {
+                            out << "<null>";
+                        }
+                    }
+                    out << ")";
+                }
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 if (inner.inner) {
                     out << "some(";
@@ -285,6 +368,8 @@ void print_value(const Value &v, std::ostream &out) {
                 } else {
                     out << "none";
                 }
+            } else if constexpr (std::is_same_v<T, CallableValue>) {
+                out << "<lambda/" << inner.params.size() << ">";
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 out << "set{";
                 for (size_t i = 0; i < inner.items.size(); ++i) {
@@ -336,6 +421,16 @@ Value make_optional_none() {
     return Value{OptionalValue{nullptr}};
 }
 
+Value make_callable(std::vector<std::string> params,
+                    const ir::Expr *body,
+                    std::shared_ptr<const EvalContext> captured_context) {
+    return Value{CallableValue{
+        .params = std::move(params),
+        .body = body,
+        .captured_context = std::move(captured_context),
+    }};
+}
+
 Value make_struct(std::string type_name, std::unordered_map<std::string, Value> fields) {
     StructValue sv;
     sv.type_name = std::move(type_name);
@@ -343,6 +438,17 @@ Value make_struct(std::string type_name, std::unordered_map<std::string, Value> 
         sv.fields.emplace(name, std::make_unique<Value>(std::move(val)));
     }
     return Value{std::move(sv)};
+}
+
+Value make_enum(std::string enum_name, std::string variant, std::vector<Value> payload) {
+    EnumValue ev;
+    ev.enum_name = std::move(enum_name);
+    ev.variant = std::move(variant);
+    ev.payload.reserve(payload.size());
+    for (auto &item : payload) {
+        ev.payload.push_back(std::make_unique<Value>(std::move(item)));
+    }
+    return Value{std::move(ev)};
 }
 
 Value make_list(std::vector<Value> items) {
@@ -370,8 +476,9 @@ Value make_set(std::vector<Value> items) {
             canonical.push_back(std::move(item));
         }
     }
-    std::sort(canonical.begin(), canonical.end(),
-              [](const Value &a, const Value &b) { return compare_values(a, b) < 0; });
+    std::sort(canonical.begin(), canonical.end(), [](const Value &a, const Value &b) {
+        return compare_values(a, b) < 0;
+    });
 
     SetValue sv;
     sv.items.reserve(canonical.size());
@@ -398,7 +505,8 @@ Value make_map(std::vector<std::pair<Value, Value>> entries) {
             canonical.push_back(std::move(entry));
         }
     }
-    std::sort(canonical.begin(), canonical.end(),
+    std::sort(canonical.begin(),
+              canonical.end(),
               [](const std::pair<Value, Value> &a, const std::pair<Value, Value> &b) {
                   return compare_values(a.first, b.first) < 0;
               });
@@ -477,12 +585,25 @@ Value clone_value(const Value &v) {
                 }
                 return Value{std::move(lv)};
             } else if constexpr (std::is_same_v<T, EnumValue>) {
-                return make_enum(inner.enum_name, inner.variant);
+                EnumValue ev;
+                ev.enum_name = inner.enum_name;
+                ev.variant = inner.variant;
+                ev.payload.reserve(inner.payload.size());
+                for (const auto &item : inner.payload) {
+                    if (item) {
+                        ev.payload.push_back(std::make_unique<Value>(clone_value(*item)));
+                    } else {
+                        ev.payload.push_back(nullptr);
+                    }
+                }
+                return Value{std::move(ev)};
             } else if constexpr (std::is_same_v<T, OptionalValue>) {
                 if (inner.inner) {
                     return make_optional_some(clone_value(*inner.inner));
                 }
                 return make_optional_none();
+            } else if constexpr (std::is_same_v<T, CallableValue>) {
+                return make_callable(inner.params, inner.body, inner.captured_context);
             } else if constexpr (std::is_same_v<T, SetValue>) {
                 SetValue sv;
                 sv.items.reserve(inner.items.size());

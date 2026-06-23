@@ -40,6 +40,10 @@ class BuiltinTable {
     /// Look up a builtin by name.  Returns nullptr if not found.
     [[nodiscard]] const BuiltinFn *find(std::string_view name) const;
 
+    /// Return registered builtin names in stable sorted order. Exposed for
+    /// contract tests that compare the runtime table with stdlib declarations.
+    [[nodiscard]] std::vector<std::string> names() const;
+
     /// Register a builtin.  Used internally by populate(); exposed for tests.
     void insert(std::string name, BuiltinFn fn);
 

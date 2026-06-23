@@ -14,6 +14,12 @@ namespace ahfl::evaluator {
 
 class EvalContext {
   public:
+    EvalContext() = default;
+    EvalContext(const EvalContext &other);
+    EvalContext &operator=(const EvalContext &other);
+    EvalContext(EvalContext &&) noexcept = default;
+    EvalContext &operator=(EvalContext &&) noexcept = default;
+
     // --- Input scope ---
     void set_input(const std::string &name, Value value);
     [[nodiscard]] std::optional<Value> get_input(const std::string &name) const;
