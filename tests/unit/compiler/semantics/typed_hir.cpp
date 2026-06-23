@@ -517,7 +517,8 @@ flow for A {
         REQUIRE(e != nullptr);
         CHECK_FALSE(e->is_pure);
         CHECK(e->effect == ahfl::ExprEffect::CapabilityCall);
-        CHECK(e->call_target_kind == ahfl::TypedCallTargetKind::InherentMethod);
+        REQUIRE(e->call_target_kind.has_value());
+        CHECK(*e->call_target_kind == ahfl::TypedCallTargetKind::InherentMethod);
     }
     // Struct literal: resolved_symbol points to struct decl.
     {
@@ -4132,4 +4133,143 @@ flow for Worker {
     // because synthetic AST nodes injected above may confuse unrelated
     // analyses. The structural traversal is what matters here.
     INFO("P4.S3: ValidationPass walk_typed_contract_clauses entry verified at compile time.");
+}
+
+// ============================================================================
+// P3c.S7  TypedCallTargetKind — three-enum contract + typecheck wiring.
+// ============================================================================
+
+TEST_CASE("TypedCallTargetKind exposes exactly three public variants") {
+    // The static_assert lives in the header; compiling is enough to prove it.
+    // Belt-and-suspenders: also check the underlying integral values at
+    // runtime so a future refactor that misplaces the Sentinel cannot slip
+    // through.
+    using K = ahfl::TypedCallTargetKind;
+    CHECK(std::to_underlying(K::InherentMethod) == 0);
+    CHECK(std::to_underlying(K::TraitMethod) == 1);
+    CHECK(std::to_underlying(K::Builtin) == 2);
+    CHECK(std::to_underlying(K::Sentinel_ForStaticAssert) == 3);
+
+    // The three meaningful values must be pairwise distinct.
+    CHECK_FALSE(K::InherentMethod == K::TraitMethod);
+    CHECK_FALSE(K::TraitMethod == K::Builtin);
+    CHECK_FALSE(K::Builtin == K::InherentMethod);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "TypedCallTargetKind::InherentMethod is recorded for capability calls") {
+    const std::string source = R"AHFL(
+module typed::call_target::inherent;
+import typed::call_target::inherent as self;
+
+struct R { v: Int; }
+struct Ctx { x: Int = 0; }
+capability C(value: Int) -> R;
+agent A {
+    input: R;
+    context: Ctx;
+    output: R;
+    states: [S, Done];
+    initial: S;
+    final: [Done];
+    capabilities: [C];
+    transition S -> Done;
+}
+flow for A {
+    state S {
+        let result = C(7);
+        return result;
+    }
+    state Done { return input; }
+}
+)AHFL";
+    const auto r = check(source);
+    const auto *call = find_by_range(r.typed_program.expressions, range_of(source, "C(7)"));
+    REQUIRE(call != nullptr);
+    CHECK(call->kind == ahfl::ast::ExprSyntaxKind::Call);
+    REQUIRE(call->call_target_kind.has_value());
+    CHECK(*call->call_target_kind == ahfl::TypedCallTargetKind::InherentMethod);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture, "TypedCallTargetKind::TraitMethod is recorded for predicate calls") {
+    const std::string source = R"AHFL(
+module typed::call_target::trait;
+import typed::call_target::trait as self;
+
+struct R { v: Int; }
+struct Ctx { x: Int = 0; }
+predicate P(value: Int) -> Bool;
+agent A {
+    input: R;
+    context: Ctx;
+    output: R;
+    states: [S, Done];
+    initial: S;
+    final: [Done];
+    capabilities: [];
+    transition S -> Done;
+}
+contract for A {
+    requires: P(1);
+}
+flow for A {
+    state S {
+        let result = P(11);
+        return R { v: 1 };
+    }
+    state Done { return R { v: 1 }; }
+}
+)AHFL";
+    const auto r = check(source);
+    const auto *call = find_by_range(r.typed_program.expressions, range_of(source, "P(11)"));
+    REQUIRE(call != nullptr);
+    CHECK(call->kind == ahfl::ast::ExprSyntaxKind::Call);
+    REQUIRE(call->call_target_kind.has_value());
+    CHECK(*call->call_target_kind == ahfl::TypedCallTargetKind::TraitMethod);
+}
+
+TEST_CASE_FIXTURE(TypedHIRFixture,
+                  "Non-call TypedExpr nodes carry no TypedCallTargetKind (Builtin placeholder path)") {
+    const std::string source = R"AHFL(
+module typed::call_target::non_call;
+import typed::call_target::non_call as self;
+
+struct R { v: Int; }
+struct Ctx { x: Int = 0; }
+agent A {
+    input: R;
+    context: Ctx;
+    output: R;
+    states: [S, Done];
+    initial: S;
+    final: [Done];
+    capabilities: [];
+    transition S -> Done;
+}
+flow for A {
+    state S {
+        let n = 42;
+        let s = "hello";
+        let lit = R { v: n };
+        return lit;
+    }
+    state Done { return input; }
+}
+)AHFL";
+    const auto r = check(source);
+
+    // Integer / string / struct-literal — none of these are Call, so the
+    // classification must be absent (std::nullopt), not a zero-filled sentinel.
+    const auto *int_lit = find_by_range(r.typed_program.expressions, range_of(source, "42"));
+    REQUIRE(int_lit != nullptr);
+    CHECK_FALSE(int_lit->call_target_kind.has_value());
+
+    const auto *str_lit =
+        find_by_range(r.typed_program.expressions, range_of(source, "\"hello\""));
+    REQUIRE(str_lit != nullptr);
+    CHECK_FALSE(str_lit->call_target_kind.has_value());
+
+    const auto *struct_lit =
+        find_by_range(r.typed_program.expressions, range_of(source, "R { v: n }"));
+    REQUIRE(struct_lit != nullptr);
+    CHECK_FALSE(struct_lit->call_target_kind.has_value());
 }
