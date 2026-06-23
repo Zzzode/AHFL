@@ -4007,6 +4007,10 @@ add_test(NAME ahfl.semantics.trait_impl_all
     COMMAND $<TARGET_FILE:ahfl_semantics_trait_impl_tests>
 )
 
+add_test(NAME ahfl.semantics.validate_plumbing_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_validate_plumbing_tests>
+)
+
 add_test(NAME ahfl.semantics.where_clause_info_all
     COMMAND $<TARGET_FILE:ahfl_semantics_where_clause_info_tests>
 )

@@ -496,6 +496,16 @@ target_link_libraries(ahfl_semantics_flow_condition_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_flow_condition_tests)
 
+add_executable(ahfl_semantics_validate_plumbing_tests
+    unit/compiler/semantics/validate_plumbing.cpp
+)
+target_link_libraries(ahfl_semantics_validate_plumbing_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_validate_plumbing_tests)
+
 add_executable(ahfl_semantics_adt_match_tests
     unit/compiler/semantics/adt_match.cpp
 )
@@ -535,7 +545,6 @@ target_link_libraries(ahfl_semantics_decreases_recognizer_tests
         doctest
 )
 ahfl_apply_project_warnings(ahfl_semantics_decreases_recognizer_tests)
-
 
 add_executable(ahfl_semantics_concurrency_tests
     unit/compiler/semantics/concurrency.cpp
@@ -917,6 +926,7 @@ foreach(_tgt
     ahfl_semantics_typed_hir_tests
     ahfl_semantics_effects_tests
     ahfl_semantics_flow_condition_tests
+    ahfl_semantics_validate_plumbing_tests
     ahfl_semantics_adt_match_tests
     ahfl_semantics_fn_generics_closures_tests
     ahfl_semantics_trait_impl_tests
