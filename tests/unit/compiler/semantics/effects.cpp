@@ -2681,15 +2681,8 @@ flow for HirAgent {
     REQUIRE(bool_literal != type_result.typed_program.expressions.end());
     CHECK(bool_literal->semantic_name == "true");
 
-    const auto none_literal =
-        std::find_if(type_result.typed_program.expressions.begin(),
-                     type_result.typed_program.expressions.end(),
-                     [&](const ahfl::TypedExpr &expr) {
-                         return expr.kind == ahfl::ast::ExprSyntaxKind::NoneLiteral &&
-                                expr.source_id == app_source_id;
-                     });
-    REQUIRE(none_literal != type_result.typed_program.expressions.end());
-    CHECK(none_literal->semantic_name == "none");
+    // Note: ExprSyntaxKind::NoneLiteral removed in P5.6a; `none` now lowered by desugar.
+    (void)type_result;
 }
 
 TEST_CASE("Type checker can trace relation checks through TypeRelationContext") {

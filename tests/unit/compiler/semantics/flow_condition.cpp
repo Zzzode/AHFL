@@ -316,36 +316,6 @@ struct NoneComparisonFinder {
             }
         }
     }
-    void visit_list_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &elem : expr.as<ahfl::ast::ListLiteralExpr>().items) {
-            if (elem) {
-                ahfl::ast::visit_expr_syntax(*elem, *this);
-            }
-        }
-    }
-    void visit_set_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &elem : expr.as<ahfl::ast::SetLiteralExpr>().items) {
-            if (elem) {
-                ahfl::ast::visit_expr_syntax(*elem, *this);
-            }
-        }
-    }
-    void visit_map_literal(const ahfl::ast::ExprSyntax &expr) {
-        for (const auto &entry : expr.as<ahfl::ast::MapLiteralExpr>().entries) {
-            if (entry->key) {
-                ahfl::ast::visit_expr_syntax(*entry->key, *this);
-            }
-            if (entry->value) {
-                ahfl::ast::visit_expr_syntax(*entry->value, *this);
-            }
-        }
-    }
-    void visit_some(const ahfl::ast::ExprSyntax &expr) {
-        const auto &value = expr.as<ahfl::ast::SomeExpr>().value;
-        if (value) {
-            ahfl::ast::visit_expr_syntax(*value, *this);
-        }
-    }
     // Leaf nodes — no children.
     void visit_bool_literal(const ahfl::ast::ExprSyntax &) {}
     void visit_integer_literal(const ahfl::ast::ExprSyntax &) {}

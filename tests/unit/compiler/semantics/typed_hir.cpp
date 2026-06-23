@@ -425,11 +425,8 @@ flow for LiteralAgent {
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::IntegerLiteral));
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::FloatLiteral));
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::StringLiteral));
-    CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::NoneLiteral));
-    CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::Some));
-    CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::ListLiteral));
-    CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::SetLiteral));
-    CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::MapLiteral));
+    // Removed in P5.6a: NoneLiteral, Some, ListLiteral, SetLiteral, MapLiteral
+    // (sugar variants lowered through desugar pass).
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::StructLiteral));
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::Path));
     CHECK(has_kind(exprs, ahfl::ast::ExprSyntaxKind::Call));
