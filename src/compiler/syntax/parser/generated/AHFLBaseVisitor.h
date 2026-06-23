@@ -59,10 +59,6 @@ public:
     return visitChildren(ctx);
   }
 
-  virtual std::any visitAppType(AHFLParser::AppTypeContext *ctx) override {
-    return visitChildren(ctx);
-  }
-
   virtual std::any visitPrimitiveType(AHFLParser::PrimitiveTypeContext *ctx) override {
     return visitChildren(ctx);
   }

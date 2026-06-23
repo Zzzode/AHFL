@@ -41,8 +41,6 @@ public:
 
     virtual std::any visitType_(AHFLParser::Type_Context *context) = 0;
 
-    virtual std::any visitAppType(AHFLParser::AppTypeContext *context) = 0;
-
     virtual std::any visitPrimitiveType(AHFLParser::PrimitiveTypeContext *context) = 0;
 
     virtual std::any visitConstDecl(AHFLParser::ConstDeclContext *context) = 0;
