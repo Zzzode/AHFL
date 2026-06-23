@@ -1290,19 +1290,34 @@ bool TypeCheckPass::impl_target_implements(SymbolId target_id, SymbolId trait_id
     return false;
 }
 
-// P2d.S2 (RFC §3.5 / §2): resolve a trait reference by its canonical-name
-// index and recursively check super-trait coverage so a `trait B: A { ... }`
-// declaration means B satisfiability also satisfies the A bound.
-// P2d.S2 (RFC §3.5 / §2): super-trait chain closure for bound checking.
-//
-// The direction matters: given a bound `where T: B` and a concrete type with
-// `impl A for T` where `A: B` (i.e. B is a super-trait of A), the bound is
-// satisfied because impl of a sub-trait transitively satisfies all super-trait
-// bounds. So the closure walks DOWN the super-trait DAG — from the bound trait
-// to every trait that lists it as a super-trait (its sub-traits / children).
-// Cycles are prevented by marking each trait visited on entry.
+// P2d.S2 (RFC §3.5 / §2) + P3c.S5b: super-trait chain closure for bound
+// checking, extended to accept a normalized type key rather than a nominal
+// SymbolId. This lets the same predicate answer "does Int implement Eq?"
+// (where Int is a built-in with no struct/enum symbol) alongside nominal
+// targets like `struct Counter`. Primitive targets match by
+// `TypeEnvironment::normalize_type_key` on ImplTypeInfo::target_type;
+// nominal targets still compare SymbolIds for efficiency and backward
+// compatibility with the orphan-rule / coherence paths.
 namespace {
-bool trait_chain_implements(SymbolId target_id,
+bool impl_matches_target(const ImplTypeInfo &impl,
+                         SymbolId nominal_target,
+                         std::string_view normalized_target,
+                         bool use_nominal) {
+    if (impl.is_inherent) {
+        return false;
+    }
+    if (use_nominal) {
+        return impl.target_symbol.has_value() && *impl.target_symbol == nominal_target;
+    }
+    if (impl.target_type == nullptr) {
+        return false;
+    }
+    return TypeEnvironment::normalize_type_key(*impl.target_type) == normalized_target;
+}
+
+bool trait_chain_implements(SymbolId nominal_target,
+                            std::string_view normalized_target,
+                            bool use_nominal,
                             SymbolId trait_id,
                             const TypeEnvironment &env,
                             std::unordered_set<std::size_t> &visited) {
@@ -1313,24 +1328,26 @@ bool trait_chain_implements(SymbolId target_id,
     // (1) Direct impl of trait_id for the target type.
     for (const auto &[index, impl] : env.impls()) {
         (void)index;
-        if (impl.is_inherent) {
+        if (!impl.trait_symbol.has_value() || *impl.trait_symbol != trait_id) {
             continue;
         }
-        if (!impl.trait_symbol.has_value() || !impl.target_symbol.has_value()) {
-            continue;
-        }
-        if (*impl.trait_symbol == trait_id && *impl.target_symbol == target_id) {
+        if (impl_matches_target(impl, nominal_target, normalized_target, use_nominal)) {
             return true;
         }
     }
     // (2) Walk sub-traits: every trait X that has `trait_id` listed in its
-    // super_traits is a sub-trait. If `target_id` implements any such X, the
+    // super_traits is a sub-trait. If `target` implements any such X, the
     // bound for `trait_id` is transitively satisfied.
     for (const auto &[x_id, x_info] : env.traits()) {
         (void)x_info;
         for (const auto super_id : x_info.super_traits) {
             if (super_id == trait_id) {
-                if (trait_chain_implements(target_id, SymbolId{x_id}, env, visited)) {
+                if (trait_chain_implements(nominal_target,
+                                           normalized_target,
+                                           use_nominal,
+                                           SymbolId{x_id},
+                                           env,
+                                           visited)) {
                     return true;
                 }
                 break; // each child trait is recursed into at most once
@@ -1344,13 +1361,17 @@ bool trait_chain_implements(SymbolId target_id,
 bool TypeCheckPass::check_bound(const Type &subject_type,
                                 std::string_view trait_name,
                                 SourceRange range) {
-    // Resolve the (possibly unqualified) trait name via the symbol table. The
+    // Resolve the (possibly qualified) trait name via the symbol table. The
     // where-clause bound parser stores raw spellings ("Show", "Ord") but the
-    // environment indexes traits by SymbolId; the symbol table applies the
-    // current module prefix so same-module trait references resolve correctly
-    // without explicit qualification. Imported traits would also resolve here
-    // once the resolver merges the import graph.
-    const auto trait_symbol = find_local_here(SymbolNamespace::Types, trait_name);
+    // dispatch stage may pass a canonical form ("module::Trait") — strip a
+    // leading `::`-qualified module prefix so local lookup succeeds. The
+    // symbol table applies the current module prefix so same-module trait
+    // references resolve correctly without explicit qualification.
+    std::string_view local_name = trait_name;
+    if (const auto separator = trait_name.rfind("::"); separator != std::string_view::npos) {
+        local_name = trait_name.substr(separator + 2);
+    }
+    const auto trait_symbol = find_local_here(SymbolNamespace::Types, local_name);
     if (!trait_symbol.has_value()) {
         // Unknown trait: the resolver would already have flagged an undeclared
         // trait reference at the where-clause declaration site. To avoid
@@ -1361,25 +1382,39 @@ bool TypeCheckPass::check_bound(const Type &subject_type,
     if (!trait_info.has_value()) {
         return false;
     }
-    const auto target_symbol = nominal_symbol_of(subject_type);
-    if (!target_symbol.has_value()) {
-        // Primitive / compound / unresolved type: no impl can exist in the
-        // environment, so the bound is not satisfied.
-        typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
-                             messages::typecheck::TraitBoundNotSatisfied.format_with(
-                                 std::string{"<type>"},
-                                 std::string{trait_name},
-                                 subject_type.describe()),
-                             range);
-        return false;
-    }
+    // Split the subject into a nominal SymbolId branch (fast path used by
+    // struct/enum targets including all S5b stage-1 and most stage-2
+    // dispatch) and a normalized-type-key branch that covers primitive
+    // targets such as `impl Eq for Int` / `impl Hash for String` (P3c.S5b
+    // stage-3 bound gate for primitive-trait method dispatch).
+    const auto nominal_target = nominal_symbol_of(subject_type);
     std::unordered_set<std::size_t> visited;
-    if (trait_chain_implements(*target_symbol, trait_info->get().symbol, environment(), visited)) {
+    const bool implemented = [&]() -> bool {
+        if (nominal_target.has_value()) {
+            return trait_chain_implements(*nominal_target,
+                                          /*normalized_target=*/{},
+                                          /*use_nominal=*/true,
+                                          trait_info->get().symbol,
+                                          environment(),
+                                          visited);
+        }
+        const std::string key = TypeEnvironment::normalize_type_key(subject_type);
+        return trait_chain_implements(SymbolId{0},
+                                      key,
+                                      /*use_nominal=*/false,
+                                      trait_info->get().symbol,
+                                      environment(),
+                                      visited);
+    }();
+    if (implemented) {
         return true;
     }
+    const std::string nominal_name = nominal_target.has_value()
+                                         ? nominal_describe(subject_type)
+                                         : std::string{"<type>"};
     typecheck_error_here(error_codes::typecheck::TraitBoundNotSatisfied,
                          messages::typecheck::TraitBoundNotSatisfied.format_with(
-                             nominal_describe(subject_type),
+                             nominal_name,
                              std::string{trait_name},
                              subject_type.describe()),
                          range);
