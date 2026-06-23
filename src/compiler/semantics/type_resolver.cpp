@@ -77,19 +77,37 @@ TypePtr TypeResolver::resolve_named_type(const ast::QualifiedName &name,
     // Dispatch the built-in parameterised types that used to have dedicated
     // syntax nodes (Optional/List/Set/Map). Any other type is expected to have
     // no generic arguments and is resolved as a plain named reference.
-    if (name.segments.size() == 1) {
+    if (name.segments.size() == 1 && !args.empty()) {
         const auto &head = name.segments.front();
-        if (head == "Optional" && args.size() == 1) {
-            return types_.optional(std::move(args.front()));
+        std::string_view canonical_name;
+        std::size_t expected_arity = 0;
+        if (head == "Optional") {
+            canonical_name = stdlib_bridge::kOptionType;
+            expected_arity = 1;
+        } else if (head == "List") {
+            canonical_name = stdlib_bridge::kListType;
+            expected_arity = 1;
+        } else if (head == "Set") {
+            canonical_name = stdlib_bridge::kSetType;
+            expected_arity = 1;
+        } else if (head == "Map") {
+            canonical_name = stdlib_bridge::kMapType;
+            expected_arity = 2;
         }
-        if (head == "List" && args.size() == 1) {
-            return types_.list(std::move(args.front()));
-        }
-        if (head == "Set" && args.size() == 1) {
-            return types_.set(std::move(args.front()));
-        }
-        if (head == "Map" && args.size() == 2) {
-            return types_.map(std::move(args[0]), std::move(args[1]));
+        if (!canonical_name.empty()) {
+            if (args.size() == expected_arity) {
+                if (TypePtr nominal =
+                        resolve_std_container_type(canonical_name, args, use_range);
+                    nominal != nullptr) {
+                    return nominal;
+                }
+                diagnose_(
+                    error_codes::typecheck::InvalidTypeReference,
+                    messages::typecheck::StdContainerTypeUnavailable.format_with(canonical_name),
+                    use_range);
+                return make_error_type();
+            }
+            // Arity mismatch falls through to UnknownType diagnostic below.
         }
     }
 

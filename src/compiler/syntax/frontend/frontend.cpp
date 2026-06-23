@@ -2016,10 +2016,6 @@ class ProgramBuilder {
             return build_fn_type_syntax(fn_type->get());
         }
 
-        if (const auto app_type = borrow(context.appType())) {
-            return build_app_type_syntax(app_type->get());
-        }
-
         auto type = make_owned<ast::TypeSyntax>();
         type->range = context_range(context, source_);
 
@@ -2148,25 +2144,6 @@ class ProgramBuilder {
         }
 
         type->node = std::move(fn_type);
-        return type;
-    }
-
-    [[nodiscard]] Owned<ast::TypeSyntax>
-    build_app_type_syntax(AHFLParser::AppTypeContext &context) const {
-        auto type = make_owned<ast::TypeSyntax>();
-        type->range = context_range(context, source_);
-
-        ast::AppType app_type;
-        app_type.name =
-            build_qualified_name(require(context.qualifiedIdent(), "app type name is missing"));
-
-        if (const auto type_list = borrow(context.typeList())) {
-            for (auto *arg_type_ctx : type_list->get().type_()) {
-                app_type.arguments.push_back(build_type_syntax(*arg_type_ctx));
-            }
-        }
-
-        type->node = std::move(app_type);
         return type;
     }
 
