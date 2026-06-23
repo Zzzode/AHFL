@@ -526,6 +526,17 @@ target_link_libraries(ahfl_semantics_trait_impl_tests
 )
 ahfl_apply_project_warnings(ahfl_semantics_trait_impl_tests)
 
+add_executable(ahfl_semantics_decreases_recognizer_tests
+    unit/compiler/semantics/decreases_recognizer.cpp
+)
+target_link_libraries(ahfl_semantics_decreases_recognizer_tests
+    PRIVATE
+        ahfl_compiler_semantics
+        doctest
+)
+ahfl_apply_project_warnings(ahfl_semantics_decreases_recognizer_tests)
+
+
 add_executable(ahfl_semantics_concurrency_tests
     unit/compiler/semantics/concurrency.cpp
 )

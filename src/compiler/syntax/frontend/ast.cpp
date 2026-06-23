@@ -1207,6 +1207,8 @@ std::string_view to_string(ContractClauseKind kind) noexcept {
         return "invariant";
     case ContractClauseKind::Forbid:
         return "forbid";
+    case ContractClauseKind::Decreases:
+        return "decreases";
     }
 
     return "unknown";

@@ -78,11 +78,13 @@ enum class NodeKind {
 /// - Ensures: postcondition (guaranteed after execution)
 /// - Invariant: invariant (always holds)
 /// - Forbid: forbidden condition (must never occur)
+/// - Decreases: termination measure (strictly decreases on every recursive/iterative step)
 enum class ContractClauseKind {
     Requires,
     Ensures,
     Invariant,
     Forbid,
+    Decreases,
 };
 
 [[nodiscard]] std::string_view to_string(ContractClauseKind kind) noexcept;

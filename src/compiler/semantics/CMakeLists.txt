@@ -1,6 +1,7 @@
 add_library(ahfl_compiler_semantics STATIC
     const_sema.cpp
     condition_facts.cpp
+    decreases_recognizer.cpp
     effects.cpp
     expression_sema.cpp
     flow_facts.cpp

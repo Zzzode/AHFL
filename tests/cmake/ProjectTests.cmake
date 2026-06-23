@@ -4178,3 +4178,7 @@ add_test(NAME ahfl.property.smv_syntax
 add_test(NAME ahfl.ir.opt.lower_and_passes
     COMMAND $<TARGET_FILE:ahfl_compiler_ir_opt_tests>
 )
+
+add_test(NAME ahfl.semantics.decreases_recognizer_all
+    COMMAND $<TARGET_FILE:ahfl_semantics_decreases_recognizer_tests>
+)
