@@ -5,6 +5,7 @@
 #include "ahfl/compiler/frontend/frontend.hpp"
 #include "ahfl/compiler/ir/analysis.hpp"
 #include "ahfl/compiler/ir/identity.hpp"
+#include "ahfl/compiler/ir/mangling.hpp"
 #include "ahfl/compiler/semantics/typecheck.hpp"
 #include "compiler/semantics/std_container_types.hpp"
 
@@ -14,10 +15,12 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -297,6 +300,7 @@ class TypedIrLowerer final {
         }
         current_source_id_.reset();
         current_module_name_.clear();
+        emit_instantiated_declarations(program_ir);
         return program_ir;
     }
 
@@ -985,6 +989,18 @@ class TypedIrLowerer final {
                                                           std::string_view label) const {
         if (type == nullptr) {
             throw std::logic_error("TypedProgram is missing required " + std::string(label));
+        }
+        auto ref = type_ref_from_type(*type);
+        ref.source_range = source_range;
+        return ref;
+    }
+
+    [[nodiscard]] ir::TypeRef type_ref_from_optional_type(TypePtr type,
+                                                          SourceRange source_range,
+                                                          std::string_view label) const {
+        if (type == nullptr) {
+            (void)label;
+            return ir::TypeRef{};
         }
         auto ref = type_ref_from_type(*type);
         ref.source_range = source_range;
@@ -2550,6 +2566,278 @@ class TypedIrLowerer final {
             lowered.has_body = true;
         }
         return lowered;
+    }
+
+    // =====================================================================
+    // Monomorphization: collect and emit InstanceDecls
+    // =====================================================================
+
+    struct InstanceKey {
+        std::size_t symbol_value{0};
+        std::vector<TypePtr> type_args;
+
+        [[nodiscard]] friend bool operator==(const InstanceKey &lhs,
+                                             const InstanceKey &rhs) noexcept {
+            if (lhs.symbol_value != rhs.symbol_value) return false;
+            if (lhs.type_args.size() != rhs.type_args.size()) return false;
+            for (std::size_t i = 0; i < lhs.type_args.size(); ++i) {
+                if (lhs.type_args[i] != rhs.type_args[i]) return false;
+            }
+            return true;
+        }
+    };
+
+    struct InstanceKeyHash {
+        [[nodiscard]] std::size_t operator()(const InstanceKey &k) const noexcept {
+            std::size_t h = k.symbol_value;
+            for (const TypePtr t : k.type_args) {
+                const auto ptr_bits = reinterpret_cast<std::uintptr_t>(t);
+                h ^= static_cast<std::size_t>(ptr_bits) * 0x9e3779b97f4a7c15ULL +
+                     0x9e3779b9 + (h << 6) + (h >> 2);
+            }
+            return h;
+        }
+    };
+
+    enum class InstanceBuildKind { Capability, Predicate, Agent, Workflow };
+
+    struct InstanceBuildInfo {
+        InstanceBuildKind kind{InstanceBuildKind::Capability};
+        SymbolId symbol{0};
+        std::vector<TypePtr> type_args;
+        // Nominal payload for InstanceDecl construction.
+        const CapabilityTypeInfo *capability{nullptr};
+        const PredicateTypeInfo *predicate{nullptr};
+        const AgentTypeInfo *agent{nullptr};
+        const WorkflowTypeInfo *workflow{nullptr};
+        // Range used for provenance.
+        SourceRange provenance_range{};
+    };
+
+    void emit_instantiated_declarations(ir::Program &program_ir) const {
+        std::unordered_map<InstanceKey, InstanceBuildInfo, InstanceKeyHash> instances;
+
+        // --- Source 1: Capability / Predicate calls in expressions ------
+        for (const auto &expr : typed_program_->expressions) {
+            if (expr.kind != ast::ExprSyntaxKind::Call) continue;
+            if (!expr.resolved_symbol.has_value()) continue;
+            if (expr.call_target_kind == TypedCallTargetKind::None) continue;
+
+            std::vector<TypePtr> type_args;
+            type_args.reserve(expr.children.size());
+            for (const auto &child : expr.children) {
+                if (child.role != TypedExprChildRole::Argument) continue;
+                if (child.expr_index == UINT32_MAX ||
+                    child.expr_index >= typed_program_->expressions.size()) {
+                    type_args.push_back(nullptr);
+                    continue;
+                }
+                type_args.push_back(typed_program_->expressions[child.expr_index].type);
+            }
+
+            InstanceKey key{
+                .symbol_value = static_cast<std::size_t>(expr.resolved_symbol->value),
+                .type_args = std::move(type_args),
+            };
+            if (instances.contains(key)) continue;
+
+            InstanceBuildInfo info;
+            info.symbol = *expr.resolved_symbol;
+            info.type_args = key.type_args;
+            info.provenance_range = expr.range;
+
+            if (expr.call_target_kind == TypedCallTargetKind::Capability) {
+                info.kind = InstanceBuildKind::Capability;
+                info.capability = find_capability_info(*expr.resolved_symbol);
+            } else { // Predicate
+                info.kind = InstanceBuildKind::Predicate;
+                info.predicate = find_predicate_info(*expr.resolved_symbol);
+            }
+            instances.emplace(std::move(key), std::move(info));
+        }
+
+        // --- Source 2: Workflow node agent targets ---------------------
+        for (const auto &decl : typed_program_->declarations) {
+            const auto *workflow = payload_as<WorkflowTypeInfo>(&decl);
+            if (workflow == nullptr) continue;
+            for (const auto &node : workflow->nodes) {
+                if (node.target_symbol.value == 0) continue;
+
+                const AgentTypeInfo *agent_info = find_agent_info(node.target_symbol);
+                std::vector<TypePtr> type_args;
+                type_args.reserve(3);
+                type_args.push_back(agent_info ? agent_info->input_type : nullptr);
+                type_args.push_back(agent_info ? agent_info->context_type : nullptr);
+                type_args.push_back(agent_info ? agent_info->output_type : nullptr);
+
+                InstanceKey key{
+                    .symbol_value = static_cast<std::size_t>(node.target_symbol.value),
+                    .type_args = std::move(type_args),
+                };
+                if (instances.contains(key)) continue;
+
+                InstanceBuildInfo info;
+                info.kind = InstanceBuildKind::Agent;
+                info.symbol = node.target_symbol;
+                info.type_args = key.type_args;
+                info.agent = agent_info;
+                info.provenance_range = node.source_range;
+                instances.emplace(std::move(key), std::move(info));
+            }
+        }
+
+        // --- Emit one InstanceDecl per unique key ----------------------
+        const auto symbol_resolver = [this](SymbolId id) -> std::optional<std::string> {
+            const auto sym = typed_program_->find_symbol(id);
+            if (!sym.has_value()) return std::nullopt;
+            return sym->get().canonical_name;
+        };
+
+        std::vector<std::pair<InstanceKey, InstanceBuildInfo>> sorted_instances;
+        sorted_instances.reserve(instances.size());
+        for (auto &[k, v] : instances) sorted_instances.emplace_back(k, v);
+        std::stable_sort(sorted_instances.begin(), sorted_instances.end(),
+                         [](const auto &lhs, const auto &rhs) {
+                             if (lhs.first.symbol_value != rhs.first.symbol_value) {
+                                 return lhs.first.symbol_value < rhs.first.symbol_value;
+                             }
+                             if (lhs.first.type_args.size() != rhs.first.type_args.size()) {
+                                 return lhs.first.type_args.size() < rhs.first.type_args.size();
+                             }
+                             for (std::size_t i = 0; i < lhs.first.type_args.size(); ++i) {
+                                 const auto a = reinterpret_cast<std::uintptr_t>(lhs.first.type_args[i]);
+                                 const auto b = reinterpret_cast<std::uintptr_t>(rhs.first.type_args[i]);
+                                 if (a != b) return a < b;
+                             }
+                             return false;
+                         });
+
+        for (const auto &[key, info] : sorted_instances) {
+            program_ir.declarations.push_back(build_instance_decl(info, symbol_resolver));
+        }
+    }
+
+    [[nodiscard]] const CapabilityTypeInfo *find_capability_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<CapabilityTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const PredicateTypeInfo *find_predicate_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<PredicateTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const AgentTypeInfo *find_agent_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<AgentTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+    [[nodiscard]] const WorkflowTypeInfo *find_workflow_info(SymbolId sym) const {
+        for (const auto &decl : typed_program_->declarations) {
+            if (decl.symbol != sym) continue;
+            if (const auto *info = payload_as<WorkflowTypeInfo>(&decl); info != nullptr) {
+                return info;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] ir::InstanceDecl
+    build_instance_decl(const InstanceBuildInfo &info,
+                        const mangle::SymbolCanonicalNameFn &resolver) const {
+        const std::span<const TypePtr> type_args(info.type_args);
+        const std::string mangled = mangle::mangle_instance(info.symbol, type_args, resolver);
+
+        ir::InstanceDecl decl{
+            .provenance = {},
+            .name = mangled,
+            .kind = ir::InstanceKind::Unknown,
+            .symbol_ref = {},
+            .type_args = {},
+            .params = {},
+            .return_type_ref = {},
+            .agent_input_type_ref = {},
+            .agent_context_type_ref = {},
+            .agent_output_type_ref = {},
+            .workflow_input_type_ref = {},
+            .workflow_output_type_ref = {},
+        };
+        {
+            const auto sym = typed_program_->find_symbol(info.symbol);
+            if (sym.has_value()) {
+                decl.symbol_ref = ir::SymbolRef{
+                    .kind = lower_symbol_ref_kind(sym->get().kind),
+                    .canonical_name = sym->get().canonical_name,
+                    .local_name = sym->get().local_name,
+                    .module_name = sym->get().module_name,
+                    .id = sym->get().id.value,
+                };
+            }
+        }
+        decl = with_provenance(std::move(decl), info.provenance_range);
+
+        // Convert type_args to ir::TypeRef for IR inspection.
+        decl.type_args.reserve(info.type_args.size());
+        for (const TypePtr t : info.type_args) {
+            decl.type_args.push_back(type_ref_from_optional_type(
+                t, info.provenance_range, "instance type_arg"));
+        }
+
+        switch (info.kind) {
+        case InstanceBuildKind::Capability:
+            decl.kind = ir::InstanceKind::Capability;
+            if (info.capability != nullptr) {
+                decl.params = lower_params(info.capability->params);
+                decl.return_type_ref = type_ref_from_optional_type(
+                    info.capability->return_type, info.capability->declaration_range,
+                    "capability instance return type");
+            }
+            break;
+        case InstanceBuildKind::Predicate:
+            decl.kind = ir::InstanceKind::Predicate;
+            if (info.predicate != nullptr) {
+                decl.params = lower_params(info.predicate->params);
+            }
+            break;
+        case InstanceBuildKind::Agent:
+            decl.kind = ir::InstanceKind::Agent;
+            if (info.agent != nullptr) {
+                decl.agent_input_type_ref = type_ref_from_optional_type(
+                    info.agent->input_type, info.agent->input_type_range,
+                    "agent instance input type");
+                decl.agent_context_type_ref = type_ref_from_optional_type(
+                    info.agent->context_type, info.agent->context_type_range,
+                    "agent instance context type");
+                decl.agent_output_type_ref = type_ref_from_optional_type(
+                    info.agent->output_type, info.agent->output_type_range,
+                    "agent instance output type");
+            }
+            break;
+        case InstanceBuildKind::Workflow:
+            decl.kind = ir::InstanceKind::Workflow;
+            if (info.workflow != nullptr) {
+                decl.workflow_input_type_ref = type_ref_from_optional_type(
+                    info.workflow->input_type, info.workflow->input_type_range,
+                    "workflow instance input type");
+                decl.workflow_output_type_ref = type_ref_from_optional_type(
+                    info.workflow->output_type, info.workflow->output_type_range,
+                    "workflow instance output type");
+            }
+            break;
+        }
+        return decl;
     }
 };
 
